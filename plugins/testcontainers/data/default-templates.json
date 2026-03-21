@@ -1,0 +1,323 @@
+{
+  "templates": [
+    {
+      "id": "postgres-16",
+      "name": "PostgreSQL 16",
+      "description": "PostgreSQL is a powerful, open source object-relational database system",
+      "category": "database",
+      "image": "postgres",
+      "tag": "16-alpine",
+      "ports": [
+        { "containerPort": 5432, "protocol": "tcp" }
+      ],
+      "environment": {
+        "POSTGRES_USER": "test",
+        "POSTGRES_PASSWORD": "test",
+        "POSTGRES_DB": "testdb"
+      },
+      "healthCheck": {
+        "test": ["CMD-SHELL", "pg_isready -U test"],
+        "interval": "10s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "waitStrategy": {
+        "type": "port",
+        "port": 5432,
+        "timeout": 60
+      },
+      "estimatedMemoryMb": 256,
+      "official": true
+    },
+    {
+      "id": "mysql-8",
+      "name": "MySQL 8",
+      "description": "MySQL is a widely used, open-source relational database management system",
+      "category": "database",
+      "image": "mysql",
+      "tag": "8.0",
+      "ports": [
+        { "containerPort": 3306, "protocol": "tcp" }
+      ],
+      "environment": {
+        "MYSQL_ROOT_PASSWORD": "test",
+        "MYSQL_DATABASE": "testdb",
+        "MYSQL_USER": "test",
+        "MYSQL_PASSWORD": "test"
+      },
+      "healthCheck": {
+        "test": ["CMD", "mysqladmin", "ping", "-h", "localhost"],
+        "interval": "10s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "waitStrategy": {
+        "type": "log",
+        "pattern": "ready for connections",
+        "timeout": 90
+      },
+      "estimatedMemoryMb": 512,
+      "official": true
+    },
+    {
+      "id": "mongo-7",
+      "name": "MongoDB 7",
+      "description": "MongoDB is a document database with the scalability and flexibility that you want",
+      "category": "database",
+      "image": "mongo",
+      "tag": "7.0",
+      "ports": [
+        { "containerPort": 27017, "protocol": "tcp" }
+      ],
+      "environment": {
+        "MONGO_INITDB_ROOT_USERNAME": "test",
+        "MONGO_INITDB_ROOT_PASSWORD": "test"
+      },
+      "waitStrategy": {
+        "type": "log",
+        "pattern": "Waiting for connections",
+        "timeout": 60
+      },
+      "estimatedMemoryMb": 256,
+      "official": true
+    },
+    {
+      "id": "redis-7",
+      "name": "Redis 7",
+      "description": "Redis is an open source, in-memory data structure store, used as a database, cache, and message broker",
+      "category": "cache",
+      "image": "redis",
+      "tag": "7-alpine",
+      "ports": [
+        { "containerPort": 6379, "protocol": "tcp" }
+      ],
+      "environment": {},
+      "healthCheck": {
+        "test": ["CMD", "redis-cli", "ping"],
+        "interval": "10s",
+        "timeout": "5s",
+        "retries": 5
+      },
+      "waitStrategy": {
+        "type": "log",
+        "pattern": "Ready to accept connections",
+        "timeout": 30
+      },
+      "estimatedMemoryMb": 64,
+      "official": true
+    },
+    {
+      "id": "rabbitmq-3",
+      "name": "RabbitMQ 3",
+      "description": "RabbitMQ is an open-source message broker with management UI",
+      "category": "messaging",
+      "image": "rabbitmq",
+      "tag": "3-management-alpine",
+      "ports": [
+        { "containerPort": 5672, "protocol": "tcp" },
+        { "containerPort": 15672, "protocol": "tcp" }
+      ],
+      "environment": {
+        "RABBITMQ_DEFAULT_USER": "test",
+        "RABBITMQ_DEFAULT_PASS": "test"
+      },
+      "healthCheck": {
+        "test": ["CMD", "rabbitmq-diagnostics", "-q", "ping"],
+        "interval": "30s",
+        "timeout": "10s",
+        "retries": 3
+      },
+      "waitStrategy": {
+        "type": "http",
+        "path": "/api/health/checks/alarms",
+        "port": 15672,
+        "statusCodes": [200],
+        "timeout": 90
+      },
+      "estimatedMemoryMb": 256,
+      "official": true
+    },
+    {
+      "id": "kafka-kraft",
+      "name": "Kafka (KRaft)",
+      "description": "Apache Kafka with KRaft mode (no Zookeeper required)",
+      "category": "messaging",
+      "image": "bitnami/kafka",
+      "tag": "3.6",
+      "ports": [
+        { "containerPort": 9092, "protocol": "tcp" },
+        { "containerPort": 9093, "protocol": "tcp" }
+      ],
+      "environment": {
+        "KAFKA_CFG_NODE_ID": "0",
+        "KAFKA_CFG_PROCESS_ROLES": "controller,broker",
+        "KAFKA_CFG_LISTENERS": "PLAINTEXT://:9092,CONTROLLER://:9093",
+        "KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP": "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT",
+        "KAFKA_CFG_CONTROLLER_QUORUM_VOTERS": "0@localhost:9093",
+        "KAFKA_CFG_CONTROLLER_LISTENER_NAMES": "CONTROLLER",
+        "ALLOW_PLAINTEXT_LISTENER": "yes"
+      },
+      "waitStrategy": {
+        "type": "log",
+        "pattern": "Kafka Server started",
+        "timeout": 90
+      },
+      "estimatedMemoryMb": 512,
+      "official": true
+    },
+    {
+      "id": "nats-2",
+      "name": "NATS 2",
+      "description": "NATS is a simple, secure and performant messaging system",
+      "category": "messaging",
+      "image": "nats",
+      "tag": "2-alpine",
+      "ports": [
+        { "containerPort": 4222, "protocol": "tcp" },
+        { "containerPort": 8222, "protocol": "tcp" }
+      ],
+      "environment": {},
+      "waitStrategy": {
+        "type": "http",
+        "path": "/",
+        "port": 8222,
+        "statusCodes": [200],
+        "timeout": 30
+      },
+      "estimatedMemoryMb": 32,
+      "official": true
+    },
+    {
+      "id": "elasticsearch-8",
+      "name": "Elasticsearch 8",
+      "description": "Elasticsearch is a distributed search and analytics engine",
+      "category": "service",
+      "image": "elasticsearch",
+      "tag": "8.11.0",
+      "ports": [
+        { "containerPort": 9200, "protocol": "tcp" },
+        { "containerPort": 9300, "protocol": "tcp" }
+      ],
+      "environment": {
+        "discovery.type": "single-node",
+        "xpack.security.enabled": "false",
+        "ES_JAVA_OPTS": "-Xms256m -Xmx256m"
+      },
+      "healthCheck": {
+        "test": ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"],
+        "interval": "30s",
+        "timeout": "10s",
+        "retries": 5
+      },
+      "waitStrategy": {
+        "type": "http",
+        "path": "/_cluster/health",
+        "port": 9200,
+        "statusCodes": [200],
+        "timeout": 120
+      },
+      "estimatedMemoryMb": 512,
+      "official": true
+    },
+    {
+      "id": "localstack",
+      "name": "LocalStack",
+      "description": "LocalStack provides an easy-to-use test/mocking framework for developing AWS applications",
+      "category": "service",
+      "image": "localstack/localstack",
+      "tag": "latest",
+      "ports": [
+        { "containerPort": 4566, "protocol": "tcp" }
+      ],
+      "environment": {
+        "SERVICES": "s3,sqs,sns,dynamodb,lambda",
+        "DEBUG": "0"
+      },
+      "waitStrategy": {
+        "type": "http",
+        "path": "/_localstack/health",
+        "port": 4566,
+        "statusCodes": [200],
+        "timeout": 90
+      },
+      "estimatedMemoryMb": 512,
+      "official": true
+    },
+    {
+      "id": "keycloak-23",
+      "name": "Keycloak 23",
+      "description": "Keycloak is an open source identity and access management solution",
+      "category": "service",
+      "image": "quay.io/keycloak/keycloak",
+      "tag": "23.0",
+      "ports": [
+        { "containerPort": 8080, "protocol": "tcp" }
+      ],
+      "environment": {
+        "KEYCLOAK_ADMIN": "admin",
+        "KEYCLOAK_ADMIN_PASSWORD": "admin",
+        "KC_HTTP_ENABLED": "true",
+        "KC_HOSTNAME_STRICT": "false"
+      },
+      "healthCheck": {
+        "test": ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"],
+        "interval": "30s",
+        "timeout": "10s",
+        "retries": 5,
+        "startPeriod": "60s"
+      },
+      "waitStrategy": {
+        "type": "http",
+        "path": "/health",
+        "port": 8080,
+        "statusCodes": [200],
+        "timeout": 120
+      },
+      "estimatedMemoryMb": 512,
+      "official": true
+    },
+    {
+      "id": "memcached",
+      "name": "Memcached",
+      "description": "Memcached is a high-performance, distributed memory object caching system",
+      "category": "cache",
+      "image": "memcached",
+      "tag": "alpine",
+      "ports": [
+        { "containerPort": 11211, "protocol": "tcp" }
+      ],
+      "environment": {},
+      "waitStrategy": {
+        "type": "port",
+        "port": 11211,
+        "timeout": 30
+      },
+      "estimatedMemoryMb": 64,
+      "official": true
+    },
+    {
+      "id": "mariadb-11",
+      "name": "MariaDB 11",
+      "description": "MariaDB is a community-developed fork of MySQL",
+      "category": "database",
+      "image": "mariadb",
+      "tag": "11",
+      "ports": [
+        { "containerPort": 3306, "protocol": "tcp" }
+      ],
+      "environment": {
+        "MARIADB_ROOT_PASSWORD": "test",
+        "MARIADB_DATABASE": "testdb",
+        "MARIADB_USER": "test",
+        "MARIADB_PASSWORD": "test"
+      },
+      "waitStrategy": {
+        "type": "log",
+        "pattern": "ready for connections",
+        "timeout": 90
+      },
+      "estimatedMemoryMb": 256,
+      "official": true
+    }
+  ]
+}

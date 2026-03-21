@@ -1,0 +1,209 @@
+# Daax Configuration
+# This file defines boot-time defaults for feature visibility, maturity, layout, and ordering.
+# All settings can be overridden at runtime via the Settings UI (stored in localStorage).
+
+# =============================================================================
+# FEATURE VISIBILITY
+# =============================================================================
+# Controls which features are visible based on their maturity level.
+# Valid values: "disabled" | "alpha" | "beta" | "ga"
+#
+# - "alpha"    : Show all features (including experimental)
+# - "beta"     : Show beta and GA features only
+# - "ga"       : Show only stable GA features
+# - "disabled" : Hide everything (not recommended)
+
+[features]
+visibility = "beta"           # Global maturity threshold
+showMaturityLabels = false      # Show ALPHA/BETA/GA badges in the UI
+
+# =============================================================================
+# UI LAYOUT
+# =============================================================================
+
+[layout]
+# AI Coding page layout: "tree" (sidebar) or "tabs" (tab bar)
+aiCodingLayout = "tree"
+
+# =============================================================================
+# PLUGIN MATURITY LEVELS
+# =============================================================================
+# Each plugin has a maturity level: "disabled", "alpha", "beta", or "ga"
+# Plugins below the visibility threshold will be hidden.
+
+[plugins.maturity]
+home = "ga"
+ai-coding = "ga"
+backlog = "ga"
+devcontainers = "beta"
+testcontainers = "beta"
+provenance = "disabled"
+security = "alpha"
+cloud = "disabled"
+learning = "alpha"
+analytics = "beta"
+settings = "ga"
+
+# =============================================================================
+# PLUGIN ORDER
+# =============================================================================
+# Defines the display order of plugins in navigation.
+# Plugins not listed here will appear at the end in default order.
+
+[plugins]
+order = [
+  "home",
+  "ai-coding",
+  "devcontainers",
+  "testcontainers",
+  "analytics",
+  "backlog",
+  "settings",
+]
+
+# =============================================================================
+# SUB-FEATURE MATURITY LEVELS
+# =============================================================================
+# Fine-grained control over individual features within plugins.
+# Format: [subfeatures.maturity."plugin-id"]
+
+# AI Coding sub-feature IDs must match DEFAULT_AI_CODING_ITEMS in Titlebar.tsx
+[subfeatures.maturity."ai-coding"]
+coding-agents = "ga"       # Main AI coding agents page (/ai-coding)
+code-server = "ga"         # VS Code in browser (/code-server)
+mcp = "ga"                 # Model Context Protocol tools (/mcp)
+shell = "ga"               # Terminal (/shell)
+workflow-editor = "beta"   # Workflow editor (/workflow-editor)
+backlog = "ga"             # Task management (/backlog)
+recordings = "beta"        # Session recordings (/ai-coding/recordings)
+logs = "beta"              # Log viewer (/ai-coding/logs)
+api-tools = "beta"         # API testing tools (/ai-coding/api-tools)
+
+[subfeatures.maturity.devcontainers]
+catalog = "beta"
+running = "beta"
+build = "beta"
+
+[subfeatures.maturity.security]
+scanner = "beta"
+reports = "beta"
+policies = "beta"
+
+[subfeatures.maturity.analytics]
+overview = "beta"
+logs = "beta"
+metrics = "alpha"
+traces = "alpha"
+
+[subfeatures.maturity.testcontainers]
+catalog = "beta"
+running = "beta"
+reports = "beta"
+
+# =============================================================================
+# SUB-FEATURE ORDER
+# =============================================================================
+# Defines the display order of sub-features within each plugin.
+# Format: [subfeatures.order."plugin-id"]
+
+# Order must match sub-feature IDs defined above
+[subfeatures.order."ai-coding"]
+order = [
+  "coding-agents",
+  "code-server",
+  "mcp",
+  "shell",
+  "workflow-editor",
+  "backlog",
+  "recordings",
+  "logs",
+  "api-tools",
+]
+
+[subfeatures.order.devcontainers]
+order = ["catalog", "running", "build"]
+
+[subfeatures.order.security]
+order = ["scanner", "reports", "policies"]
+
+[subfeatures.order.analytics]
+order = ["overview", "logs", "metrics", "traces"]
+
+[subfeatures.order.testcontainers]
+order = ["catalog", "running", "reports"]
+
+# =============================================================================
+# HOMEPAGE CARDS
+# =============================================================================
+# Configure which cards appear on the homepage and their display order.
+# Cards not in the order list will appear at the end.
+
+[homepage]
+cardOrder = [
+  "overview",
+  "ai-coding",
+  "code-server",
+  "shell",
+  "mcp",
+  "backlog",
+  "analytics",
+  "devcontainers",
+  "testcontainers",
+  "security",
+  "learning",
+  "cloud",
+  "provenance",
+]
+
+# Per-card configuration (enabled, color, tagline)
+[homepage.cards.overview]
+enabled = true
+color = "blue"
+
+[homepage.cards.ai-coding]
+enabled = true
+color = "blue"
+
+[homepage.cards.code-server]
+enabled = true
+color = "blue"
+
+[homepage.cards.shell]
+enabled = true
+color = "green"
+
+[homepage.cards.mcp]
+enabled = true
+color = "green"
+
+[homepage.cards.backlog]
+enabled = true
+color = "green"
+
+[homepage.cards.analytics]
+enabled = true
+color = "white"
+
+[homepage.cards.devcontainers]
+enabled = true
+color = "green"
+
+[homepage.cards.testcontainers]
+enabled = true
+color = "green"
+
+[homepage.cards.provenance]
+enabled = false
+color = "green"
+
+[homepage.cards.security]
+enabled = true
+color = "blue"
+
+[homepage.cards.cloud]
+enabled = false
+color = "blue"
+
+[homepage.cards.learning]
+enabled = true
+color = "white"

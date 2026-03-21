@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cybersecurity Crossword | RockCyber</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            background: '#000000',
+            foreground: '#ffffff',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #000000;
+      color: #ffffff;
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-black text-white">
+  <!-- Header -->
+  <header class="border-b border-neutral-800 bg-black">
+    <div class="container mx-auto px-4 py-6">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-3xl font-bold text-white">RockCyber</h1>
+          <p class="text-sm text-neutral-400 mt-1">
+            Transforming Cybersecurity Innovation
+          </p>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="container mx-auto px-4 py-8">
+    <div class="mb-8">
+      <h2 class="text-4xl font-bold text-white mb-2">
+        Cybersecurity Crossword Challenge
+      </h2>
+      <p class="text-neutral-400">
+        Test your knowledge of cybersecurity terms and concepts. Click a cell to select it,
+        type to fill in answers, and use arrow keys to navigate.
+      </p>
+    </div>
+
+    <!-- Success Message -->
+    <div id="success-message" class="hidden mb-6 p-6 bg-gradient-to-r from-emerald-950/50 to-green-950/50 border border-emerald-500/50 rounded-lg">
+      <div class="flex items-center gap-3">
+        <svg class="h-8 w-8 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        <div>
+          <h3 class="text-lg font-semibold text-emerald-400">Congratulations!</h3>
+          <p class="text-sm text-emerald-400/80">You've completed the cybersecurity crossword!</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="flex justify-between items-center mb-6">
+      <h3 class="text-2xl font-bold text-white">Cybersecurity Challenge</h3>
+      <div class="flex gap-2">
+        <button onclick="checkAnswers()" class="px-4 py-2 bg-neutral-900 border border-neutral-700 hover:bg-neutral-800 text-white rounded-md flex items-center gap-2">
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          Check
+        </button>
+        <button onclick="resetPuzzle()" class="px-4 py-2 bg-neutral-900 border border-neutral-700 hover:bg-neutral-800 text-white rounded-md flex items-center gap-2">
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+          </svg>
+          Reset
+        </button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <!-- Grid -->
+      <div class="flex justify-center">
+        <div id="crossword-grid" class="inline-block border-2 border-white"></div>
+      </div>
+
+      <!-- Clues -->
+      <div class="space-y-6">
+        <div>
+          <h3 class="text-lg font-semibold text-white mb-3 border-b border-neutral-700 pb-2">Across</h3>
+          <div id="across-clues" class="space-y-2"></div>
+        </div>
+        <div>
+          <h3 class="text-lg font-semibold text-white mb-3 border-b border-neutral-700 pb-2">Down</h3>
+          <div id="down-clues" class="space-y-2"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer Info -->
+    <div class="mt-12 pt-8 border-t border-neutral-800">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
+        <div>
+          <h3 class="font-semibold text-white mb-2">How to Play</h3>
+          <ul class="text-neutral-400 space-y-1">
+            <li>• Click a cell to select it</li>
+            <li>• Type to fill in your answer</li>
+            <li>• Use arrow keys to navigate</li>
+            <li>• Click "Check" to verify answers</li>
+          </ul>
+        </div>
+        <div>
+          <h3 class="font-semibold text-white mb-2">About This Puzzle</h3>
+          <p class="text-neutral-400">
+            This crossword features common cybersecurity terms, threats, and concepts.
+            Perfect for security professionals and enthusiasts alike.
+          </p>
+        </div>
+        <div>
+          <h3 class="font-semibold text-white mb-2">Learn More</h3>
+          <p class="text-neutral-400">
+            Interested in cybersecurity solutions? Visit
+            <a href="https://rockcyber.com" target="_blank" rel="noopener noreferrer" class="text-white hover:underline">
+              rockcyber.com
+            </a>
+            to learn about our services.
+          </p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-neutral-800 bg-black mt-12">
+    <div class="container mx-auto px-4 py-6">
+      <p class="text-center text-sm text-neutral-500">
+        © <span id="year"></span> RockCyber. All rights reserved.
+      </p>
+    </div>
+  </footer>
+
+  <script>
+    // Crossword data
+    const crosswordData = {
+      size: { rows: 13, cols: 13 },
+      clues: [
+        { number: 1, direction: 'across', clue: 'Malicious software designed to harm systems', answer: 'MALWARE', startX: 0, startY: 0 },
+        { number: 4, direction: 'across', clue: 'Fraudulent attempt to obtain sensitive information', answer: 'PHISHING', startX: 0, startY: 2 },
+        { number: 6, direction: 'across', clue: 'Network security system that monitors traffic', answer: 'FIREWALL', startX: 0, startY: 4 },
+        { number: 8, direction: 'across', clue: 'Converting data into coded form', answer: 'ENCRYPTION', startX: 0, startY: 6 },
+        { number: 11, direction: 'across', clue: 'Software that records keystrokes', answer: 'KEYLOGGER', startX: 0, startY: 8 },
+        { number: 13, direction: 'across', clue: 'Unauthorized access to computer systems', answer: 'HACKING', startX: 0, startY: 10 },
+        { number: 15, direction: 'across', clue: 'Virtual Private Network abbreviation', answer: 'VPN', startX: 5, startY: 12 },
+        { number: 1, direction: 'down', clue: 'Type of attack that floods a network', answer: 'DDOS', startX: 0, startY: 0 },
+        { number: 2, direction: 'down', clue: 'Software that displays unwanted ads', answer: 'ADWARE', startX: 2, startY: 0 },
+        { number: 3, direction: 'down', clue: 'Malware that encrypts files for ransom', answer: 'RANSOMWARE', startX: 4, startY: 0 },
+        { number: 5, direction: 'down', clue: 'Weakness in a system that can be exploited', answer: 'VULNERABILITY', startX: 6, startY: 2 },
+        { number: 7, direction: 'down', clue: 'Software that hides malware from detection', answer: 'ROOTKIT', startX: 0, startY: 4 },
+        { number: 9, direction: 'down', clue: 'Two-factor authentication abbreviation', answer: 'MFA', startX: 4, startY: 6 },
+        { number: 10, direction: 'down', clue: 'Isolated environment for testing suspicious files', answer: 'SANDBOX', startX: 8, startY: 6 },
+        { number: 12, direction: 'down', clue: 'Security incident response team abbreviation', answer: 'CERT', startX: 6, startY: 8 },
+        { number: 14, direction: 'down', clue: 'Malicious code that replicates itself', answer: 'VIRUS', startX: 2, startY: 10 },
+      ]
+    };
+
+    // Generate grid
+    const grid = Array(crosswordData.size.rows).fill(null).map(() => Array(crosswordData.size.cols).fill(null));
+    const userGrid = Array(crosswordData.size.rows).fill(null).map(() => Array(crosswordData.size.cols).fill(null));
+
+    crosswordData.clues.forEach(clue => {
+      const letters = clue.answer.split('');
+      letters.forEach((letter, index) => {
+        if (clue.direction === 'across') {
+          grid[clue.startY][clue.startX + index] = letter;
+        } else {
+          grid[clue.startY + index][clue.startX] = letter;
+        }
+      });
+    });
+
+    let selectedCell = null;
+    let selectedDirection = 'across';
+    let showErrors = false;
+
+    function renderGrid() {
+      const gridContainer = document.getElementById('crossword-grid');
+      gridContainer.innerHTML = '';
+
+      grid.forEach((row, y) => {
+        const rowDiv = document.createElement('div');
+        rowDiv.className = 'flex';
+
+        row.forEach((cell, x) => {
+          const cellDiv = document.createElement('div');
+          cellDiv.className = 'w-10 h-10 border flex items-center justify-center text-sm font-semibold relative';
+
+          const isBlank = grid[y][x] === null;
+          const isSelected = selectedCell?.x === x && selectedCell?.y === y;
+          const userValue = userGrid[y][x];
+          const correctValue = grid[y][x];
+          const isCorrect = userValue?.toUpperCase() === correctValue;
+          const hasError = showErrors && userValue && !isCorrect;
+
+          if (isBlank) {
+            cellDiv.className += ' bg-black border-neutral-800';
+          } else if (isSelected) {
+            cellDiv.className += ' bg-neutral-800 border-neutral-500 ring-2 ring-white';
+          } else if (hasError) {
+            cellDiv.className += ' bg-red-950/30 border-red-500/50 text-red-400';
+          } else if (isCorrect && userValue) {
+            cellDiv.className += ' bg-emerald-950/30 border-emerald-500/50 text-emerald-400';
+          } else {
+            cellDiv.className += ' bg-neutral-900 border-neutral-700 hover:bg-neutral-800 cursor-pointer';
+          }
+
+          // Add clue number
+          const clue = crosswordData.clues.find(c => c.startX === x && c.startY === y);
+          if (clue) {
+            const numberSpan = document.createElement('span');
+            numberSpan.className = 'absolute top-0 left-0.5 text-[8px] text-neutral-500';
+            numberSpan.textContent = clue.number;
+            cellDiv.appendChild(numberSpan);
+          }
+
+          // Add letter
+          const letterSpan = document.createElement('span');
+          letterSpan.className = 'text-white';
+          letterSpan.textContent = userGrid[y][x] || '';
+          cellDiv.appendChild(letterSpan);
+
+          if (!isBlank) {
+            cellDiv.addEventListener('click', () => selectCell(x, y));
+          }
+
+          rowDiv.appendChild(cellDiv);
+        });
+
+        gridContainer.appendChild(rowDiv);
+      });
+    }
+
+    function renderClues() {
+      const acrossClues = document.getElementById('across-clues');
+      const downClues = document.getElementById('down-clues');
+
+      acrossClues.innerHTML = '';
+      downClues.innerHTML = '';
+
+      crosswordData.clues.forEach(clue => {
+        const clueDiv = document.createElement('div');
+        clueDiv.className = 'text-sm text-neutral-300';
+        clueDiv.innerHTML = `<span class="font-semibold text-white">${clue.number}.</span> ${clue.clue}`;
+
+        if (clue.direction === 'across') {
+          acrossClues.appendChild(clueDiv);
+        } else {
+          downClues.appendChild(clueDiv);
+        }
+      });
+    }
+
+    function selectCell(x, y) {
+      if (selectedCell?.x === x && selectedCell?.y === y) {
+        selectedDirection = selectedDirection === 'across' ? 'down' : 'across';
+      } else {
+        selectedCell = { x, y };
+      }
+      renderGrid();
+    }
+
+    function handleInput(letter) {
+      if (!selectedCell) return;
+
+      const { x, y } = selectedCell;
+      userGrid[y][x] = letter.toUpperCase();
+
+      // Move to next cell
+      if (selectedDirection === 'across') {
+        let nextX = x + 1;
+        while (nextX < crosswordData.size.cols && grid[y][nextX] === null) nextX++;
+        if (nextX < crosswordData.size.cols) {
+          selectedCell = { x: nextX, y };
+        }
+      } else {
+        let nextY = y + 1;
+        while (nextY < crosswordData.size.rows && grid[nextY][x] === null) nextY++;
+        if (nextY < crosswordData.size.rows) {
+          selectedCell = { x, y: nextY };
+        }
+      }
+
+      checkCompletion();
+      renderGrid();
+    }
+
+    function handleBackspace() {
+      if (!selectedCell) return;
+
+      const { x, y } = selectedCell;
+      userGrid[y][x] = null;
+
+      // Move to previous cell
+      if (selectedDirection === 'across') {
+        let prevX = x - 1;
+        while (prevX >= 0 && grid[y][prevX] === null) prevX--;
+        if (prevX >= 0) {
+          selectedCell = { x: prevX, y };
+        }
+      } else {
+        let prevY = y - 1;
+        while (prevY >= 0 && grid[prevY][x] === null) prevY--;
+        if (prevY >= 0) {
+          selectedCell = { x, y: prevY };
+        }
+      }
+
+      renderGrid();
+    }
+
+    function handleArrowKey(key) {
+      if (!selectedCell) return;
+
+      const { x, y } = selectedCell;
+
+      if (key === 'ArrowRight') {
+        let nextX = x + 1;
+        while (nextX < crosswordData.size.cols && grid[y][nextX] === null) nextX++;
+        if (nextX < crosswordData.size.cols) {
+          selectedCell = { x: nextX, y };
+          selectedDirection = 'across';
+        }
+      } else if (key === 'ArrowLeft') {
+        let prevX = x - 1;
+        while (prevX >= 0 && grid[y][prevX] === null) prevX--;
+        if (prevX >= 0) {
+          selectedCell = { x: prevX, y };
+          selectedDirection = 'across';
+        }
+      } else if (key === 'ArrowDown') {
+        let nextY = y + 1;
+        while (nextY < crosswordData.size.rows && grid[nextY][x] === null) nextY++;
+        if (nextY < crosswordData.size.rows) {
+          selectedCell = { x, y: nextY };
+          selectedDirection = 'down';
+        }
+      } else if (key === 'ArrowUp') {
+        let prevY = y - 1;
+        while (prevY >= 0 && grid[prevY][x] === null) prevY--;
+        if (prevY >= 0) {
+          selectedCell = { x, y: prevY };
+          selectedDirection = 'down';
+        }
+      }
+
+      renderGrid();
+    }
+
+    function checkCompletion() {
+      const allFilled = userGrid.every((row, y) =>
+        row.every((cell, x) => {
+          if (grid[y][x] === null) return true;
+          return cell !== null && cell !== '';
+        })
+      );
+
+      const allCorrect = userGrid.every((row, y) =>
+        row.every((cell, x) => {
+          if (grid[y][x] === null) return true;
+          return cell?.toUpperCase() === grid[y][x];
+        })
+      );
+
+      if (allFilled && allCorrect) {
+        document.getElementById('success-message').classList.remove('hidden');
+      }
+    }
+
+    function checkAnswers() {
+      showErrors = true;
+      renderGrid();
+      setTimeout(() => {
+        showErrors = false;
+        renderGrid();
+      }, 2000);
+    }
+
+    function resetPuzzle() {
+      for (let y = 0; y < crosswordData.size.rows; y++) {
+        for (let x = 0; x < crosswordData.size.cols; x++) {
+          userGrid[y][x] = null;
+        }
+      }
+      selectedCell = null;
+      showErrors = false;
+      document.getElementById('success-message').classList.add('hidden');
+      renderGrid();
+    }
+
+    // Event listeners
+    document.addEventListener('keydown', (e) => {
+      if (e.key.length === 1 && e.key.match(/[a-zA-Z]/)) {
+        handleInput(e.key);
+      } else if (e.key === 'Backspace') {
+        handleBackspace();
+      } else if (e.key.startsWith('Arrow')) {
+        e.preventDefault();
+        handleArrowKey(e.key);
+      }
+    });
+
+    // Initialize
+    document.getElementById('year').textContent = new Date().getFullYear();
+    renderGrid();
+    renderClues();
+  </script>
+</body>
+</html>

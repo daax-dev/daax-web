@@ -1,0 +1,60 @@
+# Daax Local Development
+#
+# Usage:
+#   ./rebuild.sh              # Build and run via docker compose
+#   docker compose logs -f    # View logs
+#   docker compose down       # Stop
+
+services:
+  daax:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: daax:local
+    container_name: daax
+    restart: unless-stopped
+
+    ports:
+      - "4200:4200"
+      - "4201:4201"
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    volumes:
+      # Docker socket for spawning containers
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # Workspace volume
+      - ${DAAX_WORKSPACE:-${HOME}/prj}:/workspace
+
+      # Claude config
+      - ${CLAUDE_CONFIG_PATH:-${HOME}/.claude.json}:/host-config/.claude.json:rw
+
+      # Claude projects dir
+      - ${CLAUDE_DIR:-${HOME}/.claude}:/host-claude:ro
+
+      # Home MCP config (optional)
+      - ${HOME_MCP_PATH:-/dev/null}:/host-config/.mcp.json:ro
+
+    environment:
+      - DOCKER_NETWORK=daax-net
+      - HOST_WORKSPACE_PATH=${DAAX_WORKSPACE:-${HOME}/prj}
+      - CLAUDE_CODE_CONFIG=/host-config/.claude.json
+      - CLAUDE_PROJECTS_DIR=/host-claude/projects
+      - NEXT_PUBLIC_DEPLOYMENT_MODE=container
+      - TERMINAL_HOST=0.0.0.0
+      - HOME_MCP_JSON=${HOME_MCP_PATH:+/host-config/.mcp.json}
+
+      # Clawd Gateway (optional, for Bot feature)
+      # Set CLAWD_GATEWAY_URL and CLAWD_GATEWAY_TOKEN env vars, or use defaults below
+      # Note: Use https:// for iframe embedding (not wss:// which is for WebSocket)
+      - CLAWD_GATEWAY_URL=${CLAWD_GATEWAY_URL:-https://clawd.${HOSTNAME}.poley.dev}
+      - CLAWD_GATEWAY_TOKEN=${CLAWD_GATEWAY_TOKEN:-}
+
+    networks:
+      - daax-net
+
+networks:
+  daax-net:
+    external: true

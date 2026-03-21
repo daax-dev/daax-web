@@ -1,0 +1,133 @@
+{
+  "mcps": [
+    {
+      "id": "ask-my-human",
+      "name": "Ask My Human",
+      "description": "When an agent is uncertain or needs clarification, it can ask a human for guidance. Sends an event and waits for a follow-up answer before proceeding.",
+      "version": "0.1.0",
+      "status": "available",
+      "category": "coordination",
+      "isCore": true,
+      "useGateway": true,
+      "tools": [
+        {
+          "name": "ask_human",
+          "description": "Ask a human a question and wait for their response. Use when uncertain about requirements, edge cases, or decisions that need human judgment."
+        },
+        {
+          "name": "check_response",
+          "description": "Check if a human has responded to a pending question"
+        }
+      ],
+      "resources": [
+        {
+          "uri": "mcp://ask-my-human/pending",
+          "name": "Pending Questions",
+          "description": "List of questions awaiting human response"
+        }
+      ],
+      "source": "github.com/peregrinesummit/mcp-ask-my-human"
+    },
+    {
+      "id": "pass-to-expert",
+      "name": "Pass to Expert",
+      "description": "Delegate tasks to specialized agents. When one agent knows another is better suited for a task (like git operations, code review, or specific domains), it can hand off work instead of attempting it poorly.",
+      "version": "0.1.0",
+      "status": "available",
+      "category": "coordination",
+      "isCore": true,
+      "useGateway": true,
+      "tools": [
+        {
+          "name": "delegate_to_expert",
+          "description": "Delegate a task to a specialized agent/expert. Returns when the expert completes the task."
+        },
+        {
+          "name": "list_experts",
+          "description": "List available expert agents and their capabilities"
+        },
+        {
+          "name": "register_expertise",
+          "description": "Register this agent's expertise so others can delegate to it"
+        }
+      ],
+      "resources": [
+        {
+          "uri": "mcp://pass-to-expert/experts",
+          "name": "Expert Registry",
+          "description": "Registry of available experts and their capabilities"
+        }
+      ],
+      "source": "github.com/peregrinesummit/mcp-pass-to-expert"
+    },
+    {
+      "id": "events",
+      "name": "Events",
+      "description": "Emit and subscribe to events for observability and coordination. Includes regular check-ins to allow humans to change direction or provide new instructions mid-task.",
+      "version": "0.1.0",
+      "status": "available",
+      "category": "observability",
+      "isCore": true,
+      "useGateway": true,
+      "tools": [
+        {
+          "name": "emit_event",
+          "description": "Emit an event to notify other agents or humans of something that happened"
+        },
+        {
+          "name": "checkin",
+          "description": "Regular check-in to see if there are new instructions or direction changes. Call this periodically during long-running tasks."
+        },
+        {
+          "name": "get_events",
+          "description": "Retrieve recent events, optionally filtered"
+        },
+        {
+          "name": "subscribe",
+          "description": "Subscribe to events matching a pattern"
+        }
+      ],
+      "resources": [
+        {
+          "uri": "mcp://events/stream",
+          "name": "Event Stream",
+          "description": "Live stream of all events"
+        }
+      ],
+      "source": "github.com/peregrinesummit/mcp-events"
+    },
+    {
+      "id": "gateway",
+      "name": "MCP Gateway",
+      "description": "Central gateway that routes all MCP requests. Provides unified authentication, logging, and routing for all MCPs in the system.",
+      "version": "0.1.0",
+      "status": "available",
+      "category": "gateway",
+      "isCore": true,
+      "tools": [
+        {
+          "name": "route",
+          "description": "Route a request to an MCP through the gateway"
+        },
+        {
+          "name": "list_mcps",
+          "description": "List all MCPs available through the gateway"
+        },
+        {
+          "name": "get_mcp_status",
+          "description": "Get status of an MCP"
+        }
+      ],
+      "resources": [
+        {
+          "uri": "mcp://gateway/config",
+          "name": "Gateway Configuration",
+          "description": "Current gateway configuration"
+        }
+      ],
+      "source": "github.com/peregrinesummit/mcp-gateway"
+    }
+  ],
+  "submissions": [],
+  "lastUpdated": "2025-12-24T23:55:43.277Z"
+}

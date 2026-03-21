@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <rect width="256" height="256" rx="32" fill="#E95420"/>
+  <g fill="#FFFFFF">
+    <!-- Center ring -->
+    <circle cx="128" cy="128" r="52" fill="none" stroke="#FFFFFF" stroke-width="12"/>
+    <!-- Top circle (friend) -->
+    <circle cx="128" cy="64" r="18"/>
+    <!-- Bottom-left circle (friend) -->
+    <circle cx="72.6" cy="160" r="18"/>
+    <!-- Bottom-right circle (friend) -->
+    <circle cx="183.4" cy="160" r="18"/>
+  </g>
+</svg>
