@@ -1,0 +1,213 @@
+version: '2.0'
+transitions:
+- name: assess
+  from: To Do
+  to: Assessed
+  validation: NONE
+  via: assess
+- name: specify
+  from: Assessed
+  to: Specified
+  validation: NONE
+  via: specify
+- name: plan
+  from: Specified
+  to: Planned
+  validation: NONE
+  via: plan
+- name: implement
+  from: Planned
+  to: Implemented
+  validation: NONE
+  via: implement
+- name: validate
+  from: Implemented
+  to: Validated
+  validation: NONE
+  via: validate
+states:
+- To Do
+- Assessed
+- Specified
+- Planned
+- Implemented
+- Validated
+workflows:
+  assess:
+    command: /flow:assess
+    description: Assess workflow step
+    agents: []
+    input_states:
+    - To Do
+    output_state: Assessed
+    optional: true
+    id: assess
+  specify:
+    command: /flow:specify
+    description: Specify workflow step
+    agents: []
+    input_states:
+    - Assessed
+    output_state: Specified
+    optional: false
+  plan:
+    command: /flow:plan
+    description: Plan workflow step
+    agents: []
+    input_states:
+    - Specified
+    output_state: Planned
+    optional: false
+  implement:
+    command: /flow:implement
+    description: Implement workflow step
+    agents: []
+    input_states:
+    - Planned
+    output_state: Implemented
+    optional: false
+  validate:
+    command: /flow:validate
+    description: Validate workflow step
+    agents: []
+    input_states:
+    - Implemented
+    output_state: Validated
+    optional: false
+metadata:
+  last_updated: '2026-01-10'
+  state_count: 6
+  workflow_count: 5
+  transition_count: 5
+  schema_version: '2.0'
+roles:
+  primary: dev
+  show_all_commands: false
+  definitions:
+    arch:
+      display_name: Architect
+      icon: 🏗️
+      commands:
+      - decide
+      - model
+      agents:
+      - '@software-architect'
+      - '@platform-engineer'
+    dev:
+      display_name: Developer
+      icon: 💻
+      commands:
+      - cleanup
+      - debug
+      - refactor
+      agents:
+      - '@frontend-engineer'
+      - '@backend-engineer'
+      - '@ai-ml-engineer'
+    sec:
+      display_name: Security Engineer
+      icon: 🔒
+      commands:
+      - fix
+      - report
+      - scan
+      - triage
+      agents:
+      - '@secure-by-design-engineer'
+    qa:
+      display_name: QA Engineer
+      icon: ✅
+      commands:
+      - review
+      - test
+      agents:
+      - '@quality-guardian'
+      - '@release-manager'
+    ops:
+      display_name: SRE/DevOps
+      icon: 🚀
+      commands:
+      - monitor
+      - respond
+      - scale
+      agents:
+      - '@sre-agent'
+    all:
+      display_name: All Roles
+      icon: 🌐
+      commands: []
+      agents: []
+agent_loops:
+  inner:
+    description: Fast execution - optimized for developer velocity
+    agents:
+    - frontend-engineer
+    - backend-engineer
+    - ai-ml-engineer
+    - frontend-code-reviewer
+    - backend-code-reviewer
+  outer:
+    description: Governance-focused - optimized for safety and reliability
+    agents:
+    - workflow-assessor
+    - product-requirements-manager
+    - researcher
+    - business-validator
+    - software-architect
+    - platform-engineer
+    - quality-guardian
+    - secure-by-design-engineer
+    - tech-writer
+    - release-manager
+    - sre-agent
+    - pr-monitor
+custom_workflows:
+  quick_build:
+    name: Quick Build
+    description: Lightweight workflow for simple features
+    mode: vibing
+    steps:
+    - workflow: specify
+    - workflow: implement
+    - workflow: validate
+    rigor:
+      log_decisions: true
+      log_events: true
+      backlog_integration: true
+      memory_tracking: true
+      follow_constitution: true
+      create_adrs: true
+  full_design:
+    name: Full Design Workflow
+    description: Complete design workflow with conditional research
+    mode: spec-ing
+    steps:
+    - workflow: assess
+    - workflow: specify
+      checkpoint: Review PRD before continuing?
+    - workflow: research
+      condition: complexity >= 7
+    - workflow: plan
+      checkpoint: Review architecture before implementing?
+    rigor:
+      log_decisions: true
+      log_events: true
+      backlog_integration: true
+      memory_tracking: true
+      follow_constitution: true
+      create_adrs: true
+  ship_it:
+    name: Build and Ship
+    description: Implementation to validation with PR submission
+    mode: vibing
+    steps:
+    - workflow: implement
+    - workflow: validate
+    - workflow: submit-n-watch-pr
+    rigor:
+      log_decisions: true
+      log_events: true
+      backlog_integration: true
+      memory_tracking: true
+      follow_constitution: true
+      create_adrs: true
