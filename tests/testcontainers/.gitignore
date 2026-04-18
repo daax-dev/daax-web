@@ -1,0 +1,3 @@
+node_modules/
+results/*.log
+results/vitest-report.json
