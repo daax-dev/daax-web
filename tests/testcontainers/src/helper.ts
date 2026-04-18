@@ -41,13 +41,19 @@ export function smokeTest<T extends Startable>(
         await extraAssert(started as Awaited<ReturnType<T["start"]>>);
       }
     } finally {
+      // Only clear `started` on a *successful* stop. If stop() throws (Docker
+      // hiccup, socket timeout), the reference stays live so afterAll can make a
+      // second cleanup attempt on the same container — both paths never double-
+      // stop because `started` is cleared the moment stop() resolves.
       const container = started;
-      started = undefined;
       if (container) {
         try {
           await container.stop();
+          if (started === container) {
+            started = undefined;
+          }
         } catch (err) {
-          console.error(`[${moduleId}] stop failed:`, err);
+          console.error(`[${moduleId}] stop failed (afterAll will retry):`, err);
         }
       }
     }
