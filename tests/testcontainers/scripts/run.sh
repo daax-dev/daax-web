@@ -42,13 +42,17 @@ fi
 mkdir -p results
 : > results/run.log
 
-# Clean up any testcontainer-labelled siblings left behind by a previous run
-# (we disable Ryuk in the runner, so orphan cleanup is our responsibility).
-orphan_ids=$(docker ps -aq --filter "label=org.testcontainers=true" 2>/dev/null || true)
-if [[ -n "$orphan_ids" ]]; then
-  echo ">>> Removing $(echo "$orphan_ids" | wc -w | tr -d ' ') orphaned testcontainer(s) before run"
-  echo "$orphan_ids" | xargs docker rm -f >/dev/null 2>&1 || true
-fi
+# testcontainers-node v11.x does not expose a way to inject custom labels on every
+# spawned container, so we can't filter cleanup by a suite-specific tag. Instead
+# we snapshot every pre-existing container carrying org.testcontainers=true BEFORE
+# the run and only delete containers that appeared AFTERWARDS. This guarantees we
+# never touch a testcontainers container owned by another project on the same
+# daemon, even though we share the reaper label.
+baseline_file="$(mktemp -t daax-tc-baseline.XXXXXX)"
+trap 'rm -f "$baseline_file"' EXIT
+docker ps -aq --filter "label=org.testcontainers=true" 2>/dev/null > "$baseline_file" || true
+baseline_count=$(wc -l < "$baseline_file" | tr -d ' ')
+echo ">>> Snapshot baseline: $baseline_count pre-existing testcontainer(s) will be preserved"
 
 # On macOS Docker Desktop provides host.docker.internal; on Linux, add an explicit gateway alias.
 extra_host_args=()
@@ -74,10 +78,17 @@ set -e
 echo ">>> vitest exit status: $status"
 
 # Post-run orphan sweep — retries and hard failures can leave containers behind.
-leftover_ids=$(docker ps -aq --filter "label=org.testcontainers=true" 2>/dev/null || true)
-if [[ -n "$leftover_ids" ]]; then
-  echo ">>> Post-run cleanup: removing $(echo "$leftover_ids" | wc -w | tr -d ' ') leftover testcontainer(s)"
-  echo "$leftover_ids" | xargs docker rm -f >/dev/null 2>&1 || true
+# Delete only containers that were not present in the pre-run baseline: these are
+# guaranteed to have been spawned by this run.
+if [[ -s "$baseline_file" ]]; then
+  new_ids=$(docker ps -aq --filter "label=org.testcontainers=true" 2>/dev/null | grep -vxF -f "$baseline_file" || true)
+else
+  new_ids=$(docker ps -aq --filter "label=org.testcontainers=true" 2>/dev/null || true)
+fi
+if [[ -n "${new_ids// }" ]]; then
+  count=$(printf '%s\n' "$new_ids" | grep -c .)
+  echo ">>> Post-run cleanup: removing $count container(s) spawned by this run"
+  printf '%s\n' "$new_ids" | xargs docker rm -f >/dev/null 2>&1 || true
 fi
 
 exit "$status"
