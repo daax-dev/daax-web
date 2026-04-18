@@ -29,51 +29,18 @@ for (const tr of report.testResults ?? []) {
   });
 }
 
-const defaultImages = {
-  "arangodb": "arangodb:3.12.8",
-  "azure-cosmosdb-emulator": "mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-EN20250228",
-  "azureservicebus": "mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.0",
-  "azurite": "mcr.microsoft.com/azure-storage/azurite:3.35.0",
-  "cassandra": "cassandra:5.0.7",
-  "chromadb": "chromadb/chroma:1.5.5",
-  "clickhouse": "clickhouse/clickhouse-server:26.3-alpine",
-  "cockroachdb": "cockroachdb/cockroach:v26.1.1",
-  "couchbase": "couchbase/server:enterprise-8.0.1",
-  "couchdb": "couchdb:3.5",
-  "elasticsearch": "elasticsearch:9.3.2",
-  "etcd": "quay.io/coreos/etcd:v3.6.10",
-  "eventstoredb": "eventstore/eventstore (module default)",
-  "gcloud": "gcr.io/google.com/cloudsdktool/google-cloud-cli:563.0.0-emulators (PubSub)",
-  "hivemq": "hivemq/hivemq-ce:2025.5",
-  "k3s": "rancher/k3s:v1.35.3-k3s1",
-  "kafka": "confluentinc/cp-kafka:8.2.0",
-  "kurrentdb": "kurrentplatform/kurrentdb:26.0",
-  "localstack": "localstack/localstack:4.14.0",
-  "mariadb": "mariadb:12.2.2",
-  "minio": "minio/minio:RELEASE.2024-12-13T22-19-12Z",
-  "mockserver": "mockserver/mockserver:5.15.0",
-  "mongodb": "mongo:8.2.6",
-  "mssqlserver": "mcr.microsoft.com/mssql/server:2022-CU13-ubuntu-22.04",
-  "mysql": "mysql:9.6.0",
-  "nats": "nats:2.12.6-alpine",
-  "neo4j": "neo4j:5.26.24",
-  "ollama": "ollama/ollama:0.20.2",
-  "opensearch": "opensearchproject/opensearch:3.5.0",
-  "oraclefree": "gvenzl/oracle-free:23.26.1-slim-faststart",
-  "postgresql": "postgres:18.3-alpine",
-  "qdrant": "qdrant/qdrant:v1.17.1",
-  "rabbitmq": "rabbitmq:4.2.5-management-alpine",
-  "redis": "redis:8.6",
-  "redpanda": "docker.redpanda.com/redpandadata/redpanda:v26.1.2",
-  "s3mock": "adobe/s3mock:4.12.2",
-  "scylladb": "scylladb/scylla:6.2.3",
-  "selenium": "seleniarm/standalone-chromium:124.0 (arm64) / selenium/standalone-chrome:145.0 (amd64)",
-  "toxiproxy": "ghcr.io/shopify/toxiproxy:2.12.0",
-  "valkey": "valkey/valkey:9.0",
-  "vault": "hashicorp/vault:1.21.4",
-  "weaviate": "semitechnologies/weaviate:1.36.9",
+const imageOverrides = {
+  eventstoredb: "eventstore/eventstore (module default)",
+  gcloud: "gcr.io/google.com/cloudsdktool/google-cloud-cli:563.0.0-emulators (PubSub)",
+  selenium: "seleniarm/standalone-chromium:124.0 (arm64) / selenium/standalone-chrome:145.0 (amd64)",
 };
 
+const defaultImages = Object.fromEntries(
+  (matrix ?? []).map((m) => [
+    m.id,
+    imageOverrides[m.id] ?? m.image,
+  ]),
+);
 const notes = {
   "azure-cosmosdb-emulator": "large image; slow first pull",
   "azureservicebus": "emulator wires sibling mssql container internally",
