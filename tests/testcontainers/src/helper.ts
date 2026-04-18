@@ -32,12 +32,24 @@ export function smokeTest<T extends Startable>(
   });
 
   test(`${moduleId} :: ${label}`, { retry: 1 }, async () => {
-    started = (await makeContainer().start()) as Stopped;
-    expect(started).toBeTruthy();
-    const id = started.getId?.();
-    expect(typeof id === "string" && id.length > 0).toBe(true);
-    if (extraAssert) {
-      await extraAssert(started as Awaited<ReturnType<T["start"]>>);
+    try {
+      started = (await makeContainer().start()) as Stopped;
+      expect(started).toBeTruthy();
+      const id = started.getId?.();
+      expect(typeof id === "string" && id.length > 0).toBe(true);
+      if (extraAssert) {
+        await extraAssert(started as Awaited<ReturnType<T["start"]>>);
+      }
+    } finally {
+      const container = started;
+      started = undefined;
+      if (container) {
+        try {
+          await container.stop();
+        } catch (err) {
+          console.error(`[${moduleId}] stop failed:`, err);
+        }
+      }
     }
   });
 }
