@@ -36,10 +36,7 @@ const imageOverrides = {
 };
 
 const defaultImages = Object.fromEntries(
-  (matrix ?? []).map((m) => [
-    m.id,
-    imageOverrides[m.id] ?? m.image,
-  ]),
+  (matrix.modules ?? []).map((m) => [m.id, imageOverrides[m.id] ?? m.image]),
 );
 const notes = {
   "azure-cosmosdb-emulator": "large image; slow first pull",
