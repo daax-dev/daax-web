@@ -12,10 +12,11 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$here"
 
 image="daax-testcontainers-runner:local"
+hash_inputs=(package.json Dockerfile tsconfig.json vitest.config.ts)
 if command -v md5 >/dev/null 2>&1; then
-  tag_source="$(cat package.json Dockerfile | md5 -q)"
+  tag_source="$(cat "${hash_inputs[@]}" | md5 -q)"
 else
-  tag_source="$(cat package.json Dockerfile | md5sum | awk '{print $1}')"
+  tag_source="$(cat "${hash_inputs[@]}" | md5sum | awk '{print $1}')"
 fi
 tag_source="${tag_source:0:12}"
 tagged="${image%:*}:${tag_source}"
