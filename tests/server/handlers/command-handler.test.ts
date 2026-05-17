@@ -35,19 +35,22 @@ describe("buildFullCommand", () => {
     it("transforms claude with arguments", () => {
       const result = buildFullCommand("claude --model opus");
 
-      expect(result).toContain(`exec ${claudePath} --model opus`);
+      expect(result).toBe(`exec ${claudePath} --model opus`);
+      expect(result).not.toContain("flowspec");
     });
 
     it("transforms claude with complex arguments", () => {
       const result = buildFullCommand("claude chat --continue --verbose");
 
-      expect(result).toContain(`exec ${claudePath} chat --continue --verbose`);
+      expect(result).toBe(`exec ${claudePath} chat --continue --verbose`);
+      expect(result).not.toContain("flowspec");
     });
 
     it("preserves quoted arguments", () => {
       const result = buildFullCommand('claude "hello world"');
 
-      expect(result).toContain(`exec ${claudePath} "hello world"`);
+      expect(result).toBe(`exec ${claudePath} "hello world"`);
+      expect(result).not.toContain("flowspec");
     });
   });
 
