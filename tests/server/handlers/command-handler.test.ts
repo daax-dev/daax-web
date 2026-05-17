@@ -25,61 +25,32 @@ describe("buildFullCommand", () => {
   describe("claude command", () => {
     const claudePath = "/home/vscode/.local/share/pnpm/claude";
 
-    it("transforms bare claude command with flowspec check", () => {
+    it("transforms bare claude command to a full-path exec (no flowspec prompt)", () => {
       const result = buildFullCommand("claude");
 
-      expect(result).toContain("bash -c");
-      expect(result).toContain(".flowspec");
-      expect(result).toContain("flowspec init");
-      expect(result).toContain(`exec ${claudePath}`);
-      // Should end with bare claude command (no trailing args)
-      expect(result.endsWith(`exec ${claudePath}`)).toBe(true);
+      expect(result).toBe(`exec ${claudePath}`);
+      expect(result).not.toContain("flowspec");
     });
 
     it("transforms claude with arguments", () => {
       const result = buildFullCommand("claude --model opus");
 
-      expect(result).toContain(`exec ${claudePath} --model opus`);
+      expect(result).toBe(`exec ${claudePath} --model opus`);
+      expect(result).not.toContain("flowspec");
     });
 
     it("transforms claude with complex arguments", () => {
       const result = buildFullCommand("claude chat --continue --verbose");
 
-      expect(result).toContain(`exec ${claudePath} chat --continue --verbose`);
+      expect(result).toBe(`exec ${claudePath} chat --continue --verbose`);
+      expect(result).not.toContain("flowspec");
     });
 
     it("preserves quoted arguments", () => {
       const result = buildFullCommand('claude "hello world"');
 
-      expect(result).toContain(`exec ${claudePath} "hello world"`);
-    });
-
-    it("includes flowspec check for directory detection", () => {
-      const result = buildFullCommand("claude");
-
-      // Checks if .flowspec exists (skip prompt if it does)
-      expect(result).toContain("[ -d .flowspec ]");
-      expect(result).toContain("command -v flowspec >/dev/null 2>&1");
-    });
-
-    it("includes TTY check in flowspec wrapper", () => {
-      const result = buildFullCommand("claude");
-
-      // Checks if NOT a TTY (skip prompt if not interactive)
-      expect(result).toContain("[ ! -t 0 ]");
-    });
-
-    it("includes timeout for flowspec prompt", () => {
-      const result = buildFullCommand("claude");
-
-      expect(result).toContain("read -t 5");
-    });
-
-    it("uses bash -c for flowspec check and exec for claude", () => {
-      const result = buildFullCommand("claude");
-
-      expect(result).toMatch(/^bash -c/);
-      expect(result).toContain("; exec");
+      expect(result).toBe(`exec ${claudePath} "hello world"`);
+      expect(result).not.toContain("flowspec");
     });
   });
 

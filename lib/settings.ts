@@ -513,7 +513,7 @@ export interface TranscriptSettings {
 // AI Coding container settings
 export interface AICodingSettings {
   // Default container image for AI coding sessions
-  defaultContainerImage: string; // e.g., "jpoley/daax-agents-flowspec:latest"
+  defaultContainerImage: string; // e.g., "jpoley/daax-agents-gsd:latest"
   // Registry namespace/username prefix for images (e.g., "username" or "ghcr.io/username")
   containerRegistry: string;
   // Auto-pull latest image on session launch
@@ -540,13 +540,13 @@ export const CONTAINER_VARIANTS = [
     id: "daax-agents-flowspec",
     name: "Flowspec",
     description: "Core + Flowspec + Backlog.md",
-    recommended: true,
+    recommended: false,
   },
   {
     id: "daax-agents-gsd",
     name: "Get Shit Done",
     description: "Core + GSD methodology",
-    recommended: false,
+    recommended: true,
   },
   {
     id: "daax-agents-openspec",
@@ -557,9 +557,9 @@ export const CONTAINER_VARIANTS = [
 ] as const;
 
 export const DEFAULT_AI_CODING_SETTINGS: AICodingSettings = {
-  defaultContainerImage: "jpoley/daax-agents-flowspec:latest",
+  defaultContainerImage: "jpoley/daax-agents-gsd:latest",
   // Registry is the username/namespace prefix for images (not hostname like docker.io).
-  // Images are constructed as: {registry}/{variant}:latest -> jpoley/daax-agents-flowspec:latest
+  // Images are constructed as: {registry}/{variant}:latest -> jpoley/daax-agents-gsd:latest
   containerRegistry: "jpoley",
   autoPullLatest: false,
   usePrebuiltImage: true,
@@ -884,6 +884,22 @@ export function getSettings(): DaaxSettings {
       if (parsed.aiCoding === undefined) {
         console.log("[Settings] Setting AI Coding defaults (migration)");
         parsed.aiCoding = DEFAULT_AI_CODING_SETTINGS;
+        needsMigration = true;
+      }
+
+      // Migrate the old flowspec default image to the new gsd default.
+      // Only rewrite when the saved value still equals the previous default,
+      // so a user who deliberately picked another image is left untouched.
+      if (
+        parsed.aiCoding &&
+        parsed.aiCoding.defaultContainerImage ===
+          "jpoley/daax-agents-flowspec:latest"
+      ) {
+        console.log(
+          "[Settings] Migrating old AI Coding default image to gsd (migration)",
+        );
+        parsed.aiCoding.defaultContainerImage =
+          DEFAULT_AI_CODING_SETTINGS.defaultContainerImage;
         needsMigration = true;
       }
 
