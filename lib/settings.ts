@@ -887,6 +887,22 @@ export function getSettings(): DaaxSettings {
         needsMigration = true;
       }
 
+      // Migrate the old flowspec default image to the new gsd default.
+      // Only rewrite when the saved value still equals the previous default,
+      // so a user who deliberately picked another image is left untouched.
+      if (
+        parsed.aiCoding &&
+        parsed.aiCoding.defaultContainerImage ===
+          "jpoley/daax-agents-flowspec:latest"
+      ) {
+        console.log(
+          "[Settings] Migrating old AI Coding default image to gsd (migration)",
+        );
+        parsed.aiCoding.defaultContainerImage =
+          DEFAULT_AI_CODING_SETTINGS.defaultContainerImage;
+        needsMigration = true;
+      }
+
       // Force save the migration
       // Note: We intentionally do NOT call notifySubscribers here because:
       // 1. getSettings() is typically called during init before any subscribers exist
