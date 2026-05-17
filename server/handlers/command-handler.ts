@@ -14,16 +14,11 @@ import { hasSession } from "../sessions/session-manager";
  */
 export function buildFullCommand(command: string): string {
   // For claude command, use full path to avoid PATH issues during shell init
-  // Also check for flowspec and offer to initialize if not present
   if (command === "claude" || command.startsWith("claude ")) {
     const claudePath = "/home/vscode/.local/share/pnpm/claude";
     const claudeArgs = command.replace(/^claude\s*/, "");
 
-    // Check for flowspec and offer to initialize - single line to avoid shell echo noise
-    // Uses bash -c with single-line script to prevent multi-line prompt display
-    const flowspecCheck = `bash -c '[ -d .flowspec ] || ! command -v flowspec >/dev/null 2>&1 || [ ! -t 0 ] || { printf "\\033[33m⚠ Flowspec not initialized. Initialize? (y/N, 5s): \\033[0m"; read -t 5 -r a && [ "$a" = y -o "$a" = Y ] && flowspec init . --ai claude >/dev/null 2>&1 && printf "\\033[32m✓ Done\\033[0m\\n" || printf "\\033[90m(skipped)\\033[0m\\n"; }'`;
-
-    return `${flowspecCheck}; exec ${claudePath}${claudeArgs ? " " + claudeArgs : ""}`;
+    return `exec ${claudePath}${claudeArgs ? " " + claudeArgs : ""}`;
   }
 
   // For opencode command, set PATH with /usr/local/bin FIRST (musl fix on Alpine)

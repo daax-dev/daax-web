@@ -42,7 +42,7 @@ export interface AITabState {
 // Placeholder images for each agent (used in UI when no image is explicitly provided).
 // All agents use the same base image (daax-agents-core) which includes all AI CLIs.
 // NOTE: The actual server-side default is in DEFAULT_AI_CODING_SETTINGS.defaultContainerImage
-// (currently flowspec variant). These values are for UI display only as placeholders.
+// (currently gsd variant). These values are for UI display only as placeholders.
 // Users can override per-session via the modal or globally via settings.
 export const DEFAULT_AGENT_CONTAINER_IMAGE = 'jpoley/daax-agents-core:latest';
 
