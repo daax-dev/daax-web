@@ -66,8 +66,9 @@ function getHostMountPath(requestedPath: string, basePath: string): string {
 }
 
 // Check whether the code-server image exists locally.
-// `daax-code-server` is not a public registry image — it must be built
-// from the sibling daax-devtools repo. Without this pre-flight check,
+// `daax-code-server` is not a public registry image — it is typically built
+// locally from the vendored deploy/code-server/Dockerfile via
+// ./scripts/build-code-server.sh. Without this pre-flight check,
 // `docker run` silently tries (and fails) to pull it from Docker Hub.
 function imageExists(image: string): boolean {
   try {
