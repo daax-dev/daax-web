@@ -111,7 +111,29 @@ daax-web/
 # .env.local
 NEXT_PUBLIC_TERMINAL_WS_URL=ws://localhost:4201
 NEXT_PUBLIC_API_URL=http://localhost:4200/api
+
+# Optional: override the code-server image (see prerequisite below)
+CODE_SERVER_IMAGE=daax-code-server:latest
 ```
+
+## Code-Server Image
+
+The `/code-server` page launches a Docker container from the
+`daax-code-server:latest` image (upstream code-server plus Go, Python,
+and Rust toolchains). **This image is not on any public registry**, but
+daax-web is self-contained: `rebuild.sh` and `deploy-local.sh` build it
+automatically from the vendored `deploy/code-server/Dockerfile` — no
+sibling repos required, works on any machine.
+
+If you start Daax another way (e.g. plain `bun dev`), build it once:
+
+```bash
+./scripts/build-code-server.sh
+```
+
+The `/code-server` page and API pre-flight this image and show build
+instructions instead of a silent Docker pull failure if it is missing.
+To supply your own image, set `CODE_SERVER_IMAGE` (the build is skipped).
 
 ## Integration
 

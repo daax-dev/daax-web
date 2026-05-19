@@ -24,6 +24,11 @@ fi
 echo "🌐 Ensuring network exists..."
 docker network create "$NETWORK_NAME" 2>/dev/null || true
 
+# Build the code-server image (self-contained, from deploy/code-server/).
+# Not on any public registry; /code-server is broken without it. Fail hard.
+echo "🧩 Ensuring code-server image..."
+./scripts/build-code-server.sh
+
 echo "🚀 Starting container..."
 echo "   Workspace: $WORKSPACE_PATH"
 docker run -d \

@@ -102,6 +102,15 @@ daax-web/
 | `/analytics` | System stats and analytics |
 | `/settings` | App settings |
 
+> **`/code-server` image:** `daax-code-server:latest` is not on a public
+> registry, but daax-web is self-contained — `rebuild.sh` /
+> `deploy-local.sh` build it automatically from the vendored
+> `deploy/code-server/Dockerfile` via `scripts/build-code-server.sh`
+> (works on any machine, no sibling repos). For other start methods, run
+> `./scripts/build-code-server.sh`, or set `CODE_SERVER_IMAGE` to supply
+> your own. The API still pre-flights `docker image inspect` and returns
+> `IMAGE_NOT_FOUND` (surfaced in the UI) as a fallback.
+
 ## Code Style Guidelines
 
 ### Colors and Theming

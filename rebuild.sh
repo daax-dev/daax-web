@@ -50,6 +50,13 @@ else
   echo "⏭️  Skipping agent image pre-pull (SKIP_PULL set)"
 fi
 
+# Build the code-server image (self-contained, from deploy/code-server/).
+# It is not on any public registry, so the /code-server page cannot work
+# until this exists. Fail hard if the build fails — a half-deployed Daax
+# where /code-server is silently broken is worse than a clear error here.
+echo "🧩 Ensuring code-server image..."
+./scripts/build-code-server.sh
+
 echo "🌐 Ensuring network exists..."
 docker network create "$NETWORK_NAME" 2>/dev/null || true
 
