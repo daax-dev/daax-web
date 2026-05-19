@@ -36,6 +36,7 @@ import {
   Container,
   Database,
   Layers,
+  Boxes,
 } from "lucide-react";
 import { McpIcon } from "@/components/icons/McpIcon";
 import { cn } from "@/lib/utils";
@@ -92,6 +93,12 @@ const DEFAULT_AI_CODING_ITEMS: SubNavItem[] = [
     label: "Shell",
     icon: SquareTerminal,
     subFeatureId: "shell",
+  },
+  {
+    href: "/ai-coding/sessions",
+    label: "Sessions",
+    icon: Boxes,
+    subFeatureId: "sessions",
   },
   {
     href: "/workflow-editor",
