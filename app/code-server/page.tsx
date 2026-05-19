@@ -31,6 +31,9 @@ export default function CodeServerPage() {
   const [codeServerUrl, setCodeServerUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [mountedProject, setMountedProject] = useState<string | null>(null);
+  // null = not yet checked, true/false = result of pre-flight image check
+  const [imageAvailable, setImageAvailable] = useState<boolean | null>(null);
+  const [imageName, setImageName] = useState("daax-code-server:latest");
 
   const { activeProject, getProjectPath, basePath, directories } = useProject();
 
@@ -104,6 +107,7 @@ export default function CodeServerPage() {
       });
       const data = await response.json();
       if (data.success) {
+        setImageAvailable(true);
         setIsRunning(true);
         setMountedProject(activeProject);
         // Give code-server a moment to start, then open in new tab
@@ -113,6 +117,10 @@ export default function CodeServerPage() {
           window.open(codeServerUrl, "_blank");
         }, 2000);
       } else {
+        if (data.code === "IMAGE_NOT_FOUND") {
+          setImageAvailable(false);
+          if (data.image) setImageName(data.image);
+        }
         setError(data.error || "Failed to start code-server");
         setIsLoading(false);
       }
@@ -151,6 +159,9 @@ export default function CodeServerPage() {
       setIsRunning(data.running);
       if (data.port) setPort(data.port);
       setMountedProject(data.mountedProject || null);
+      if (typeof data.imageAvailable === "boolean")
+        setImageAvailable(data.imageAvailable);
+      if (data.image) setImageName(data.image);
     } catch {
       // Server might not be reachable
     }
@@ -182,6 +193,42 @@ export default function CodeServerPage() {
               <p className="text-sm mt-1">
                 Click <strong>Stop</strong> then <strong>Start</strong> to
                 switch to the selected project.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {imageAvailable === false && (
+          <div className="bg-yellow-500/10 text-yellow-600 dark:text-yellow-400 px-4 py-3 rounded-md flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 flex-shrink-0 mt-0.5" />
+            <div className="space-y-2">
+              <p className="font-medium">Code-server image not found</p>
+              <p className="text-sm">
+                The image{" "}
+                <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">
+                  {imageName}
+                </code>{" "}
+                is not available locally. It is not a public registry image, so
+                Docker cannot pull it.{" "}
+                <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">
+                  rebuild.sh
+                </code>{" "}
+                and{" "}
+                <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">
+                  deploy-local.sh
+                </code>{" "}
+                build it automatically; if you started Daax another way, build
+                it once then click <strong>Start</strong> again:
+              </p>
+              <pre className="text-xs bg-muted text-foreground p-3 rounded overflow-x-auto">
+                ./scripts/build-code-server.sh
+              </pre>
+              <p className="text-sm">
+                Or set the{" "}
+                <code className="font-mono text-xs bg-muted px-1 py-0.5 rounded">
+                  CODE_SERVER_IMAGE
+                </code>{" "}
+                environment variable to an image you already have.
               </p>
             </div>
           </div>
@@ -269,7 +316,9 @@ export default function CodeServerPage() {
                 {!isRunning ? (
                   <Button
                     onClick={startCodeServer}
-                    disabled={isLoading || !activeProject}
+                    disabled={
+                      isLoading || !activeProject || imageAvailable === false
+                    }
                   >
                     {isLoading ? (
                       <RefreshCw className="h-4 w-4 mr-2 animate-spin" />

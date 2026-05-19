@@ -65,6 +65,25 @@ function getHostMountPath(requestedPath: string, basePath: string): string {
   return expandPath(requestedPath);
 }
 
+// Check whether the code-server image exists locally.
+// `daax-code-server` is not a public registry image — it must be built
+// from the sibling daax-devtools repo. Without this pre-flight check,
+// `docker run` silently tries (and fails) to pull it from Docker Hub.
+function imageExists(image: string): boolean {
+  try {
+    execFileSync("docker", ["image", "inspect", image], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// User-facing hint shown when the image is missing. Kept in one place so
+// the API error and the UI setup guide stay in sync. rebuild.sh /
+// deploy-local.sh build this automatically; this path is the fallback
+// for `bun dev` without a build, or a bad CODE_SERVER_IMAGE override.
+const IMAGE_NOT_FOUND_HINT = `Image "${CONTAINER_IMAGE}" is not available locally. Build it with ./scripts/build-code-server.sh (rebuild.sh and deploy-local.sh do this automatically), or set the CODE_SERVER_IMAGE environment variable to an image you already have.`;
+
 function isContainerRunning(): boolean {
   try {
     const result = execFileSync(
@@ -197,6 +216,8 @@ export async function GET() {
     port,
     containerName: CONTAINER_NAME,
     mountedProject,
+    image: CONTAINER_IMAGE,
+    imageAvailable: imageExists(CONTAINER_IMAGE),
   });
 }
 
@@ -213,6 +234,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     } = body;
 
     if (action === "start") {
+      // Pre-flight: ensure the image exists locally before doing anything.
+      // `docker run` would otherwise try to pull a non-public image and fail
+      // with an opaque error after we've already torn down any prior container.
+      if (!imageExists(CONTAINER_IMAGE)) {
+        return NextResponse.json(
+          {
+            success: false,
+            code: "IMAGE_NOT_FOUND",
+            image: CONTAINER_IMAGE,
+            error: IMAGE_NOT_FOUND_HINT,
+          },
+          { status: 400 },
+        );
+      }
+
       // Security: Reject path traversal attempts (only if hostPath is provided)
       if (hostPath && (hostPath.includes("..") || hostPath.includes("//"))) {
         return NextResponse.json(
