@@ -50,8 +50,10 @@ ENV PATH="$BUN_INSTALL/bin:$PATH"
 
 # Install pnpm and backlog.md CLI globally for subprocess management
 ENV PNPM_HOME=/usr/local/pnpm
-ENV PATH="$PNPM_HOME:$PATH"
-RUN npm install -g pnpm && mkdir -p $PNPM_HOME && pnpm add -g backlog.md
+# pnpm's global bin dir is $PNPM_HOME/bin; it must be on PATH or recent pnpm
+# hard-errors ("global bin directory ... is not in PATH") instead of warning.
+ENV PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"
+RUN npm install -g pnpm && mkdir -p "$PNPM_HOME/bin" && pnpm add -g backlog.md
 
 WORKDIR /app
 
