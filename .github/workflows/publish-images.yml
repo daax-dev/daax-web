@@ -49,7 +49,10 @@ jobs:
         with:
           context: .
           target: runner
-          platforms: linux/amd64,linux/arm64
+          # amd64 only: cloud VMs (Azure x86_64) are amd64, and the arm64 build
+          # compiles node-pty from source under QEMU emulation — minutes → ~30m+
+          # and fragile. code-server below stays multi-arch (no native compile).
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
