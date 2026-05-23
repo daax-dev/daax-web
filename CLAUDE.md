@@ -1,147 +1,150 @@
+<!-- CLAUDE.md and AGENTS.md intentionally share the common guardrails below; operator-specific preferences may differ. Keep any shared guidance aligned between the files. -->
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Overview
+## Project
+Name: daax-web (package name: `daax`)
+Purpose: Browser-based development workbench — integrated terminal, AI coding agents, code editor, and MCP tooling — built on Next.js 16 / React 19, designed for Tailscale-network deployment.
+Goal: A working two-mode (host dev + Docker container) web workbench where lint, typecheck, unit and E2E tests pass and both deployment paths build and run.
 
-**Daax-Web** is a web-based development workbench with integrated terminal, AI coding tools, and code editor. Built on Next.js 16 with React 19, it provides a browser-based interface for managing development sessions. Designed for Tailscale network deployment.
+---
+
+## Operator Preferences
+<!-- Operator-specific. Revise or replace when applying to a different operator. -->
+- State facts only. No sugarcoating.
+- Surface problems, blockers, and risks immediately.
+- Consult before one-way-door decisions and before any architectural change.
+- Never answer from a guess. Validate claims against primary sources. If validation is not possible, say so explicitly.
+- Objective language. No first-person pronouns. No apologies or hedges.
+
+---
+
+## Hard Guardrails (always apply)
+- Plan before any non-trivial change. Write the plan down. Wait for approval.
+- Never commit or merge directly to `main` (pushing to `main` publishes container images).
+- Never commit secrets, tokens, keys, or `.env` files with live values.
+- No destructive git (`reset --hard`, force-push, branch delete) without explicit operator approval.
+- Never overwrite uncommitted user changes. Inspect existing patterns before editing.
+- Run formatter, linter, typecheck, and tests after changes. If that is not possible, state exactly why.
+- Maintain BOTH deployment modes (host dev and Docker container). A change that breaks one is incomplete.
+- Log non-trivial decisions to `.logs/decisions/<topic>.jsonl`.
+- Repo-local instructions override these template defaults.
+
+---
+
+## Required Reading
+`.claude/workflow.md` is always loaded (see include below) — planning and definition of done apply to every task.
+
+Read the matching file **before** you:
+- write or edit code → `.claude/language.md` (TypeScript: Bun, ESLint, Prettier, tsconfig, Vitest/Playwright)
+- make an architectural or cross-boundary decision → `.claude/architecture.md`
+- touch dependencies, runtime, or infrastructure → `.claude/stack.md`
+- perform branch / PR / commit / merge operations → `.claude/sourcecontrol.md`
+- write a decision or reference log entry → `.claude/history.md`
+
+@.claude/workflow.md
+
+---
 
 ## Deployment Modes
 
 Daax-Web supports TWO deployment modes. **Always maintain both options.**
 
 ### 1. Host Mode (Development)
-
-Run directly on the host machine:
-
 ```bash
 bun install        # Install dependencies
-bun dev            # Start dev server (port 4200 + terminal server 4201)
+bun dev            # Next.js (port 4200) + terminal server (port 4201)
 ```
+Access at `http://localhost:4200`.
 
-Access at: `http://localhost:4200`
-
-### 2. Container Mode (Production/Tailscale)
-
-Run inside a Docker container:
-
+### 2. Container Mode (Production / Tailscale)
 ```bash
-docker build -t daax-web .
-docker run -d -p 4200:4200 -p 4201:4201 daax-web
+./scripts/build-code-server.sh   # build the required daax-code-server:latest image
+bun run docker:build             # build the app image
+DAAX_WORKSPACE=/abs/path bun run docker:run   # run with workspace mount + HOST_WORKSPACE_PATH wired
 ```
-
-Access at: `http://localhost:4200` or `http://<tailscale-ip>:4200`
+Set `DAAX_WORKSPACE` to an absolute path before running `bun run docker:run`. The script's `~/prj` fallback does not expand `~` in shell parameter expansion, so without an explicit absolute path the mount target is a literal `~/prj` and the run fails. `bun run docker:run` mounts the Docker socket and a workspace into `/workspace` and sets `HOST_WORKSPACE_PATH` (without these the terminal server falls back to host mode and container path/auth mounts break). The `/code-server` proxy requires the local `daax-code-server:latest` image built by `./scripts/build-code-server.sh` (enforced by `rebuild.sh` / `deploy-local.sh` and the API preflight). `./rebuild.sh` or `docker compose up` perform both steps. Access at `http://localhost:4200` or `http://<tailscale-ip>:4200`. Supports Docker-in-Docker for spawning AI coding containers.
 
 ## Commands
-
 ```bash
 # Development
-bun install          # Install dependencies
-bun dev              # Development server (port 4200)
+bun install          # Install dependencies (bun.lock committed)
+bun dev              # Dev server (Next.js 4200 + terminal 4201)
 bun run build        # Production build
 bun start            # Run production build
 
 # Quality
-bun run lint         # Run ESLint
-bun run lint:fix     # Fix lint issues
-bun run typecheck    # TypeScript type checking
-bun run format:write # Format code with Prettier
-bun run format:check # Check formatting
+bun run lint         # ESLint
+bun run lint:fix     # ESLint autofix
+bun run typecheck    # tsc --noEmit
+bun run format:write # Prettier write
+bun run format:check # Prettier check
+
+# Tests
+bun run test         # Vitest (unit/component, headless)
+bun run test:e2e     # Playwright (tests/e2e)
+bun run test:all     # Vitest + Playwright + agent quick-verify
 
 # Components
-bunx shadcn@latest add <component-name>  # Add shadcn/ui component
+bunx shadcn@latest add <component-name>   # installs to components/ui/
 ```
 
 ## Tech Stack
-
 | Category | Technology |
 |----------|------------|
-| Framework | Next.js 16+ with App Router |
-| Language | TypeScript |
-| Styling | Tailwind CSS v4+ with CSS variables |
+| Framework | Next.js 16 (App Router) |
+| Language | TypeScript 5.9 (strict) |
+| Runtime | Node 22; Bun (declared via `packageManager`, not pinned in the Dockerfile) |
+| Styling | Tailwind CSS v4 with semantic CSS variables |
 | UI Components | shadcn/ui (Radix UI primitives) |
-| Terminal | xterm.js |
-| Recording | asciinema v2 format |
-| Session Replay | rrweb |
-| Package Manager | bun (preferred) |
+| Terminal | xterm.js + node-pty + ghostty-web |
+| Persistence | SQLite (better-sqlite3) |
+| Recording | asciinema v2 / rrweb |
+| Package Manager | Bun (preferred) |
+| CI / Registry | GitHub Actions → GHCR (`ghcr.io/daax-dev/daax-web`) |
+
+See `.claude/stack.md` and `.claude/language.md` for full detail.
 
 ## Architecture
-
-```
-daax-web/
-├── app/                   # Next.js App Router pages
-│   ├── layout.tsx        # Root layout with providers
-│   ├── page.tsx          # Homepage
-│   └── globals.css       # Global styles
-├── components/
-│   ├── ui/               # shadcn/ui components
-│   ├── layout/           # Layout components (Titlebar, etc.)
-│   └── terminal/         # Terminal components
-├── hooks/                # React hooks
-├── lib/                  # Utilities and helpers
-├── plugins/              # Plugin system for extensibility
-├── server/
-│   └── terminal-server.ts # WebSocket terminal server (port 4201)
-├── scripts/              # Build and deployment scripts
-├── tests/                # Test files
-├── types/                # TypeScript definitions
-├── data/                 # Static data files
-├── examples/             # Usage examples
-└── packages/             # Internal packages
-```
+See `.claude/architecture.md` for the full repository layout, plugin/maturity model (`config.toml`), boundaries, and integration points. Key directories: `app/` (App Router), `components/ui/` (shadcn), `hooks/`, `lib/` (utilities + SQLite), `plugins/` (feature plugins), `server/terminal-server.ts` (WS terminal, port 4201), `tests/` (Vitest + `tests/e2e/` Playwright), `types/`.
 
 ## Key Pages
-
 | Route | Purpose |
 |-------|---------|
 | `/` | Homepage with feature cards |
 | `/shell` | Interactive terminal |
-| `/ai-coding` | AI coding agents (Claude, Aider) |
+| `/ai-coding` | AI coding agents |
 | `/code-server` | VS Code in browser |
 | `/mcp` | MCP catalog and management |
 | `/analytics` | System stats and analytics |
 | `/settings` | App settings |
 
-> **`/code-server` image:** `daax-code-server:latest` is not on a public
-> registry, but daax-web is self-contained — `rebuild.sh` /
-> `deploy-local.sh` build it automatically from the vendored
-> `deploy/code-server/Dockerfile` via `scripts/build-code-server.sh`
-> (works on any machine, no sibling repos). For other start methods, run
-> `./scripts/build-code-server.sh`, or set `CODE_SERVER_IMAGE` to supply
-> your own. The API still pre-flights `docker image inspect` and returns
-> `IMAGE_NOT_FOUND` (surfaced in the UI) as a fallback.
-
 ## Code Style Guidelines
-
 ### Colors and Theming
-- **Never hardcode colors** like `text-blue-500`
-- Use CSS variables: `text-foreground`, `bg-background`, `text-muted-foreground`
-- Theme colors defined in `globals.css` using HSL variables
+- **Never hardcode colors** like `text-blue-500`.
+- Use CSS variables: `text-foreground`, `bg-background`, `text-muted-foreground`. Theme colors are defined in `globals.css`.
 
 ### Components
-- Extract sub-components for repetitive code
-- Single-statement arrow functions: `() => expression` (no brackets)
-- Prefer `motion` library for animations over CSS transitions
+- Extract sub-components for repetitive code.
+- Single-statement arrow functions: `() => expression` (no braces).
+- Prefer the `motion` library for animations over CSS transitions.
 
 ### TypeScript
-- Strict mode enabled
-- Define shared types in `types/` directory
+- Strict mode enabled. Define shared types in `types/`.
 
 ## Integration Points
-
-- **Terminal Server (port 4201)**: WebSocket connections for terminal I/O
-- **daax-cli**: Registers sessions for recording
-- **hawkeye**: API integration for job submission and status
-- **watchtower**: Session monitoring display
+- **Terminal Server (port 4201):** WebSocket connections for terminal I/O.
+- **daax-cli:** registers sessions for recording.
+- **hawkeye:** API integration for job submission and status.
+- **watchtower:** session monitoring display.
 
 ## Adding Components
-
 ```bash
-# Add shadcn/ui components
 bunx shadcn@latest add button card dialog tabs scroll-area
 ```
-
-Components installed to `components/ui/`.
+Components install to `components/ui/`.
 
 <!-- BACKLOG.MD MCP GUIDELINES START -->
 
