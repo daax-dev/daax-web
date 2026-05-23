@@ -334,10 +334,20 @@ export function AgentTabsLayout() {
     if (!draggingTabId || draggingTabId === overTabId) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
+    // Position-aware insert: only move when the pointer is past the target's
+    // horizontal midpoint, on the side it's heading toward. Without this the
+    // tab oscillates — a plain "swap on every dragover" reinserts the dragged
+    // tab on the far side of the target, which the next dragover undoes.
+    const rect = e.currentTarget.getBoundingClientRect();
+    const insertAfter = e.clientX > rect.left + rect.width / 2;
     setTabs((prev) => {
       const fromIdx = prev.findIndex((t) => t.id === draggingTabId);
-      const toIdx = prev.findIndex((t) => t.id === overTabId);
-      if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return prev;
+      const overIdx = prev.findIndex((t) => t.id === overTabId);
+      if (fromIdx < 0 || overIdx < 0) return prev;
+      let toIdx = insertAfter ? overIdx + 1 : overIdx;
+      // Removing the dragged tab first shifts every later index down by one.
+      if (fromIdx < toIdx) toIdx -= 1;
+      if (toIdx === fromIdx) return prev; // already in place — no-op
       const next = prev.slice();
       const [moved] = next.splice(fromIdx, 1);
       next.splice(toIdx, 0, moved);
