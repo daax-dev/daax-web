@@ -540,13 +540,13 @@ export const CONTAINER_VARIANTS = [
     id: "daax-agents-flowspec",
     name: "Flowspec",
     description: "Core + Flowspec + Backlog.md",
-    recommended: true,
+    recommended: false,
   },
   {
     id: "daax-agents-gsd",
     name: "Get Shit Done",
     description: "Core + GSD methodology",
-    recommended: false,
+    recommended: true,
   },
   {
     id: "daax-agents-openspec",
@@ -557,7 +557,7 @@ export const CONTAINER_VARIANTS = [
 ] as const;
 
 export const DEFAULT_AI_CODING_SETTINGS: AICodingSettings = {
-  defaultContainerImage: "jpoley/daax-agents-flowspec:latest",
+  defaultContainerImage: "jpoley/daax-agents-gsd:latest",
   // Registry is the username/namespace prefix for images (not hostname like docker.io).
   // Images are constructed as: {registry}/{variant}:latest -> jpoley/daax-agents-flowspec:latest
   containerRegistry: "jpoley",
@@ -884,6 +884,23 @@ export function getSettings(): DaaxSettings {
       if (parsed.aiCoding === undefined) {
         console.log("[Settings] Setting AI Coding defaults (migration)");
         parsed.aiCoding = DEFAULT_AI_CODING_SETTINGS;
+        needsMigration = true;
+      }
+
+      // Migrate users still pointing at the old flowspec default to the new gsd default.
+      // Why: gsd was promoted to recommended/default on 2026-04-30 and existing
+      //      localStorage still pinned flowspec, blocking the rollout.
+      if (
+        parsed.aiCoding?.defaultContainerImage ===
+        "jpoley/daax-agents-flowspec:latest"
+      ) {
+        console.log(
+          "[Settings] Migrating default container image flowspec -> gsd",
+        );
+        parsed.aiCoding = {
+          ...parsed.aiCoding,
+          defaultContainerImage: "jpoley/daax-agents-gsd:latest",
+        };
         needsMigration = true;
       }
 
