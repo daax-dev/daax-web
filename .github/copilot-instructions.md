@@ -79,6 +79,6 @@ A task is done only when:
 - Type check (`bun run typecheck`) and lint (`bun run lint`) pass; formatter clean (`bun run format:check`).
 - Both deployment modes still build (`bun run build`; `docker build` when runtime/Dockerfile touched).
 - PR opened with problem statement, approach, and test evidence.
-- No `[FILL IN]` placeholders left in affected files.
+- No unannotated `[FILL IN]` placeholders introduced by the task (the documented instruction-suite gaps in `.claude/` are intentional and may remain).
 - Decisions logged in `.logs/decisions/` if a non-trivial choice was made.
 - Backlog.md task moved to Done with a link to the PR/commit.
