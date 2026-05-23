@@ -33,7 +33,7 @@ Routine code edits, typo fixes, and pure refactors do not require log entries.
 
 ## References
 
-**Location:** `.logs/references/<topic>.jsonl`
+**Location:** `.logs/references/<topic>.jsonl` (the `.logs/references/` directory is committed via `.gitkeep`; run `mkdir -p .logs/references` first if it is ever missing).
 
 **Format:**
 ```json

@@ -7,7 +7,7 @@ Only document what is confirmed and deployable today.
 
 ## Runtime
 - Node 22 — production container base `node:22-bookworm-slim` (`Dockerfile`).
-- Bun `1.3.9` — package manager and dev/prod process runner (pinned via `packageManager` in `package.json`).
+- Bun `1.3.9` — package manager and dev/prod process runner (declared via `"packageManager"` in `package.json`; not version-pinned in the Dockerfile, which installs Bun from `bun.sh`, so the container runtime version can drift).
 - Two supported deployment modes (keep BOTH working):
   - **Host mode (dev):** `bun install` then `bun dev` — Next.js on port 4200 plus the terminal WebSocket server on 4201 (run concurrently via `concurrently`).
   - **Container mode (prod / Tailscale):** `docker build -t daax .` then run with the Docker socket mounted. Exposes 4200 (web), 4201 (terminal WS), 18080 (code-server proxy). Supports Docker-in-Docker for spawning AI coding containers.
@@ -40,7 +40,7 @@ Only document what is confirmed and deployable today.
 ## Build / Package
 - TypeScript: Bun + `bun.lock` (committed). No npm/yarn lockfiles. Build: `bun run build` (Next.js). `prebuild` optionally parses SAFE-MCP if `3rd-party/safe-mcp` exists.
 - CI: GitHub Actions — `.github/workflows/publish-images.yml`. On push to `main` and `v*` tags (and manual dispatch) it builds and pushes container images. No separate lint/test CI workflow is present (`[FILL IN — add a test/lint CI job if gating on green is desired]`).
-- Artifact registry: GitHub Container Registry (GHCR). CI publishes `ghcr.io/daax-dev/daax-web` (linux/amd64 only — arm64 dropped due to slow emulated `node-pty` native compile) and `ghcr.io/daax-dev/code-server` (multi-arch). Note: local `release:*` npm scripts still target the legacy `ghcr.io/jpoley/daax` path — CI (`daax-dev` org) is canonical.
+- Artifact registry: GitHub Container Registry (GHCR). CI publishes `ghcr.io/daax-dev/daax-web` (linux/amd64 only — arm64 dropped due to slow emulated `node-pty` native compile) and `ghcr.io/daax-dev/code-server` (multi-arch). The local `release:*` scripts in `package.json` also publish to `ghcr.io/daax-dev/daax-web`, matching CI (`daax-dev` org is canonical).
 
 ## Deployment Target
 - Self-hosted: SSH + systemd + `docker compose` on hosts (e.g. `kinsale`, `muckross`) via `bun run deploy:kinsale` / `deploy:muckross`. Traefik reverse proxy (`deploy/traefik-daax.yml.tpl`). Designed for Tailscale-network access. Not a managed cloud PaaS.
