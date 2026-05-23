@@ -23,7 +23,7 @@
     "docker:up:build": "docker compose up -d --build",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
-    "release:build": "docker build -t ghcr.io/daax-dev/daax-web:latest .",
+    "release:build": "docker buildx build --platform linux/amd64 --target runner --load -t ghcr.io/daax-dev/daax-web:latest .",
     "release:push": "docker push ghcr.io/daax-dev/daax-web:latest",
     "release:tag": "docker tag ghcr.io/daax-dev/daax-web:latest ghcr.io/daax-dev/daax-web:$(node -p \"require('./package.json').version\") && docker push ghcr.io/daax-dev/daax-web:$(node -p \"require('./package.json').version\")",
     "release": "bun run release:build && bun run release:push",
