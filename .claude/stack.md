@@ -31,6 +31,7 @@ Only document what is confirmed and deployable today.
 
 ## Auth
 - Identity: Pocket ID (OIDC) fronted by Traefik in deployed environments — referenced by the auth-gated Playwright projects (`playwright.config.ts`, `DAAX_AUTH_BASE_URL` / `POCKET_ID_OAT_COMMAND`) and `deploy/traefik-daax.yml.tpl`. JWT handling via `jose`. Local dev runs without auth.
+- Auth gate (`lib/auth.ts`): API route guards (`requireAuth` / `requireAuthOrThrow`) read the forward-auth `X-Forwarded-*` headers injected by the Pocket ID proxy. When no `X-Forwarded-User` header is present (host dev mode, or a proxy-less Tailscale container), requests are treated as a trusted local operator so the app is usable without a proxy. Set `DAAX_REQUIRE_AUTH=1` to restore strict enforcement (returns 401 without a valid header) — set this in any deployment that fronts daax with the Pocket ID proxy for defense in depth. A one-time startup warning is logged whenever the bypass is exercised.
 - Service-to-service: `[FILL IN — not documented in repo]`.
 
 ## Observability

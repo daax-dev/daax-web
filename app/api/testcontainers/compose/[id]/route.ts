@@ -3,6 +3,8 @@
  *
  * GET /api/testcontainers/compose/[id] - Get project details
  * DELETE /api/testcontainers/compose/[id] - Remove project
+ *
+ * SECURITY: DELETE operations require authentication via requireAuth()
  */
 
 import { NextResponse } from 'next/server';
@@ -11,6 +13,7 @@ import {
   removeComposeProject,
   checkDockerStatus,
 } from '@/plugins/testcontainers/api';
+import { requireAuth } from '@/lib/auth';
 
 export async function GET(
   request: Request,
@@ -52,6 +55,10 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // Require authentication for compose project removal
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { id } = await params;
 
