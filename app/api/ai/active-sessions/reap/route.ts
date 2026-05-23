@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { requireAuth } from "@/lib/auth";
+import { isAiSessionName } from "@/lib/ai-session-name";
 
 const execFileAsync = promisify(execFile);
 
@@ -41,11 +42,14 @@ async function listDaaxContainerNames(): Promise<string[]> {
     ],
     { maxBuffer: 1024 * 1024 },
   );
+  // `docker ps --filter name=` is a substring match, so it also returns
+  // infrastructure containers like daax-code-server. Keep only the exact
+  // session shape — this list feeds an unconditional `docker rm -f`.
   return stdout
     .trim()
     .split("\n")
     .map((s) => s.trim())
-    .filter(Boolean);
+    .filter(isAiSessionName);
 }
 
 async function lastActivityMs(name: string): Promise<number> {

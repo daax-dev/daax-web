@@ -2,8 +2,11 @@
  * GET /api/ai/active-sessions
  *
  * Returns the ground-truth list of AI Coding container sessions by
- * shelling out to `docker ps` (filtered to the `daax-` prefix used by
- * server/handlers/connection-handler.ts when spawning containers).
+ * shelling out to `docker ps` and keeping only the exact session-name
+ * shape (`daax-<8 hex>`) used by server/handlers/connection-handler.ts.
+ * The cheap `docker ps --filter name=daax-` prefix is a substring match,
+ * so it also returns infrastructure containers like `daax-code-server`;
+ * those are dropped here so the kill/reap UI never offers to remove them.
  *
  * The Next.js process can't read the terminal server's in-memory session
  * map (different process on port 4201), so we use docker as ground truth.
@@ -15,11 +18,12 @@
 import { NextResponse } from "next/server";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { isAiSessionName } from "@/lib/ai-session-name";
 
 const execFileAsync = promisify(execFile);
 
-// Filter prefix for AI Coding / shell containers. Matches the naming
-// scheme in server/handlers/connection-handler.ts (`daax-<sessionId8>`).
+// Cheap server-side prefilter for `docker ps`. This is a substring match,
+// so results are re-filtered with isAiSessionName() before use.
 const DAAX_NAME_PREFIX = "daax-";
 
 export interface ActiveSession {
@@ -111,10 +115,15 @@ export async function GET() {
     const rows = await dockerPs();
     const now = Date.now();
 
+    // Drop non-session containers the prefix filter let through
+    // (e.g. daax-code-server, daax-net). `docker ps --format '{{json .}}'`
+    // emits "Names" as a comma list; the first entry is canonical.
+    const sessionRows = rows.filter((row) =>
+      isAiSessionName((row.Names || "").split(",")[0]?.trim() || ""),
+    );
+
     const sessions: ActiveSession[] = await Promise.all(
-      rows.map(async (row) => {
-        // `docker ps --format '{{json .}}'` emits "Names" as a comma list
-        // for containers with multiple names; first entry is canonical.
+      sessionRows.map(async (row) => {
         const name = (row.Names || "").split(",")[0]?.trim() || row.ID;
 
         const [inspect, lastLog] = await Promise.all([

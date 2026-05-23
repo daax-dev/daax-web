@@ -4,21 +4,19 @@
  * Force-removes a `daax-*` container via `docker rm -f`. Used to evict
  * stray sessions surfaced by GET /api/ai/active-sessions.
  *
- * SECURITY: Requires auth and only accepts names matching the `daax-`
- * prefix to prevent operating on unrelated containers.
+ * SECURITY: Requires auth and only accepts the exact AI session container
+ * shape (`daax-<8 hex>`). A looser `daax-` prefix would also match
+ * infrastructure containers like `daax-code-server`, letting this endpoint
+ * force-remove them.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { requireAuth } from "@/lib/auth";
+import { isAiSessionName } from "@/lib/ai-session-name";
 
 const execFileAsync = promisify(execFile);
-
-// Conservative whitelist: matches daax-<short-id> shape from
-// server/handlers/connection-handler.ts. We avoid permitting arbitrary
-// docker names so this endpoint can't be repurposed against the host.
-const NAME_PATTERN = /^daax-[a-z0-9-]{4,128}$/i;
 
 export async function DELETE(
   _req: NextRequest,
@@ -29,7 +27,7 @@ export async function DELETE(
 
   const { name } = await context.params;
 
-  if (!NAME_PATTERN.test(name)) {
+  if (!isAiSessionName(name)) {
     return NextResponse.json(
       { success: false, error: "Invalid container name" },
       { status: 400 },
