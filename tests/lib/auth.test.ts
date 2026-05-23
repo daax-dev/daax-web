@@ -40,10 +40,12 @@ describe("auth module", () => {
     delete process.env.DAAX_AUTH_EMAIL_HEADER;
     delete process.env.DAAX_AUTH_GROUPS_HEADER;
     delete process.env.DAAX_AUTH_PROVIDER_URL;
+    delete process.env.DAAX_REQUIRE_AUTH;
   });
 
   afterEach(() => {
     vi.resetModules();
+    delete process.env.DAAX_REQUIRE_AUTH;
   });
 
   describe("getAuthUser", () => {
@@ -242,7 +244,8 @@ describe("auth module", () => {
       }
     });
 
-    it("should return 401 response when not authenticated", async () => {
+    it("should return 401 response when not authenticated and DAAX_REQUIRE_AUTH=1", async () => {
+      process.env.DAAX_REQUIRE_AUTH = "1";
       mockHeaders.mockResolvedValue(createMockHeaders({}));
 
       const result = await requireAuth();
@@ -258,7 +261,8 @@ describe("auth module", () => {
       }
     });
 
-    it("should return 401 when user header is missing but other headers present", async () => {
+    it("should return 401 when user header missing (other headers present) and DAAX_REQUIRE_AUTH=1", async () => {
+      process.env.DAAX_REQUIRE_AUTH = "1";
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-email": "test@example.com",
@@ -271,6 +275,18 @@ describe("auth module", () => {
       expect(result.authenticated).toBe(false);
       if (!result.authenticated) {
         expect(result.response.status).toBe(401);
+      }
+    });
+
+    it("should bypass to a local operator when no header and DAAX_REQUIRE_AUTH unset", async () => {
+      mockHeaders.mockResolvedValue(createMockHeaders({}));
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(true);
+      if (result.authenticated) {
+        expect(result.user.username).toBe("local");
+        expect(result.user.groups).toEqual([]);
       }
     });
   });
@@ -290,7 +306,8 @@ describe("auth module", () => {
       expect(user.authenticated).toBe(true);
     });
 
-    it("should throw error when not authenticated", async () => {
+    it("should throw error when not authenticated and DAAX_REQUIRE_AUTH=1", async () => {
+      process.env.DAAX_REQUIRE_AUTH = "1";
       mockHeaders.mockResolvedValue(createMockHeaders({}));
 
       await expect(requireAuthOrThrow()).rejects.toThrow(
@@ -298,7 +315,8 @@ describe("auth module", () => {
       );
     });
 
-    it("should throw error when user header is empty string", async () => {
+    it("should throw error when user header empty and DAAX_REQUIRE_AUTH=1", async () => {
+      process.env.DAAX_REQUIRE_AUTH = "1";
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-user": "",
@@ -308,6 +326,15 @@ describe("auth module", () => {
       await expect(requireAuthOrThrow()).rejects.toThrow(
         "Authentication required"
       );
+    });
+
+    it("should return local operator when not authenticated and DAAX_REQUIRE_AUTH unset", async () => {
+      mockHeaders.mockResolvedValue(createMockHeaders({}));
+
+      const user = await requireAuthOrThrow();
+
+      expect(user.authenticated).toBe(true);
+      expect(user.username).toBe("local");
     });
   });
 

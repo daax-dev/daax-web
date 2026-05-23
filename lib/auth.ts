@@ -35,6 +35,46 @@ const GROUPS_HEADER =
 const OIDC_PROVIDER_URL =
   process.env.DAAX_AUTH_PROVIDER_URL || "https://auth.poley.dev";
 
+// Auth enforcement gate.
+//
+// daax-web is designed to run behind a Pocket ID forward-auth proxy that
+// injects the X-Forwarded-* headers above. In two supported deployments there
+// is NO proxy in front: host dev mode (`bun dev`) and proxy-less Tailscale
+// container runs. In those cases no header is present and every guarded route
+// would otherwise return 401.
+//
+// Policy (operator-approved): when no authenticated user can be derived from
+// headers, requests are treated as a trusted local operator UNLESS
+// DAAX_REQUIRE_AUTH=1 is set, which restores strict enforcement (used when a
+// real proxy is in front). A one-time warning is logged whenever the bypass is
+// actually exercised so the relaxed posture is never silent.
+//
+// Evaluated at call time (not module load) so the gate honors the current
+// environment and stays straightforward to test.
+function authRequired(): boolean {
+  return process.env.DAAX_REQUIRE_AUTH === "1";
+}
+
+// Synthetic user representing the trusted local operator when auth is bypassed.
+const LOCAL_OPERATOR: AuthUser = {
+  username: "local",
+  email: null,
+  groups: [],
+  authenticated: true,
+  pictureUrl: null,
+};
+
+let bypassWarned = false;
+function warnAuthBypassedOnce(): void {
+  if (bypassWarned) return;
+  bypassWarned = true;
+  console.warn(
+    "[auth] No forward-auth header present and DAAX_REQUIRE_AUTH!=1 — " +
+      "authentication is BYPASSED (treating requests as a trusted local operator). " +
+      "Set DAAX_REQUIRE_AUTH=1 to enforce authentication (e.g. behind the Pocket ID proxy).",
+  );
+}
+
 export async function getAuthUser(): Promise<AuthUser> {
   const h = await headers();
 
@@ -113,22 +153,25 @@ export async function getAuthUser(): Promise<AuthUser> {
 export async function requireAuth(): Promise<AuthResult> {
   const user = await getAuthUser();
 
-  if (!user.authenticated) {
-    return {
-      authenticated: false,
-      response: NextResponse.json(
-        {
-          error: "Authentication required",
-          message: "You must be logged in to access this resource",
-        },
-        { status: 401 }
-      ),
-    };
+  if (user.authenticated) {
+    return { authenticated: true, user };
+  }
+
+  // No proxy header. Bypass to a local operator unless strict auth is required.
+  if (!authRequired()) {
+    warnAuthBypassedOnce();
+    return { authenticated: true, user: LOCAL_OPERATOR };
   }
 
   return {
-    authenticated: true,
-    user,
+    authenticated: false,
+    response: NextResponse.json(
+      {
+        error: "Authentication required",
+        message: "You must be logged in to access this resource",
+      },
+      { status: 401 }
+    ),
   };
 }
 
@@ -156,9 +199,14 @@ export async function requireAuth(): Promise<AuthResult> {
 export async function requireAuthOrThrow(): Promise<AuthUser> {
   const user = await getAuthUser();
 
-  if (!user.authenticated) {
-    throw new Error("Authentication required");
+  if (user.authenticated) {
+    return user;
   }
 
-  return user;
+  if (!authRequired()) {
+    warnAuthBypassedOnce();
+    return LOCAL_OPERATOR;
+  }
+
+  throw new Error("Authentication required");
 }
