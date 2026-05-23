@@ -1,4 +1,4 @@
-<!-- CLAUDE.md and AGENTS.md share the Operator Preferences and Hard Guardrails below. Keep them in sync. -->
+<!-- CLAUDE.md and AGENTS.md intentionally share the common guardrails below; operator-specific preferences may differ. Keep any shared guidance aligned between the files. -->
 
 # CLAUDE.md
 
