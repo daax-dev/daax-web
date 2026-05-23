@@ -96,7 +96,7 @@ bunx shadcn@latest add <component-name>   # installs to components/ui/
 |----------|------------|
 | Framework | Next.js 16 (App Router) |
 | Language | TypeScript 5.9 (strict) |
-| Runtime | Node 22 / Bun 1.3.9 |
+| Runtime | Node 22; Bun (declared via `packageManager`, not pinned in the Dockerfile) |
 | Styling | Tailwind CSS v4 with semantic CSS variables |
 | UI Components | shadcn/ui (Radix UI primitives) |
 | Terminal | xterm.js + node-pty + ghostty-web |

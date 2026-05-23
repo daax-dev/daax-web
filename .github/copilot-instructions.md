@@ -47,7 +47,7 @@ Purpose: Browser-based development workbench (terminal, AI coding agents, code e
 - Never hardcode colors (e.g. `text-blue-500`) — use semantic CSS variables (`text-foreground`, `bg-background`). Theme in `globals.css`.
 - Components `PascalCase` in `components/`; hooks `use`-prefixed; shared types in `types/`.
 - Lockfiles are committed. Updating `bun.lock` is a deliberate change — note it in the PR.
-- Generated code (`.next/`, `next-env.d.ts`) is excluded from lint/format. Never edit by hand.
+- Generated code (`.next/`, `next-env.d.ts`) is excluded from lint (ESLint ignores `.next/**`). Never edit by hand.
 - Never edit Backlog.md task files under `backlog/tasks/` directly — use the `backlog` CLI.
 
 ---
