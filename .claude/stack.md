@@ -10,7 +10,7 @@ Only document what is confirmed and deployable today.
 - Bun `1.3.9` — package manager and dev/prod process runner (declared via `"packageManager"` in `package.json`; not version-pinned in the Dockerfile, which installs Bun from `bun.sh`, so the container runtime version can drift).
 - Two supported deployment modes (keep BOTH working):
   - **Host mode (dev):** `bun install` then `bun dev` — Next.js on port 4200 plus the terminal WebSocket server on 4201 (run concurrently via `concurrently`).
-  - **Container mode (prod / Tailscale):** `docker build -t daax .` then run with the Docker socket mounted. Exposes 4200 (web), 4201 (terminal WS), 18080 (code-server proxy). Supports Docker-in-Docker for spawning AI coding containers.
+  - **Container mode (prod / Tailscale):** `docker build -t daax .` then run with the Docker socket mounted. Default run paths (`docker-compose.yml`, `rebuild.sh`, `deploy-local.sh`) publish 4200 (web) and 4201 (terminal WS); 18080 (code-server proxy) is an internal default that is only published when run via the `docker:run` script (`-p 18080:18080`). Supports Docker-in-Docker for spawning AI coding containers.
 
 ## Frameworks
 - Frontend / app: Next.js `16.1.6` (App Router) + React `19.2.x` + TypeScript. UI via shadcn/ui on Radix UI primitives (`components.json`, `components/ui/`), Tailwind CSS v4. Charts: Recharts. Flow graphs: `@xyflow/react`. Diagrams: Mermaid. Animations: `motion`.

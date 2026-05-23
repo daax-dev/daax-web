@@ -40,7 +40,7 @@ For each active language, this file records:
 
 ## Cross-Cutting Rules
 - No language rule overrides the formatter. Fix the config, not the code.
-- Generated code is excluded from lint/format (`.next/`, `next-env.d.ts`). Never edit generated files by hand.
+- Generated code (`.next/`, `next-env.d.ts`) is excluded from lint (ESLint ignores `.next/**`). Never edit generated files by hand.
 - Lockfiles are committed (`bun.lock`). Updating a lockfile is a deliberate change — call it out in the PR.
 - Theming: never hardcode colors (e.g. `text-blue-500`). Use CSS variables / semantic tokens (`text-foreground`, `bg-background`, `text-muted-foreground`) defined in `globals.css`. Tailwind CSS v4 (`@tailwindcss/postcss`), utility-first, variants co-located with components.
 - React: single-statement arrow functions without braces where practical; prefer the `motion` library for animations over raw CSS transitions; shared types in `types/`.
