@@ -1,6 +1,6 @@
 # Copilot Instructions
 
-GitHub Copilot reads this file automatically. Rules here are enforced in every session.
+GitHub Copilot can apply these instructions automatically when available; they are guidance, not a guaranteed enforcement mechanism.
 
 ---
 
@@ -28,7 +28,7 @@ Purpose: Browser-based development workbench (terminal, AI coding agents, code e
 ---
 
 ## Stack
-- Runtime: Node 22 (`node:22-bookworm-slim`) + Bun 1.3.9 (pinned via `packageManager`).
+- Runtime: Node 22 (`node:22-bookworm-slim`) + Bun 1.3.9 (declared via `packageManager` in `package.json`; not pinned in the Dockerfile, so the container Bun version can drift).
 - Package manager: Bun. `bun.lock` committed. No npm/yarn lockfiles.
 - Framework: Next.js 16 (App Router) + React 19 + TypeScript 5.9 (strict). Tailwind v4, shadcn/ui (Radix).
 - Persistence: SQLite via `better-sqlite3` (local file). Runtime feature config in `config.toml`.

@@ -61,10 +61,11 @@ Access at `http://localhost:4200`.
 
 ### 2. Container Mode (Production / Tailscale)
 ```bash
-docker build -t daax .
-docker run -d -p 4200:4200 -p 4201:4201 -v /var/run/docker.sock:/var/run/docker.sock daax
+./scripts/build-code-server.sh   # build the required daax-code-server:latest image
+bun run docker:build             # build the app image
+bun run docker:run               # run with workspace mount + HOST_WORKSPACE_PATH wired
 ```
-Access at `http://localhost:4200` or `http://<tailscale-ip>:4200`. Supports Docker-in-Docker for spawning AI coding containers.
+`bun run docker:run` mounts the Docker socket and a workspace into `/workspace` and sets `HOST_WORKSPACE_PATH` (without these the terminal server falls back to host mode and container path/auth mounts break). The `/code-server` proxy requires the local `daax-code-server:latest` image built by `./scripts/build-code-server.sh` (enforced by `rebuild.sh` / `deploy-local.sh` and the API preflight). `./rebuild.sh` or `docker compose up` perform both steps. Access at `http://localhost:4200` or `http://<tailscale-ip>:4200`. Supports Docker-in-Docker for spawning AI coding containers.
 
 ## Commands
 ```bash
