@@ -1,0 +1,52 @@
+# Stack
+
+`[FILL IN]` marks an undefined entry. Treat as "ask the operator," not a guess.
+Only document what is confirmed and deployable today.
+
+---
+
+## Runtime
+- Node 22 — production container base `node:22-bookworm-slim` (`Dockerfile`).
+- Bun `1.3.9` — package manager and dev/prod process runner (pinned via `packageManager` in `package.json`).
+- Two supported deployment modes (keep BOTH working):
+  - **Host mode (dev):** `bun install` then `bun dev` — Next.js on port 4200 plus the terminal WebSocket server on 4201 (run concurrently via `concurrently`).
+  - **Container mode (prod / Tailscale):** `docker build -t daax .` then run with the Docker socket mounted. Exposes 4200 (web), 4201 (terminal WS), 18080 (code-server proxy). Supports Docker-in-Docker for spawning AI coding containers.
+
+## Frameworks
+- Frontend / app: Next.js `16.1.6` (App Router) + React `19.2.x` + TypeScript. UI via shadcn/ui on Radix UI primitives (`components.json`, `components/ui/`), Tailwind CSS v4. Charts: Recharts. Flow graphs: `@xyflow/react`. Diagrams: Mermaid. Animations: `motion`.
+- Terminal: xterm.js (`@xterm/xterm` + addons), `node-pty` (optional dep; required and compiled in the container), `ghostty-web`.
+- Server: custom WebSocket terminal server `server/terminal-server.ts` (port 4201, run via `tsx`). Container management via `dockerode`.
+- Session replay / recording: rrweb + rrweb-player; asciinema v2 format.
+- CLI: none in this repo. Integrates with the external `backlog` CLI (task management) and `daax-cli` (session registration).
+
+## Persistence
+- Primary: SQLite via `better-sqlite3` (e.g. `lib/releases-db.ts`, `lib/catalog/db.ts`). Local file-backed; no external DB server.
+- Runtime feature config: `config.toml` (boot defaults) overridable at runtime via Settings UI persisted to `localStorage`.
+- Cache: none.
+- Search: none.
+- Object storage: local filesystem; a `/workspace` host volume is mounted in container mode.
+
+## Messaging / Eventing
+- WebSockets for terminal I/O (port 4201). No external broker.
+
+## Auth
+- Identity: Pocket ID (OIDC) fronted by Traefik in deployed environments — referenced by the auth-gated Playwright projects (`playwright.config.ts`, `DAAX_AUTH_BASE_URL` / `POCKET_ID_OAT_COMMAND`) and `deploy/traefik-daax.yml.tpl`. JWT handling via `jose`. Local dev runs without auth.
+- Service-to-service: `[FILL IN — not documented in repo]`.
+
+## Observability
+- Instrumentation hook present (`instrumentation.ts`). Specific tracing/metrics backend: `[FILL IN — confirm whether OpenTelemetry/Prometheus are wired]`.
+- Logs: stdout (container health check hits `http://localhost:4200/`).
+
+## Build / Package
+- TypeScript: Bun + `bun.lock` (committed). No npm/yarn lockfiles. Build: `bun run build` (Next.js). `prebuild` optionally parses SAFE-MCP if `3rd-party/safe-mcp` exists.
+- CI: GitHub Actions — `.github/workflows/publish-images.yml`. On push to `main` and `v*` tags (and manual dispatch) it builds and pushes container images. No separate lint/test CI workflow is present (`[FILL IN — add a test/lint CI job if gating on green is desired]`).
+- Artifact registry: GitHub Container Registry (GHCR). CI publishes `ghcr.io/daax-dev/daax-web` (linux/amd64 only — arm64 dropped due to slow emulated `node-pty` native compile) and `ghcr.io/daax-dev/code-server` (multi-arch). Note: local `release:*` npm scripts still target the legacy `ghcr.io/jpoley/daax` path — CI (`daax-dev` org) is canonical.
+
+## Deployment Target
+- Self-hosted: SSH + systemd + `docker compose` on hosts (e.g. `kinsale`, `muckross`) via `bun run deploy:kinsale` / `deploy:muckross`. Traefik reverse proxy (`deploy/traefik-daax.yml.tpl`). Designed for Tailscale-network access. Not a managed cloud PaaS.
+
+## Explicitly Not in Stack
+List rejected tools and the reason. Prevents re-proposal.
+- npm / yarn as the application package manager — Bun is the standard; do not add competing lockfiles.
+- linux/arm64 container builds for `daax-web` — dropped in CI; emulated `node-pty` compilation is too slow/fragile.
+- `[FILL IN — add other explicitly banned tools if the operator names any]`
