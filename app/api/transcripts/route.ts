@@ -3,6 +3,9 @@ import { readdir, readFile, stat } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import type { TranscriptTool } from "@/lib/transcripts/types";
+import { listCodexSessions } from "@/lib/transcripts/codex";
+import { listCopilotSessions } from "@/lib/transcripts/copilot";
 
 // Get Claude projects directory
 function getClaudeProjectsDir(): string {
@@ -30,6 +33,7 @@ function getClaudeProjectsDir(): string {
 export interface TranscriptSession {
   id: string;
   sessionId: string;
+  tool: TranscriptTool;
   projectPath: string;
   projectName: string;
   firstPrompt: string;
@@ -164,8 +168,9 @@ export async function GET() {
           }
 
           allSessions.push({
-            id: entry.sessionId,
+            id: `claude:${entry.sessionId}`,
             sessionId: entry.sessionId,
+            tool: "claude",
             projectPath: entry.projectPath,
             projectName,
             firstPrompt: entry.firstPrompt?.slice(0, 200) || "",
@@ -180,6 +185,19 @@ export async function GET() {
         }
       } catch (err) {
         console.error(`Error reading sessions-index.json from ${projectPath}:`, err);
+      }
+    }
+
+    // Append other tools' sessions. Each provider is isolated so a failure in
+    // one tool (or a missing/empty store) never breaks the rest of the list.
+    for (const provider of [
+      { name: "codex", fn: listCodexSessions },
+      { name: "copilot", fn: listCopilotSessions },
+    ]) {
+      try {
+        allSessions.push(...(await provider.fn()));
+      } catch (err) {
+        console.error(`[transcripts API] ${provider.name} provider failed:`, err);
       }
     }
 

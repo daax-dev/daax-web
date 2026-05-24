@@ -3,6 +3,8 @@ import { readFile, readdir } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { findCodexSessionFile, parseCodexJsonl } from "@/lib/transcripts/codex";
+import { findCopilotSessionFile, parseCopilotJsonl } from "@/lib/transcripts/copilot";
 
 // Get Claude projects directory
 function getClaudeProjectsDir(): string {
@@ -206,7 +208,31 @@ export async function GET(
   const { searchParams } = new URL(request.url);
   const format = searchParams.get("format") || "json";
 
-  const sessionFile = await findSessionFile(id);
+  // Ids are `${tool}:${sessionId}`. Bare ids (no recognized prefix) default to
+  // Claude for backward compatibility. Dispatch discovery + parsing per tool.
+  let tool = "claude";
+  let nativeId = id;
+  const sep = id.indexOf(":");
+  if (sep !== -1) {
+    const prefix = id.slice(0, sep);
+    if (prefix === "claude" || prefix === "codex" || prefix === "copilot") {
+      tool = prefix;
+      nativeId = id.slice(sep + 1);
+    }
+  }
+
+  let sessionFile: string | null;
+  let parse: (content: string) => ParseResult;
+  if (tool === "codex") {
+    sessionFile = await findCodexSessionFile(nativeId);
+    parse = parseCodexJsonl;
+  } else if (tool === "copilot") {
+    sessionFile = findCopilotSessionFile(nativeId);
+    parse = parseCopilotJsonl;
+  } else {
+    sessionFile = await findSessionFile(nativeId);
+    parse = parseJsonlToMessages;
+  }
 
   if (!sessionFile) {
     return NextResponse.json(
@@ -228,7 +254,7 @@ export async function GET(
     }
 
     // Parse and return structured messages with stats
-    const { messages, stats } = parseJsonlToMessages(content);
+    const { messages, stats } = parse(content);
 
     return NextResponse.json({
       sessionId: id,
