@@ -71,6 +71,10 @@ const TOOL_META: Record<
     label: string;
   }
 > = {
+  // Intentional fixed palette: these accents are per-tool BRAND identity for the
+  // five AI tools, not theme state. They are deliberately exempt from the
+  // semantic-token rule — collapsing them to one token would erase the visual
+  // distinction between tools. Brand hues stay constant across light/dark.
   claude: { Icon: Sparkles, accent: "text-orange-500", label: "Claude" },
   copilot: { Icon: Github, accent: "text-emerald-500", label: "Copilot" },
   gemini: { Icon: Stars, accent: "text-blue-500", label: "Gemini" },
