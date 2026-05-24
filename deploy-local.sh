@@ -125,9 +125,11 @@ self_elevate() {
 list_docker_proxies() {
   ps -eo pid,args --no-headers 2>/dev/null | awk '
     {
-      # args starts at $2; the first token is the executable path
+      # args starts at $2; the first token is the executable path. Match both
+      # a full path (.../docker-proxy) and a bare argv[0] (docker-proxy), which
+      # different ps/distros report.
       exe=$2
-      if (exe !~ /\/docker-proxy$/) next
+      if (exe !~ /(^|\/)docker-proxy$/) next
       daemon = (exe ~ /^\/snap\//) ? "snap" : "native"
       hip=""; hp=""; cip=""; cp=""
       for (i=3; i<=NF; i++) {

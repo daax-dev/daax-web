@@ -12,12 +12,17 @@
  * (the returned promise rejects on the first one), so callers that must not
  * abort on a single failure should catch inside `fn` and return a result
  * object instead.
+ *
+ * A non-positive or non-finite `limit` is clamped to 1 — otherwise zero
+ * workers would spawn and the result array would be returned with
+ * uninitialized slots.
  */
 export async function mapPool<T, R>(
   items: T[],
   limit: number,
   fn: (item: T) => Promise<R>,
 ): Promise<R[]> {
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 1;
   const out: R[] = new Array(items.length);
   let next = 0;
   const worker = async () => {
@@ -28,7 +33,7 @@ export async function mapPool<T, R>(
     }
   };
   await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, worker),
+    Array.from({ length: Math.min(safeLimit, items.length) }, worker),
   );
   return out;
 }
