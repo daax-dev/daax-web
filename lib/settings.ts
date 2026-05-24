@@ -879,6 +879,69 @@ export function getSettings(): DaaxSettings {
         needsMigration = true;
       }
 
+      // Migrate legacy top-level "devcontainers"/"testcontainers" plugin IDs
+      // to the new "containers" group. These were promoted to sub-features of
+      // the "containers" plugin; persisted settings from before the change
+      // still reference the old IDs.
+      const LEGACY_CONTAINER_IDS = ["devcontainers", "testcontainers"];
+
+      // pluginOrder: replace legacy IDs with "containers" in place, preserving
+      // the user's relative position, then de-duplicate (first occurrence wins)
+      // so the new nav order is not reshuffled to the end.
+      if (
+        Array.isArray(parsed.pluginOrder) &&
+        parsed.pluginOrder.some((id: string) =>
+          LEGACY_CONTAINER_IDS.includes(id),
+        )
+      ) {
+        console.log(
+          "[Settings] Migrating legacy container plugin order to 'containers'",
+        );
+        const seen = new Set<string>();
+        const migratedOrder: string[] = [];
+        for (const id of parsed.pluginOrder as string[]) {
+          const mapped = LEGACY_CONTAINER_IDS.includes(id) ? "containers" : id;
+          if (!seen.has(mapped)) {
+            seen.add(mapped);
+            migratedOrder.push(mapped);
+          }
+        }
+        parsed.pluginOrder = migratedOrder;
+        needsMigration = true;
+      }
+
+      // pluginMaturity: legacy per-plugin overrides for the old top-level IDs
+      // now belong to the "containers" sub-features. Remap to
+      // subFeatureMaturity["containers.<id>"] so a user who disabled/changed
+      // devcontainers or testcontainers keeps that intent, then drop the
+      // orphaned plugin-level keys.
+      if (
+        parsed.pluginMaturity &&
+        typeof parsed.pluginMaturity === "object" &&
+        LEGACY_CONTAINER_IDS.some((id) => id in parsed.pluginMaturity)
+      ) {
+        console.log(
+          "[Settings] Migrating legacy container plugin maturity overrides",
+        );
+        if (
+          !parsed.subFeatureMaturity ||
+          typeof parsed.subFeatureMaturity !== "object"
+        ) {
+          parsed.subFeatureMaturity = {};
+        }
+        for (const id of LEGACY_CONTAINER_IDS) {
+          if (id in parsed.pluginMaturity) {
+            const key = `containers.${id}`;
+            // Do not clobber an explicit sub-feature override if one exists.
+            if (!(key in parsed.subFeatureMaturity)) {
+              parsed.subFeatureMaturity[key] = parsed.pluginMaturity[id];
+            }
+            delete parsed.pluginMaturity[id];
+          }
+        }
+        needsMigration = true;
+      }
+
       // Force save the migration
       // Note: We intentionally do NOT call notifySubscribers here because:
       // 1. getSettings() is typically called during init before any subscribers exist
