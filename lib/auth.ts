@@ -49,29 +49,17 @@ const OIDC_PROVIDER_URL =
 // when a real proxy is in front). A one-time warning is logged whenever the
 // bypass is actually exercised so the relaxed posture is never silent.
 //
-// A header that is PRESENT but empty/whitespace-only is treated as an invalid
-// (malformed) credential, not as "no proxy" — it returns 401 / throws even when
-// DAAX_REQUIRE_AUTH is unset. This prevents a client that can reach the app
-// directly and send an empty `X-Forwarded-User` from being silently bypassed.
+// A header that is PRESENT but empty or whitespace-only is treated as an
+// invalid (malformed) credential, not as "no proxy" — getAuthContext() trims
+// the value, so it yields an unauthenticated user, and the guards return
+// 401 / throw even when DAAX_REQUIRE_AUTH is unset. This prevents a client that
+// can reach the app directly and send an empty or whitespace `X-Forwarded-User`
+// from being silently bypassed.
 //
 // Evaluated at call time (not module load) so the gate honors the current
 // environment and stays straightforward to test.
 function authRequired(): boolean {
   return process.env.DAAX_REQUIRE_AUTH === "1";
-}
-
-/**
- * Determine whether the forward-auth user header is truly absent.
- *
- * The Web Headers API returns `null` when a header is not present and `""`
- * (or whitespace) when it is present but empty. Bypass is only permitted for a
- * genuinely absent header; a present-but-empty/whitespace value is treated as
- * an invalid credential.
- */
-async function isUserHeaderAbsent(): Promise<boolean> {
-  const h = await headers();
-  const raw = h.get(USER_HEADER);
-  return raw === null;
 }
 
 // Synthetic user representing the trusted local operator when auth is bypassed.
@@ -94,12 +82,36 @@ function warnAuthBypassedOnce(): void {
   );
 }
 
-export async function getAuthUser(): Promise<AuthUser> {
+/**
+ * Resolved auth context for a single request.
+ *
+ * `rawUserHeader` is the unmodified `X-Forwarded-User` header value as returned
+ * by the Web Headers API: `null` when the header is genuinely absent, or the
+ * raw string (possibly empty/whitespace) when present. The guards use it to
+ * distinguish "no proxy" (absent → bypass eligible) from a malformed credential
+ * (present-but-empty/whitespace → never bypass). `user` is the derived AuthUser.
+ */
+interface AuthContext {
+  rawUserHeader: string | null;
+  user: AuthUser;
+}
+
+/**
+ * Read the forward-auth headers once and derive both the raw user header and
+ * the AuthUser. Single `headers()` lookup per request — used by getAuthUser()
+ * and the guards so the unauthenticated path does not read headers twice.
+ */
+async function getAuthContext(): Promise<AuthContext> {
   const h = await headers();
 
-  const userId = h.get(USER_HEADER) || null;
-  const username = h.get(USERNAME_HEADER) || null;
-  const displayName = h.get(DISPLAYNAME_HEADER) || null;
+  const rawUserHeader = h.get(USER_HEADER);
+  // Trim before validating: a present-but-empty or whitespace-only value is not
+  // a valid credential and must not yield an authenticated user. Use `??` (not
+  // `||`) so an absent header (null) and an empty string stay distinguishable
+  // upstream via rawUserHeader, then coalesce empty/whitespace to null here.
+  const userId = (rawUserHeader ?? "").trim() || null;
+  const username = (h.get(USERNAME_HEADER) || "").trim() || null;
+  const displayName = (h.get(DISPLAYNAME_HEADER) || "").trim() || null;
   const email = h.get(EMAIL_HEADER) || null;
   const groupsRaw = h.get(GROUPS_HEADER) || "";
   const groups = groupsRaw
@@ -115,14 +127,21 @@ export async function getAuthUser(): Promise<AuthUser> {
   const displayUsername = displayName || username || (isUuid ? "User" : userId);
 
   return {
-    username: displayUsername,
-    email,
-    groups,
-    authenticated: !!userId,
-    pictureUrl: userId
-      ? `${OIDC_PROVIDER_URL}/api/users/${encodeURIComponent(userId)}/avatar`
-      : null,
+    rawUserHeader,
+    user: {
+      username: displayUsername,
+      email,
+      groups,
+      authenticated: !!userId,
+      pictureUrl: userId
+        ? `${OIDC_PROVIDER_URL}/api/users/${encodeURIComponent(userId)}/avatar`
+        : null,
+    },
   };
+}
+
+export async function getAuthUser(): Promise<AuthUser> {
+  return (await getAuthContext()).user;
 }
 
 /**
@@ -170,16 +189,17 @@ export async function getAuthUser(): Promise<AuthUser> {
  * @returns AuthResult - either { authenticated: true, user: AuthUser } or { authenticated: false, response: NextResponse }
  */
 export async function requireAuth(): Promise<AuthResult> {
-  const user = await getAuthUser();
+  const { rawUserHeader, user } = await getAuthContext();
 
   if (user.authenticated) {
     return { authenticated: true, user };
   }
 
   // Bypass to a local operator only when the user header is truly absent
-  // (no proxy) and strict auth is not required. A present-but-empty/invalid
-  // header is a malformed credential and always 401s.
-  if (!authRequired() && (await isUserHeaderAbsent())) {
+  // (rawUserHeader === null → no proxy) and strict auth is not required. A
+  // present-but-empty or whitespace-only header is a malformed credential and
+  // always 401s.
+  if (!authRequired() && rawUserHeader === null) {
     warnAuthBypassedOnce();
     return { authenticated: true, user: LOCAL_OPERATOR };
   }
@@ -218,15 +238,15 @@ export async function requireAuth(): Promise<AuthResult> {
  * @returns AuthUser - the authenticated user
  */
 export async function requireAuthOrThrow(): Promise<AuthUser> {
-  const user = await getAuthUser();
+  const { rawUserHeader, user } = await getAuthContext();
 
   if (user.authenticated) {
     return user;
   }
 
   // Bypass only for a truly absent header (see requireAuth). A present-but-empty
-  // header is a malformed credential and always throws.
-  if (!authRequired() && (await isUserHeaderAbsent())) {
+  // or whitespace-only header is a malformed credential and always throws.
+  if (!authRequired() && rawUserHeader === null) {
     warnAuthBypassedOnce();
     return LOCAL_OPERATOR;
   }
