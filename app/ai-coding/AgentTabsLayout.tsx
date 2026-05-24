@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import {
   Bot,
   Plus,
@@ -98,9 +99,18 @@ export function AgentTabsLayout() {
   const [launchDialogOpen, setLaunchDialogOpen] = useState(false);
   const [selectedTool, setSelectedTool] = useState<AIToolId>("claude");
   const [selectedLocationName, setSelectedLocationName] = useState("muckross");
-  // Set of live `daax-*` container names from /api/ai/active-sessions.
-  // A tab whose containerName is known but missing here is marked stray.
-  const [liveContainers, setLiveContainers] = useState<Set<string>>(new Set());
+  // Sets of `daax-*` container names from /api/ai/active-sessions (which
+  // queries `docker ps -a`, so it includes stopped/exited containers).
+  // `knownContainers` holds every session container regardless of state — a
+  // tab whose containerName is missing from it has truly disappeared (stray).
+  // `runningContainers` holds only `state === "running"` ones and drives the
+  // running/stopped status UI without conflating "stopped" with "gone".
+  const [knownContainers, setKnownContainers] = useState<Set<string>>(
+    new Set(),
+  );
+  const [runningContainers, setRunningContainers] = useState<Set<string>>(
+    new Set(),
+  );
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { activeProject, directories, basePath } = useProject();
@@ -233,12 +243,16 @@ export function AgentTabsLayout() {
         if (!res.ok) return;
         const data = await res.json();
         if (cancelled || !data?.success) return;
-        const names = new Set<string>(
-          (data.sessions ?? [])
-            .filter((s: { state: string }) => s.state === "running")
-            .map((s: { containerName: string }) => s.containerName),
+        const sessions: { state: string; containerName: string }[] =
+          data.sessions ?? [];
+        setKnownContainers(new Set(sessions.map((s) => s.containerName)));
+        setRunningContainers(
+          new Set(
+            sessions
+              .filter((s) => s.state === "running")
+              .map((s) => s.containerName),
+          ),
         );
-        setLiveContainers(names);
       } catch {
         // Best-effort — leave previous state on failure.
       }
@@ -356,8 +370,17 @@ export function AgentTabsLayout() {
   };
   const onDragEnd = () => setDraggingTabId(null);
 
+  // Stray = the tab had a container assigned but it no longer exists in any
+  // state. A known-but-stopped container is NOT stray.
   const isStray = (tab: AgentTab) =>
-    Boolean(tab.containerName) && !liveContainers.has(tab.containerName!);
+    Boolean(tab.containerName) && !knownContainers.has(tab.containerName!);
+
+  // Running status reflects the live container state once one is assigned;
+  // before a container name arrives we fall back to the tab's initial status.
+  const isRunning = (tab: AgentTab) =>
+    tab.containerName
+      ? runningContainers.has(tab.containerName)
+      : tab.status === "running";
 
   const activeTab = useMemo(
     () => tabs.find((t) => t.id === activeTabId) ?? null,
@@ -425,7 +448,7 @@ export function AgentTabsLayout() {
                             "inline-block h-2 w-2 rounded-full shrink-0",
                             stray
                               ? "bg-amber-500"
-                              : tab.status === "running"
+                              : isRunning(tab)
                                 ? "bg-emerald-500"
                                 : "bg-muted-foreground/50",
                           )}
@@ -501,9 +524,7 @@ export function AgentTabsLayout() {
                           </span>
                         ) : (
                           <span className="text-muted-foreground">
-                            {tab.status === "running"
-                              ? "● Running"
-                              : "○ Stopped"}
+                            {isRunning(tab) ? "● Running" : "○ Stopped"}
                             {tab.containerName ? ` · ${tab.containerName}` : ""}
                           </span>
                         )}
@@ -538,9 +559,9 @@ export function AgentTabsLayout() {
           <span>
             This session&apos;s container is no longer running. Close this tab
             or visit{" "}
-            <a className="underline" href="/ai-coding/sessions">
+            <Link className="underline" href="/ai-coding/sessions">
               Sessions
-            </a>{" "}
+            </Link>{" "}
             to review.
           </span>
         </div>
@@ -569,12 +590,18 @@ export function AgentTabsLayout() {
                   <span
                     className={cn(
                       "font-medium",
-                      isStray(tab) ? "text-amber-600" : "text-emerald-600",
+                      isStray(tab)
+                        ? "text-amber-600"
+                        : isRunning(tab)
+                          ? "text-emerald-600"
+                          : "text-muted-foreground",
                     )}
                   >
                     {isStray(tab)
                       ? "● Stray (container missing)"
-                      : `● Running (${formatUptime(tab.startTime)})`}
+                      : isRunning(tab)
+                        ? `● Running (${formatUptime(tab.startTime)})`
+                        : "○ Stopped"}
                   </span>
                 </div>
                 <div>
@@ -613,7 +640,7 @@ export function AgentTabsLayout() {
                     Stop
                   </Button>
                   <Button size="sm" variant="outline" asChild>
-                    <a href="/ai-coding/sessions">Manage sessions</a>
+                    <Link href="/ai-coding/sessions">Manage sessions</Link>
                   </Button>
                 </div>
               </div>

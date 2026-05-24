@@ -35,7 +35,8 @@ services:
 
       # Environment file for secrets (optional). If DAAX_ENV_FILE is not set,
       # /dev/null is mounted and no .env.local file will be loaded.
-      # IMPORTANT: Docker Compose does not expand ~ or support :-default syntax in volume paths.
+      # IMPORTANT: Docker Compose does not expand ~ in volume paths; use an
+      # absolute path. (${VAR:-default} interpolation IS supported, as below.)
       # Example: export DAAX_ENV_FILE="$HOME/.daax.env"
       - ${DAAX_ENV_FILE:-/dev/null}:/app/.env.local:ro
 
