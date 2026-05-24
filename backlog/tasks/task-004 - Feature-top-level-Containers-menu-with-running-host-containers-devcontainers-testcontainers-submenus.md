@@ -3,16 +3,10 @@ id: TASK-004
 title: >-
   Feature: top-level "Containers" menu with running host containers +
   devcontainers/testcontainers submenus
-<<<<<<< Updated upstream
 status: Done
 assignee: []
 created_date: '2026-05-23 17:50'
 updated_date: '2026-05-24 16:34'
-=======
-status: To Do
-assignee: []
-created_date: '2026-05-23 17:50'
->>>>>>> Stashed changes
 labels:
   - feature
   - ui
@@ -32,7 +26,6 @@ Plan stub: add a "containers" parent plugin in lib/settings.ts with subFeatures 
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-<<<<<<< Updated upstream
 - [x] #1 New top-level 'Containers' menu present in nav
 - [x] #2 Submenu lists Running (host containers), Devcontainers, Testcontainers
 - [x] #3 Running view lists all host Docker containers (not just testcontainers-labeled), read-only, refreshable
@@ -48,12 +41,3 @@ Shipped in PR #32 (branch feature/containers-menu). Added top-level "Containers"
 
 Verified live (fresh next dev): top nav shows Containers; submenu shows all three items; /containers listed 21 running host containers with ports (23 with all); /devcontainers and /testcontainers still 200. bun run build passes (both routes compiled). lint/typecheck no new issues vs main baseline. Cross-provider Codex validation: approved after fixing a blocking finding — /api/containers no longer returns Docker labels (secret-leak risk). Decisions in .logs/decisions/containers-menu.jsonl.
 <!-- SECTION:FINAL_SUMMARY:END -->
-=======
-- [ ] #1 New top-level 'Containers' menu present in nav
-- [ ] #2 Submenu lists Running (host containers), Devcontainers, Testcontainers
-- [ ] #3 Running view lists all host Docker containers (not just testcontainers-labeled), read-only, refreshable
-- [ ] #4 Existing /devcontainers and /testcontainers routes still work (direct + via submenu)
-- [ ] #5 Graceful state when Docker socket unavailable
-- [ ] #6 Both deployment modes build; lint/typecheck/test pass
-<!-- AC:END -->
->>>>>>> Stashed changes
