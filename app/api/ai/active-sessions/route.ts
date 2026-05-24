@@ -50,6 +50,31 @@ interface DockerPsRow {
   CreatedAt: string;
 }
 
+// Bound how many `docker inspect`/`docker logs` subprocesses run at once so a
+// host with many `daax-*` containers is not hit by an unbounded fan-out.
+const DOCKER_PROBE_CONCURRENCY = 4;
+
+// Order-preserving bounded-concurrency map. No external dependency.
+async function mapPool<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const idx = next++;
+      if (idx >= items.length) return;
+      out[idx] = await fn(items[idx]);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker),
+  );
+  return out;
+}
+
 async function dockerPs(): Promise<DockerPsRow[]> {
   const { stdout } = await execFileAsync(
     "docker",
@@ -122,13 +147,18 @@ export async function GET() {
       isAiSessionName((row.Names || "").split(",")[0]?.trim() || ""),
     );
 
-    const sessions: ActiveSession[] = await Promise.all(
-      sessionRows.map(async (row) => {
+    const sessions: ActiveSession[] = await mapPool(
+      sessionRows,
+      DOCKER_PROBE_CONCURRENCY,
+      async (row) => {
         const name = (row.Names || "").split(",")[0]?.trim() || row.ID;
 
+        // Only running containers can have new log activity; for stopped/exited
+        // ones the StartedAt floor is sufficient, so skip the `docker logs`
+        // subprocess entirely.
         const [inspect, lastLog] = await Promise.all([
           inspectContainer(name),
-          getLastLogTimestamp(name),
+          row.State === "running" ? getLastLogTimestamp(name) : null,
         ]);
 
         const startedAtMs = new Date(inspect.startedAt).getTime();
@@ -155,7 +185,7 @@ export async function GET() {
               ? Math.max(0, Math.floor((now - startedAtMs) / 1000))
               : 0,
         };
-      }),
+      },
     );
 
     // Newest first

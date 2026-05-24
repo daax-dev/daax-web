@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
       const lastMs = await lastActivityMs(name);
       const idleSeconds =
         lastMs > 0
-          ? Math.floor((now - lastMs) / 1000)
+          ? Math.max(0, Math.floor((now - lastMs) / 1000))
           : Number.MAX_SAFE_INTEGER;
 
       if (idleSeconds < idleThresholdSeconds) {

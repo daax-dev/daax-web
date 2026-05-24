@@ -149,12 +149,17 @@ export default function SessionsPage() {
   }, [reapMinutes, load]);
 
   const idleThresholdSeconds = reapMinutes * 60;
+  // A reap candidate is any session past the idle threshold, regardless of
+  // state. The reap endpoint considers every `daax-*` session container
+  // (including exited/stopped) — counting only `running` here understated the
+  // count and wrongly disabled "Reap now" for stopped strays.
+  const isReapCandidate = useCallback(
+    (s: ActiveSession) => s.idleSeconds >= idleThresholdSeconds,
+    [idleThresholdSeconds],
+  );
   const idleCount = useMemo(
-    () =>
-      sessions.filter(
-        (s) => s.state === "running" && s.idleSeconds >= idleThresholdSeconds,
-      ).length,
-    [sessions, idleThresholdSeconds],
+    () => sessions.filter(isReapCandidate).length,
+    [sessions, isReapCandidate],
   );
 
   return (
@@ -253,8 +258,7 @@ export default function SessionsPage() {
               </TableRow>
             )}
             {sessions.map((s) => {
-              const isIdle =
-                s.state === "running" && s.idleSeconds >= idleThresholdSeconds;
+              const isIdle = isReapCandidate(s);
               return (
                 <TableRow key={s.containerId}>
                   <TableCell className="font-mono text-xs">
