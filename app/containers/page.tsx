@@ -28,7 +28,6 @@ interface HostContainer {
   state: string;
   status: string;
   ports: string[];
-  createdAt: string;
 }
 
 function stateVariant(state: string): "default" | "secondary" | "destructive" {
@@ -81,14 +80,24 @@ export default function ContainersRunningPage() {
         </div>
         <div className="flex items-center gap-2">
           <Button
+            type="button"
             variant={showAll ? "secondary" : "ghost"}
             size="sm"
             onClick={() => setShowAll((v) => !v)}
+            aria-pressed={showAll}
+            aria-label={
+              showAll
+                ? "Showing all containers; click to show running only"
+                : "Showing running containers only; click to show all"
+            }
+            aria-controls="containers-list-content"
           >
             {showAll ? "Showing all" : "Running only"}
           </Button>
           <Button variant="outline" size="sm" onClick={load} disabled={loading}>
-            <RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+            <RefreshCw
+              className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"}
+            />
             <span className="ml-1.5">Refresh</span>
           </Button>
         </div>
@@ -109,7 +118,7 @@ export default function ContainersRunningPage() {
             {containers.length} container{containers.length === 1 ? "" : "s"}
           </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent id="containers-list-content">
           {!error && containers.length === 0 && !loading ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
               No containers found.
@@ -129,11 +138,15 @@ export default function ContainersRunningPage() {
                 {containers.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell className="font-medium">{c.name}</TableCell>
-                    <TableCell className="text-muted-foreground">{c.image}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {c.image}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={stateVariant(c.state)}>{c.state}</Badge>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{c.status}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {c.status}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">
                       {c.ports.length ? c.ports.join(", ") : "—"}
                     </TableCell>

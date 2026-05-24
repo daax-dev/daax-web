@@ -21,11 +21,12 @@ interface HostContainer {
   state: string;
   status: string;
   ports: string[];
-  createdAt: string;
 }
-// Note: container labels are deliberately NOT returned. Labels frequently
-// carry secrets (registry credentials, CI tokens, Tailscale auth keys,
-// Compose metadata) and this is an unauthenticated read-only endpoint.
+// Note: container labels and createdAt are deliberately NOT returned. Labels
+// frequently carry secrets (registry credentials, CI tokens, Tailscale auth
+// keys, Compose metadata) and this is an unauthenticated read-only endpoint;
+// the Running view does not render either field, so they are omitted to keep
+// the payload minimal.
 
 function getDocker(): Docker {
   const socketPath = process.env.DOCKER_HOST || "/var/run/docker.sock";
@@ -54,7 +55,8 @@ function formatPorts(ports?: Docker.Port[] | null): string[] {
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const all = searchParams.get("all") === "1" || searchParams.get("all") === "true";
+  const all =
+    searchParams.get("all") === "1" || searchParams.get("all") === "true";
 
   const docker = getDocker();
 
@@ -82,7 +84,6 @@ export async function GET(request: Request) {
       state: c.State,
       status: c.Status,
       ports: formatPorts(c.Ports),
-      createdAt: new Date(c.Created * 1000).toISOString(),
     }));
 
     return NextResponse.json({ containers: result, total: result.length });
