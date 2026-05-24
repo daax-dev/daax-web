@@ -414,7 +414,11 @@ export function AgentTabsLayout() {
       {/* Tab Bar */}
       {tabs.length > 0 && (
         <div className="flex items-center border-b bg-muted/30 px-2">
-          <div className="flex items-center gap-0.5 overflow-x-auto py-1 flex-1">
+          <div
+            role="tablist"
+            aria-label="AI agent sessions"
+            className="flex items-center gap-0.5 overflow-x-auto py-1 flex-1"
+          >
             <TooltipProvider delayDuration={400}>
               {tabs.map((tab, idx) => {
                 const isActive = activeTabId === tab.id;
@@ -432,6 +436,16 @@ export function AgentTabsLayout() {
                         onDragEnd={onDragEnd}
                         role="tab"
                         aria-selected={isActive}
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          // Only act on the tab itself — let Enter/Space reach
+                          // the rename input and the info/close buttons inside.
+                          if (e.target !== e.currentTarget) return;
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault(); // suppress page scroll on Space
+                            setActiveTabId(tab.id);
+                          }
+                        }}
                         className={cn(
                           "flex items-center gap-1.5 pl-2.5 pr-1 py-1.5 rounded-t-md border-b-2 -mb-px transition-colors cursor-pointer group select-none min-w-0",
                           isActive
