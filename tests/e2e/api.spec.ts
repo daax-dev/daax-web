@@ -16,12 +16,37 @@ test.describe("API Endpoints", () => {
     expect(Array.isArray(data.recordings)).toBe(true);
   });
 
-  test("GET /api/testcontainers returns container list", async ({ request }) => {
+  test("GET /api/testcontainers returns container list", async ({
+    request,
+  }) => {
     const response = await request.get("/api/testcontainers");
     expect(response.ok()).toBe(true);
 
     const data = await response.json();
     expect(data).toHaveProperty("containers");
+  });
+
+  test("GET /api/containers returns container list or 503", async ({
+    request,
+  }) => {
+    const response = await request.get("/api/containers");
+    const data = await response.json();
+
+    if (response.ok()) {
+      // Docker reachable: read-only host listing.
+      expect(data).toHaveProperty("containers");
+      expect(Array.isArray(data.containers)).toBe(true);
+      expect(data).toHaveProperty("total");
+      // Sensitive / unused fields must not be present in the payload.
+      for (const c of data.containers) {
+        expect(c).not.toHaveProperty("labels");
+        expect(c).not.toHaveProperty("createdAt");
+      }
+    } else {
+      // Docker unavailable: clear 503 instead of a generic 500.
+      expect(response.status()).toBe(503);
+      expect(data).toHaveProperty("error", "Docker daemon not available");
+    }
   });
 
   test("GET /api/ai/sessions returns session list", async ({ request }) => {
@@ -39,7 +64,9 @@ test.describe("API Endpoints", () => {
     expect(response.status()).toBeLessThan(500);
   });
 
-  test("GET /api/backlog/status returns backlog status", async ({ request }) => {
+  test("GET /api/backlog/status returns backlog status", async ({
+    request,
+  }) => {
     const response = await request.get("/api/backlog/status");
     expect(response.ok()).toBe(true);
 
