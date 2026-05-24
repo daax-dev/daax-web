@@ -291,17 +291,26 @@ cmd_deploy() {
   reach_native_docker
   require_cmd ss
 
-  # Refuse if snap is hoarding ports — user must migrate-daax first.
-  # Otherwise fail fast if a non-docker-proxy process (Traefik, a stray
-  # node, etc.) is already listening — `compose up` would fail later with a
-  # far worse error than this.
+  # Fail fast on any port conflict on 4200/4201 — `compose up` would
+  # otherwise fail later with a far worse error. Three cases:
+  #   snap    -> snap docker-proxy holds it; user must migrate-daax first.
+  #   native  -> a native docker-proxy holds it; allowed ONLY when it is the
+  #              daax container's own (force-recreate replaces it). Any other
+  #              native container (a separate stack/test container) must die.
+  #   empty   -> a non-docker-proxy process (Traefik, a stray node, etc.)
+  #              is listening; always a conflict.
   for p in 4200 4201; do
     local owner
     owner="$(port_owner_daemon "$p")"
     if [[ "$owner" == snap ]]; then
       die "port $p is held by the SNAP docker daemon. Run once: $0 migrate-daax"
     fi
-    if [[ -z "$owner" ]] && port_has_listener "$p"; then
+    if [[ "$owner" == native ]]; then
+      # Only the daax container we are about to force-recreate may hold it.
+      if [[ "$(docker inspect --format '{{.State.Status}}' "$CONTAINER_NAME" 2>/dev/null || true)" != running ]]; then
+        die "port $p is held by a native docker-proxy that is not the daax container. Identify it: ss -ltnp 'sport = :$p'"
+      fi
+    elif port_has_listener "$p"; then
       die "port $p is already in use by a non-docker process. Identify it: ss -ltnp 'sport = :$p'"
     fi
   done
