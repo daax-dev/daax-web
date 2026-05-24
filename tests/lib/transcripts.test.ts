@@ -2,7 +2,11 @@ import { afterEach, describe, it, expect } from "vitest";
 import { mkdtemp, rm, writeFile, mkdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { parseCodexJsonl, findCodexSessionFile } from "@/lib/transcripts/codex";
+import {
+  parseCodexJsonl,
+  findCodexSessionFile,
+  listCodexSessions,
+} from "@/lib/transcripts/codex";
 import {
   parseCopilotJsonl,
   findCopilotSessionFile,
@@ -231,5 +235,111 @@ describe("listCopilotSessions messageCount matches detail count", () => {
     expect(sessions).toHaveLength(1);
     const detailCount = parseCopilotJsonl(content).messages.length;
     expect(sessions[0].messageCount).toBe(detailCount);
+  });
+});
+
+describe("listCodexSessions id derivation + messageCount", () => {
+  const tmpDirs: string[] = [];
+  const uuid = "019e5ad3-c86b-7d92-a085-2b82eac9d1bc";
+  afterEach(async () => {
+    delete process.env.CODEX_SESSIONS_DIR;
+    await Promise.all(
+      tmpDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })),
+    );
+  });
+
+  async function writeRollout(name: string, content: string): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "codex-list-"));
+    tmpDirs.push(dir);
+    await writeFile(join(dir, name), content, "utf-8");
+    process.env.CODEX_SESSIONS_DIR = dir;
+    return dir;
+  }
+
+  it("derives a resolvable id from the filename when session_meta is missing", async () => {
+    // First line is malformed JSON, so session_meta is never parsed.
+    const content = [
+      "{not valid json",
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "hi" }],
+        },
+      }),
+    ].join("\n");
+    await writeRollout(`rollout-2025-11-29T15-38-13-${uuid}.jsonl`, content);
+
+    const sessions = await listCodexSessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].sessionId).toBe(uuid);
+    expect(sessions[0].id).toBe(`codex:${uuid}`);
+    // The derived id must resolve back to the file.
+    const hit = await findCodexSessionFile(uuid);
+    expect(hit).not.toBeNull();
+  });
+
+  it("skips rollout files whose name carries no uuid", async () => {
+    await writeRollout(
+      "rollout-no-uuid-here.jsonl",
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "hi" }],
+        },
+      }),
+    );
+    expect(await listCodexSessions()).toHaveLength(0);
+  });
+
+  it("list messageCount equals parseCodexJsonl(content).messages.length", async () => {
+    const content = [
+      JSON.stringify({
+        type: "session_meta",
+        payload: { id: uuid, cwd: "/work/proj" },
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "hello" }],
+        },
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "hi there" }],
+        },
+      }),
+      // message with empty text — parser skips it, lister must too.
+      JSON.stringify({
+        type: "response_item",
+        payload: { type: "message", role: "assistant", content: [] },
+      }),
+      // non-user/assistant role — parser skips it.
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "system",
+          content: [{ type: "text", text: "sys" }],
+        },
+      }),
+      // non-message response_item — parser skips it.
+      JSON.stringify({ type: "response_item", payload: { type: "reasoning" } }),
+    ].join("\n");
+    await writeRollout(`rollout-2025-11-29T15-38-13-${uuid}.jsonl`, content);
+
+    const sessions = await listCodexSessions();
+    expect(sessions).toHaveLength(1);
+    const detailCount = parseCodexJsonl(content).messages.length;
+    expect(sessions[0].messageCount).toBe(detailCount);
+    expect(sessions[0].messageCount).toBe(2);
   });
 });
