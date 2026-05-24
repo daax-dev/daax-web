@@ -3,6 +3,8 @@
  *
  * GET /api/testcontainers/templates - List all templates
  * POST /api/testcontainers/templates - Create custom template
+ *
+ * SECURITY: POST operations require authentication via requireAuth()
  */
 
 import { NextResponse } from 'next/server';
@@ -12,6 +14,7 @@ import {
   getTemplatesByCategory,
 } from '@/plugins/testcontainers/api/templates';
 import type { TemplateCategory } from '@/plugins/testcontainers/types';
+import { requireAuth } from '@/lib/auth';
 
 export async function GET(request: Request) {
   try {
@@ -36,6 +39,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  // Require authentication for custom template creation
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const body = await request.json();
 

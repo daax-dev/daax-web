@@ -269,6 +269,21 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
     },
   },
   {
+    label: "POST /api/testcontainers/templates",
+    method: "POST",
+    url: "http://localhost/api/testcontainers/templates",
+    importPath: "@/app/api/testcontainers/templates/route",
+    handlerExport: "POST",
+    requestInit: {
+      method: "POST",
+      body: JSON.stringify({
+        name: "tmpl",
+        image: "nginx:latest",
+        category: "database",
+      }),
+    },
+  },
+  {
     label: "DELETE /api/testcontainers/compose/[id]",
     method: "DELETE",
     url: "http://localhost/api/testcontainers/compose/stack-1",
