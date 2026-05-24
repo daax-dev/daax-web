@@ -1,16 +1,9 @@
 ---
 id: TASK-002
 title: 'Fix: AI coding agent PTYs die when leaving the /ai-coding screen'
-<<<<<<< Updated upstream
 status: To Do
 assignee: []
 created_date: '2026-05-23 17:49'
-=======
-status: In Progress
-assignee: []
-created_date: '2026-05-23 17:49'
-updated_date: '2026-05-23 20:52'
->>>>>>> Stashed changes
 labels:
   - bug
   - terminal
@@ -38,21 +31,3 @@ Likely fix direction (pending verification): decouple PTY lifetime from WS — o
 - [ ] #4 No orphaned PTYs/containers after normal use
 - [ ] #5 Both deployment modes build; lint/typecheck/test (incl. e2e for the terminal flow) pass
 <!-- AC:END -->
-<<<<<<< Updated upstream
-=======
-
-## Implementation Plan
-
-<!-- SECTION:PLAN:BEGIN -->
-ROOT CAUSE (code-verified):
-- TerminalManagerProvider is at root (components/providers.tsx via app/layout.tsx), and AI terminals render in a global fixed div, so pure SPA nav keeps them mounted. BUT:
-- aiSessions is ephemeral useState([]) (TerminalManager.tsx:198) with NO persistence (no localStorage). Any full reload / provider remount resets it to [] → all <Terminal> unmount.
-- Terminal unmount closes the WS (Terminal.tsx:335-344). On WS close the terminal server writes EOF + SIGTERMs the PTY after 500ms (connection-handler.ts:329-383). PTY is 1:1 with the WS.
-- Server keys each PTY by a fresh crypto.randomUUID() per connection (connection-handler.ts:66). clientSessionId (param at :141) is used ONLY for recording dedup, NOT reattach. There is NO path to attach a new WS to an existing PTY.
-- Net: PTY lifetime == WS lifetime; client session list is ephemeral; no reattach. Reload / remount / transient WS drop loses the PTY irrecoverably. stopAllAISessions fires only on project switch (project-context.tsx), not route nav.
-
-REQUIRED FIX (architectural — needs approval): decouple PTY lifetime from the WS. On WS close, do NOT kill the PTY immediately; keep it alive (detached) keyed by a stable clientSessionId, buffer recent output, and let a reconnecting WS reattach by clientSessionId and replay buffered output. Persist the client session list (localStorage) so reload restores the session and reconnects. Keep explicit stop/close killing the PTY; add idle GC to avoid leaks.
-
-Open design decisions for operator: (1) output replay on reattach vs live-only; (2) detached-PTY retention/GC policy; (3) scope of buffer. Live Playwright repro to be run during implementation to confirm the client trigger and verify reattach end-to-end.
-<!-- SECTION:PLAN:END -->
->>>>>>> Stashed changes
