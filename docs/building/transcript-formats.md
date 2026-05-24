@@ -13,13 +13,18 @@ implementation can add per-tool discovery + parsing behind a common model.
 
 ## Common target model
 
-Both existing routes already use this shape; keep it and add a `tool` discriminator:
+Proposed normalized shape for task-006 (multi-tool transcripts), **not** the exact output of
+the current Claude-only routes:
 
 - Session (list): `{ id, tool, projectName, path, size|messageCount, mtime/created }`
 - Message (detail): `{ role: "user"|"assistant", text, timestamp, blocks?: (text|thinking|tool_use|tool_result) }`
 
-Add `tool: "claude" | "codex" | "copilot" | "opencode"` to `TranscriptSession` and switch
-the detail parser on it.
+The existing routes currently return different field names / structures (for example,
+`TranscriptSession` fields such as `sessionId`, `projectPath`, `fullPath`, `created`,
+`modified`, and detail `messages` shaped around `type` + `content`). Task-006 should either
+normalize those current outputs to this model or refactor the routes to emit this model
+before adding `tool: "claude" | "codex" | "copilot" | "opencode"` and switching the detail
+parser on it.
 
 ---
 
