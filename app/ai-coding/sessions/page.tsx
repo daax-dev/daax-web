@@ -200,7 +200,12 @@ export default function SessionsPage() {
               max={1440}
               value={reapMinutes}
               onChange={(e) =>
-                setReapMinutes(Math.max(1, Number(e.target.value) || 1))
+                // Clamp to [1, 1440] (matches the `max` attr and the server's
+                // 24h reap clamp) so the candidate count/highlight stays in
+                // sync with what the reap endpoint would actually act on.
+                setReapMinutes(
+                  Math.min(1440, Math.max(1, Number(e.target.value) || 1)),
+                )
               }
               className="w-20 h-8"
             />
@@ -267,8 +272,8 @@ export default function SessionsPage() {
                         className={`inline-block h-2 w-2 rounded-full ${
                           s.state === "running"
                             ? isIdle
-                              ? "bg-amber-500"
-                              : "bg-emerald-500"
+                              ? "bg-warning"
+                              : "bg-success"
                             : "bg-muted-foreground/50"
                         }`}
                         aria-hidden
@@ -292,7 +297,7 @@ export default function SessionsPage() {
                   </TableCell>
                   <TableCell
                     className={`text-right tabular-nums text-xs ${
-                      isIdle ? "text-amber-600 font-medium" : ""
+                      isIdle ? "text-warning font-medium" : ""
                     }`}
                   >
                     <span className="inline-flex items-center gap-1 justify-end">
