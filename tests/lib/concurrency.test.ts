@@ -28,8 +28,8 @@ describe("mapPool", () => {
     expect(maxInFlight).toBeLessThanOrEqual(3);
   });
 
-  it.each([0, -1, -5, NaN, Infinity, -Infinity])(
-    "clamps a non-positive/non-finite limit (%p) to 1 and still processes every item",
+  it.each([0, -1, -5, 0.5, 0.999, NaN, Infinity, -Infinity])(
+    "clamps a non-positive/non-finite/fractional limit (%p) to 1 and still processes every item",
     async (badLimit) => {
       const items = [1, 2, 3, 4];
       const seen: number[] = [];
