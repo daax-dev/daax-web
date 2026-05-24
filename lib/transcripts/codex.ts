@@ -94,6 +94,7 @@ export async function listCodexSessions(): Promise<TranscriptSession[]> {
         } catch {
           continue;
         }
+        if (!entry || typeof entry !== "object") continue;
         if (entry.type === "session_meta" && entry.payload) {
           sessionId = entry.payload.id || sessionId;
           cwd = entry.payload.cwd || "";
