@@ -285,29 +285,31 @@ export const DEFAULT_PLUGINS: PluginConfig[] = [
     maturity: "ga",
   },
   // Note: MCP appears as a sub-feature of AI Coding but also has a homepage card entry
+  // Containers is a top-level group; Devcontainers and Testcontainers live under it
+  // as submenu choices, alongside a read-only "Running" host-containers view.
   {
-    id: "devcontainers",
-    name: "DevContainers",
-    description: "Create and manage development containers",
+    id: "containers",
+    name: "Containers",
+    description: "Running host containers, devcontainers, and test containers",
     maturity: "beta",
     subFeatures: [
       {
-        id: "quickstart",
-        name: "Quickstart",
-        description: "Pre-configured templates for common languages",
+        id: "running",
+        name: "Running",
+        description: "All Docker containers running on the host (read-only)",
         maturity: "beta",
       },
       {
-        id: "custom",
-        name: "Custom",
-        description: "Build custom devcontainer configurations",
+        id: "devcontainers",
+        name: "Devcontainers",
+        description: "Create and manage development containers",
         maturity: "beta",
       },
       {
-        id: "my-containers",
-        name: "My Containers",
-        description: "Saved devcontainer configurations",
-        maturity: "alpha",
+        id: "testcontainers",
+        name: "Testcontainers",
+        description: "Docker container management for testing",
+        maturity: "beta",
       },
     ],
   },
@@ -383,32 +385,6 @@ export const DEFAULT_PLUGINS: PluginConfig[] = [
         id: "stats",
         name: "System Stats",
         description: "btop system monitoring",
-        maturity: "alpha",
-      },
-    ],
-  },
-  {
-    id: "testcontainers",
-    name: "Test Containers",
-    description: "Docker container management for testing",
-    maturity: "alpha",
-    subFeatures: [
-      {
-        id: "dashboard",
-        name: "Dashboard",
-        description: "Container overview and management",
-        maturity: "alpha",
-      },
-      {
-        id: "catalog",
-        name: "Catalog",
-        description: "Pre-built container templates",
-        maturity: "alpha",
-      },
-      {
-        id: "compose",
-        name: "Compose",
-        description: "Docker Compose stack management",
         maturity: "alpha",
       },
     ],
