@@ -124,6 +124,35 @@ describe("auth module", () => {
       });
     });
 
+    it("should treat a whitespace-only user header as unauthenticated", async () => {
+      // A present-but-whitespace X-Forwarded-User is a malformed credential,
+      // not a valid identity: the value is trimmed and yields no user.
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "   ",
+        })
+      );
+
+      const user = await getAuthUser();
+
+      expect(user.authenticated).toBe(false);
+      expect(user.username).toBeNull();
+      expect(user.pictureUrl).toBeNull();
+    });
+
+    it("should treat an empty-string user header as unauthenticated", async () => {
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "",
+        })
+      );
+
+      const user = await getAuthUser();
+
+      expect(user.authenticated).toBe(false);
+      expect(user.username).toBeNull();
+    });
+
     describe("groups parsing", () => {
       it("should parse comma-separated groups", async () => {
         mockHeaders.mockResolvedValue(
@@ -295,6 +324,9 @@ describe("auth module", () => {
         expect(result.user.username).toBe("local");
         expect(result.user.groups).toEqual([]);
       }
+      // Single-lookup refactor: the unauthenticated bypass path must read
+      // headers() exactly once (no second lookup for the absent-header check).
+      expect(mockHeaders).toHaveBeenCalledTimes(1);
     });
 
     it("should return 401 when user header is present but empty and DAAX_REQUIRE_AUTH unset", async () => {
@@ -315,6 +347,22 @@ describe("auth module", () => {
           error: "Authentication required",
           message: "You must be logged in to access this resource",
         });
+      }
+    });
+
+    it("should return 401 when user header is whitespace-only and DAAX_REQUIRE_AUTH unset", async () => {
+      // Whitespace-only header is a malformed credential, NOT 'no proxy'.
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "   ",
+        })
+      );
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(false);
+      if (!result.authenticated) {
+        expect(result.response.status).toBe(401);
       }
     });
   });
@@ -370,6 +418,19 @@ describe("auth module", () => {
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-user": "",
+        })
+      );
+
+      await expect(requireAuthOrThrow()).rejects.toThrow(
+        "Authentication required"
+      );
+    });
+
+    it("should throw when user header is whitespace-only and DAAX_REQUIRE_AUTH unset", async () => {
+      // Whitespace-only header is malformed; it must not bypass to local operator.
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "   ",
         })
       );
 
