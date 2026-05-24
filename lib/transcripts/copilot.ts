@@ -89,6 +89,13 @@ export async function listCopilotSessions(): Promise<TranscriptSession[]> {
           messageCount++;
           if (!firstPrompt) firstPrompt = String(entry.data?.content ?? "").slice(0, 200);
         } else if (entry.type === "assistant.message") {
+          // Mirror parseCopilotJsonl: assistant text counts only when present,
+          // plus one message per tool request. Keeps the list count equal to
+          // the detail view's messages.length.
+          if (String(entry.data?.content ?? "")) messageCount++;
+          if (Array.isArray(entry.data?.toolRequests))
+            messageCount += entry.data.toolRequests.length;
+        } else if (entry.type === "tool.execution_complete") {
           messageCount++;
         }
       }

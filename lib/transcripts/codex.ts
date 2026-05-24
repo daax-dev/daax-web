@@ -7,7 +7,7 @@
  * See docs/building/transcript-formats.md.
  */
 
-import { readFile, readdir, stat } from "fs/promises";
+import { readdir, stat } from "fs/promises";
 import { createReadStream, existsSync } from "fs";
 import { createInterface } from "readline";
 import { basename, join } from "path";
@@ -138,13 +138,15 @@ export async function findCodexSessionFile(sessionId: string): Promise<string | 
   const dir = getCodexSessionsDir();
   if (!existsSync(dir)) return null;
   const files = await findRolloutFiles(dir);
-  // Fast path: filename embeds the uuid.
-  const byName = files.find((f) => basename(f).includes(sessionId));
+  // Fast path: filename ends with the exact uuid (rollout-<ISO>-<uuid>.jsonl).
+  // The leading hyphen prevents a short/partial id matching a longer uuid.
+  const byName = files.find((f) => basename(f).endsWith(`-${sessionId}.jsonl`));
   if (byName) return byName;
-  // Fallback: match session_meta.payload.id.
+  // Fallback: match session_meta.payload.id. Read only the first line via a
+  // stream so a large rollout never loads fully into memory.
   for (const file of files) {
     try {
-      const first = (await readFile(file, "utf-8")).split("\n", 1)[0];
+      const first = await readFirstLine(file);
       const meta = JSON.parse(first);
       if (meta?.payload?.id === sessionId) return file;
     } catch {
@@ -152,6 +154,21 @@ export async function findCodexSessionFile(sessionId: string): Promise<string | 
     }
   }
   return null;
+}
+
+/** Read just the first line of a file via a stream (closes after line one). */
+async function readFirstLine(file: string): Promise<string> {
+  const stream = createReadStream(file, "utf-8");
+  const rl = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of rl) {
+      return line;
+    }
+    return "";
+  } finally {
+    rl.close();
+    stream.destroy();
+  }
 }
 
 /** Parse a Codex rollout JSONL into the shared message model. */

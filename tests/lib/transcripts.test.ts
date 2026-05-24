@@ -1,6 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
+import { mkdtemp, rm, writeFile, mkdir } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 import { parseCodexJsonl, findCodexSessionFile } from "@/lib/transcripts/codex";
-import { parseCopilotJsonl, findCopilotSessionFile } from "@/lib/transcripts/copilot";
+import {
+  parseCopilotJsonl,
+  findCopilotSessionFile,
+  listCopilotSessions,
+} from "@/lib/transcripts/copilot";
 import { isSafeSessionId } from "@/lib/transcripts/types";
 
 describe("isSafeSessionId / path-traversal guard", () => {
@@ -121,5 +128,108 @@ describe("parseCopilotJsonl", () => {
 
   it("handles empty input without throwing", () => {
     expect(parseCopilotJsonl("").messages).toHaveLength(0);
+  });
+});
+
+describe("findCodexSessionFile exact-id match", () => {
+  const tmpDirs: string[] = [];
+  afterEach(async () => {
+    delete process.env.CODEX_SESSIONS_DIR;
+    await Promise.all(
+      tmpDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })),
+    );
+  });
+
+  async function setupCodexDir(filenames: string[]): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "codex-sessions-"));
+    tmpDirs.push(dir);
+    for (const name of filenames) {
+      await writeFile(
+        join(dir, name),
+        JSON.stringify({ type: "session_meta", payload: { id: name } }) + "\n",
+        "utf-8",
+      );
+    }
+    process.env.CODEX_SESSIONS_DIR = dir;
+    return dir;
+  }
+
+  it("matches the exact uuid suffix, not a substring", async () => {
+    await setupCodexDir([
+      "rollout-2025-11-29T15-38-13-019e5ad3-c86b-7d92-a085-2b82eac9d1bc.jsonl",
+    ]);
+    // A partial id that is merely a substring must NOT match.
+    expect(await findCodexSessionFile("019e5ad3")).toBeNull();
+    // The full uuid suffix matches.
+    const hit = await findCodexSessionFile(
+      "019e5ad3-c86b-7d92-a085-2b82eac9d1bc",
+    );
+    expect(hit).not.toBeNull();
+    expect(hit).toContain("019e5ad3-c86b-7d92-a085-2b82eac9d1bc.jsonl");
+  });
+});
+
+describe("listCopilotSessions messageCount matches detail count", () => {
+  const tmpDirs: string[] = [];
+  afterEach(async () => {
+    delete process.env.COPILOT_SESSIONS_DIR;
+    await Promise.all(
+      tmpDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })),
+    );
+  });
+
+  it("list messageCount equals parseCopilotJsonl(content).messages.length", async () => {
+    const content = [
+      JSON.stringify({
+        type: "session.start",
+        data: { sessionId: "c-1", startTime: "2025-11-17T23:51:57.885Z" },
+        timestamp: "2025-11-17T23:51:57.888Z",
+      }),
+      JSON.stringify({
+        type: "user.message",
+        data: { content: "fix the bug" },
+        timestamp: "t1",
+      }),
+      JSON.stringify({
+        type: "assistant.message",
+        data: {
+          content: "Looking into it.",
+          toolRequests: [
+            {
+              toolCallId: "tc1",
+              name: "read_file",
+              arguments: { path: "x.ts" },
+            },
+          ],
+        },
+        timestamp: "t2",
+      }),
+      // assistant with empty content + a tool request: parser emits only the tool_use.
+      JSON.stringify({
+        type: "assistant.message",
+        data: {
+          content: "",
+          toolRequests: [{ toolCallId: "tc2", name: "write_file" }],
+        },
+        timestamp: "t3",
+      }),
+      JSON.stringify({
+        type: "tool.execution_complete",
+        data: { toolCallId: "tc1", result: "file contents" },
+        timestamp: "t4",
+      }),
+    ].join("\n");
+
+    const dir = await mkdtemp(join(tmpdir(), "copilot-sessions-"));
+    tmpDirs.push(dir);
+    await writeFile(join(dir, "c-1.jsonl"), content, "utf-8");
+    // Sibling workspace dir is optional; create an empty one for realism.
+    await mkdir(join(dir, "c-1"), { recursive: true });
+    process.env.COPILOT_SESSIONS_DIR = dir;
+
+    const sessions = await listCopilotSessions();
+    expect(sessions).toHaveLength(1);
+    const detailCount = parseCopilotJsonl(content).messages.length;
+    expect(sessions[0].messageCount).toBe(detailCount);
   });
 });
