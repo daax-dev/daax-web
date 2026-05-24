@@ -46,6 +46,14 @@ async function findRolloutFiles(dir: string): Promise<string[]> {
   return out;
 }
 
+/** Extract the trailing uuid from a `rollout-<ISO>-<uuid>.jsonl` filename. */
+function uuidFromRolloutName(file: string): string | null {
+  const m = basename(file).match(
+    /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i,
+  );
+  return m ? m[1] : null;
+}
+
 function textFromContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -71,7 +79,12 @@ export async function listCodexSessions(): Promise<TranscriptSession[]> {
 
   for (const file of files) {
     try {
-      let sessionId = basename(file);
+      // Default to the filename uuid so the listed id stays resolvable by
+      // findCodexSessionFile even if the session_meta line is missing/bad.
+      // Skip files whose name has no uuid rather than emit a broken id.
+      const derivedId = uuidFromRolloutName(file);
+      if (!derivedId) continue;
+      let sessionId = derivedId;
       let cwd = "";
       let created = "";
       let firstPrompt = "";
@@ -100,9 +113,16 @@ export async function listCodexSessions(): Promise<TranscriptSession[]> {
           cwd = entry.payload.cwd || "";
           created = entry.payload.timestamp || entry.timestamp || "";
         } else if (entry.type === "response_item" && entry.payload?.type === "message") {
+          // Mirror parseCodexJsonl: only user/assistant messages with non-empty
+          // extracted text are emitted, so count the same subset to keep the
+          // list count equal to the detail view's messages.length.
+          const role = entry.payload.role;
+          if (role !== "user" && role !== "assistant") continue;
+          const text = textFromContent(entry.payload.content);
+          if (!text) continue;
           messageCount++;
-          if (!firstPrompt && entry.payload.role === "user") {
-            firstPrompt = textFromContent(entry.payload.content).slice(0, 200);
+          if (!firstPrompt && role === "user") {
+            firstPrompt = text.slice(0, 200);
           }
         }
       }
