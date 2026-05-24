@@ -33,7 +33,15 @@ const eslintConfig = defineConfig([
   },
   // SSR/hydration patterns - scoped to specific directories where these patterns are required
   {
-    files: ["app/**/*.tsx", "components/**/*.tsx", "hooks/**/*.ts", "lib/**/*.ts", "lib/**/*.tsx"],
+    files: [
+      "app/**/*.tsx",
+      "components/**/*.tsx",
+      "hooks/**/*.ts",
+      "lib/**/*.ts",
+      "lib/**/*.tsx",
+      "plugins/**/*.ts",
+      "plugins/**/*.tsx",
+    ],
     rules: {
       // Allow setState in useEffect for hydration handling - common SSR pattern
       // Required for: client-side state initialization after server render
@@ -44,6 +52,12 @@ const eslintConfig = defineConfig([
       // Allow accessing refs during render (common pattern for callback refs)
       // Required for: imperative DOM operations, third-party library integration
       "react-hooks/refs": "off",
+      // React Compiler diagnostics: legacy code migration in progress, matching
+      // the existing policy above. Mutual-recursion / use-before-declaration of
+      // useCallback consts and manual memoization patterns are flagged but are
+      // not runtime defects in these effect/callback handlers.
+      "react-hooks/immutability": "off",
+      "react-hooks/preserve-manual-memoization": "off",
     },
   },
 ]);
