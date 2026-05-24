@@ -16,6 +16,7 @@ import { existsSync } from "fs";
 import { basename, join } from "path";
 import { homedir } from "os";
 import type { ParseResult, TranscriptMessage, TranscriptSession } from "./types";
+import { isSafeSessionId } from "./types";
 
 /** Resolve the Copilot session-state dir (env → container mount → host default). */
 export function getCopilotSessionsDir(): string {
@@ -111,6 +112,7 @@ export async function listCopilotSessions(): Promise<TranscriptSession[]> {
 
 /** Locate the session-state file for a Copilot session id. */
 export function findCopilotSessionFile(sessionId: string): string | null {
+  if (!isSafeSessionId(sessionId)) return null; // reject path traversal
   const dir = getCopilotSessionsDir();
   const file = join(dir, `${sessionId}.jsonl`);
   return existsSync(file) ? file : null;
@@ -131,13 +133,18 @@ export function parseCopilotJsonl(content: string): ParseResult {
       invalidJsonLines++;
       continue;
     }
+    if (!entry || typeof entry !== "object") {
+      nonMessageEntries++;
+      continue;
+    }
     const ts = entry.timestamp || "";
     if (entry.type === "user.message") {
       messages.push({ type: "user", content: String(entry.data?.content ?? ""), timestamp: ts });
     } else if (entry.type === "assistant.message") {
       const content_ = String(entry.data?.content ?? "");
       if (content_) messages.push({ type: "assistant", content: content_, timestamp: ts });
-      for (const req of entry.data?.toolRequests ?? []) {
+      const toolRequests = Array.isArray(entry.data?.toolRequests) ? entry.data.toolRequests : [];
+      for (const req of toolRequests) {
         messages.push({
           type: "tool_use",
           content: JSON.stringify(req.arguments ?? {}, null, 2),

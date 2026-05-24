@@ -69,18 +69,17 @@ export async function GET() {
   const projectsDir = getClaudeProjectsDir();
 
   try {
-    if (!existsSync(projectsDir)) {
-      console.log(`[transcripts API] Claude projects directory not found: ${projectsDir}`);
-      return NextResponse.json({
-        transcripts: [],
-        path: projectsDir,
-        hint: "Claude projects directory not found. In container mode, mount ~/.claude to /host-claude",
-      });
-    }
-
-    console.log(`[transcripts API] Reading from: ${projectsDir}`);
-    const projectDirs = await readdir(projectsDir, { withFileTypes: true });
     const allSessions: TranscriptSession[] = [];
+
+    // Claude is optional: if its store is absent we still list the other tools
+    // (a missing ~/.claude must not hide Codex/Copilot sessions).
+    const claudeAvailable = existsSync(projectsDir);
+    if (!claudeAvailable) {
+      console.log(`[transcripts API] Claude projects directory not found: ${projectsDir} (continuing with other tools)`);
+    }
+    const projectDirs = claudeAvailable
+      ? await readdir(projectsDir, { withFileTypes: true })
+      : [];
 
     for (const projectDir of projectDirs) {
       if (!projectDir.isDirectory()) continue;

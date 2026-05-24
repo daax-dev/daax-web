@@ -1,6 +1,41 @@
 import { describe, it, expect } from "vitest";
-import { parseCodexJsonl } from "@/lib/transcripts/codex";
-import { parseCopilotJsonl } from "@/lib/transcripts/copilot";
+import { parseCodexJsonl, findCodexSessionFile } from "@/lib/transcripts/codex";
+import { parseCopilotJsonl, findCopilotSessionFile } from "@/lib/transcripts/copilot";
+import { isSafeSessionId } from "@/lib/transcripts/types";
+
+describe("isSafeSessionId / path-traversal guard", () => {
+  it("accepts normal uuids and rejects traversal", () => {
+    expect(isSafeSessionId("019e5ad3-c86b-7d92-a085-2b82eac9d1bc")).toBe(true);
+    expect(isSafeSessionId("../../etc/passwd")).toBe(false);
+    expect(isSafeSessionId("a/b")).toBe(false);
+    expect(isSafeSessionId("..")).toBe(false);
+  });
+
+  it("finders return null for unsafe ids (no fs escape)", async () => {
+    expect(await findCodexSessionFile("../../../etc/passwd")).toBeNull();
+    expect(findCopilotSessionFile("../../../etc/passwd")).toBeNull();
+  });
+});
+
+describe("parser robustness on malformed lines", () => {
+  it("does not throw on null / non-object / bad json lines", () => {
+    const junk = ["null", "5", '"a string"', "{not json", "[]"].join("\n");
+    expect(() => parseCodexJsonl(junk)).not.toThrow();
+    expect(() => parseCopilotJsonl(junk)).not.toThrow();
+    expect(parseCodexJsonl(junk).messages).toHaveLength(0);
+    expect(parseCopilotJsonl(junk).messages).toHaveLength(0);
+  });
+
+  it("copilot tolerates a non-array toolRequests", () => {
+    const line = JSON.stringify({
+      type: "assistant.message",
+      data: { content: "hi", toolRequests: "oops-not-an-array" },
+      timestamp: "t",
+    });
+    expect(() => parseCopilotJsonl(line)).not.toThrow();
+    expect(parseCopilotJsonl(line).messages).toHaveLength(1); // just the assistant text
+  });
+});
 
 describe("parseCodexJsonl", () => {
   const fixture = [

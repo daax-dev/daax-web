@@ -12,6 +12,7 @@ import { existsSync } from "fs";
 import { basename, join } from "path";
 import { homedir } from "os";
 import type { ParseResult, TranscriptMessage, TranscriptSession } from "./types";
+import { isSafeSessionId } from "./types";
 
 /** Resolve the Codex sessions dir (env → container mount → host default). */
 export function getCodexSessionsDir(): string {
@@ -124,6 +125,7 @@ export async function listCodexSessions(): Promise<TranscriptSession[]> {
 
 /** Locate the rollout file for a Codex session id. */
 export async function findCodexSessionFile(sessionId: string): Promise<string | null> {
+  if (!isSafeSessionId(sessionId)) return null; // reject path traversal
   const dir = getCodexSessionsDir();
   if (!existsSync(dir)) return null;
   const files = await findRolloutFiles(dir);
@@ -156,6 +158,10 @@ export function parseCodexJsonl(content: string): ParseResult {
       entry = JSON.parse(line);
     } catch {
       invalidJsonLines++;
+      continue;
+    }
+    if (!entry || typeof entry !== "object") {
+      nonMessageEntries++;
       continue;
     }
     if (entry.type !== "response_item" || entry.payload?.type !== "message") {

@@ -5,6 +5,15 @@
 
 export type TranscriptTool = "claude" | "codex" | "copilot";
 
+/**
+ * Guard against path traversal: session ids come from the URL and are joined
+ * into filesystem paths by the finders. Only allow plain token characters.
+ */
+export function isSafeSessionId(id: string): boolean {
+  // Plain token chars only, and never a ".." traversal sequence.
+  return /^[A-Za-z0-9._-]+$/.test(id) && !id.includes("..");
+}
+
 export interface TranscriptSession {
   /** Globally-unique id used in the detail URL: `${tool}:${sessionId}` */
   id: string;
