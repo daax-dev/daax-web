@@ -35,8 +35,7 @@ aiCodingLayout = "tree"
 home = "ga"
 ai-coding = "ga"
 backlog = "ga"
-devcontainers = "beta"
-testcontainers = "beta"
+containers = "beta"
 provenance = "disabled"
 security = "alpha"
 cloud = "disabled"
@@ -54,8 +53,7 @@ settings = "ga"
 order = [
   "home",
   "ai-coding",
-  "devcontainers",
-  "testcontainers",
+  "containers",
   "analytics",
   "backlog",
   "settings",
@@ -95,10 +93,11 @@ logs = "beta"
 metrics = "alpha"
 traces = "alpha"
 
-[subfeatures.maturity.testcontainers]
-catalog = "beta"
+# Containers group submenu: Running host view + reparented Devcontainers/Testcontainers
+[subfeatures.maturity."containers"]
 running = "beta"
-reports = "beta"
+devcontainers = "beta"
+testcontainers = "beta"
 
 # =============================================================================
 # SUB-FEATURE ORDER
@@ -129,8 +128,8 @@ order = ["scanner", "reports", "policies"]
 [subfeatures.order.analytics]
 order = ["overview", "logs", "metrics", "traces"]
 
-[subfeatures.order.testcontainers]
-order = ["catalog", "running", "reports"]
+[subfeatures.order."containers"]
+order = ["running", "devcontainers", "testcontainers"]
 
 # =============================================================================
 # HOMEPAGE CARDS
