@@ -77,11 +77,6 @@ recordings = "beta"        # Session recordings (/ai-coding/recordings)
 logs = "beta"              # Log viewer (/ai-coding/logs)
 api-tools = "beta"         # API testing tools (/ai-coding/api-tools)
 
-[subfeatures.maturity.devcontainers]
-catalog = "beta"
-running = "beta"
-build = "beta"
-
 [subfeatures.maturity.security]
 scanner = "beta"
 reports = "beta"
@@ -118,9 +113,6 @@ order = [
   "logs",
   "api-tools",
 ]
-
-[subfeatures.order.devcontainers]
-order = ["catalog", "running", "build"]
 
 [subfeatures.order.security]
 order = ["scanner", "reports", "policies"]
