@@ -11,12 +11,21 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { requireAuth } from "@/lib/auth";
 import { isAiSessionName } from "@/lib/ai-session-name";
+import { defaultDockerExec, type DockerExec } from "@/lib/docker-exec";
 
-const execFileAsync = promisify(execFile);
+/**
+ * Force-remove a single AI session container. Takes an injectable `exec`
+ * (defaults to the real docker shell-out) so it can be unit-tested without
+ * spawning a subprocess, matching the GET/reap routes' DockerExec seam.
+ */
+export async function removeSession(
+  name: string,
+  exec: DockerExec = defaultDockerExec,
+): Promise<void> {
+  await exec(["rm", "-f", name]);
+}
 
 export async function DELETE(
   _req: NextRequest,
@@ -35,7 +44,7 @@ export async function DELETE(
   }
 
   try {
-    await execFileAsync("docker", ["rm", "-f", name]);
+    await removeSession(name);
     return NextResponse.json({ success: true, removed: name });
   } catch (error) {
     return NextResponse.json(

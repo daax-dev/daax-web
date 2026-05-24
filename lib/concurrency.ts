@@ -13,16 +13,17 @@
  * abort on a single failure should catch inside `fn` and return a result
  * object instead.
  *
- * A non-positive or non-finite `limit` is clamped to 1 — otherwise zero
- * workers would spawn and the result array would be returned with
- * uninitialized slots.
+ * A non-positive, non-finite, or fractional-below-one `limit` is clamped to
+ * 1 — otherwise zero workers would spawn and the result array would be
+ * returned with uninitialized slots. The floor is applied before the clamp
+ * so a value like 0.5 still yields one worker.
  */
 export async function mapPool<T, R>(
   items: T[],
   limit: number,
   fn: (item: T) => Promise<R>,
 ): Promise<R[]> {
-  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 1;
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 1;
   const out: R[] = new Array(items.length);
   let next = 0;
   const worker = async () => {

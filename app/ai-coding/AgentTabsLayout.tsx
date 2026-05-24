@@ -397,10 +397,14 @@ export function AgentTabsLayout() {
     Boolean(tab.containerName) &&
     !knownContainers.has(tab.containerName!);
 
-  // Running status reflects the live container state once one is assigned;
-  // before a container name arrives we fall back to the tab's initial status.
+  // Running status reflects the live container state once one is assigned AND
+  // the active-sessions set has loaded at least once. Before the first load
+  // (or before a container name arrives) fall back to the tab's optimistic
+  // initial status — consistent with the isStray guard, so the two never
+  // disagree (e.g. report "not running" while not yet "stray") on a freshly
+  // launched tab whose set hasn't been polled.
   const isRunning = (tab: AgentTab) =>
-    tab.containerName
+    hasLoadedContainers && tab.containerName
       ? runningContainers.has(tab.containerName)
       : tab.status === "running";
 
