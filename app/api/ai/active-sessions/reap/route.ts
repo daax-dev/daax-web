@@ -12,15 +12,16 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { requireAuth } from "@/lib/auth";
 import { isAiSessionName } from "@/lib/ai-session-name";
-
-const execFileAsync = promisify(execFile);
+import { mapPool } from "@/lib/concurrency";
+import { defaultDockerExec, type DockerExec } from "@/lib/docker-exec";
 
 const DAAX_NAME_PREFIX = "daax-";
 const DEFAULT_IDLE_THRESHOLD_SECONDS = 30 * 60;
+// Bound concurrent docker subprocesses per reap pass (inspect/logs/rm),
+// matching the active-sessions GET route's fan-out limit.
+const REAP_CONCURRENCY = 4;
 
 interface ReapResult {
   containerName: string;
@@ -29,9 +30,8 @@ interface ReapResult {
   reason?: string;
 }
 
-async function listDaaxContainerNames(): Promise<string[]> {
-  const { stdout } = await execFileAsync(
-    "docker",
+async function listDaaxContainerNames(exec: DockerExec): Promise<string[]> {
+  const { stdout } = await exec(
     [
       "ps",
       "-a",
@@ -52,11 +52,11 @@ async function listDaaxContainerNames(): Promise<string[]> {
     .filter(isAiSessionName);
 }
 
-async function lastActivityMs(name: string): Promise<number> {
+async function lastActivityMs(name: string, exec: DockerExec): Promise<number> {
   // Last activity = max(StartedAt, last log line timestamp).
   let startedAt = 0;
   try {
-    const { stdout } = await execFileAsync("docker", [
+    const { stdout } = await exec([
       "inspect",
       "--format",
       "{{.State.StartedAt}}",
@@ -69,8 +69,7 @@ async function lastActivityMs(name: string): Promise<number> {
 
   let lastLog = 0;
   try {
-    const { stdout } = await execFileAsync(
-      "docker",
+    const { stdout } = await exec(
       ["logs", "--tail", "1", "--timestamps", name],
       { maxBuffer: 64 * 1024 },
     );
@@ -87,6 +86,47 @@ async function lastActivityMs(name: string): Promise<number> {
   }
 
   return Math.max(startedAt, lastLog);
+}
+
+/**
+ * Core reap pass: list candidates, compute idle time, `docker rm -f` those
+ * past the threshold — via a bounded pool with per-candidate error handling.
+ * Takes an injectable `exec` (defaults to the real docker shell-out) and
+ * `now` so it can be unit-tested without spawning subprocesses.
+ */
+export async function reapSessions(
+  idleThresholdSeconds: number,
+  exec: DockerExec = defaultDockerExec,
+  now: number = Date.now(),
+): Promise<ReapResult[]> {
+  const names = await listDaaxContainerNames(exec);
+
+  // Bounded-concurrency fan-out. The per-candidate try/catch stays inside
+  // the worker so one failure is reported (removed:false + reason) without
+  // aborting the rest of the pass.
+  return mapPool(names, REAP_CONCURRENCY, async (name): Promise<ReapResult> => {
+    const lastMs = await lastActivityMs(name, exec);
+    const idleSeconds =
+      lastMs > 0
+        ? Math.max(0, Math.floor((now - lastMs) / 1000))
+        : Number.MAX_SAFE_INTEGER;
+
+    if (idleSeconds < idleThresholdSeconds) {
+      return { containerName: name, removed: false, idleSeconds };
+    }
+
+    try {
+      await exec(["rm", "-f", name]);
+      return { containerName: name, removed: true, idleSeconds };
+    } catch (err) {
+      return {
+        containerName: name,
+        removed: false,
+        idleSeconds,
+        reason: err instanceof Error ? err.message : "rm failed",
+      };
+    }
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -108,35 +148,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const names = await listDaaxContainerNames();
-    const now = Date.now();
-    const results: ReapResult[] = [];
-
-    for (const name of names) {
-      const lastMs = await lastActivityMs(name);
-      const idleSeconds =
-        lastMs > 0
-          ? Math.max(0, Math.floor((now - lastMs) / 1000))
-          : Number.MAX_SAFE_INTEGER;
-
-      if (idleSeconds < idleThresholdSeconds) {
-        results.push({ containerName: name, removed: false, idleSeconds });
-        continue;
-      }
-
-      try {
-        await execFileAsync("docker", ["rm", "-f", name]);
-        results.push({ containerName: name, removed: true, idleSeconds });
-      } catch (err) {
-        results.push({
-          containerName: name,
-          removed: false,
-          idleSeconds,
-          reason: err instanceof Error ? err.message : "rm failed",
-        });
-      }
-    }
-
+    const results = await reapSessions(idleThresholdSeconds);
     const reaped = results.filter((r) => r.removed).length;
     return NextResponse.json({
       success: true,

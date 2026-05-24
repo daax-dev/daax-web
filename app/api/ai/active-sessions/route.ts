@@ -16,11 +16,9 @@
  */
 
 import { NextResponse } from "next/server";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { isAiSessionName } from "@/lib/ai-session-name";
-
-const execFileAsync = promisify(execFile);
+import { mapPool } from "@/lib/concurrency";
+import { defaultDockerExec, type DockerExec } from "@/lib/docker-exec";
 
 // Cheap server-side prefilter for `docker ps`. This is a substring match,
 // so results are re-filtered with isAiSessionName() before use.
@@ -54,30 +52,8 @@ interface DockerPsRow {
 // host with many `daax-*` containers is not hit by an unbounded fan-out.
 const DOCKER_PROBE_CONCURRENCY = 4;
 
-// Order-preserving bounded-concurrency map. No external dependency.
-async function mapPool<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  const worker = async () => {
-    for (;;) {
-      const idx = next++;
-      if (idx >= items.length) return;
-      out[idx] = await fn(items[idx]);
-    }
-  };
-  await Promise.all(
-    Array.from({ length: Math.min(limit, items.length) }, worker),
-  );
-  return out;
-}
-
-async function dockerPs(): Promise<DockerPsRow[]> {
-  const { stdout } = await execFileAsync(
-    "docker",
+async function dockerPs(exec: DockerExec): Promise<DockerPsRow[]> {
+  const { stdout } = await exec(
     [
       "ps",
       "-a",
@@ -97,9 +73,10 @@ async function dockerPs(): Promise<DockerPsRow[]> {
 
 async function inspectContainer(
   name: string,
+  exec: DockerExec,
 ): Promise<{ createdAt: string; startedAt: string }> {
   try {
-    const { stdout } = await execFileAsync("docker", [
+    const { stdout } = await exec([
       "inspect",
       "--format",
       "{{.Created}}|{{.State.StartedAt}}",
@@ -115,10 +92,12 @@ async function inspectContainer(
   }
 }
 
-async function getLastLogTimestamp(name: string): Promise<string | null> {
+async function getLastLogTimestamp(
+  name: string,
+  exec: DockerExec,
+): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync(
-      "docker",
+    const { stdout } = await exec(
       ["logs", "--tail", "1", "--timestamps", name],
       { maxBuffer: 64 * 1024 },
     );
@@ -135,62 +114,73 @@ async function getLastLogTimestamp(name: string): Promise<string | null> {
   }
 }
 
+/**
+ * Core session listing: `docker ps` + per-container probes via a bounded
+ * pool. Takes an injectable `exec` (defaults to the real docker shell-out)
+ * so it can be unit-tested without spawning subprocesses.
+ */
+export async function listAndProbeSessions(
+  exec: DockerExec = defaultDockerExec,
+  now: number = Date.now(),
+): Promise<ActiveSession[]> {
+  const rows = await dockerPs(exec);
+
+  // Drop non-session containers the prefix filter let through
+  // (e.g. daax-code-server, daax-net). `docker ps --format '{{json .}}'`
+  // emits "Names" as a comma list; the first entry is canonical.
+  const sessionRows = rows.filter((row) =>
+    isAiSessionName((row.Names || "").split(",")[0]?.trim() || ""),
+  );
+
+  const sessions: ActiveSession[] = await mapPool(
+    sessionRows,
+    DOCKER_PROBE_CONCURRENCY,
+    async (row) => {
+      const name = (row.Names || "").split(",")[0]?.trim() || row.ID;
+
+      // Only running containers can have new log activity; for stopped/exited
+      // ones the StartedAt floor is sufficient, so skip the `docker logs`
+      // subprocess entirely.
+      const [inspect, lastLog] = await Promise.all([
+        inspectContainer(name, exec),
+        row.State === "running" ? getLastLogTimestamp(name, exec) : null,
+      ]);
+
+      const startedAtMs = new Date(inspect.startedAt).getTime();
+      const lastLogMs = lastLog ? new Date(lastLog).getTime() : 0;
+      const lastActivityMs = Math.max(startedAtMs, lastLogMs);
+      const lastActivityAt = new Date(lastActivityMs || 0).toISOString();
+
+      return {
+        containerName: name,
+        containerId: row.ID,
+        image: row.Image,
+        command: row.Command,
+        status: row.Status,
+        state: row.State,
+        createdAt: inspect.createdAt,
+        startedAt: inspect.startedAt,
+        lastActivityAt,
+        idleSeconds:
+          lastActivityMs > 0
+            ? Math.max(0, Math.floor((now - lastActivityMs) / 1000))
+            : 0,
+        uptimeSeconds:
+          startedAtMs > 0
+            ? Math.max(0, Math.floor((now - startedAtMs) / 1000))
+            : 0,
+      };
+    },
+  );
+
+  // Newest first
+  sessions.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  return sessions;
+}
+
 export async function GET() {
   try {
-    const rows = await dockerPs();
-    const now = Date.now();
-
-    // Drop non-session containers the prefix filter let through
-    // (e.g. daax-code-server, daax-net). `docker ps --format '{{json .}}'`
-    // emits "Names" as a comma list; the first entry is canonical.
-    const sessionRows = rows.filter((row) =>
-      isAiSessionName((row.Names || "").split(",")[0]?.trim() || ""),
-    );
-
-    const sessions: ActiveSession[] = await mapPool(
-      sessionRows,
-      DOCKER_PROBE_CONCURRENCY,
-      async (row) => {
-        const name = (row.Names || "").split(",")[0]?.trim() || row.ID;
-
-        // Only running containers can have new log activity; for stopped/exited
-        // ones the StartedAt floor is sufficient, so skip the `docker logs`
-        // subprocess entirely.
-        const [inspect, lastLog] = await Promise.all([
-          inspectContainer(name),
-          row.State === "running" ? getLastLogTimestamp(name) : null,
-        ]);
-
-        const startedAtMs = new Date(inspect.startedAt).getTime();
-        const lastLogMs = lastLog ? new Date(lastLog).getTime() : 0;
-        const lastActivityMs = Math.max(startedAtMs, lastLogMs);
-        const lastActivityAt = new Date(lastActivityMs || 0).toISOString();
-
-        return {
-          containerName: name,
-          containerId: row.ID,
-          image: row.Image,
-          command: row.Command,
-          status: row.Status,
-          state: row.State,
-          createdAt: inspect.createdAt,
-          startedAt: inspect.startedAt,
-          lastActivityAt,
-          idleSeconds:
-            lastActivityMs > 0
-              ? Math.max(0, Math.floor((now - lastActivityMs) / 1000))
-              : 0,
-          uptimeSeconds:
-            startedAtMs > 0
-              ? Math.max(0, Math.floor((now - startedAtMs) / 1000))
-              : 0,
-        };
-      },
-    );
-
-    // Newest first
-    sessions.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-
+    const sessions = await listAndProbeSessions();
     return NextResponse.json({ success: true, sessions });
   } catch (error) {
     return NextResponse.json(
