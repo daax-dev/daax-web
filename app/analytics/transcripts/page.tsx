@@ -116,7 +116,7 @@ export default function TranscriptsPage() {
             Transcripts
           </h1>
           <p className="text-sm text-muted-foreground">
-            Claude Code session history from ~/.claude/projects
+            AI agent session history — Claude, Codex, and Copilot
           </p>
         </div>
         <Button
@@ -164,7 +164,7 @@ export default function TranscriptsPage() {
               <p className="text-sm mt-1">
                 {transcripts.length > 0
                   ? "Try adjusting your search"
-                  : "Claude Code session data not found. Check ~/.claude/projects"}
+                  : "No agent session data found (Claude ~/.claude, Codex ~/.codex, Copilot ~/.copilot)"}
               </p>
             </div>
           ) : (
@@ -185,6 +185,9 @@ export default function TranscriptsPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
+                      <Badge variant="secondary" className="text-xs capitalize">
+                        {session.tool}
+                      </Badge>
                       <Badge variant="outline" className="text-xs">
                         {session.projectName}
                       </Badge>
