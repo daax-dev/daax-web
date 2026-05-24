@@ -30,5 +30,11 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "ext-research", "examples", "packages/*/examples"]
+  "exclude": [
+    "node_modules",
+    "ext-research",
+    "examples",
+    "packages/*/examples",
+    "tests/testcontainers"
+  ]
 }
