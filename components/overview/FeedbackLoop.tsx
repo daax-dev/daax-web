@@ -42,7 +42,7 @@ export function FeedbackLoop({ className }: { className?: string }) {
           <span className="text-primary font-semibold">
             agentic retrospective
           </span>
-          — surfacing insights for both the human and the AI to improve.
+          —surfacing insights for both the human and the AI to improve.
         </p>
       </div>
 

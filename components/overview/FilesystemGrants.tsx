@@ -27,7 +27,7 @@ export function FilesystemGrants({ className }: { className?: string }) {
       <div className="text-center mb-8">
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
           Agents see only what you explicitly allow. Each path grant specifies
-          read, write, or both— everything else is invisible and inaccessible.
+          read, write, or both—everything else is invisible and inaccessible.
         </p>
       </div>
 

@@ -12,7 +12,7 @@ export function DeveloperSecurity({ className }: { className?: string }) {
         </div>
         <p className="text-lg text-muted-foreground max-w-xl">
           Shift security left. Run SAST, secrets scanning, and dependency checks
-          directly in your workflow— catch vulnerabilities before they reach
+          directly in your workflow—catch vulnerabilities before they reach
           production.
         </p>
       </div>
