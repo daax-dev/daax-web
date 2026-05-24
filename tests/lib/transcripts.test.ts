@@ -236,6 +236,21 @@ describe("listCopilotSessions messageCount matches detail count", () => {
     const detailCount = parseCopilotJsonl(content).messages.length;
     expect(sessions[0].messageCount).toBe(detailCount);
   });
+
+  it("skips a session whose filename-derived id is unsafe (path-segment guard)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "copilot-unsafe-"));
+    tmpDirs.push(dir);
+    // Filename "...jsonl" -> derived uuid ".." which isSafeSessionId rejects.
+    const line = JSON.stringify({
+      type: "user.message",
+      data: { content: "hi" },
+      timestamp: "t",
+    });
+    await writeFile(join(dir, "...jsonl"), line, "utf-8");
+    process.env.COPILOT_SESSIONS_DIR = dir;
+
+    expect(await listCopilotSessions()).toHaveLength(0);
+  });
 });
 
 describe("listCodexSessions id derivation + messageCount", () => {
