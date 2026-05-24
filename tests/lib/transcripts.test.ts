@@ -13,6 +13,7 @@ import {
   listCopilotSessions,
 } from "@/lib/transcripts/copilot";
 import { isSafeSessionId } from "@/lib/transcripts/types";
+import { GET as transcriptDetailGET } from "@/app/api/transcripts/[id]/route";
 
 describe("isSafeSessionId / path-traversal guard", () => {
   it("accepts normal uuids and rejects traversal", () => {
@@ -240,7 +241,8 @@ describe("listCopilotSessions messageCount matches detail count", () => {
   it("skips a session whose filename-derived id is unsafe (path-segment guard)", async () => {
     const dir = await mkdtemp(join(tmpdir(), "copilot-unsafe-"));
     tmpDirs.push(dir);
-    // Filename "...jsonl" -> derived uuid ".." which isSafeSessionId rejects.
+    // Filename "...jsonl" -> strip ".jsonl" suffix -> derived id "..", which
+    // isSafeSessionId rejects via its !id.includes("..") clause.
     const line = JSON.stringify({
       type: "user.message",
       data: { content: "hi" },
@@ -356,5 +358,69 @@ describe("listCodexSessions id derivation + messageCount", () => {
     const detailCount = parseCodexJsonl(content).messages.length;
     expect(sessions[0].messageCount).toBe(detailCount);
     expect(sessions[0].messageCount).toBe(2);
+  });
+
+  it("tolerates a non-string cwd in session_meta (no throw, fallback name)", async () => {
+    const content = [
+      JSON.stringify({
+        type: "session_meta",
+        payload: { id: uuid, cwd: { not: "a string" } },
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "hi" }],
+        },
+      }),
+    ].join("\n");
+    await writeRollout(`rollout-2025-11-29T15-38-13-${uuid}.jsonl`, content);
+
+    const sessions = await listCodexSessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].projectPath).toBe("");
+    expect(sessions[0].projectName).toBe("codex");
+  });
+});
+
+describe("transcript detail route sessionId is the bare id + tool field", () => {
+  const tmpDirs: string[] = [];
+  const uuid = "019e5ad3-c86b-7d92-a085-2b82eac9d1bc";
+  afterEach(async () => {
+    delete process.env.CODEX_SESSIONS_DIR;
+    await Promise.all(
+      tmpDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })),
+    );
+  });
+
+  it("strips the `${tool}:` prefix and exposes tool separately", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "codex-detail-"));
+    tmpDirs.push(dir);
+    const content = JSON.stringify({
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "hello" }],
+      },
+    });
+    await writeFile(
+      join(dir, `rollout-2025-11-29T15-38-13-${uuid}.jsonl`),
+      content,
+      "utf-8",
+    );
+    process.env.CODEX_SESSIONS_DIR = dir;
+
+    const id = `codex:${uuid}`;
+    const res = await transcriptDetailGET(
+      new Request(`http://test/api/transcripts/${id}`),
+      { params: Promise.resolve({ id }) },
+    );
+    const data = await res.json();
+    // Matches the list route's bare TranscriptSession.sessionId; tool is its
+    // own field, not baked into sessionId.
+    expect(data.sessionId).toBe(uuid);
+    expect(data.tool).toBe("codex");
   });
 });
