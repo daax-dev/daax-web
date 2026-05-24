@@ -226,6 +226,11 @@ export function AgentTabsLayout() {
   // (xterm.js wraps a textarea but still surfaces metaKey/ctrlKey).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Don't hijack the shortcut while renaming a tab — the inline rename
+      // input is only mounted when editingTabId is set, so this single guard
+      // covers it without breaking the deliberate xterm-focus behavior
+      // (xterm's textarea must still receive Cmd/Ctrl+1..9 tab switching).
+      if (editingTabId !== null) return;
       if (!(e.metaKey || e.ctrlKey)) return;
       if (e.key < "1" || e.key > "9") return;
       const idx = Number(e.key) - 1;
@@ -235,7 +240,7 @@ export function AgentTabsLayout() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tabs]);
+  }, [tabs, editingTabId]);
 
   // Poll for live container names so tabs can flag strays/lost sessions.
   // Skipped entirely when there are no tabs to avoid pointless network.
