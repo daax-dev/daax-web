@@ -16,7 +16,11 @@ import { createReadStream, existsSync } from "fs";
 import { createInterface } from "readline";
 import { basename, join } from "path";
 import { homedir } from "os";
-import type { ParseResult, TranscriptMessage, TranscriptSession } from "./types";
+import type {
+  ParseResult,
+  TranscriptMessage,
+  TranscriptSession,
+} from "./types";
 import { isSafeSessionId } from "./types";
 
 /** Resolve the Copilot session-state dir (env → container mount → host default). */
@@ -165,19 +169,29 @@ export function parseCopilotJsonl(content: string): ParseResult {
       nonMessageEntries++;
       continue;
     }
-    const ts = entry.timestamp || "";
+    // timestamp is untrusted JSON; only accept string values.
+    const ts = typeof entry.timestamp === "string" ? entry.timestamp : "";
     if (entry.type === "user.message") {
-      messages.push({ type: "user", content: String(entry.data?.content ?? ""), timestamp: ts });
+      messages.push({
+        type: "user",
+        content: String(entry.data?.content ?? ""),
+        timestamp: ts,
+      });
     } else if (entry.type === "assistant.message") {
       const content_ = String(entry.data?.content ?? "");
-      if (content_) messages.push({ type: "assistant", content: content_, timestamp: ts });
-      const toolRequests = Array.isArray(entry.data?.toolRequests) ? entry.data.toolRequests : [];
+      if (content_)
+        messages.push({ type: "assistant", content: content_, timestamp: ts });
+      const toolRequests = Array.isArray(entry.data?.toolRequests)
+        ? entry.data.toolRequests
+        : [];
       for (const req of toolRequests) {
+        // req fields are untrusted JSON; guard the typed string fields.
         messages.push({
           type: "tool_use",
-          content: JSON.stringify(req.arguments ?? {}, null, 2),
-          toolName: req.name,
-          toolId: req.toolCallId,
+          content: JSON.stringify(req?.arguments ?? {}, null, 2),
+          toolName: typeof req?.name === "string" ? req.name : undefined,
+          toolId:
+            typeof req?.toolCallId === "string" ? req.toolCallId : undefined,
           timestamp: ts,
         });
       }
@@ -188,7 +202,10 @@ export function parseCopilotJsonl(content: string): ParseResult {
           typeof entry.data?.result === "string"
             ? entry.data.result
             : JSON.stringify(entry.data?.result ?? entry.data ?? {}),
-        toolId: entry.data?.toolCallId,
+        toolId:
+          typeof entry.data?.toolCallId === "string"
+            ? entry.data.toolCallId
+            : undefined,
         timestamp: ts,
       });
     } else {

@@ -4,6 +4,7 @@ import { existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import type { TranscriptSession } from "@/lib/transcripts/types";
+import { isPathWithin } from "@/lib/transcripts/types";
 import { listCodexSessions } from "@/lib/transcripts/codex";
 import { listCopilotSessions } from "@/lib/transcripts/copilot";
 
@@ -59,7 +60,9 @@ export async function GET() {
     // (a missing ~/.claude must not hide Codex/Copilot sessions).
     const claudeAvailable = existsSync(projectsDir);
     if (!claudeAvailable) {
-      console.log(`[transcripts API] Claude projects directory not found: ${projectsDir} (continuing with other tools)`);
+      console.log(
+        `[transcripts API] Claude projects directory not found: ${projectsDir} (continuing with other tools)`,
+      );
     }
     const projectDirs = claudeAvailable
       ? await readdir(projectsDir, { withFileTypes: true })
@@ -81,16 +84,28 @@ export async function GET() {
           // Skip sidechains
           if (entry.isSidechain) continue;
 
+          if (typeof entry.fullPath !== "string") continue;
+
           // Translate fullPath from host path to container path if needed
           // e.g., /home/jpoley/.claude/projects/xxx -> /host-claude/projects/xxx
           let sessionFilePath = entry.fullPath;
-          if (!existsSync(sessionFilePath) && projectsDir.startsWith("/host-claude")) {
+          let containmentBase = projectsDir;
+          if (
+            !existsSync(sessionFilePath) &&
+            projectsDir.startsWith("/host-claude")
+          ) {
             // Extract relative path from the fullPath
             const match = entry.fullPath.match(/\.claude\/projects\/(.+)$/);
             if (match) {
               sessionFilePath = join("/host-claude/projects", match[1]);
+              containmentBase = "/host-claude/projects";
             }
           }
+
+          // entry.fullPath (and the regex-derived translation) are untrusted
+          // on-disk index content: skip any entry that resolves outside the
+          // configured Claude projects dir (path-traversal containment).
+          if (!isPathWithin(containmentBase, sessionFilePath)) continue;
 
           // Get file size
           let size = 0;
@@ -167,7 +182,10 @@ export async function GET() {
           });
         }
       } catch (err) {
-        console.error(`Error reading sessions-index.json from ${projectPath}:`, err);
+        console.error(
+          `Error reading sessions-index.json from ${projectPath}:`,
+          err,
+        );
       }
     }
 
@@ -180,14 +198,16 @@ export async function GET() {
       try {
         allSessions.push(...(await provider.fn()));
       } catch (err) {
-        console.error(`[transcripts API] ${provider.name} provider failed:`, err);
+        console.error(
+          `[transcripts API] ${provider.name} provider failed:`,
+          err,
+        );
       }
     }
 
     // Sort by modified date, newest first
     allSessions.sort(
-      (a, b) =>
-        new Date(b.modified).getTime() - new Date(a.modified).getTime()
+      (a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime(),
     );
 
     console.log(`[transcripts API] Found ${allSessions.length} sessions`);
@@ -206,7 +226,7 @@ export async function GET() {
         details: errorMessage,
         transcripts: [],
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
