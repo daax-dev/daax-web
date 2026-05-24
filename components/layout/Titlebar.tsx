@@ -34,8 +34,8 @@ import {
   ClipboardCheck,
   Presentation,
   Container,
-  Database,
-  Layers,
+  Boxes,
+  FlaskConical,
 } from "lucide-react";
 import { McpIcon } from "@/components/icons/McpIcon";
 import { cn } from "@/lib/utils";
@@ -211,34 +211,32 @@ const securityRoutes = [
   "/cyber/safe-mcp",
 ];
 
-// Test Containers submenu items - shown in secondary nav bar
-const testcontainersItems: SubNavItem[] = [
+// Containers submenu items - shown in secondary nav bar.
+// Devcontainers and Testcontainers are reparented under the Containers group;
+// each maps to a subFeature of the "containers" plugin for visibility control.
+const containersItems: SubNavItem[] = [
+  {
+    href: "/containers",
+    label: "Running",
+    icon: Boxes,
+    subFeatureId: "running",
+  },
+  {
+    href: "/devcontainers",
+    label: "Devcontainers",
+    icon: Container,
+    subFeatureId: "devcontainers",
+  },
   {
     href: "/testcontainers",
-    label: "Dashboard",
-    icon: Container,
-    subFeatureId: "dashboard",
-  },
-  {
-    href: "/testcontainers/catalog",
-    label: "Catalog",
-    icon: Database,
-    subFeatureId: "catalog",
-  },
-  {
-    href: "/testcontainers/compose",
-    label: "Compose",
-    icon: Layers,
-    subFeatureId: "compose",
+    label: "Testcontainers",
+    icon: FlaskConical,
+    subFeatureId: "testcontainers",
   },
 ];
 
-// Routes that should show the Test Containers submenu
-const testcontainersRoutes = [
-  "/testcontainers",
-  "/testcontainers/catalog",
-  "/testcontainers/compose",
-];
+// Routes that should show the Containers submenu
+const containersRoutes = ["/containers", "/devcontainers", "/testcontainers"];
 
 // Note: shell and code-server are no longer top-level plugins, only AI Coding sub-features
 
@@ -260,6 +258,7 @@ const pluginIcons: Record<
   learning: Lightbulb,
   analytics: BarChart3,
   settings: Settings,
+  containers: Boxes,
   testcontainers: Container,
   bot: MessageSquare,
 };
@@ -279,6 +278,7 @@ const pluginRoutes: Record<string, string> = {
   learning: "/learning",
   analytics: "/analytics",
   settings: "/settings",
+  containers: "/containers",
   testcontainers: "/testcontainers",
   bot: "/bot",
 };
@@ -298,11 +298,11 @@ function getIsActive(
   pathname: string,
   isOnAiCodingPage: boolean,
   isOnSecurityPage: boolean,
-  isOnTestcontainersPage: boolean,
+  isOnContainersPage: boolean,
 ): boolean {
   if (pluginId === "ai-coding") return isOnAiCodingPage;
   if (pluginId === "security") return isOnSecurityPage;
-  if (pluginId === "testcontainers") return isOnTestcontainersPage;
+  if (pluginId === "containers") return isOnContainersPage;
   if (href === "/") return pathname === "/";
   return pathname === href || pathname.startsWith(`${href}/`);
 }
@@ -347,8 +347,8 @@ export function Titlebar() {
     (route) => pathname === route || pathname.startsWith(`${route}/`),
   );
 
-  // Check if we're on a Test Containers related page
-  const isOnTestcontainersPage = testcontainersRoutes.some(
+  // Check if we're on a Containers related page (running / devcontainers / testcontainers)
+  const isOnContainersPage = containersRoutes.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`),
   );
 
@@ -522,7 +522,7 @@ export function Titlebar() {
               pathname,
               isOnAiCodingPage,
               isOnSecurityPage,
-              isOnTestcontainersPage,
+              isOnContainersPage,
             );
             const maturity = settings
               ? getPluginMaturity(item.pluginId, settings)
@@ -870,15 +870,18 @@ export function Titlebar() {
         </div>
       )}
 
-      {/* Test Containers secondary navigation bar - only render after settings loaded to avoid hydration mismatch */}
-      {isOnTestcontainersPage && settings && (
+      {/* Containers secondary navigation bar - only render after settings loaded to avoid hydration mismatch */}
+      {isOnContainersPage && settings && (
         <div className="border-t bg-muted/30">
           <div className="container flex h-10 max-w-screen-2xl items-center">
             <nav className="flex items-center space-x-1 text-sm">
-              {testcontainersItems
+              {getOrderedSubFeatures(
+                containersItems,
+                settings.subFeatureOrder["containers"],
+              )
                 .filter((item) =>
                   isSubFeatureVisible(
-                    "testcontainers",
+                    "containers",
                     item.subFeatureId,
                     settings || undefined,
                   ),

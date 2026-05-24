@@ -27,7 +27,14 @@ import type { AuthUser } from "@/lib/auth-types";
  */
 function createMockHeaders(headers: Record<string, string>): Headers {
   return {
-    get: (name: string) => headers[name.toLowerCase()] || null,
+    // Mirror the real Web Headers API: return the raw value (including "")
+    // when the key is present, and null only when it is genuinely absent.
+    get: (name: string) => {
+      const key = name.toLowerCase();
+      return Object.prototype.hasOwnProperty.call(headers, key)
+        ? headers[key]
+        : null;
+    },
   } as Headers;
 }
 
@@ -40,10 +47,12 @@ describe("auth module", () => {
     delete process.env.DAAX_AUTH_EMAIL_HEADER;
     delete process.env.DAAX_AUTH_GROUPS_HEADER;
     delete process.env.DAAX_AUTH_PROVIDER_URL;
+    delete process.env.DAAX_REQUIRE_AUTH;
   });
 
   afterEach(() => {
     vi.resetModules();
+    delete process.env.DAAX_REQUIRE_AUTH;
   });
 
   describe("getAuthUser", () => {
@@ -112,6 +121,35 @@ describe("auth module", () => {
         authenticated: false,
         pictureUrl: null,
       });
+    });
+
+    it("should treat a whitespace-only user header as unauthenticated", async () => {
+      // A present-but-whitespace X-Forwarded-User is a malformed credential,
+      // not a valid identity: the value is trimmed and yields no user.
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "   ",
+        })
+      );
+
+      const user = await getAuthUser();
+
+      expect(user.authenticated).toBe(false);
+      expect(user.username).toBeNull();
+      expect(user.pictureUrl).toBeNull();
+    });
+
+    it("should treat an empty-string user header as unauthenticated", async () => {
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "",
+        })
+      );
+
+      const user = await getAuthUser();
+
+      expect(user.authenticated).toBe(false);
+      expect(user.username).toBeNull();
     });
 
     describe("groups parsing", () => {
@@ -241,7 +279,8 @@ describe("auth module", () => {
       }
     });
 
-    it("should return 401 response when not authenticated", async () => {
+    it("should return 401 response when not authenticated and DAAX_REQUIRE_AUTH=1", async () => {
+      process.env.DAAX_REQUIRE_AUTH = "1";
       mockHeaders.mockResolvedValue(createMockHeaders({}));
 
       const result = await requireAuth();
@@ -257,12 +296,65 @@ describe("auth module", () => {
       }
     });
 
-    it("should return 401 when user header is missing but other headers present", async () => {
+    it("should return 401 when user header missing (other headers present) and DAAX_REQUIRE_AUTH=1", async () => {
+      process.env.DAAX_REQUIRE_AUTH = "1";
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-email": "test@example.com",
           "x-forwarded-name": "Test User",
         }),
+      );
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(false);
+      if (!result.authenticated) {
+        expect(result.response.status).toBe(401);
+      }
+    });
+
+    it("should bypass to a local operator when no header and DAAX_REQUIRE_AUTH unset", async () => {
+      mockHeaders.mockResolvedValue(createMockHeaders({}));
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(true);
+      if (result.authenticated) {
+        expect(result.user.username).toBe("local");
+        expect(result.user.groups).toEqual([]);
+      }
+      // Single-lookup refactor: the unauthenticated bypass path must read
+      // headers() exactly once (no second lookup for the absent-header check).
+      expect(mockHeaders).toHaveBeenCalledTimes(1);
+    });
+
+    it("should return 401 when user header is present but empty and DAAX_REQUIRE_AUTH unset", async () => {
+      // Present-but-empty header is a malformed credential, NOT 'no proxy'.
+      // It must NOT bypass to the local operator even with strict auth off.
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "",
+        })
+      );
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(false);
+      if (!result.authenticated) {
+        expect(result.response.status).toBe(401);
+        expect(result.response.body).toEqual({
+          error: "Authentication required",
+          message: "You must be logged in to access this resource",
+        });
+      }
+    });
+
+    it("should return 401 when user header is whitespace-only and DAAX_REQUIRE_AUTH unset", async () => {
+      // Whitespace-only header is a malformed credential, NOT 'no proxy'.
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "   ",
+        })
       );
 
       const result = await requireAuth();
@@ -289,7 +381,8 @@ describe("auth module", () => {
       expect(user.authenticated).toBe(true);
     });
 
-    it("should throw error when not authenticated", async () => {
+    it("should throw error when not authenticated and DAAX_REQUIRE_AUTH=1", async () => {
+      process.env.DAAX_REQUIRE_AUTH = "1";
       mockHeaders.mockResolvedValue(createMockHeaders({}));
 
       await expect(requireAuthOrThrow()).rejects.toThrow(
@@ -297,7 +390,8 @@ describe("auth module", () => {
       );
     });
 
-    it("should throw error when user header is empty string", async () => {
+    it("should throw error when user header empty and DAAX_REQUIRE_AUTH=1", async () => {
+      process.env.DAAX_REQUIRE_AUTH = "1";
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-user": "",
@@ -306,6 +400,41 @@ describe("auth module", () => {
 
       await expect(requireAuthOrThrow()).rejects.toThrow(
         "Authentication required",
+      );
+    });
+
+    it("should return local operator when not authenticated and DAAX_REQUIRE_AUTH unset", async () => {
+      mockHeaders.mockResolvedValue(createMockHeaders({}));
+
+      const user = await requireAuthOrThrow();
+
+      expect(user.authenticated).toBe(true);
+      expect(user.username).toBe("local");
+    });
+
+    it("should throw when user header is present but empty and DAAX_REQUIRE_AUTH unset", async () => {
+      // Present-but-empty header is malformed; it must not bypass to local operator.
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "",
+        })
+      );
+
+      await expect(requireAuthOrThrow()).rejects.toThrow(
+        "Authentication required"
+      );
+    });
+
+    it("should throw when user header is whitespace-only and DAAX_REQUIRE_AUTH unset", async () => {
+      // Whitespace-only header is malformed; it must not bypass to local operator.
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "   ",
+        })
+      );
+
+      await expect(requireAuthOrThrow()).rejects.toThrow(
+        "Authentication required"
       );
     });
   });
