@@ -145,6 +145,13 @@ port_owner_daemon() {
   list_docker_proxies | awk -v p="$1" '$3==p {print $1; exit}'
 }
 
+# True if ANY process is listening on the given TCP port (not just
+# docker-proxy). Uses `ss`; PID/program columns need root but the LISTEN
+# state is visible regardless, which is all this check needs.
+port_has_listener() {
+  ss -ltn "sport = :$1" 2>/dev/null | awk 'NR>1 {found=1} END {exit found?0:1}'
+}
+
 snap_docker_active() { systemctl is-active --quiet "$SNAP_DOCKERD_UNIT" 2>/dev/null; }
 
 snap_dockerd_pid() {
@@ -282,13 +289,20 @@ cmd_deploy() {
   validate_hostname
   need_docker_access
   reach_native_docker
+  require_cmd ss
 
   # Refuse if snap is hoarding ports — user must migrate-daax first.
+  # Otherwise fail fast if a non-docker-proxy process (Traefik, a stray
+  # node, etc.) is already listening — `compose up` would fail later with a
+  # far worse error than this.
   for p in 4200 4201; do
     local owner
     owner="$(port_owner_daemon "$p")"
     if [[ "$owner" == snap ]]; then
       die "port $p is held by the SNAP docker daemon. Run once: $0 migrate-daax"
+    fi
+    if [[ -z "$owner" ]] && port_has_listener "$p"; then
+      die "port $p is already in use by a non-docker process. Identify it: ss -ltnp 'sport = :$p'"
     fi
   done
 
