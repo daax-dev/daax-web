@@ -21,7 +21,9 @@ export function useAuthUser(): UseAuthUserResult {
       fetchPromise = fetch("/api/auth/user")
         .then((res) => {
           if (!res.ok) {
-            throw new Error(`Failed to fetch auth user: ${res.status} ${res.statusText}`);
+            throw new Error(
+              `Failed to fetch auth user: ${res.status} ${res.statusText}`,
+            );
           }
           return res.json();
         })

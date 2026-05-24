@@ -4,9 +4,9 @@
  * Displays a single container with status, ports, and quick actions.
  */
 
-'use client';
+"use client";
 
-import { useState } from 'react';
+import { useState } from "react";
 import {
   Play,
   Square,
@@ -17,9 +17,9 @@ import {
   ChevronUp,
   Copy,
   Clock,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+} from "lucide-react";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,11 +30,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
-import type { TestContainer, ContainerAction } from '../types';
-import { StatusBadge } from './StatusBadge';
+} from "@/components/ui/alert-dialog";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import type { TestContainer, ContainerAction } from "../types";
+import { StatusBadge } from "./StatusBadge";
 
 interface ContainerCardProps {
   container: TestContainer;
@@ -58,7 +58,7 @@ function formatAge(createdAt: string): string {
 
 function copyToClipboard(text: string) {
   navigator.clipboard.writeText(text);
-  toast.success('Copied to clipboard');
+  toast.success("Copied to clipboard");
 }
 
 interface ConnectionInfo {
@@ -70,124 +70,125 @@ interface ConnectionInfo {
 function getConnectionInfo(container: TestContainer): ConnectionInfo | null {
   const image = container.image.toLowerCase();
   const hostPort = container.ports[0]?.hostPort;
-  
+
   if (!hostPort) return null;
 
   // PostgreSQL
-  if (image.includes('postgres')) {
+  if (image.includes("postgres")) {
     return {
-      type: 'PostgreSQL',
+      type: "PostgreSQL",
       connectionString: `postgresql://test:[REDACTED]@localhost:${hostPort}/testdb`,
       credentials: [
-        { label: 'Host', value: `localhost:${hostPort}` },
-        { label: 'Database', value: 'testdb' },
-        { label: 'User', value: 'test' },
-        { label: 'Password', value: '[REDACTED]', sensitive: true },
+        { label: "Host", value: `localhost:${hostPort}` },
+        { label: "Database", value: "testdb" },
+        { label: "User", value: "test" },
+        { label: "Password", value: "[REDACTED]", sensitive: true },
       ],
     };
   }
 
   // MySQL
-  if (image.includes('mysql')) {
+  if (image.includes("mysql")) {
     return {
-      type: 'MySQL',
+      type: "MySQL",
       connectionString: `mysql://test:[REDACTED]@localhost:${hostPort}/testdb`,
       credentials: [
-        { label: 'Host', value: `localhost:${hostPort}` },
-        { label: 'Database', value: 'testdb' },
-        { label: 'User', value: 'test' },
-        { label: 'Password', value: '[REDACTED]', sensitive: true },
-        { label: 'Root Password', value: '[REDACTED]', sensitive: true },
+        { label: "Host", value: `localhost:${hostPort}` },
+        { label: "Database", value: "testdb" },
+        { label: "User", value: "test" },
+        { label: "Password", value: "[REDACTED]", sensitive: true },
+        { label: "Root Password", value: "[REDACTED]", sensitive: true },
       ],
     };
   }
 
   // MariaDB
-  if (image.includes('mariadb')) {
+  if (image.includes("mariadb")) {
     return {
-      type: 'MariaDB',
+      type: "MariaDB",
       connectionString: `mysql://test:[REDACTED]@localhost:${hostPort}/testdb`,
       credentials: [
-        { label: 'Host', value: `localhost:${hostPort}` },
-        { label: 'Database', value: 'testdb' },
-        { label: 'User', value: 'test' },
-        { label: 'Password', value: '[REDACTED]', sensitive: true },
-        { label: 'Root Password', value: '[REDACTED]', sensitive: true },
+        { label: "Host", value: `localhost:${hostPort}` },
+        { label: "Database", value: "testdb" },
+        { label: "User", value: "test" },
+        { label: "Password", value: "[REDACTED]", sensitive: true },
+        { label: "Root Password", value: "[REDACTED]", sensitive: true },
       ],
     };
   }
 
   // MongoDB
-  if (image.includes('mongo')) {
+  if (image.includes("mongo")) {
     return {
-      type: 'MongoDB',
+      type: "MongoDB",
       connectionString: `mongodb://test:[REDACTED]@localhost:${hostPort}`,
       credentials: [
-        { label: 'Host', value: `localhost:${hostPort}` },
-        { label: 'User', value: 'test' },
-        { label: 'Password', value: '[REDACTED]', sensitive: true },
+        { label: "Host", value: `localhost:${hostPort}` },
+        { label: "User", value: "test" },
+        { label: "Password", value: "[REDACTED]", sensitive: true },
       ],
     };
   }
 
   // Redis
-  if (image.includes('redis')) {
+  if (image.includes("redis")) {
     return {
-      type: 'Redis',
+      type: "Redis",
       connectionString: `redis://localhost:${hostPort}`,
-      credentials: [
-        { label: 'Host', value: `localhost:${hostPort}` },
-      ],
+      credentials: [{ label: "Host", value: `localhost:${hostPort}` }],
     };
   }
 
   // RabbitMQ
-  if (image.includes('rabbitmq')) {
-    const mgmtPort = container.ports.find(p => p.containerPort === 15672)?.hostPort;
+  if (image.includes("rabbitmq")) {
+    const mgmtPort = container.ports.find(
+      (p) => p.containerPort === 15672,
+    )?.hostPort;
     return {
-      type: 'RabbitMQ',
+      type: "RabbitMQ",
       connectionString: `amqp://test:[REDACTED]@localhost:${hostPort}`,
       credentials: [
-        { label: 'AMQP Host', value: `localhost:${hostPort}` },
-        { label: 'Management UI', value: mgmtPort ? `http://localhost:${mgmtPort}` : 'N/A' },
-        { label: 'User', value: 'test' },
-        { label: 'Password', value: '[REDACTED]', sensitive: true },
+        { label: "AMQP Host", value: `localhost:${hostPort}` },
+        {
+          label: "Management UI",
+          value: mgmtPort ? `http://localhost:${mgmtPort}` : "N/A",
+        },
+        { label: "User", value: "test" },
+        { label: "Password", value: "[REDACTED]", sensitive: true },
       ],
     };
   }
 
   // Elasticsearch
-  if (image.includes('elasticsearch')) {
+  if (image.includes("elasticsearch")) {
     return {
-      type: 'Elasticsearch',
+      type: "Elasticsearch",
       connectionString: `http://localhost:${hostPort}`,
-      credentials: [
-        { label: 'URL', value: `http://localhost:${hostPort}` },
-      ],
+      credentials: [{ label: "URL", value: `http://localhost:${hostPort}` }],
     };
   }
 
   // Keycloak
-  if (image.includes('keycloak')) {
+  if (image.includes("keycloak")) {
     return {
-      type: 'Keycloak',
+      type: "Keycloak",
       connectionString: `http://localhost:${hostPort}`,
       credentials: [
-        { label: 'URL', value: `http://localhost:${hostPort}` },
-        { label: 'Admin User', value: 'admin' },
-        { label: 'Admin Password', value: '[REDACTED]', sensitive: true },
+        { label: "URL", value: `http://localhost:${hostPort}` },
+        { label: "Admin User", value: "admin" },
+        { label: "Admin Password", value: "[REDACTED]", sensitive: true },
       ],
     };
   }
 
   // LocalStack
-  if (image.includes('localstack')) {
+  if (image.includes("localstack")) {
     return {
-      type: 'LocalStack',
+      type: "LocalStack",
       connectionString: `http://localhost:${hostPort}`,
       credentials: [
-        { label: 'Endpoint', value: `http://localhost:${hostPort}` },
-        { label: 'AWS_ENDPOINT_URL', value: `http://localhost:${hostPort}` },
+        { label: "Endpoint", value: `http://localhost:${hostPort}` },
+        { label: "AWS_ENDPOINT_URL", value: `http://localhost:${hostPort}` },
       ],
     };
   }
@@ -195,7 +196,11 @@ function getConnectionInfo(container: TestContainer): ConnectionInfo | null {
   return null;
 }
 
-export function ContainerCard({ container, onAction, expanded: initialExpanded = false }: ContainerCardProps) {
+export function ContainerCard({
+  container,
+  onAction,
+  expanded: initialExpanded = false,
+}: ContainerCardProps) {
   const [expanded, setExpanded] = useState(initialExpanded);
   const [loading, setLoading] = useState<ContainerAction | null>(null);
 
@@ -208,8 +213,9 @@ export function ContainerCard({ container, onAction, expanded: initialExpanded =
     }
   };
 
-  const isRunning = container.status === 'running';
-  const isStopped = container.status === 'exited' || container.status === 'dead';
+  const isRunning = container.status === "running";
+  const isStopped =
+    container.status === "exited" || container.status === "dead";
 
   return (
     <Card className="hover:border-primary/50 transition-colors">
@@ -222,7 +228,10 @@ export function ContainerCard({ container, onAction, expanded: initialExpanded =
               </h3>
               <StatusBadge status={container.status} />
             </div>
-            <p className="text-sm text-muted-foreground truncate mt-1" title={container.image}>
+            <p
+              className="text-sm text-muted-foreground truncate mt-1"
+              title={container.image}
+            >
               {container.image}
             </p>
           </div>
@@ -234,11 +243,11 @@ export function ContainerCard({ container, onAction, expanded: initialExpanded =
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
-                onClick={() => handleAction('stop')}
+                onClick={() => handleAction("stop")}
                 disabled={loading !== null}
                 title="Stop container"
               >
-                {loading === 'stop' ? (
+                {loading === "stop" ? (
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                 ) : (
                   <Square className="h-4 w-4" />
@@ -249,11 +258,11 @@ export function ContainerCard({ container, onAction, expanded: initialExpanded =
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
-                onClick={() => handleAction('start')}
+                onClick={() => handleAction("start")}
                 disabled={loading !== null}
                 title="Start container"
               >
-                {loading === 'start' ? (
+                {loading === "start" ? (
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                 ) : (
                   <Play className="h-4 w-4" />
@@ -267,11 +276,11 @@ export function ContainerCard({ container, onAction, expanded: initialExpanded =
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
-                onClick={() => handleAction('restart')}
+                onClick={() => handleAction("restart")}
                 disabled={loading !== null}
                 title="Restart container"
               >
-                {loading === 'restart' ? (
+                {loading === "restart" ? (
                   <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
                 ) : (
                   <RotateCcw className="h-4 w-4" />
@@ -284,7 +293,7 @@ export function ContainerCard({ container, onAction, expanded: initialExpanded =
               variant="ghost"
               size="icon"
               className="h-8 w-8"
-              onClick={() => handleAction('logs')}
+              onClick={() => handleAction("logs")}
               disabled={loading !== null}
               title="View logs"
             >
@@ -308,18 +317,19 @@ export function ContainerCard({ container, onAction, expanded: initialExpanded =
                 <AlertDialogHeader>
                   <AlertDialogTitle>Remove Container</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Are you sure you want to remove <strong>{container.name}</strong>?
-                    {isRunning && ' The container will be stopped first.'}
+                    Are you sure you want to remove{" "}
+                    <strong>{container.name}</strong>?
+                    {isRunning && " The container will be stopped first."}
                     This action cannot be undone.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                   <AlertDialogAction
-                    onClick={() => handleAction('remove')}
+                    onClick={() => handleAction("remove")}
                     className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                   >
-                    {loading === 'remove' ? 'Removing...' : 'Remove'}
+                    {loading === "remove" ? "Removing..." : "Remove"}
                   </AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
@@ -331,7 +341,7 @@ export function ContainerCard({ container, onAction, expanded: initialExpanded =
               size="icon"
               className="h-8 w-8"
               onClick={() => setExpanded(!expanded)}
-              title={expanded ? 'Collapse' : 'Expand'}
+              title={expanded ? "Collapse" : "Expand"}
             >
               {expanded ? (
                 <ChevronUp className="h-4 w-4" />
@@ -350,14 +360,20 @@ export function ContainerCard({ container, onAction, expanded: initialExpanded =
             {container.ports.map((port, idx) => (
               <button
                 key={idx}
-                onClick={() => copyToClipboard(`localhost:${port.hostPort || port.containerPort}`)}
+                onClick={() =>
+                  copyToClipboard(
+                    `localhost:${port.hostPort || port.containerPort}`,
+                  )
+                }
                 className={cn(
-                  'inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs',
-                  'bg-muted hover:bg-muted/80 transition-colors cursor-pointer'
+                  "inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs",
+                  "bg-muted hover:bg-muted/80 transition-colors cursor-pointer",
                 )}
                 title="Click to copy"
               >
-                <span className="text-muted-foreground">{port.containerPort}</span>
+                <span className="text-muted-foreground">
+                  {port.containerPort}
+                </span>
                 {port.hostPort && (
                   <>
                     <span className="text-muted-foreground">→</span>
@@ -391,17 +407,23 @@ export function ContainerCard({ container, onAction, expanded: initialExpanded =
               if (!connInfo) return null;
               return (
                 <div className="bg-muted/50 rounded-lg p-3 space-y-2">
-                  <p className="text-xs font-medium text-primary">{connInfo.type} Connection</p>
-                  
+                  <p className="text-xs font-medium text-primary">
+                    {connInfo.type} Connection
+                  </p>
+
                   {/* Connection String */}
                   <div>
-                    <p className="text-xs text-muted-foreground mb-1">Connection String</p>
+                    <p className="text-xs text-muted-foreground mb-1">
+                      Connection String
+                    </p>
                     <button
                       onClick={() => copyToClipboard(connInfo.connectionString)}
                       className="w-full text-left text-xs font-mono bg-background px-2 py-1.5 rounded border hover:border-primary/50 transition-colors flex items-center gap-2"
                       title="Click to copy"
                     >
-                      <span className="truncate flex-1">{connInfo.connectionString}</span>
+                      <span className="truncate flex-1">
+                        {connInfo.connectionString}
+                      </span>
                       <Copy className="h-3 w-3 text-muted-foreground shrink-0" />
                     </button>
                   </div>
@@ -415,8 +437,12 @@ export function ContainerCard({ container, onAction, expanded: initialExpanded =
                         className="text-left text-xs hover:bg-background/50 px-1 py-0.5 rounded transition-colors flex items-center justify-between gap-1"
                         title="Click to copy"
                       >
-                        <span className="text-muted-foreground">{cred.label}:</span>
-                        <span className="font-mono font-medium truncate">{cred.value}</span>
+                        <span className="text-muted-foreground">
+                          {cred.label}:
+                        </span>
+                        <span className="font-mono font-medium truncate">
+                          {cred.value}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -426,7 +452,9 @@ export function ContainerCard({ container, onAction, expanded: initialExpanded =
 
             {/* Container ID */}
             <div>
-              <p className="text-xs font-medium text-muted-foreground mb-1">Container ID</p>
+              <p className="text-xs font-medium text-muted-foreground mb-1">
+                Container ID
+              </p>
               <button
                 onClick={() => copyToClipboard(container.containerId)}
                 className="text-xs font-mono bg-muted px-2 py-1 rounded hover:bg-muted/80 transition-colors"
@@ -439,10 +467,15 @@ export function ContainerCard({ container, onAction, expanded: initialExpanded =
             {/* Networks */}
             {container.networks.length > 0 && (
               <div>
-                <p className="text-xs font-medium text-muted-foreground mb-1">Networks</p>
+                <p className="text-xs font-medium text-muted-foreground mb-1">
+                  Networks
+                </p>
                 <div className="flex flex-wrap gap-1">
                   {container.networks.map((net) => (
-                    <span key={net} className="text-xs bg-muted px-2 py-0.5 rounded">
+                    <span
+                      key={net}
+                      className="text-xs bg-muted px-2 py-0.5 rounded"
+                    >
                       {net}
                     </span>
                   ))}
@@ -453,11 +486,17 @@ export function ContainerCard({ container, onAction, expanded: initialExpanded =
             {/* Mounts */}
             {container.mounts.length > 0 && (
               <div>
-                <p className="text-xs font-medium text-muted-foreground mb-1">Volumes</p>
+                <p className="text-xs font-medium text-muted-foreground mb-1">
+                  Volumes
+                </p>
                 <div className="space-y-1">
                   {container.mounts.map((mount, idx) => (
-                    <p key={idx} className="text-xs font-mono truncate" title={`${mount.source} → ${mount.target}`}>
-                      {mount.target} {mount.readOnly && '(ro)'}
+                    <p
+                      key={idx}
+                      className="text-xs font-mono truncate"
+                      title={`${mount.source} → ${mount.target}`}
+                    >
+                      {mount.target} {mount.readOnly && "(ro)"}
                     </p>
                   ))}
                 </div>
@@ -467,14 +506,23 @@ export function ContainerCard({ container, onAction, expanded: initialExpanded =
             {/* Health */}
             {container.health && (
               <div>
-                <p className="text-xs font-medium text-muted-foreground mb-1">Health</p>
-                <span className={cn(
-                  'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium',
-                  container.health.status === 'healthy' && 'bg-green-500/20 text-green-600',
-                  container.health.status === 'unhealthy' && 'bg-red-500/20 text-red-600',
-                  container.health.status === 'starting' && 'bg-yellow-500/20 text-yellow-600',
-                  !['healthy', 'unhealthy', 'starting'].includes(container.health.status) && 'bg-gray-500/20 text-gray-600'
-                )}>
+                <p className="text-xs font-medium text-muted-foreground mb-1">
+                  Health
+                </p>
+                <span
+                  className={cn(
+                    "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium",
+                    container.health.status === "healthy" &&
+                      "bg-green-500/20 text-green-600",
+                    container.health.status === "unhealthy" &&
+                      "bg-red-500/20 text-red-600",
+                    container.health.status === "starting" &&
+                      "bg-yellow-500/20 text-yellow-600",
+                    !["healthy", "unhealthy", "starting"].includes(
+                      container.health.status,
+                    ) && "bg-gray-500/20 text-gray-600",
+                  )}
+                >
                   {container.health.status}
                 </span>
               </div>

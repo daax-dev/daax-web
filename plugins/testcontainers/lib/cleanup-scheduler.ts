@@ -4,9 +4,9 @@
  * Automated cleanup of old containers, stopped containers, and orphaned resources.
  */
 
-import { getDockerClient } from './docker-client';
-import { CLEANUP_DEFAULTS } from '../constants';
-import type { TestContainer } from '../types';
+import { getDockerClient } from "./docker-client";
+import { CLEANUP_DEFAULTS } from "../constants";
+import type { TestContainer } from "../types";
 
 /**
  * Cleanup policy configuration
@@ -71,11 +71,13 @@ export class CleanupScheduler {
    */
   start(intervalMs = CLEANUP_DEFAULTS.intervalMs, runOnStart = false): void {
     if (this.intervalId) {
-      console.log('[CleanupScheduler] Already running');
+      console.log("[CleanupScheduler] Already running");
       return;
     }
 
-    console.log(`[CleanupScheduler] Starting with interval: ${intervalMs}ms, runOnStart: ${runOnStart}`);
+    console.log(
+      `[CleanupScheduler] Starting with interval: ${intervalMs}ms, runOnStart: ${runOnStart}`,
+    );
     this.intervalId = setInterval(() => this.runCleanup(), intervalMs);
 
     // Only run immediately if explicitly requested
@@ -91,7 +93,7 @@ export class CleanupScheduler {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
-      console.log('[CleanupScheduler] Stopped');
+      console.log("[CleanupScheduler] Stopped");
     }
   }
 
@@ -114,16 +116,18 @@ export class CleanupScheduler {
    */
   async runCleanup(): Promise<CleanupResult> {
     if (this.running) {
-      console.log('[CleanupScheduler] Cleanup already in progress');
-      return this.lastResult || {
-        containersRemoved: [],
-        networksRemoved: [],
-        volumesRemoved: [],
-        errors: ['Cleanup already in progress'],
-        startedAt: new Date().toISOString(),
-        completedAt: new Date().toISOString(),
-        durationMs: 0,
-      };
+      console.log("[CleanupScheduler] Cleanup already in progress");
+      return (
+        this.lastResult || {
+          containersRemoved: [],
+          networksRemoved: [],
+          volumesRemoved: [],
+          errors: ["Cleanup already in progress"],
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          durationMs: 0,
+        }
+      );
     }
 
     this.running = true;
@@ -134,7 +138,7 @@ export class CleanupScheduler {
       volumesRemoved: [],
       errors: [],
       startedAt: new Date().toISOString(),
-      completedAt: '',
+      completedAt: "",
       durationMs: 0,
     };
 
@@ -162,7 +166,7 @@ export class CleanupScheduler {
         const age = now - createdAt;
 
         let shouldRemove = false;
-        let reason = '';
+        let reason = "";
 
         // Check max age
         if (age > this.config.maxAgeMs) {
@@ -171,7 +175,10 @@ export class CleanupScheduler {
         }
 
         // Check stopped containers
-        if (!shouldRemove && (container.status === 'exited' || container.status === 'dead')) {
+        if (
+          !shouldRemove &&
+          (container.status === "exited" || container.status === "dead")
+        ) {
           // Use finishedAt if available, otherwise fall back to createdAt
           const stoppedTime = container.finishedAt
             ? new Date(container.finishedAt).getTime()
@@ -187,7 +194,9 @@ export class CleanupScheduler {
           try {
             await client.removeContainer(container.id, true);
             result.containersRemoved.push(`${container.name} (${reason})`);
-            console.log(`[CleanupScheduler] Removed container: ${container.name} - ${reason}`);
+            console.log(
+              `[CleanupScheduler] Removed container: ${container.name} - ${reason}`,
+            );
           } catch (err) {
             const error = `Failed to remove ${container.name}: ${err}`;
             result.errors.push(error);
@@ -200,10 +209,9 @@ export class CleanupScheduler {
       if (this.config.cleanupNetworks) {
         await this.cleanupOrphanedNetworks(result);
       }
-
     } catch (err) {
       result.errors.push(err instanceof Error ? err.message : String(err));
-      console.error('[CleanupScheduler] Cleanup error:', err);
+      console.error("[CleanupScheduler] Cleanup error:", err);
     } finally {
       this.running = false;
       result.completedAt = new Date().toISOString();
@@ -211,11 +219,14 @@ export class CleanupScheduler {
       this.lastResult = result;
     }
 
-    console.log(`[CleanupScheduler] Cleanup completed in ${result.durationMs}ms:`, {
-      containersRemoved: result.containersRemoved.length,
-      networksRemoved: result.networksRemoved.length,
-      errors: result.errors.length,
-    });
+    console.log(
+      `[CleanupScheduler] Cleanup completed in ${result.durationMs}ms:`,
+      {
+        containersRemoved: result.containersRemoved.length,
+        networksRemoved: result.networksRemoved.length,
+        errors: result.errors.length,
+      },
+    );
 
     return result;
   }
@@ -259,7 +270,9 @@ export function getCleanupScheduler(): CleanupScheduler {
 /**
  * Initialize and start the cleanup scheduler (call on app startup)
  */
-export function initCleanupScheduler(config?: Partial<CleanupConfig>): CleanupScheduler {
+export function initCleanupScheduler(
+  config?: Partial<CleanupConfig>,
+): CleanupScheduler {
   if (cleanupSchedulerInstance) {
     cleanupSchedulerInstance.stop();
   }

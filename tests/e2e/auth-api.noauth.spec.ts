@@ -51,7 +51,7 @@ test.describe("Unauthenticated API - should be blocked by ForwardAuth", () => {
       const status = response.status();
       expect(
         status === 401 || status === 302 || status === 307,
-        `Expected 401/302/307 for ${method} ${path}, got ${status}`
+        `Expected 401/302/307 for ${method} ${path}, got ${status}`,
       ).toBe(true);
 
       // Verify no data leakage on 401

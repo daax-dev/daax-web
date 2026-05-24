@@ -16,7 +16,9 @@ test.describe("API Endpoints", () => {
     expect(Array.isArray(data.recordings)).toBe(true);
   });
 
-  test("GET /api/testcontainers returns container list", async ({ request }) => {
+  test("GET /api/testcontainers returns container list", async ({
+    request,
+  }) => {
     const response = await request.get("/api/testcontainers");
     expect(response.ok()).toBe(true);
 
@@ -39,7 +41,9 @@ test.describe("API Endpoints", () => {
     expect(response.status()).toBeLessThan(500);
   });
 
-  test("GET /api/backlog/status returns backlog status", async ({ request }) => {
+  test("GET /api/backlog/status returns backlog status", async ({
+    request,
+  }) => {
     const response = await request.get("/api/backlog/status");
     expect(response.ok()).toBe(true);
 

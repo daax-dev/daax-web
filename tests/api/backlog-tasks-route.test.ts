@@ -8,7 +8,14 @@ import type { NextRequest } from "next/server";
 import type { Task, BacklogProject } from "@/types/backlog";
 
 // Hoist mock functions so they're available in vi.mock factory
-const { mockGetProject, mockCreateTask, mockUpdateTask, mockDeleteTask, mockStore, mockRequireAuth } = vi.hoisted(() => {
+const {
+  mockGetProject,
+  mockCreateTask,
+  mockUpdateTask,
+  mockDeleteTask,
+  mockStore,
+  mockRequireAuth,
+} = vi.hoisted(() => {
   const _mockGetProject = vi.fn();
   const _mockCreateTask = vi.fn();
   const _mockUpdateTask = vi.fn();
@@ -120,7 +127,9 @@ describe("GET /api/backlog/tasks", () => {
   });
 
   it("returns all tasks for a project", async () => {
-    const request = createTestRequest("http://localhost/api/backlog/tasks?project=/workspace/test-project");
+    const request = createTestRequest(
+      "http://localhost/api/backlog/tasks?project=/workspace/test-project",
+    );
 
     const response = await GET(request);
     const data = await response.json();
@@ -144,7 +153,9 @@ describe("GET /api/backlog/tasks", () => {
   it("returns 404 when project not found", async () => {
     mockGetProject.mockReturnValue(null);
 
-    const request = createTestRequest("http://localhost/api/backlog/tasks?project=/workspace/unknown");
+    const request = createTestRequest(
+      "http://localhost/api/backlog/tasks?project=/workspace/unknown",
+    );
 
     const response = await GET(request);
     const data = await response.json();
@@ -155,7 +166,9 @@ describe("GET /api/backlog/tasks", () => {
 
   describe("filtering", () => {
     it("filters tasks by status", async () => {
-      const request = createTestRequest("http://localhost/api/backlog/tasks?project=/workspace/test-project&status=Open");
+      const request = createTestRequest(
+        "http://localhost/api/backlog/tasks?project=/workspace/test-project&status=Open",
+      );
 
       const response = await GET(request);
       const data = await response.json();
@@ -167,7 +180,9 @@ describe("GET /api/backlog/tasks", () => {
     });
 
     it("filters tasks by priority", async () => {
-      const request = createTestRequest("http://localhost/api/backlog/tasks?project=/workspace/test-project&priority=high");
+      const request = createTestRequest(
+        "http://localhost/api/backlog/tasks?project=/workspace/test-project&priority=high",
+      );
 
       const response = await GET(request);
       const data = await response.json();
@@ -178,18 +193,24 @@ describe("GET /api/backlog/tasks", () => {
     });
 
     it("filters tasks by assignee", async () => {
-      const request = createTestRequest("http://localhost/api/backlog/tasks?project=/workspace/test-project&assignee=@jpoley");
+      const request = createTestRequest(
+        "http://localhost/api/backlog/tasks?project=/workspace/test-project&assignee=@jpoley",
+      );
 
       const response = await GET(request);
       const data = await response.json();
 
       expect(response.status).toBe(200);
       expect(data.tasks).toHaveLength(2);
-      expect(data.tasks.every((t: Task) => t.assignee?.includes("@jpoley"))).toBe(true);
+      expect(
+        data.tasks.every((t: Task) => t.assignee?.includes("@jpoley")),
+      ).toBe(true);
     });
 
     it("combines multiple filters", async () => {
-      const request = createTestRequest("http://localhost/api/backlog/tasks?project=/workspace/test-project&status=Open&priority=high");
+      const request = createTestRequest(
+        "http://localhost/api/backlog/tasks?project=/workspace/test-project&status=Open&priority=high",
+      );
 
       const response = await GET(request);
       const data = await response.json();
@@ -201,7 +222,9 @@ describe("GET /api/backlog/tasks", () => {
     });
 
     it("returns empty array when no tasks match filter", async () => {
-      const request = createTestRequest("http://localhost/api/backlog/tasks?project=/workspace/test-project&status=Cancelled");
+      const request = createTestRequest(
+        "http://localhost/api/backlog/tasks?project=/workspace/test-project&status=Cancelled",
+      );
 
       const response = await GET(request);
       const data = await response.json();
@@ -218,7 +241,9 @@ describe("POST /api/backlog/tasks", () => {
     vi.clearAllMocks();
     setupAuthenticatedUser();
     mockGetProject.mockReturnValue(mockProject);
-    mockCreateTask.mockImplementation(async (_path: string, task: Task) => task);
+    mockCreateTask.mockImplementation(
+      async (_path: string, task: Task) => task,
+    );
   });
 
   it("creates a new task", async () => {
@@ -333,22 +358,29 @@ describe("PATCH /api/backlog/tasks/[id]", () => {
     vi.clearAllMocks();
     setupAuthenticatedUser();
     mockGetProject.mockReturnValue(mockProject);
-    mockUpdateTask.mockImplementation(async (_path: string, _id: string, updates: Partial<Task>) => ({
-      ...mockProject.tasks[0],
-      ...updates,
-    }));
+    mockUpdateTask.mockImplementation(
+      async (_path: string, _id: string, updates: Partial<Task>) => ({
+        ...mockProject.tasks[0],
+        ...updates,
+      }),
+    );
   });
 
   it("updates a task", async () => {
-    const request = createTestRequest("http://localhost/api/backlog/tasks/task-001", {
-      method: "PATCH",
-      body: JSON.stringify({
-        project: "/workspace/test-project",
-        updates: { status: "Done", priority: "low" },
-      }),
-    });
+    const request = createTestRequest(
+      "http://localhost/api/backlog/tasks/task-001",
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          project: "/workspace/test-project",
+          updates: { status: "Done", priority: "low" },
+        }),
+      },
+    );
 
-    const response = await PATCH(request, { params: Promise.resolve({ id: "task-001" }) });
+    const response = await PATCH(request, {
+      params: Promise.resolve({ id: "task-001" }),
+    });
     const data = await response.json();
 
     expect(response.status).toBe(200);
@@ -357,14 +389,19 @@ describe("PATCH /api/backlog/tasks/[id]", () => {
   });
 
   it("returns 400 when project is missing", async () => {
-    const request = createTestRequest("http://localhost/api/backlog/tasks/task-001", {
-      method: "PATCH",
-      body: JSON.stringify({
-        updates: { status: "Done" },
-      }),
-    });
+    const request = createTestRequest(
+      "http://localhost/api/backlog/tasks/task-001",
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          updates: { status: "Done" },
+        }),
+      },
+    );
 
-    const response = await PATCH(request, { params: Promise.resolve({ id: "task-001" }) });
+    const response = await PATCH(request, {
+      params: Promise.resolve({ id: "task-001" }),
+    });
     const data = await response.json();
 
     expect(response.status).toBe(400);
@@ -372,15 +409,20 @@ describe("PATCH /api/backlog/tasks/[id]", () => {
   });
 
   it("returns 400 when updates is invalid", async () => {
-    const request = createTestRequest("http://localhost/api/backlog/tasks/task-001", {
-      method: "PATCH",
-      body: JSON.stringify({
-        project: "/workspace/test-project",
-        updates: "invalid",
-      }),
-    });
+    const request = createTestRequest(
+      "http://localhost/api/backlog/tasks/task-001",
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          project: "/workspace/test-project",
+          updates: "invalid",
+        }),
+      },
+    );
 
-    const response = await PATCH(request, { params: Promise.resolve({ id: "task-001" }) });
+    const response = await PATCH(request, {
+      params: Promise.resolve({ id: "task-001" }),
+    });
     const data = await response.json();
 
     expect(response.status).toBe(400);
@@ -390,15 +432,20 @@ describe("PATCH /api/backlog/tasks/[id]", () => {
   it("returns 404 when project not found", async () => {
     mockGetProject.mockReturnValue(null);
 
-    const request = createTestRequest("http://localhost/api/backlog/tasks/task-001", {
-      method: "PATCH",
-      body: JSON.stringify({
-        project: "/workspace/unknown",
-        updates: { status: "Done" },
-      }),
-    });
+    const request = createTestRequest(
+      "http://localhost/api/backlog/tasks/task-001",
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          project: "/workspace/unknown",
+          updates: { status: "Done" },
+        }),
+      },
+    );
 
-    const response = await PATCH(request, { params: Promise.resolve({ id: "task-001" }) });
+    const response = await PATCH(request, {
+      params: Promise.resolve({ id: "task-001" }),
+    });
     const data = await response.json();
 
     expect(response.status).toBe(404);
@@ -406,15 +453,20 @@ describe("PATCH /api/backlog/tasks/[id]", () => {
   });
 
   it("returns 404 when task not found", async () => {
-    const request = createTestRequest("http://localhost/api/backlog/tasks/nonexistent", {
-      method: "PATCH",
-      body: JSON.stringify({
-        project: "/workspace/test-project",
-        updates: { status: "Done" },
-      }),
-    });
+    const request = createTestRequest(
+      "http://localhost/api/backlog/tasks/nonexistent",
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          project: "/workspace/test-project",
+          updates: { status: "Done" },
+        }),
+      },
+    );
 
-    const response = await PATCH(request, { params: Promise.resolve({ id: "nonexistent" }) });
+    const response = await PATCH(request, {
+      params: Promise.resolve({ id: "nonexistent" }),
+    });
     const data = await response.json();
 
     expect(response.status).toBe(404);
@@ -423,15 +475,20 @@ describe("PATCH /api/backlog/tasks/[id]", () => {
 
   describe("label operations", () => {
     it("adds labels with addLabels", async () => {
-      const request = createTestRequest("http://localhost/api/backlog/tasks/task-001", {
-        method: "PATCH",
-        body: JSON.stringify({
-          project: "/workspace/test-project",
-          updates: { addLabels: ["urgent", "p0"] },
-        }),
-      });
+      const request = createTestRequest(
+        "http://localhost/api/backlog/tasks/task-001",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            project: "/workspace/test-project",
+            updates: { addLabels: ["urgent", "p0"] },
+          }),
+        },
+      );
 
-      const response = await PATCH(request, { params: Promise.resolve({ id: "task-001" }) });
+      const response = await PATCH(request, {
+        params: Promise.resolve({ id: "task-001" }),
+      });
       await response.json(); // Consume response body
 
       expect(response.status).toBe(200);
@@ -440,20 +497,25 @@ describe("PATCH /api/backlog/tasks/[id]", () => {
         "task-001",
         expect.objectContaining({
           labels: expect.arrayContaining(["feature", "urgent", "p0"]),
-        })
+        }),
       );
     });
 
     it("removes labels with removeLabels", async () => {
-      const request = createTestRequest("http://localhost/api/backlog/tasks/task-001", {
-        method: "PATCH",
-        body: JSON.stringify({
-          project: "/workspace/test-project",
-          updates: { removeLabels: ["feature"] },
-        }),
-      });
+      const request = createTestRequest(
+        "http://localhost/api/backlog/tasks/task-001",
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            project: "/workspace/test-project",
+            updates: { removeLabels: ["feature"] },
+          }),
+        },
+      );
 
-      const response = await PATCH(request, { params: Promise.resolve({ id: "task-001" }) });
+      const response = await PATCH(request, {
+        params: Promise.resolve({ id: "task-001" }),
+      });
 
       expect(response.status).toBe(200);
       expect(mockUpdateTask).toHaveBeenCalledWith(
@@ -461,7 +523,7 @@ describe("PATCH /api/backlog/tasks/[id]", () => {
         "task-001",
         expect.objectContaining({
           labels: [],
-        })
+        }),
       );
     });
   });
@@ -475,28 +537,41 @@ describe("DELETE /api/backlog/tasks/[id]", () => {
   });
 
   it("deletes a task", async () => {
-    const request = createTestRequest("http://localhost/api/backlog/tasks/task-001", {
-      method: "DELETE",
-      body: JSON.stringify({
-        project: "/workspace/test-project",
-      }),
-    });
+    const request = createTestRequest(
+      "http://localhost/api/backlog/tasks/task-001",
+      {
+        method: "DELETE",
+        body: JSON.stringify({
+          project: "/workspace/test-project",
+        }),
+      },
+    );
 
-    const response = await DELETE(request, { params: Promise.resolve({ id: "task-001" }) });
+    const response = await DELETE(request, {
+      params: Promise.resolve({ id: "task-001" }),
+    });
     const data = await response.json();
 
     expect(response.status).toBe(200);
     expect(data.success).toBe(true);
-    expect(mockDeleteTask).toHaveBeenCalledWith("/workspace/test-project", "task-001");
+    expect(mockDeleteTask).toHaveBeenCalledWith(
+      "/workspace/test-project",
+      "task-001",
+    );
   });
 
   it("returns 400 when project is missing", async () => {
-    const request = createTestRequest("http://localhost/api/backlog/tasks/task-001", {
-      method: "DELETE",
-      body: JSON.stringify({}),
-    });
+    const request = createTestRequest(
+      "http://localhost/api/backlog/tasks/task-001",
+      {
+        method: "DELETE",
+        body: JSON.stringify({}),
+      },
+    );
 
-    const response = await DELETE(request, { params: Promise.resolve({ id: "task-001" }) });
+    const response = await DELETE(request, {
+      params: Promise.resolve({ id: "task-001" }),
+    });
     const data = await response.json();
 
     expect(response.status).toBe(400);
@@ -506,14 +581,19 @@ describe("DELETE /api/backlog/tasks/[id]", () => {
   it("returns 404 when delete fails", async () => {
     mockDeleteTask.mockResolvedValue(false);
 
-    const request = createTestRequest("http://localhost/api/backlog/tasks/nonexistent", {
-      method: "DELETE",
-      body: JSON.stringify({
-        project: "/workspace/test-project",
-      }),
-    });
+    const request = createTestRequest(
+      "http://localhost/api/backlog/tasks/nonexistent",
+      {
+        method: "DELETE",
+        body: JSON.stringify({
+          project: "/workspace/test-project",
+        }),
+      },
+    );
 
-    const response = await DELETE(request, { params: Promise.resolve({ id: "nonexistent" }) });
+    const response = await DELETE(request, {
+      params: Promise.resolve({ id: "nonexistent" }),
+    });
     const data = await response.json();
 
     expect(response.status).toBe(404);

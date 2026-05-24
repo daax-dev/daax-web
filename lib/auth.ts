@@ -22,14 +22,12 @@ export type AuthResult =
 //   X-Forwarded-Email    → email address
 //   X-Forwarded-Groups   → comma-separated group memberships
 //   X-Forwarded-Admin    → "true" if admin user
-const USER_HEADER =
-  process.env.DAAX_AUTH_USER_HEADER || "x-forwarded-user";
+const USER_HEADER = process.env.DAAX_AUTH_USER_HEADER || "x-forwarded-user";
 const USERNAME_HEADER =
   process.env.DAAX_AUTH_USERNAME_HEADER || "x-forwarded-username";
 const DISPLAYNAME_HEADER =
   process.env.DAAX_AUTH_DISPLAYNAME_HEADER || "x-forwarded-name";
-const EMAIL_HEADER =
-  process.env.DAAX_AUTH_EMAIL_HEADER || "x-forwarded-email";
+const EMAIL_HEADER = process.env.DAAX_AUTH_EMAIL_HEADER || "x-forwarded-email";
 const GROUPS_HEADER =
   process.env.DAAX_AUTH_GROUPS_HEADER || "x-forwarded-groups";
 const OIDC_PROVIDER_URL =
@@ -121,7 +119,7 @@ export async function requireAuth(): Promise<AuthResult> {
           error: "Authentication required",
           message: "You must be logged in to access this resource",
         },
-        { status: 401 }
+        { status: 401 },
       ),
     };
   }

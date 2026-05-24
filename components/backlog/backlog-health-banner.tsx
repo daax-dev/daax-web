@@ -26,7 +26,9 @@ export function BacklogHealthBanner() {
 
         if (data.status === "unavailable" || response.status === 503) {
           setIsUnavailable(true);
-          setErrorMessage(data.error?.message || "Backlog service initialization failed");
+          setErrorMessage(
+            data.error?.message || "Backlog service initialization failed",
+          );
         } else {
           setIsUnavailable(false);
         }
@@ -53,7 +55,8 @@ export function BacklogHealthBanner() {
             Backlog Service Unavailable
           </h3>
           <p className="text-sm text-yellow-600 dark:text-yellow-300 mt-1">
-            The backlog feature is currently unavailable. Task management functionality will not work.
+            The backlog feature is currently unavailable. Task management
+            functionality will not work.
           </p>
           {errorMessage && (
             <p className="text-xs text-yellow-500 dark:text-yellow-400 mt-2 font-mono">

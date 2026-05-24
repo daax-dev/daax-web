@@ -4,8 +4,8 @@
  * Handlers for container template management.
  */
 
-import type { ContainerTemplate, TemplateCategory } from '../types';
-import defaultTemplates from '../data/default-templates.json';
+import type { ContainerTemplate, TemplateCategory } from "../types";
+import defaultTemplates from "../data/default-templates.json";
 
 // In-memory store for custom templates (would be persisted in production)
 const customTemplates: ContainerTemplate[] = [];
@@ -13,7 +13,9 @@ const customTemplates: ContainerTemplate[] = [];
 /**
  * Get all templates (default + custom)
  */
-export function listTemplates(category?: TemplateCategory): ContainerTemplate[] {
+export function listTemplates(
+  category?: TemplateCategory,
+): ContainerTemplate[] {
   const allTemplates = [
     ...(defaultTemplates.templates as ContainerTemplate[]),
     ...customTemplates,
@@ -42,7 +44,7 @@ export function getTemplate(id: string): ContainerTemplate | undefined {
  * Create a custom template
  */
 export function createTemplate(
-  template: Omit<ContainerTemplate, 'id' | 'official'>
+  template: Omit<ContainerTemplate, "id" | "official">,
 ): ContainerTemplate {
   const newTemplate: ContainerTemplate = {
     ...template,
@@ -59,7 +61,7 @@ export function createTemplate(
  */
 export function updateTemplate(
   id: string,
-  updates: Partial<ContainerTemplate>
+  updates: Partial<ContainerTemplate>,
 ): ContainerTemplate | null {
   const index = customTemplates.findIndex((t) => t.id === id);
   if (index === -1) {
@@ -92,7 +94,10 @@ export function deleteTemplate(id: string): boolean {
 /**
  * Get templates grouped by category
  */
-export function getTemplatesByCategory(): Record<TemplateCategory, ContainerTemplate[]> {
+export function getTemplatesByCategory(): Record<
+  TemplateCategory,
+  ContainerTemplate[]
+> {
   const allTemplates = listTemplates();
 
   const grouped: Record<TemplateCategory, ContainerTemplate[]> = {

@@ -2,7 +2,13 @@
 
 import { useState, useCallback, type ReactNode } from "react";
 import { Panel, Group, Separator } from "react-resizable-panels";
-import { Columns2, Rows2, Square, GripVertical, GripHorizontal } from "lucide-react";
+import {
+  Columns2,
+  Rows2,
+  Square,
+  GripVertical,
+  GripHorizontal,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { type SplitLayout } from "@/types/ai-session";
@@ -33,7 +39,11 @@ interface LayoutToggleProps {
 }
 
 // Layout toggle buttons - extracted as separate component
-function LayoutToggle({ currentLayout, secondaryContent, onLayoutChange }: LayoutToggleProps) {
+function LayoutToggle({
+  currentLayout,
+  secondaryContent,
+  onLayoutChange,
+}: LayoutToggleProps) {
   return (
     <div className="flex items-center gap-1 p-1 rounded-md bg-muted/50 border">
       <Button
@@ -81,15 +91,13 @@ function ResizeHandle({ direction }: ResizeHandleProps) {
         "group relative flex items-center justify-center transition-colors",
         direction === "vertical"
           ? "w-2 hover:bg-primary/20 active:bg-primary/30"
-          : "h-2 hover:bg-primary/20 active:bg-primary/30"
+          : "h-2 hover:bg-primary/20 active:bg-primary/30",
       )}
     >
       <div
         className={cn(
           "absolute rounded-full bg-border group-hover:bg-primary/50 group-active:bg-primary transition-colors",
-          direction === "vertical"
-            ? "h-8 w-1"
-            : "w-8 h-1"
+          direction === "vertical" ? "h-8 w-1" : "w-8 h-1",
         )}
       />
       {direction === "vertical" ? (
@@ -130,7 +138,7 @@ export function SplitPaneLayout({
         setInternalLayout(newLayout);
       }
     },
-    [onLayoutChange]
+    [onLayoutChange],
   );
 
   return (

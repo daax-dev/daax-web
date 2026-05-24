@@ -125,7 +125,7 @@ describe("isAllowedOrigin", () => {
     it("should return true for production domains with hyphenated hostnames", () => {
       expect(isAllowedOrigin("https://daax.my-host.poley.dev")).toBe(true);
       expect(isAllowedOrigin("https://daax.my-long-hostname.poley.dev")).toBe(
-        true
+        true,
       );
     });
 
@@ -141,8 +141,12 @@ describe("isAllowedOrigin", () => {
     });
 
     it("should reject production domains with non-443 ports", () => {
-      expect(isAllowedOrigin("https://daax.kinsale.poley.dev:8080")).toBe(false);
-      expect(isAllowedOrigin("https://daax.kinsale.poley.dev:4200")).toBe(false);
+      expect(isAllowedOrigin("https://daax.kinsale.poley.dev:8080")).toBe(
+        false,
+      );
+      expect(isAllowedOrigin("https://daax.kinsale.poley.dev:4200")).toBe(
+        false,
+      );
     });
   });
 
@@ -207,9 +211,11 @@ describe("isAllowedOrigin", () => {
     });
 
     it("should reject domains that contain the pattern but don't match", () => {
-      expect(isAllowedOrigin("https://fake-daax.kinsale.poley.dev")).toBe(false);
+      expect(isAllowedOrigin("https://fake-daax.kinsale.poley.dev")).toBe(
+        false,
+      );
       expect(isAllowedOrigin("https://daax.kinsale.poley.dev.evil.com")).toBe(
-        false
+        false,
       );
       expect(isAllowedOrigin("https://notdaax.kinsale.poley.dev")).toBe(false);
     });

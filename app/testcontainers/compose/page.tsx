@@ -4,9 +4,9 @@
  * Manage Docker Compose stacks.
  */
 
-'use client';
+"use client";
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect } from "react";
 import {
   Layers,
   Upload,
@@ -18,13 +18,19 @@ import {
   ChevronDown,
   ChevronRight,
   FileCode,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Badge } from '@/components/ui/badge';
+} from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -33,12 +39,12 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog';
+} from "@/components/ui/dialog";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from '@/components/ui/collapsible';
+} from "@/components/ui/collapsible";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -49,25 +55,28 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import { toast } from 'sonner';
-import { cn } from '@/lib/utils';
-import type { ComposeProject, ComposeProjectStatus } from '@/plugins/testcontainers/types/compose';
+} from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import type {
+  ComposeProject,
+  ComposeProjectStatus,
+} from "@/plugins/testcontainers/types/compose";
 
 const statusColors: Record<ComposeProjectStatus, string> = {
-  created: 'bg-gray-500/20 text-gray-500',
-  running: 'bg-green-500/20 text-green-500',
-  partial: 'bg-yellow-500/20 text-yellow-500',
-  stopped: 'bg-red-500/20 text-red-500',
-  error: 'bg-red-700/20 text-red-700',
+  created: "bg-gray-500/20 text-gray-500",
+  running: "bg-green-500/20 text-green-500",
+  partial: "bg-yellow-500/20 text-yellow-500",
+  stopped: "bg-red-500/20 text-red-500",
+  error: "bg-red-700/20 text-red-700",
 };
 
 const statusLabels: Record<ComposeProjectStatus, string> = {
-  created: 'Created',
-  running: 'Running',
-  partial: 'Partial',
-  stopped: 'Stopped',
-  error: 'Error',
+  created: "Created",
+  running: "Running",
+  partial: "Partial",
+  stopped: "Stopped",
+  error: "Error",
 };
 
 function ProjectCard({
@@ -82,20 +91,24 @@ function ProjectCard({
   onRemove: (id: string) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [loading, setLoading] = useState<'start' | 'stop' | 'remove' | null>(null);
+  const [loading, setLoading] = useState<"start" | "stop" | "remove" | null>(
+    null,
+  );
 
-  const handleAction = async (action: 'start' | 'stop' | 'remove') => {
+  const handleAction = async (action: "start" | "stop" | "remove") => {
     setLoading(action);
     try {
-      if (action === 'start') await onStart(project.id);
-      else if (action === 'stop') await onStop(project.id);
+      if (action === "start") await onStart(project.id);
+      else if (action === "stop") await onStop(project.id);
       else await onRemove(project.id);
     } finally {
       setLoading(null);
     }
   };
 
-  const runningServices = project.services.filter(s => s.status === 'running').length;
+  const runningServices = project.services.filter(
+    (s) => s.status === "running",
+  ).length;
 
   return (
     <Card className="hover:border-primary/50 transition-colors">
@@ -105,27 +118,28 @@ function ProjectCard({
             <div className="flex items-center gap-2">
               <Layers className="h-5 w-5 text-primary" />
               <CardTitle className="text-lg">{project.name}</CardTitle>
-              <Badge className={cn('text-xs', statusColors[project.status])}>
+              <Badge className={cn("text-xs", statusColors[project.status])}>
                 {statusLabels[project.status]}
               </Badge>
             </div>
             <CardDescription className="mt-1">
-              {project.services.length} service{project.services.length !== 1 ? 's' : ''} •
-              {runningServices} running
+              {project.services.length} service
+              {project.services.length !== 1 ? "s" : ""} •{runningServices}{" "}
+              running
             </CardDescription>
           </div>
 
           <div className="flex items-center gap-1">
-            {project.status !== 'running' && (
+            {project.status !== "running" && (
               <Button
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
-                onClick={() => handleAction('start')}
+                onClick={() => handleAction("start")}
                 disabled={loading !== null}
                 title="Start stack"
               >
-                {loading === 'start' ? (
+                {loading === "start" ? (
                   <RefreshCw className="h-4 w-4 animate-spin" />
                 ) : (
                   <Play className="h-4 w-4" />
@@ -133,16 +147,16 @@ function ProjectCard({
               </Button>
             )}
 
-            {project.status === 'running' || project.status === 'partial' ? (
+            {project.status === "running" || project.status === "partial" ? (
               <Button
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
-                onClick={() => handleAction('stop')}
+                onClick={() => handleAction("stop")}
                 disabled={loading !== null}
                 title="Stop stack"
               >
-                {loading === 'stop' ? (
+                {loading === "stop" ? (
                   <RefreshCw className="h-4 w-4 animate-spin" />
                 ) : (
                   <Square className="h-4 w-4" />
@@ -166,15 +180,16 @@ function ProjectCard({
                 <AlertDialogHeader>
                   <AlertDialogTitle>Remove Stack</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Are you sure you want to remove <strong>{project.name}</strong>?
-                    This will stop and remove all {project.services.length} service(s).
-                    This action cannot be undone.
+                    Are you sure you want to remove{" "}
+                    <strong>{project.name}</strong>? This will stop and remove
+                    all {project.services.length} service(s). This action cannot
+                    be undone.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                   <AlertDialogAction
-                    onClick={() => handleAction('remove')}
+                    onClick={() => handleAction("remove")}
                     className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                   >
                     Remove
@@ -206,12 +221,16 @@ function ProjectCard({
                 <div className="flex items-center gap-2">
                   <span
                     className={cn(
-                      'h-2 w-2 rounded-full',
-                      service.status === 'running' ? 'bg-green-500' : 'bg-gray-500'
+                      "h-2 w-2 rounded-full",
+                      service.status === "running"
+                        ? "bg-green-500"
+                        : "bg-gray-500",
                     )}
                   />
                   <span className="font-medium text-sm">{service.name}</span>
-                  <span className="text-xs text-muted-foreground">{service.image}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {service.image}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2">
                   {service.ports.slice(0, 2).map((port, idx) => (
@@ -244,22 +263,22 @@ export default function ComposePage() {
   const [creating, setCreating] = useState(false);
 
   // Form state
-  const [projectName, setProjectName] = useState('');
-  const [yamlContent, setYamlContent] = useState('');
+  const [projectName, setProjectName] = useState("");
+  const [yamlContent, setYamlContent] = useState("");
   const [startImmediately, setStartImmediately] = useState(true);
 
   const fetchProjects = useCallback(async () => {
     try {
       setError(null);
-      const response = await fetch('/api/testcontainers/compose');
+      const response = await fetch("/api/testcontainers/compose");
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.error || 'Failed to fetch projects');
+        throw new Error(data.error || "Failed to fetch projects");
       }
       const data = await response.json();
       setProjects(data.projects);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
@@ -273,15 +292,15 @@ export default function ComposePage() {
 
   const handleCreate = async () => {
     if (!projectName || !yamlContent) {
-      toast.error('Project name and YAML content are required');
+      toast.error("Project name and YAML content are required");
       return;
     }
 
     setCreating(true);
     try {
-      const response = await fetch('/api/testcontainers/compose', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/testcontainers/compose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: projectName,
           yaml: yamlContent,
@@ -291,16 +310,18 @@ export default function ComposePage() {
 
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.error || 'Failed to create project');
+        throw new Error(data.error || "Failed to create project");
       }
 
-      toast.success('Project created successfully');
+      toast.success("Project created successfully");
       setDialogOpen(false);
-      setProjectName('');
-      setYamlContent('');
+      setProjectName("");
+      setYamlContent("");
       fetchProjects();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to create project');
+      toast.error(
+        err instanceof Error ? err.message : "Failed to create project",
+      );
     } finally {
       setCreating(false);
     }
@@ -317,7 +338,9 @@ export default function ComposePage() {
 
       // Auto-set project name from filename
       if (!projectName) {
-        const name = file.name.replace(/\.(ya?ml)$/i, '').replace(/[^a-zA-Z0-9-]/g, '-');
+        const name = file.name
+          .replace(/\.(ya?ml)$/i, "")
+          .replace(/[^a-zA-Z0-9-]/g, "-");
         setProjectName(name);
       }
     };
@@ -326,37 +349,37 @@ export default function ComposePage() {
 
   const handleStart = async (id: string) => {
     const response = await fetch(`/api/testcontainers/compose/${id}/start`, {
-      method: 'POST',
+      method: "POST",
     });
     if (!response.ok) {
       const data = await response.json();
-      throw new Error(data.error || 'Failed to start project');
+      throw new Error(data.error || "Failed to start project");
     }
-    toast.success('Project started');
+    toast.success("Project started");
     fetchProjects();
   };
 
   const handleStop = async (id: string) => {
     const response = await fetch(`/api/testcontainers/compose/${id}/stop`, {
-      method: 'POST',
+      method: "POST",
     });
     if (!response.ok) {
       const data = await response.json();
-      throw new Error(data.error || 'Failed to stop project');
+      throw new Error(data.error || "Failed to stop project");
     }
-    toast.success('Project stopped');
+    toast.success("Project stopped");
     fetchProjects();
   };
 
   const handleRemove = async (id: string) => {
     const response = await fetch(`/api/testcontainers/compose/${id}`, {
-      method: 'DELETE',
+      method: "DELETE",
     });
     if (!response.ok) {
       const data = await response.json();
-      throw new Error(data.error || 'Failed to remove project');
+      throw new Error(data.error || "Failed to remove project");
     }
-    toast.success('Project removed');
+    toast.success("Project removed");
     fetchProjects();
   };
 
@@ -400,7 +423,9 @@ services:
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={fetchProjects} disabled={loading}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw
+              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+            />
             Refresh
           </Button>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -519,7 +544,8 @@ services:
           </div>
           <h2 className="text-lg font-medium mb-2">No compose stacks</h2>
           <p className="text-muted-foreground max-w-md mb-4">
-            Create a new stack by uploading a docker-compose.yml file or pasting YAML content.
+            Create a new stack by uploading a docker-compose.yml file or pasting
+            YAML content.
           </p>
           <Button onClick={() => setDialogOpen(true)}>
             <Upload className="h-4 w-4 mr-2" />

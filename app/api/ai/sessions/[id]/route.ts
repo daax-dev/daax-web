@@ -1,11 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getSession, stopSession } from '@/lib/ai-sessions';
-import { requireAuth } from '@/lib/auth';
+import { NextRequest, NextResponse } from "next/server";
+import { getSession, stopSession } from "@/lib/ai-sessions";
+import { requireAuth } from "@/lib/auth";
 
 // GET /api/ai/sessions/:id - Get session details
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await params;
@@ -13,8 +13,8 @@ export async function GET(
 
     if (!session) {
       return NextResponse.json(
-        { success: false, error: 'Session not found' },
-        { status: 404 }
+        { success: false, error: "Session not found" },
+        { status: 404 },
       );
     }
 
@@ -26,9 +26,9 @@ export async function GET(
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to get session',
+        error: error instanceof Error ? error.message : "Failed to get session",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -37,7 +37,7 @@ export async function GET(
 // SECURITY: Requires authentication for session termination
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   // Require authentication for session termination
   const auth = await requireAuth();
@@ -49,22 +49,23 @@ export async function DELETE(
 
     if (!success) {
       return NextResponse.json(
-        { success: false, error: 'Session not found' },
-        { status: 404 }
+        { success: false, error: "Session not found" },
+        { status: 404 },
       );
     }
 
     return NextResponse.json({
       success: true,
-      message: 'Session stopped',
+      message: "Session stopped",
     });
   } catch (error) {
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to stop session',
+        error:
+          error instanceof Error ? error.message : "Failed to stop session",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

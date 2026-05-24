@@ -245,9 +245,9 @@ describe("Docker Image Fallback Logic", () => {
         new Set([DEFAULT_CONTAINER_IMAGE]),
       );
 
-      expect(resolveContainerImage(DEFAULT_CONTAINER_IMAGE, isImageAvailable)).toBe(
-        DEFAULT_CONTAINER_IMAGE,
-      );
+      expect(
+        resolveContainerImage(DEFAULT_CONTAINER_IMAGE, isImageAvailable),
+      ).toBe(DEFAULT_CONTAINER_IMAGE);
     });
 
     it("falls back to local image when primary unavailable", () => {
@@ -255,17 +255,17 @@ describe("Docker Image Fallback Logic", () => {
         new Set([FALLBACK_CONTAINER_IMAGE]),
       );
 
-      expect(resolveContainerImage(DEFAULT_CONTAINER_IMAGE, isImageAvailable)).toBe(
-        FALLBACK_CONTAINER_IMAGE,
-      );
+      expect(
+        resolveContainerImage(DEFAULT_CONTAINER_IMAGE, isImageAvailable),
+      ).toBe(FALLBACK_CONTAINER_IMAGE);
     });
 
     it("returns requested image when neither available (Docker will show error)", () => {
       const { isImageAvailable } = createImageAvailabilityChecker(new Set());
 
-      expect(resolveContainerImage(DEFAULT_CONTAINER_IMAGE, isImageAvailable)).toBe(
-        DEFAULT_CONTAINER_IMAGE,
-      );
+      expect(
+        resolveContainerImage(DEFAULT_CONTAINER_IMAGE, isImageAvailable),
+      ).toBe(DEFAULT_CONTAINER_IMAGE);
     });
 
     it("uses custom image when available", () => {
@@ -274,7 +274,9 @@ describe("Docker Image Fallback Logic", () => {
         new Set([customImage]),
       );
 
-      expect(resolveContainerImage(customImage, isImageAvailable)).toBe(customImage);
+      expect(resolveContainerImage(customImage, isImageAvailable)).toBe(
+        customImage,
+      );
     });
 
     it("falls back when custom image unavailable but fallback available", () => {
@@ -431,19 +433,34 @@ describe("Docker Image Fallback Logic", () => {
 
     it("resolves image only in container mode without containerName", () => {
       expect(
-        resolveForConnection("container", "", DEFAULT_CONTAINER_IMAGE, isImageAvailable),
+        resolveForConnection(
+          "container",
+          "",
+          DEFAULT_CONTAINER_IMAGE,
+          isImageAvailable,
+        ),
       ).toBe(FALLBACK_CONTAINER_IMAGE);
     });
 
     it("skips resolution in local mode (no Docker check)", () => {
       expect(
-        resolveForConnection("local", "", DEFAULT_CONTAINER_IMAGE, isImageAvailable),
+        resolveForConnection(
+          "local",
+          "",
+          DEFAULT_CONTAINER_IMAGE,
+          isImageAvailable,
+        ),
       ).toBe(DEFAULT_CONTAINER_IMAGE);
     });
 
     it("skips resolution in shell-tmux mode (no Docker check)", () => {
       expect(
-        resolveForConnection("shell-tmux", "", DEFAULT_CONTAINER_IMAGE, isImageAvailable),
+        resolveForConnection(
+          "shell-tmux",
+          "",
+          DEFAULT_CONTAINER_IMAGE,
+          isImageAvailable,
+        ),
       ).toBe(DEFAULT_CONTAINER_IMAGE);
     });
 

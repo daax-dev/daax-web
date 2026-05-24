@@ -3,9 +3,9 @@
  * Returns all discovered backlog projects
  */
 
-import { NextResponse } from 'next/server';
-import { getMultiBacklogStore } from '@/server/backlog-multi-store';
-import type { BacklogProject, BacklogProjectsResponse } from '@/types/backlog';
+import { NextResponse } from "next/server";
+import { getMultiBacklogStore } from "@/server/backlog-multi-store";
+import type { BacklogProject, BacklogProjectsResponse } from "@/types/backlog";
 
 export async function GET() {
   try {
@@ -36,7 +36,7 @@ export async function GET() {
     });
 
     const response: BacklogProjectsResponse = {
-      projects: dedupedProjects.map(p => ({
+      projects: dedupedProjects.map((p) => ({
         ...p,
         // Don't send full task/document content, just counts
         tasks: [],
@@ -48,10 +48,10 @@ export async function GET() {
 
     return NextResponse.json(response);
   } catch (error) {
-    console.error('[API] Error fetching projects:', error);
+    console.error("[API] Error fetching projects:", error);
     return NextResponse.json(
-      { error: 'Failed to fetch projects' },
-      { status: 500 }
+      { error: "Failed to fetch projects" },
+      { status: 500 },
     );
   }
 }

@@ -67,7 +67,7 @@ export async function GET() {
         source: "defaults",
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 200 } // Still 200 because we return valid defaults
+      { status: 200 }, // Still 200 because we return valid defaults
     );
   }
 }

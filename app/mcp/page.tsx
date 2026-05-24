@@ -1010,27 +1010,46 @@ export default function McpPage() {
                   {mcps.length === 0 && diagnostics ? (
                     // No MCPs found at all - show diagnostics for troubleshooting
                     <>
-                      <p className="text-lg font-medium mb-4">No MCP servers configured</p>
+                      <p className="text-lg font-medium mb-4">
+                        No MCP servers configured
+                      </p>
                       <div className="text-left max-w-lg space-y-4">
                         <div className="bg-muted/50 rounded-lg p-4 space-y-2">
-                          <p className="font-medium text-sm">Config file paths checked:</p>
-                          {Object.entries(diagnostics.configPaths).map(([key, value]) => (
-                            <div key={key} className="flex items-center gap-2 text-xs font-mono">
-                              <span className={value.exists ? "text-green-500" : "text-red-500"}>
-                                {value.exists ? "✓" : "✗"}
-                              </span>
-                              <span className="truncate" title={value.path}>
-                                {value.path}
-                              </span>
-                              {value.fromEnvVar && (
-                                <span className="text-blue-500 text-xs">(from env)</span>
-                              )}
-                            </div>
-                          ))}
+                          <p className="font-medium text-sm">
+                            Config file paths checked:
+                          </p>
+                          {Object.entries(diagnostics.configPaths).map(
+                            ([key, value]) => (
+                              <div
+                                key={key}
+                                className="flex items-center gap-2 text-xs font-mono"
+                              >
+                                <span
+                                  className={
+                                    value.exists
+                                      ? "text-green-500"
+                                      : "text-red-500"
+                                  }
+                                >
+                                  {value.exists ? "✓" : "✗"}
+                                </span>
+                                <span className="truncate" title={value.path}>
+                                  {value.path}
+                                </span>
+                                {value.fromEnvVar && (
+                                  <span className="text-blue-500 text-xs">
+                                    (from env)
+                                  </span>
+                                )}
+                              </div>
+                            ),
+                          )}
                         </div>
                         {diagnostics.hints.length > 0 && (
                           <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-4">
-                            <p className="font-medium text-sm text-amber-500 mb-2">Troubleshooting hints:</p>
+                            <p className="font-medium text-sm text-amber-500 mb-2">
+                              Troubleshooting hints:
+                            </p>
                             <ul className="list-disc pl-4 space-y-1 text-xs">
                               {diagnostics.hints.map((hint, i) => (
                                 <li key={i}>{hint}</li>
@@ -1040,7 +1059,9 @@ export default function McpPage() {
                         )}
                         {diagnostics.isContainerMode && (
                           <p className="text-xs text-muted-foreground">
-                            Running in container mode. Check docker-compose.yml volume mounts for CLAUDE_CONFIG_PATH and HOME_MCP_PATH.
+                            Running in container mode. Check docker-compose.yml
+                            volume mounts for CLAUDE_CONFIG_PATH and
+                            HOME_MCP_PATH.
                           </p>
                         )}
                       </div>

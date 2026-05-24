@@ -54,7 +54,7 @@ describe("auth module", () => {
           "x-forwarded-name": "John Doe",
           "x-forwarded-email": "john@example.com",
           "x-forwarded-groups": "admin,developers,testers",
-        })
+        }),
       );
 
       const user = await getAuthUser();
@@ -64,8 +64,7 @@ describe("auth module", () => {
         email: "john@example.com",
         groups: ["admin", "developers", "testers"],
         authenticated: true,
-        pictureUrl:
-          "https://auth.poley.dev/api/users/user-123-uuid/avatar",
+        pictureUrl: "https://auth.poley.dev/api/users/user-123-uuid/avatar",
       });
     });
 
@@ -74,7 +73,7 @@ describe("auth module", () => {
         createMockHeaders({
           "x-forwarded-user": "user-456-uuid",
           "x-forwarded-email": "user@example.com",
-        })
+        }),
       );
 
       const user = await getAuthUser();
@@ -87,7 +86,7 @@ describe("auth module", () => {
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-email": "anon@example.com",
-        })
+        }),
       );
 
       const user = await getAuthUser();
@@ -121,7 +120,7 @@ describe("auth module", () => {
           createMockHeaders({
             "x-forwarded-user": "user-id",
             "x-forwarded-groups": "group1,group2,group3",
-          })
+          }),
         );
 
         const user = await getAuthUser();
@@ -134,7 +133,7 @@ describe("auth module", () => {
           createMockHeaders({
             "x-forwarded-user": "user-id",
             "x-forwarded-groups": "  admin  ,  users  ,  devs  ",
-          })
+          }),
         );
 
         const user = await getAuthUser();
@@ -147,7 +146,7 @@ describe("auth module", () => {
           createMockHeaders({
             "x-forwarded-user": "user-id",
             "x-forwarded-groups": "admin,,users,,,devs,",
-          })
+          }),
         );
 
         const user = await getAuthUser();
@@ -160,7 +159,7 @@ describe("auth module", () => {
           createMockHeaders({
             "x-forwarded-user": "user-id",
             "x-forwarded-groups": "",
-          })
+          }),
         );
 
         const user = await getAuthUser();
@@ -173,7 +172,7 @@ describe("auth module", () => {
           createMockHeaders({
             "x-forwarded-user": "user-id",
             "x-forwarded-groups": "single-group",
-          })
+          }),
         );
 
         const user = await getAuthUser();
@@ -187,13 +186,13 @@ describe("auth module", () => {
         mockHeaders.mockResolvedValue(
           createMockHeaders({
             "x-forwarded-user": "user/with/slashes",
-          })
+          }),
         );
 
         const user = await getAuthUser();
 
         expect(user.pictureUrl).toBe(
-          "https://auth.poley.dev/api/users/user%2Fwith%2Fslashes/avatar"
+          "https://auth.poley.dev/api/users/user%2Fwith%2Fslashes/avatar",
         );
       });
 
@@ -201,13 +200,13 @@ describe("auth module", () => {
         mockHeaders.mockResolvedValue(
           createMockHeaders({
             "x-forwarded-user": "user@domain.com",
-          })
+          }),
         );
 
         const user = await getAuthUser();
 
         expect(user.pictureUrl).toBe(
-          "https://auth.poley.dev/api/users/user%40domain.com/avatar"
+          "https://auth.poley.dev/api/users/user%40domain.com/avatar",
         );
       });
 
@@ -229,7 +228,7 @@ describe("auth module", () => {
           "x-forwarded-name": "Jane Doe",
           "x-forwarded-email": "jane@example.com",
           "x-forwarded-groups": "admin",
-        })
+        }),
       );
 
       const result = await requireAuth();
@@ -263,7 +262,7 @@ describe("auth module", () => {
         createMockHeaders({
           "x-forwarded-email": "test@example.com",
           "x-forwarded-name": "Test User",
-        })
+        }),
       );
 
       const result = await requireAuth();
@@ -281,7 +280,7 @@ describe("auth module", () => {
         createMockHeaders({
           "x-forwarded-user": "user-abc",
           "x-forwarded-name": "Bob Smith",
-        })
+        }),
       );
 
       const user = await requireAuthOrThrow();
@@ -294,7 +293,7 @@ describe("auth module", () => {
       mockHeaders.mockResolvedValue(createMockHeaders({}));
 
       await expect(requireAuthOrThrow()).rejects.toThrow(
-        "Authentication required"
+        "Authentication required",
       );
     });
 
@@ -302,11 +301,11 @@ describe("auth module", () => {
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-user": "",
-        })
+        }),
       );
 
       await expect(requireAuthOrThrow()).rejects.toThrow(
-        "Authentication required"
+        "Authentication required",
       );
     });
   });
@@ -325,7 +324,7 @@ describe("auth module", () => {
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-user": "default-user",
-        })
+        }),
       );
 
       const user = await getAuthUser();
@@ -366,7 +365,7 @@ describe("auth module with custom headers", () => {
           createMockHeaders({
             "x-custom-user": "custom-user-id",
             "x-forwarded-name": "Custom User",
-          })
+          }),
         ),
     }));
 
@@ -389,7 +388,7 @@ describe("auth module with custom headers", () => {
         Promise.resolve(
           createMockHeaders({
             "x-forwarded-user": "user-id",
-          })
+          }),
         ),
     }));
 
@@ -398,7 +397,7 @@ describe("auth module with custom headers", () => {
     const user = await getAuthUserCustom();
 
     expect(user.pictureUrl).toBe(
-      "https://custom-auth.example.com/api/users/user-id/avatar"
+      "https://custom-auth.example.com/api/users/user-id/avatar",
     );
   });
 
@@ -419,7 +418,7 @@ describe("auth module with custom headers", () => {
             "x-my-name": "My Display Name",
             "x-my-email": "my@email.test",
             "x-my-groups": "group-a,group-b",
-          })
+          }),
         ),
     }));
 

@@ -4,9 +4,9 @@
  * Persistent sidebar showing running containers with quick actions.
  */
 
-'use client';
+"use client";
 
-import { useState } from 'react';
+import { useState } from "react";
 import {
   Container,
   Play,
@@ -19,30 +19,30 @@ import {
   Copy,
   MoreHorizontal,
   AlertCircle,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
-} from '@/components/ui/collapsible';
+} from "@/components/ui/collapsible";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+} from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip';
-import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
-import { useContainers } from '../hooks';
-import type { TestContainer, ContainerAction, ContainerStatus } from '../types';
-import { STATUS_COLORS } from '../constants';
+} from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import { useContainers } from "../hooks";
+import type { TestContainer, ContainerAction, ContainerStatus } from "../types";
+import { STATUS_COLORS } from "../constants";
 
 interface ContainerSidebarProps {
   className?: string;
@@ -57,18 +57,21 @@ interface ContainerItemProps {
 }
 
 function StatusDot({ status }: { status: ContainerStatus }) {
-  const isRunning = status === 'running';
+  const isRunning = status === "running";
   const colorClass = STATUS_COLORS[status] || STATUS_COLORS.dead;
 
   return (
     <span
       className={cn(
-        'h-2 w-2 rounded-full shrink-0',
-        isRunning && 'animate-pulse',
-        colorClass.includes('green') ? 'bg-green-500' :
-        colorClass.includes('yellow') ? 'bg-yellow-500' :
-        colorClass.includes('red') ? 'bg-red-500' :
-        'bg-gray-500'
+        "h-2 w-2 rounded-full shrink-0",
+        isRunning && "animate-pulse",
+        colorClass.includes("green")
+          ? "bg-green-500"
+          : colorClass.includes("yellow")
+            ? "bg-yellow-500"
+            : colorClass.includes("red")
+              ? "bg-red-500"
+              : "bg-gray-500",
       )}
     />
   );
@@ -88,12 +91,14 @@ function ContainerItem({ container, onAction, compact }: ContainerItemProps) {
 
   const copyPort = (port: number) => {
     navigator.clipboard.writeText(`localhost:${port}`);
-    toast.success('Port copied');
+    toast.success("Port copied");
   };
 
-  const isRunning = container.status === 'running';
-  const isStopped = container.status === 'exited' || container.status === 'dead';
-  const primaryPort = container.ports[0]?.hostPort || container.ports[0]?.containerPort;
+  const isRunning = container.status === "running";
+  const isStopped =
+    container.status === "exited" || container.status === "dead";
+  const primaryPort =
+    container.ports[0]?.hostPort || container.ports[0]?.containerPort;
 
   if (compact) {
     return (
@@ -101,7 +106,7 @@ function ContainerItem({ container, onAction, compact }: ContainerItemProps) {
         <TooltipTrigger asChild>
           <button
             className="flex items-center gap-2 w-full px-2 py-1.5 rounded hover:bg-muted/50 transition-colors text-left"
-            onClick={() => handleAction('inspect')}
+            onClick={() => handleAction("inspect")}
           >
             <StatusDot status={container.status} />
             <span className="truncate text-sm">{container.name}</span>
@@ -111,9 +116,7 @@ function ContainerItem({ container, onAction, compact }: ContainerItemProps) {
           <div>
             <p className="font-medium">{container.name}</p>
             <p className="text-xs text-muted-foreground">{container.image}</p>
-            {primaryPort && (
-              <p className="text-xs">Port: {primaryPort}</p>
-            )}
+            {primaryPort && <p className="text-xs">Port: {primaryPort}</p>}
           </div>
         </TooltipContent>
       </Tooltip>
@@ -125,7 +128,9 @@ function ContainerItem({ container, onAction, compact }: ContainerItemProps) {
       <StatusDot status={container.status} />
       <div className="flex-1 min-w-0">
         <p className="text-sm truncate font-medium">{container.name}</p>
-        <p className="text-xs text-muted-foreground truncate">{container.image}</p>
+        <p className="text-xs text-muted-foreground truncate">
+          {container.image}
+        </p>
       </div>
 
       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -154,7 +159,7 @@ function ContainerItem({ container, onAction, compact }: ContainerItemProps) {
           <DropdownMenuContent align="end">
             {isRunning && (
               <DropdownMenuItem
-                onClick={() => handleAction('stop')}
+                onClick={() => handleAction("stop")}
                 disabled={loading !== null}
               >
                 <Square className="h-4 w-4 mr-2" />
@@ -163,7 +168,7 @@ function ContainerItem({ container, onAction, compact }: ContainerItemProps) {
             )}
             {isStopped && (
               <DropdownMenuItem
-                onClick={() => handleAction('start')}
+                onClick={() => handleAction("start")}
                 disabled={loading !== null}
               >
                 <Play className="h-4 w-4 mr-2" />
@@ -171,7 +176,7 @@ function ContainerItem({ container, onAction, compact }: ContainerItemProps) {
               </DropdownMenuItem>
             )}
             <DropdownMenuItem
-              onClick={() => handleAction('logs')}
+              onClick={() => handleAction("logs")}
               disabled={loading !== null}
             >
               <FileText className="h-4 w-4 mr-2" />
@@ -179,7 +184,7 @@ function ContainerItem({ container, onAction, compact }: ContainerItemProps) {
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
-              onClick={() => handleAction('remove')}
+              onClick={() => handleAction("remove")}
               disabled={loading !== null}
               className="text-destructive focus:text-destructive"
             >
@@ -216,36 +221,37 @@ export function ContainerSidebar({
 
   const handleAction = async (action: ContainerAction, id: string) => {
     switch (action) {
-      case 'start':
+      case "start":
         await startContainer(id);
-        toast.success('Container started');
+        toast.success("Container started");
         break;
-      case 'stop':
+      case "stop":
         await stopContainer(id);
-        toast.success('Container stopped');
+        toast.success("Container stopped");
         break;
-      case 'remove':
+      case "remove":
         await removeContainer(id, true);
-        toast.success('Container removed');
+        toast.success("Container removed");
         break;
-      case 'logs':
-        window.open(`/testcontainers/${id}/logs`, '_blank');
+      case "logs":
+        window.open(`/testcontainers/${id}/logs`, "_blank");
         break;
-      case 'inspect':
+      case "inspect":
         window.location.href = `/testcontainers/${id}`;
         break;
     }
   };
 
-  const runningContainers = containers.filter(c => c.status === 'running');
+  const runningContainers = containers.filter((c) => c.status === "running");
   const stoppedContainers = containers.filter(
-    c => c.status === 'exited' || c.status === 'dead' || c.status === 'created'
+    (c) =>
+      c.status === "exited" || c.status === "dead" || c.status === "created",
   );
 
   // Docker not connected
   if (dockerStatus && !dockerStatus.connected) {
     return (
-      <div className={cn('flex flex-col border-r bg-background', className)}>
+      <div className={cn("flex flex-col border-r bg-background", className)}>
         <div className="p-4 flex flex-col items-center gap-2 text-center">
           <AlertCircle className="h-8 w-8 text-destructive" />
           <p className="text-sm text-muted-foreground">Docker not available</p>
@@ -260,21 +266,29 @@ export function ContainerSidebar({
 
   if (collapsed) {
     return (
-      <div className={cn('flex flex-col border-r bg-background w-10', className)}>
+      <div
+        className={cn("flex flex-col border-r bg-background w-10", className)}
+      >
         <div className="p-2">
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={refresh}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
+                onClick={refresh}
+              >
                 <Container className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="right">
-              {containers.length} containers ({runningContainers.length} running)
+              {containers.length} containers ({runningContainers.length}{" "}
+              running)
             </TooltipContent>
           </Tooltip>
         </div>
         <div className="flex-1 overflow-y-auto py-1">
-          {runningContainers.map(container => (
+          {runningContainers.map((container) => (
             <ContainerItem
               key={container.id}
               container={container}
@@ -288,7 +302,7 @@ export function ContainerSidebar({
   }
 
   return (
-    <div className={cn('flex flex-col border-r bg-background w-64', className)}>
+    <div className={cn("flex flex-col border-r bg-background w-64", className)}>
       {/* Header */}
       <div className="p-3 border-b flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -305,7 +319,7 @@ export function ContainerSidebar({
           onClick={refresh}
           disabled={loading}
         >
-          <RefreshCw className={cn('h-3 w-3', loading && 'animate-spin')} />
+          <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
         </Button>
       </div>
 
@@ -334,7 +348,7 @@ export function ContainerSidebar({
                 No running containers
               </p>
             ) : (
-              runningContainers.map(container => (
+              runningContainers.map((container) => (
                 <ContainerItem
                   key={container.id}
                   container={container}
@@ -362,7 +376,7 @@ export function ContainerSidebar({
                 No stopped containers
               </p>
             ) : (
-              stoppedContainers.map(container => (
+              stoppedContainers.map((container) => (
                 <ContainerItem
                   key={container.id}
                   container={container}
@@ -378,7 +392,9 @@ export function ContainerSidebar({
       <div className="p-2 border-t text-xs text-muted-foreground">
         <div className="flex justify-between">
           <span>Running</span>
-          <span className="font-medium text-green-500">{runningContainers.length}</span>
+          <span className="font-medium text-green-500">
+            {runningContainers.length}
+          </span>
         </div>
         <div className="flex justify-between">
           <span>Stopped</span>
