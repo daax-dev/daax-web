@@ -129,7 +129,7 @@ describe("auth module", () => {
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-user": "   ",
-        })
+        }),
       );
 
       const user = await getAuthUser();
@@ -143,7 +143,7 @@ describe("auth module", () => {
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-user": "",
-        })
+        }),
       );
 
       const user = await getAuthUser();
@@ -334,7 +334,7 @@ describe("auth module", () => {
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-user": "",
-        })
+        }),
       );
 
       const result = await requireAuth();
@@ -354,7 +354,7 @@ describe("auth module", () => {
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-user": "   ",
-        })
+        }),
       );
 
       const result = await requireAuth();
@@ -417,11 +417,11 @@ describe("auth module", () => {
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-user": "",
-        })
+        }),
       );
 
       await expect(requireAuthOrThrow()).rejects.toThrow(
-        "Authentication required"
+        "Authentication required",
       );
     });
 
@@ -430,11 +430,11 @@ describe("auth module", () => {
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-user": "   ",
-        })
+        }),
       );
 
       await expect(requireAuthOrThrow()).rejects.toThrow(
-        "Authentication required"
+        "Authentication required",
       );
     });
   });

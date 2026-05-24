@@ -7,17 +7,17 @@
  * SECURITY: DELETE operations require authentication via requireAuth()
  */
 
-import { NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
 import {
   getComposeProject,
   removeComposeProject,
   checkDockerStatus,
-} from '@/plugins/testcontainers/api';
-import { requireAuth } from '@/lib/auth';
+} from "@/plugins/testcontainers/api";
+import { requireAuth } from "@/lib/auth";
 
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const { id } = await params;
@@ -26,34 +26,31 @@ export async function GET(
     if (!status.connected) {
       return NextResponse.json(
         {
-          error: 'Docker daemon not available',
+          error: "Docker daemon not available",
           details: status.error,
         },
-        { status: 503 }
+        { status: 503 },
       );
     }
 
     const project = await getComposeProject(id);
     if (!project) {
-      return NextResponse.json(
-        { error: 'Project not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
     return NextResponse.json({ project });
   } catch (error) {
-    console.error('[Test Containers] Compose get error:', error);
+    console.error("[Test Containers] Compose get error:", error);
     return NextResponse.json(
-      { error: 'Failed to get compose project', details: String(error) },
-      { status: 500 }
+      { error: "Failed to get compose project", details: String(error) },
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(
   request: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   // Require authentication for compose project removal
   const auth = await requireAuth();
@@ -66,20 +63,20 @@ export async function DELETE(
     if (!status.connected) {
       return NextResponse.json(
         {
-          error: 'Docker daemon not available',
+          error: "Docker daemon not available",
           details: status.error,
         },
-        { status: 503 }
+        { status: 503 },
       );
     }
 
     const result = await removeComposeProject(id);
     return NextResponse.json(result);
   } catch (error) {
-    console.error('[Test Containers] Compose remove error:', error);
+    console.error("[Test Containers] Compose remove error:", error);
     return NextResponse.json(
-      { error: 'Failed to remove compose project', details: String(error) },
-      { status: 500 }
+      { error: "Failed to remove compose project", details: String(error) },
+      { status: 500 },
     );
   }
 }
