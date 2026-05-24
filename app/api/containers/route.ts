@@ -22,8 +22,10 @@ interface HostContainer {
   status: string;
   ports: string[];
   createdAt: string;
-  labels: Record<string, string>;
 }
+// Note: container labels are deliberately NOT returned. Labels frequently
+// carry secrets (registry credentials, CI tokens, Tailscale auth keys,
+// Compose metadata) and this is an unauthenticated read-only endpoint.
 
 function getDocker(): Docker {
   const socketPath = process.env.DOCKER_HOST || "/var/run/docker.sock";
@@ -81,7 +83,6 @@ export async function GET(request: Request) {
       status: c.Status,
       ports: formatPorts(c.Ports),
       createdAt: new Date(c.Created * 1000).toISOString(),
-      labels: c.Labels || {},
     }));
 
     return NextResponse.json({ containers: result, total: result.length });

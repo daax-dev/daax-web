@@ -29,7 +29,6 @@ interface HostContainer {
   status: string;
   ports: string[];
   createdAt: string;
-  labels: Record<string, string>;
 }
 
 function stateVariant(state: string): "default" | "secondary" | "destructive" {
