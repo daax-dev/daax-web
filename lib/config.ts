@@ -71,28 +71,34 @@ const DEFAULT_CONFIG: DaaxConfig = {
       home: "ga",
       "ai-coding": "ga",
       backlog: "ga",
-      devcontainers: "beta",
+      containers: "beta",
       provenance: "disabled",
       security: "alpha",
-      cloud: "alpha",
+      cloud: "disabled",
       learning: "alpha",
       analytics: "beta",
-      testcontainers: "beta",
       settings: "ga",
     },
     order: [
       "home",
       "ai-coding",
-      "backlog",
-      "devcontainers",
-      "testcontainers",
+      "containers",
       "analytics",
+      "backlog",
       "settings",
     ],
   },
   subfeatures: {
-    maturity: {},
-    order: {},
+    maturity: {
+      containers: {
+        running: "beta",
+        devcontainers: "beta",
+        testcontainers: "beta",
+      },
+    },
+    order: {
+      containers: { order: ["running", "devcontainers", "testcontainers"] },
+    },
   },
   homepage: {
     cardOrder: [],
@@ -135,7 +141,7 @@ export async function loadConfig(): Promise<DaaxConfig> {
   } catch (error) {
     console.warn(
       "[config] Failed to load config.toml, using defaults:",
-      error instanceof Error ? error.message : error
+      error instanceof Error ? error.message : error,
     );
     cachedConfig = DEFAULT_CONFIG;
     return cachedConfig;
@@ -173,7 +179,7 @@ export function loadConfigSync(): DaaxConfig {
   } catch (error) {
     console.warn(
       "[config] Failed to load config.toml sync, using defaults:",
-      error instanceof Error ? error.message : error
+      error instanceof Error ? error.message : error,
     );
     cachedConfig = DEFAULT_CONFIG;
     return cachedConfig;
@@ -233,7 +239,7 @@ function mergeWithDefaults(parsed: Record<string, unknown>): DaaxConfig {
 }
 
 function mergeSubfeatures(
-  subfeatures: Record<string, unknown> | undefined
+  subfeatures: Record<string, unknown> | undefined,
 ): SubfeaturesConfig {
   if (!subfeatures) {
     return DEFAULT_CONFIG.subfeatures;
@@ -253,7 +259,7 @@ function mergeSubfeatures(
 }
 
 function mergeHomepage(
-  homepage: Record<string, unknown> | undefined
+  homepage: Record<string, unknown> | undefined,
 ): HomepageConfig {
   if (!homepage) {
     return DEFAULT_CONFIG.homepage;
@@ -292,7 +298,7 @@ export function configToSettingsDefaults(config: DaaxConfig): {
   // To: { "ai-coding.agents": "ga" }
   const flatSubFeatureMaturity: Record<string, MaturityLevel> = {};
   for (const [pluginId, features] of Object.entries(
-    config.subfeatures.maturity
+    config.subfeatures.maturity,
   )) {
     for (const [featureId, maturity] of Object.entries(features)) {
       flatSubFeatureMaturity[`${pluginId}.${featureId}`] = maturity;
@@ -304,7 +310,7 @@ export function configToSettingsDefaults(config: DaaxConfig): {
   // To: { "ai-coding": ["agents", "worktrees"] }
   const flatSubFeatureOrder: Record<string, string[]> = {};
   for (const [pluginId, orderConfig] of Object.entries(
-    config.subfeatures.order
+    config.subfeatures.order,
   )) {
     flatSubFeatureOrder[pluginId] = orderConfig.order;
   }
