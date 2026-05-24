@@ -12,7 +12,11 @@ import { createReadStream, existsSync } from "fs";
 import { createInterface } from "readline";
 import { basename, join } from "path";
 import { homedir } from "os";
-import type { ParseResult, TranscriptMessage, TranscriptSession } from "./types";
+import type {
+  ParseResult,
+  TranscriptMessage,
+  TranscriptSession,
+} from "./types";
 import { isSafeSessionId } from "./types";
 
 /** Resolve the Codex sessions dir (env → container mount → host default). */
@@ -39,7 +43,11 @@ async function findRolloutFiles(dir: string): Promise<string[]> {
     const full = join(dir, e.name);
     if (e.isDirectory()) {
       out.push(...(await findRolloutFiles(full)));
-    } else if (e.isFile() && e.name.startsWith("rollout-") && e.name.endsWith(".jsonl")) {
+    } else if (
+      e.isFile() &&
+      e.name.startsWith("rollout-") &&
+      e.name.endsWith(".jsonl")
+    ) {
       out.push(full);
     }
   }
@@ -59,7 +67,9 @@ function textFromContent(content: unknown): string {
   if (Array.isArray(content)) {
     return content
       .map((c) =>
-        c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string"
+        c &&
+        typeof c === "object" &&
+        typeof (c as { text?: unknown }).text === "string"
           ? (c as { text: string }).text
           : "",
       )
@@ -173,7 +183,9 @@ export async function listCodexSessions(): Promise<TranscriptSession[]> {
 }
 
 /** Locate the rollout file for a Codex session id. */
-export async function findCodexSessionFile(sessionId: string): Promise<string | null> {
+export async function findCodexSessionFile(
+  sessionId: string,
+): Promise<string | null> {
   if (!isSafeSessionId(sessionId)) return null; // reject path traversal
   const dir = getCodexSessionsDir();
   if (!existsSync(dir)) return null;
@@ -244,7 +256,10 @@ export function parseCodexJsonl(content: string): ParseResult {
       nonMessageEntries++;
       continue;
     }
-    messages.push({ type: role, content: text, timestamp: entry.timestamp || "" });
+    // timestamp is untrusted JSON; only accept string values.
+    const timestamp =
+      typeof entry.timestamp === "string" ? entry.timestamp : "";
+    messages.push({ type: role, content: text, timestamp });
   }
 
   const skippedLines = invalidJsonLines + nonMessageEntries;

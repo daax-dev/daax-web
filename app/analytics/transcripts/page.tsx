@@ -152,7 +152,12 @@ export default function TranscriptsPage() {
       {/* Main content area */}
       <div className="flex-1 flex overflow-hidden">
         {/* Transcripts List */}
-        <ScrollArea className={cn("flex-1", previewId && "w-1/3 border-r border-zinc-800")}>
+        <ScrollArea
+          className={cn(
+            "flex-1",
+            previewId && "w-1/3 border-r border-zinc-800",
+          )}
+        >
           {loading ? (
             <div className="flex items-center justify-center py-16">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />

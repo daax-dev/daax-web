@@ -12,8 +12,9 @@ import {
   findCopilotSessionFile,
   listCopilotSessions,
 } from "@/lib/transcripts/copilot";
-import { isSafeSessionId } from "@/lib/transcripts/types";
+import { isSafeSessionId, isPathWithin } from "@/lib/transcripts/types";
 import { GET as transcriptDetailGET } from "@/app/api/transcripts/[id]/route";
+import { GET as transcriptListGET } from "@/app/api/transcripts/route";
 
 describe("isSafeSessionId / path-traversal guard", () => {
   it("accepts normal uuids and rejects traversal", () => {
@@ -83,7 +84,10 @@ describe("parseCodexJsonl", () => {
     const { messages, stats } = parseCodexJsonl(fixture);
     expect(messages).toHaveLength(2);
     expect(messages[0]).toMatchObject({ type: "user", content: "hello codex" });
-    expect(messages[1]).toMatchObject({ type: "assistant", content: "hi there" });
+    expect(messages[1]).toMatchObject({
+      type: "assistant",
+      content: "hi there",
+    });
     expect(stats.invalidJsonLines).toBe(1);
     expect(stats.nonMessageEntries).toBeGreaterThanOrEqual(2); // session_meta + reasoning
   });
@@ -93,11 +97,20 @@ describe("parseCopilotJsonl", () => {
   const fixture = [
     JSON.stringify({
       type: "session.start",
-      data: { sessionId: "c-1", copilotVersion: "0.0.354", startTime: "2025-11-17T23:51:57.885Z" },
+      data: {
+        sessionId: "c-1",
+        copilotVersion: "0.0.354",
+        startTime: "2025-11-17T23:51:57.885Z",
+      },
       id: "a",
       timestamp: "2025-11-17T23:51:57.888Z",
     }),
-    JSON.stringify({ type: "session.info", data: { infoType: "mcp" }, id: "b", timestamp: "t" }),
+    JSON.stringify({
+      type: "session.info",
+      data: { infoType: "mcp" },
+      id: "b",
+      timestamp: "t",
+    }),
     JSON.stringify({
       type: "user.message",
       data: { content: "fix the bug", attachments: [] },
@@ -109,7 +122,9 @@ describe("parseCopilotJsonl", () => {
       data: {
         messageId: "m1",
         content: "Looking into it.",
-        toolRequests: [{ toolCallId: "tc1", name: "read_file", arguments: { path: "x.ts" } }],
+        toolRequests: [
+          { toolCallId: "tc1", name: "read_file", arguments: { path: "x.ts" } },
+        ],
       },
       id: "d",
       timestamp: "2025-11-17T23:52:05.000Z",
@@ -127,8 +142,16 @@ describe("parseCopilotJsonl", () => {
     const types = messages.map((m) => m.type);
     expect(types).toEqual(["user", "assistant", "tool_use", "tool_result"]);
     expect(messages[0].content).toBe("fix the bug");
-    expect(messages[2]).toMatchObject({ type: "tool_use", toolName: "read_file", toolId: "tc1" });
-    expect(messages[3]).toMatchObject({ type: "tool_result", content: "file contents", toolId: "tc1" });
+    expect(messages[2]).toMatchObject({
+      type: "tool_use",
+      toolName: "read_file",
+      toolId: "tc1",
+    });
+    expect(messages[3]).toMatchObject({
+      type: "tool_result",
+      content: "file contents",
+      toolId: "tc1",
+    });
   });
 
   it("handles empty input without throwing", () => {
@@ -422,5 +445,139 @@ describe("transcript detail route sessionId is the bare id + tool field", () => 
     // own field, not baked into sessionId.
     expect(data.sessionId).toBe(uuid);
     expect(data.tool).toBe("codex");
+  });
+});
+
+describe("isPathWithin containment guard", () => {
+  const tmpDirs: string[] = [];
+  afterEach(async () => {
+    await Promise.all(
+      tmpDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })),
+    );
+  });
+
+  it("accepts a file inside the base and rejects escapes", async () => {
+    const base = await mkdtemp(join(tmpdir(), "within-base-"));
+    tmpDirs.push(base);
+    const outside = await mkdtemp(join(tmpdir(), "within-outside-"));
+    tmpDirs.push(outside);
+
+    const inside = join(base, "ok.jsonl");
+    await writeFile(inside, "x", "utf-8");
+    const escapee = join(outside, "secret.txt");
+    await writeFile(escapee, "x", "utf-8");
+
+    expect(isPathWithin(base, inside)).toBe(true);
+    expect(isPathWithin(base, escapee)).toBe(false);
+    // Unresolvable candidate (does not exist) → deny.
+    expect(isPathWithin(base, join(base, "nope.jsonl"))).toBe(false);
+  });
+});
+
+describe("Claude detail route path-traversal containment (M1)", () => {
+  const tmpDirs: string[] = [];
+  afterEach(async () => {
+    delete process.env.CLAUDE_PROJECTS_DIR;
+    await Promise.all(
+      tmpDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })),
+    );
+  });
+
+  async function setupClaudeDir(fullPath: string): Promise<void> {
+    const projectsDir = await mkdtemp(join(tmpdir(), "claude-projects-"));
+    tmpDirs.push(projectsDir);
+    const projectDir = join(projectsDir, "-tmp-proj");
+    await mkdir(projectDir, { recursive: true });
+    await writeFile(
+      join(projectDir, "sessions-index.json"),
+      JSON.stringify({
+        version: 1,
+        entries: [{ sessionId: "sess-1", fullPath }],
+      }),
+      "utf-8",
+    );
+    process.env.CLAUDE_PROJECTS_DIR = projectsDir;
+  }
+
+  it("404s when the index fullPath points outside the projects dir", async () => {
+    // Craft an index entry whose fullPath resolves to a file the projects dir
+    // does not contain (an attacker-controlled absolute path).
+    const outside = await mkdtemp(join(tmpdir(), "claude-outside-"));
+    tmpDirs.push(outside);
+    const secret = join(outside, "secret.jsonl");
+    await writeFile(
+      secret,
+      JSON.stringify({
+        type: "user",
+        message: { content: "leaked" },
+        timestamp: "t",
+      }),
+      "utf-8",
+    );
+    await setupClaudeDir(secret);
+
+    const res = await transcriptDetailGET(
+      new Request("http://test/api/transcripts/claude:sess-1"),
+      { params: Promise.resolve({ id: "claude:sess-1" }) },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("reads a session whose fullPath stays within the projects dir", async () => {
+    const projectsDir = await mkdtemp(join(tmpdir(), "claude-ok-"));
+    tmpDirs.push(projectsDir);
+    const projectDir = join(projectsDir, "-tmp-proj");
+    await mkdir(projectDir, { recursive: true });
+    const sessionFile = join(projectDir, "sess-1.jsonl");
+    await writeFile(
+      sessionFile,
+      JSON.stringify({
+        type: "user",
+        message: { content: "hello claude" },
+        timestamp: "t",
+      }),
+      "utf-8",
+    );
+    await writeFile(
+      join(projectDir, "sessions-index.json"),
+      JSON.stringify({
+        version: 1,
+        entries: [{ sessionId: "sess-1", fullPath: sessionFile }],
+      }),
+      "utf-8",
+    );
+    process.env.CLAUDE_PROJECTS_DIR = projectsDir;
+
+    const res = await transcriptDetailGET(
+      new Request("http://test/api/transcripts/claude:sess-1"),
+      { params: Promise.resolve({ id: "claude:sess-1" }) },
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.sessionId).toBe("sess-1");
+    expect(data.tool).toBe("claude");
+    expect(data.messages[0]).toMatchObject({
+      type: "user",
+      content: "hello claude",
+    });
+  });
+
+  it("list route drops index entries that escape the projects dir", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "claude-list-outside-"));
+    tmpDirs.push(outside);
+    const secret = join(outside, "secret.jsonl");
+    await writeFile(secret, "{}", "utf-8");
+    await setupClaudeDir(secret);
+
+    const res = await transcriptListGET();
+    const data = await res.json();
+    // Route must succeed (not error out), and the malicious Claude entry must
+    // be skipped so no transcript references it.
+    expect(Array.isArray(data.transcripts)).toBe(true);
+    expect(
+      (data.transcripts as { sessionId: string }[]).some(
+        (t) => t.sessionId === "sess-1",
+      ),
+    ).toBe(false);
   });
 });
