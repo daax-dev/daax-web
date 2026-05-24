@@ -215,17 +215,28 @@ const securityRoutes = [
 // Devcontainers and Testcontainers are reparented under the Containers group;
 // each maps to a subFeature of the "containers" plugin for visibility control.
 const containersItems: SubNavItem[] = [
-  { href: "/containers", label: "Running", icon: Boxes, subFeatureId: "running" },
-  { href: "/devcontainers", label: "Devcontainers", icon: Container, subFeatureId: "devcontainers" },
-  { href: "/testcontainers", label: "Testcontainers", icon: FlaskConical, subFeatureId: "testcontainers" },
+  {
+    href: "/containers",
+    label: "Running",
+    icon: Boxes,
+    subFeatureId: "running",
+  },
+  {
+    href: "/devcontainers",
+    label: "Devcontainers",
+    icon: Container,
+    subFeatureId: "devcontainers",
+  },
+  {
+    href: "/testcontainers",
+    label: "Testcontainers",
+    icon: FlaskConical,
+    subFeatureId: "testcontainers",
+  },
 ];
 
 // Routes that should show the Containers submenu
-const containersRoutes = [
-  "/containers",
-  "/devcontainers",
-  "/testcontainers",
-];
+const containersRoutes = ["/containers", "/devcontainers", "/testcontainers"];
 
 // Note: shell and code-server are no longer top-level plugins, only AI Coding sub-features
 
@@ -337,8 +348,8 @@ export function Titlebar() {
   );
 
   // Check if we're on a Containers related page (running / devcontainers / testcontainers)
-  const isOnContainersPage = containersRoutes.some(route =>
-    pathname === route || pathname.startsWith(`${route}/`)
+  const isOnContainersPage = containersRoutes.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
   );
 
   // Get branding with fallback
@@ -864,33 +875,44 @@ export function Titlebar() {
         <div className="border-t bg-muted/30">
           <div className="container flex h-10 max-w-screen-2xl items-center">
             <nav className="flex items-center space-x-1 text-sm">
-              {containersItems
-                .filter((item) => isSubFeatureVisible("containers", item.subFeatureId, settings || undefined))
+              {getOrderedSubFeatures(
+                containersItems,
+                settings.subFeatureOrder["containers"],
+              )
+                .filter((item) =>
+                  isSubFeatureVisible(
+                    "containers",
+                    item.subFeatureId,
+                    settings || undefined,
+                  ),
+                )
                 .map((item) => {
-                const Icon = item.icon;
-                const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  const Icon = item.icon;
+                  const isActive =
+                    pathname === item.href ||
+                    pathname.startsWith(`${item.href}/`);
 
-                return (
-                  <Button
-                    key={item.href}
-                    variant={isActive ? "secondary" : "ghost"}
-                    size="sm"
-                    asChild
-                    className="h-7"
-                  >
-                    <Link
-                      href={item.href}
-                      className={cn(
-                        "flex items-center gap-1.5",
-                        isActive && "text-foreground"
-                      )}
+                  return (
+                    <Button
+                      key={item.href}
+                      variant={isActive ? "secondary" : "ghost"}
+                      size="sm"
+                      asChild
+                      className="h-7"
                     >
-                      <Icon className="h-3.5 w-3.5" />
-                      <span>{item.label}</span>
-                    </Link>
-                  </Button>
-                );
-              })}
+                      <Link
+                        href={item.href}
+                        className={cn(
+                          "flex items-center gap-1.5",
+                          isActive && "text-foreground",
+                        )}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                        <span>{item.label}</span>
+                      </Link>
+                    </Button>
+                  );
+                })}
             </nav>
           </div>
         </div>
