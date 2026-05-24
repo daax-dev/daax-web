@@ -581,3 +581,100 @@ describe("Claude detail route path-traversal containment (M1)", () => {
     ).toBe(false);
   });
 });
+
+describe("malformed sessions-index.json is tolerated (not thrown)", () => {
+  const tmpDirs: string[] = [];
+  const uuid = "sess-ok";
+  afterEach(async () => {
+    delete process.env.CLAUDE_PROJECTS_DIR;
+    await Promise.all(
+      tmpDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })),
+    );
+  });
+
+  // Write a projects dir with one project whose sessions-index.json `entries`
+  // is set to the given (possibly malformed) value. When `goodSessionFile` is
+  // provided a valid `sess-ok` entry is appended pointing at a real file.
+  async function setupIndex(
+    entries: unknown,
+    withGoodEntry: boolean,
+  ): Promise<void> {
+    const projectsDir = await mkdtemp(join(tmpdir(), "claude-malformed-"));
+    tmpDirs.push(projectsDir);
+    const projectDir = join(projectsDir, "-tmp-proj");
+    await mkdir(projectDir, { recursive: true });
+
+    let finalEntries = entries;
+    if (withGoodEntry) {
+      const sessionFile = join(projectDir, "ok.jsonl");
+      await writeFile(
+        sessionFile,
+        JSON.stringify({
+          type: "user",
+          message: { content: "hi" },
+          timestamp: "t",
+        }),
+        "utf-8",
+      );
+      finalEntries = [
+        ...(Array.isArray(entries) ? entries : []),
+        { sessionId: uuid, fullPath: sessionFile },
+      ];
+    }
+
+    await writeFile(
+      join(projectDir, "sessions-index.json"),
+      JSON.stringify({ version: 1, entries: finalEntries }),
+      "utf-8",
+    );
+    process.env.CLAUDE_PROJECTS_DIR = projectsDir;
+  }
+
+  it("list route tolerates a non-array entries field", async () => {
+    await setupIndex("not-an-array", false);
+    const res = await transcriptListGET();
+    const data = await res.json();
+    expect(Array.isArray(data.transcripts)).toBe(true);
+    // No claude sessions surface; route did not throw (would be a 500).
+    expect(
+      (data.transcripts as { tool: string }[]).filter(
+        (t) => t.tool === "claude",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("list route skips null/number/missing-field entries but keeps a valid one", async () => {
+    await setupIndex(
+      [null, 5, "str", { fullPath: "/x" }, { sessionId: 1 }],
+      true,
+    );
+    const res = await transcriptListGET();
+    const data = await res.json();
+    const claude = (
+      data.transcripts as { sessionId: string; tool: string }[]
+    ).filter((t) => t.tool === "claude");
+    expect(claude).toHaveLength(1);
+    expect(claude[0].sessionId).toBe(uuid);
+  });
+
+  it("detail route tolerates a non-array entries field (404, no throw)", async () => {
+    await setupIndex("not-an-array", false);
+    const res = await transcriptDetailGET(
+      new Request(`http://test/api/transcripts/claude:${uuid}`),
+      { params: Promise.resolve({ id: `claude:${uuid}` }) },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("detail route skips malformed entries and resolves the valid one", async () => {
+    await setupIndex([null, 5, { sessionId: 1 }], true);
+    const res = await transcriptDetailGET(
+      new Request(`http://test/api/transcripts/claude:${uuid}`),
+      { params: Promise.resolve({ id: `claude:${uuid}` }) },
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.sessionId).toBe(uuid);
+    expect(data.tool).toBe("claude");
+  });
+});

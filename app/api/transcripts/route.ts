@@ -50,6 +50,21 @@ interface SessionIndex {
   entries: SessionIndexEntry[];
 }
 
+/**
+ * sessions-index.json is untrusted on-disk content. Require an entry to be an
+ * object with the string fields this route reads (sessionId, fullPath) before
+ * using it, so a malformed index (non-array entries, null/number elements,
+ * missing fields) is skipped instead of injecting bad data or throwing.
+ */
+function isValidIndexEntry(e: unknown): e is SessionIndexEntry {
+  return (
+    !!e &&
+    typeof e === "object" &&
+    typeof (e as SessionIndexEntry).sessionId === "string" &&
+    typeof (e as SessionIndexEntry).fullPath === "string"
+  );
+}
+
 export async function GET() {
   const projectsDir = getClaudeProjectsDir();
 
@@ -80,11 +95,14 @@ export async function GET() {
         const indexContent = await readFile(indexPath, "utf-8");
         const index: SessionIndex = JSON.parse(indexContent);
 
+        if (!Array.isArray(index.entries)) continue;
         for (const entry of index.entries) {
+          // Untrusted on-disk content: skip malformed (non-object / missing
+          // string sessionId+fullPath) entries before reading any field.
+          if (!isValidIndexEntry(entry)) continue;
+
           // Skip sidechains
           if (entry.isSidechain) continue;
-
-          if (typeof entry.fullPath !== "string") continue;
 
           // Translate fullPath from host path to container path if needed
           // e.g., /home/jpoley/.claude/projects/xxx -> /host-claude/projects/xxx
