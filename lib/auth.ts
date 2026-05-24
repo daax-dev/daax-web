@@ -22,23 +22,96 @@ export type AuthResult =
 //   X-Forwarded-Email    → email address
 //   X-Forwarded-Groups   → comma-separated group memberships
 //   X-Forwarded-Admin    → "true" if admin user
-const USER_HEADER = process.env.DAAX_AUTH_USER_HEADER || "x-forwarded-user";
+const USER_HEADER =
+  process.env.DAAX_AUTH_USER_HEADER || "x-forwarded-user";
 const USERNAME_HEADER =
   process.env.DAAX_AUTH_USERNAME_HEADER || "x-forwarded-username";
 const DISPLAYNAME_HEADER =
   process.env.DAAX_AUTH_DISPLAYNAME_HEADER || "x-forwarded-name";
-const EMAIL_HEADER = process.env.DAAX_AUTH_EMAIL_HEADER || "x-forwarded-email";
+const EMAIL_HEADER =
+  process.env.DAAX_AUTH_EMAIL_HEADER || "x-forwarded-email";
 const GROUPS_HEADER =
   process.env.DAAX_AUTH_GROUPS_HEADER || "x-forwarded-groups";
 const OIDC_PROVIDER_URL =
   process.env.DAAX_AUTH_PROVIDER_URL || "https://auth.poley.dev";
 
-export async function getAuthUser(): Promise<AuthUser> {
+// Auth enforcement gate.
+//
+// daax-web is designed to run behind a Pocket ID forward-auth proxy that
+// injects the X-Forwarded-* headers above. In two supported deployments there
+// is NO proxy in front: host dev mode (`bun dev`) and proxy-less Tailscale
+// container runs. In those cases no header is present and every guarded route
+// would otherwise return 401.
+//
+// Policy (operator-approved): when the forward-auth user header is ABSENT
+// (truly no header present), requests are treated as a trusted local operator
+// UNLESS DAAX_REQUIRE_AUTH=1 is set, which restores strict enforcement (used
+// when a real proxy is in front). A one-time warning is logged whenever the
+// bypass is actually exercised so the relaxed posture is never silent.
+//
+// A header that is PRESENT but empty or whitespace-only is treated as an
+// invalid (malformed) credential, not as "no proxy" — getAuthContext() trims
+// the value, so it yields an unauthenticated user, and the guards return
+// 401 / throw even when DAAX_REQUIRE_AUTH is unset. This prevents a client that
+// can reach the app directly and send an empty or whitespace `X-Forwarded-User`
+// from being silently bypassed.
+//
+// Evaluated at call time (not module load) so the gate honors the current
+// environment and stays straightforward to test.
+function authRequired(): boolean {
+  return process.env.DAAX_REQUIRE_AUTH === "1";
+}
+
+// Synthetic user representing the trusted local operator when auth is bypassed.
+const LOCAL_OPERATOR: AuthUser = {
+  username: "local",
+  email: null,
+  groups: [],
+  authenticated: true,
+  pictureUrl: null,
+};
+
+let bypassWarned = false;
+function warnAuthBypassedOnce(): void {
+  if (bypassWarned) return;
+  bypassWarned = true;
+  console.warn(
+    "[auth] No forward-auth header present and DAAX_REQUIRE_AUTH!=1 — " +
+      "authentication is BYPASSED (treating requests as a trusted local operator). " +
+      "Set DAAX_REQUIRE_AUTH=1 to enforce authentication (e.g. behind the Pocket ID proxy).",
+  );
+}
+
+/**
+ * Resolved auth context for a single request.
+ *
+ * `rawUserHeader` is the unmodified `X-Forwarded-User` header value as returned
+ * by the Web Headers API: `null` when the header is genuinely absent, or the
+ * raw string (possibly empty/whitespace) when present. The guards use it to
+ * distinguish "no proxy" (absent → bypass eligible) from a malformed credential
+ * (present-but-empty/whitespace → never bypass). `user` is the derived AuthUser.
+ */
+interface AuthContext {
+  rawUserHeader: string | null;
+  user: AuthUser;
+}
+
+/**
+ * Read the forward-auth headers once and derive both the raw user header and
+ * the AuthUser. Single `headers()` lookup per request — used by getAuthUser()
+ * and the guards so the unauthenticated path does not read headers twice.
+ */
+async function getAuthContext(): Promise<AuthContext> {
   const h = await headers();
 
-  const userId = h.get(USER_HEADER) || null;
-  const username = h.get(USERNAME_HEADER) || null;
-  const displayName = h.get(DISPLAYNAME_HEADER) || null;
+  const rawUserHeader = h.get(USER_HEADER);
+  // Trim before validating: a present-but-empty or whitespace-only value is not
+  // a valid credential and must not yield an authenticated user. Use `??` (not
+  // `||`) so an absent header (null) and an empty string stay distinguishable
+  // upstream via rawUserHeader, then coalesce empty/whitespace to null here.
+  const userId = (rawUserHeader ?? "").trim() || null;
+  const username = (h.get(USERNAME_HEADER) || "").trim() || null;
+  const displayName = (h.get(DISPLAYNAME_HEADER) || "").trim() || null;
   const email = h.get(EMAIL_HEADER) || null;
   const groupsRaw = h.get(GROUPS_HEADER) || "";
   const groups = groupsRaw
@@ -54,14 +127,21 @@ export async function getAuthUser(): Promise<AuthUser> {
   const displayUsername = displayName || username || (isUuid ? "User" : userId);
 
   return {
-    username: displayUsername,
-    email,
-    groups,
-    authenticated: !!userId,
-    pictureUrl: userId
-      ? `${OIDC_PROVIDER_URL}/api/users/${encodeURIComponent(userId)}/avatar`
-      : null,
+    rawUserHeader,
+    user: {
+      username: displayUsername,
+      email,
+      groups,
+      authenticated: !!userId,
+      pictureUrl: userId
+        ? `${OIDC_PROVIDER_URL}/api/users/${encodeURIComponent(userId)}/avatar`
+        : null,
+    },
   };
+}
+
+export async function getAuthUser(): Promise<AuthUser> {
+  return (await getAuthContext()).user;
 }
 
 /**
@@ -109,24 +189,30 @@ export async function getAuthUser(): Promise<AuthUser> {
  * @returns AuthResult - either { authenticated: true, user: AuthUser } or { authenticated: false, response: NextResponse }
  */
 export async function requireAuth(): Promise<AuthResult> {
-  const user = await getAuthUser();
+  const { rawUserHeader, user } = await getAuthContext();
 
-  if (!user.authenticated) {
-    return {
-      authenticated: false,
-      response: NextResponse.json(
-        {
-          error: "Authentication required",
-          message: "You must be logged in to access this resource",
-        },
-        { status: 401 },
-      ),
-    };
+  if (user.authenticated) {
+    return { authenticated: true, user };
+  }
+
+  // Bypass to a local operator only when the user header is truly absent
+  // (rawUserHeader === null → no proxy) and strict auth is not required. A
+  // present-but-empty or whitespace-only header is a malformed credential and
+  // always 401s.
+  if (!authRequired() && rawUserHeader === null) {
+    warnAuthBypassedOnce();
+    return { authenticated: true, user: LOCAL_OPERATOR };
   }
 
   return {
-    authenticated: true,
-    user,
+    authenticated: false,
+    response: NextResponse.json(
+      {
+        error: "Authentication required",
+        message: "You must be logged in to access this resource",
+      },
+      { status: 401 }
+    ),
   };
 }
 
@@ -152,11 +238,18 @@ export async function requireAuth(): Promise<AuthResult> {
  * @returns AuthUser - the authenticated user
  */
 export async function requireAuthOrThrow(): Promise<AuthUser> {
-  const user = await getAuthUser();
+  const { rawUserHeader, user } = await getAuthContext();
 
-  if (!user.authenticated) {
-    throw new Error("Authentication required");
+  if (user.authenticated) {
+    return user;
   }
 
-  return user;
+  // Bypass only for a truly absent header (see requireAuth). A present-but-empty
+  // or whitespace-only header is a malformed credential and always throws.
+  if (!authRequired() && rawUserHeader === null) {
+    warnAuthBypassedOnce();
+    return LOCAL_OPERATOR;
+  }
+
+  throw new Error("Authentication required");
 }
