@@ -4,7 +4,7 @@ title: 'Feature: multi-tool transcripts (Claude + Codex + Copilot) actually work
 status: Done
 assignee: []
 created_date: '2026-05-23 17:50'
-updated_date: '2026-05-24 20:41'
+updated_date: '2026-05-24 21:07'
 labels:
   - feature
 dependencies:
@@ -29,7 +29,7 @@ Plan stub (refine after spike): abstract discovery into per-tool source provider
 - [x] #3 Empty/missing tool dirs handled gracefully (no silent total failure)
 - [x] #4 Container-mode path translation works for each tool
 - [x] #5 Tests cover at least one fixture per tool format
-- [ ] #6 Transcript-specific gates pass (transcripts unit tests, lint, typecheck, format, build clean for changed files); repo-wide lint/typecheck/format and the multi-store-backup baseline are pre-existing failures handled in a separate cleanup PR, not by this work
+- [x] #6 Transcript-specific gates pass (transcripts unit tests, lint, typecheck, format, build clean for changed files); repo-wide lint/typecheck/format and the multi-store-backup baseline are pre-existing failures handled in a separate cleanup PR, not by this work
 <!-- AC:END -->
 
 ## Final Summary

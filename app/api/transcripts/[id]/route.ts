@@ -36,6 +36,21 @@ interface SessionIndex {
   entries: SessionIndexEntry[];
 }
 
+/**
+ * sessions-index.json is untrusted on-disk content. Validate that an entry is
+ * an object carrying the string fields this route relies on before using it,
+ * so a malformed index (non-array entries, null/number elements, missing
+ * fields) is skipped rather than throwing.
+ */
+function isValidIndexEntry(e: unknown): e is SessionIndexEntry {
+  return (
+    !!e &&
+    typeof e === "object" &&
+    typeof (e as SessionIndexEntry).sessionId === "string" &&
+    typeof (e as SessionIndexEntry).fullPath === "string"
+  );
+}
+
 // Find session JSONL file by ID across all projects
 async function findSessionFile(sessionId: string): Promise<string | null> {
   const projectsDir = getClaudeProjectsDir();
@@ -56,8 +71,11 @@ async function findSessionFile(sessionId: string): Promise<string | null> {
       const indexContent = await readFile(indexPath, "utf-8");
       const index: SessionIndex = JSON.parse(indexContent);
 
-      const entry = index.entries.find((e) => e.sessionId === sessionId);
-      if (entry && typeof entry.fullPath === "string") {
+      if (!Array.isArray(index.entries)) continue;
+      const entry = index.entries.find(
+        (e) => isValidIndexEntry(e) && e.sessionId === sessionId,
+      );
+      if (entry) {
         // entry.fullPath is untrusted on-disk index content: contain it to the
         // configured Claude projects dir before reading, so a crafted index can
         // never point the read at an arbitrary host file (path traversal).
