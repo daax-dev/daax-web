@@ -27,11 +27,13 @@ import {
 } from '@/components/ui/select';
 import { toast } from 'sonner';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useContainers } from '@/plugins/testcontainers/hooks';
 import { ContainerCard } from '@/plugins/testcontainers/components';
 import type { ContainerAction, ContainerStatus } from '@/plugins/testcontainers/types';
 
 export default function TestContainersPage() {
+  const router = useRouter();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
 
@@ -83,14 +85,14 @@ export default function TestContainersPage() {
             break;
           case 'inspect':
             // Navigate to details page
-            window.location.href = `/testcontainers/${id}`;
+            router.push(`/testcontainers/${id}`);
             break;
         }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Action failed');
       }
     },
-    [startContainer, stopContainer, restartContainer, removeContainer]
+    [router, startContainer, stopContainer, restartContainer, removeContainer]
   );
 
   // Count containers by status
