@@ -33,15 +33,7 @@ const eslintConfig = defineConfig([
   },
   // SSR/hydration patterns - scoped to specific directories where these patterns are required
   {
-    files: [
-      "app/**/*.tsx",
-      "components/**/*.tsx",
-      "hooks/**/*.ts",
-      "lib/**/*.ts",
-      "lib/**/*.tsx",
-      "plugins/**/*.ts",
-      "plugins/**/*.tsx",
-    ],
+    files: ["app/**/*.tsx", "components/**/*.tsx", "hooks/**/*.ts", "lib/**/*.ts", "lib/**/*.tsx"],
     rules: {
       // Allow setState in useEffect for hydration handling - common SSR pattern
       // Required for: client-side state initialization after server render
@@ -52,10 +44,18 @@ const eslintConfig = defineConfig([
       // Allow accessing refs during render (common pattern for callback refs)
       // Required for: imperative DOM operations, third-party library integration
       "react-hooks/refs": "off",
-      // React Compiler diagnostics: legacy code migration in progress, matching
-      // the existing policy above. Mutual-recursion / use-before-declaration of
-      // useCallback consts and manual memoization patterns are flagged but are
-      // not runtime defects in these effect/callback handlers.
+    },
+  },
+  // Plugins/legacy tree only: additionally suppress the stricter React Compiler
+  // diagnostics. These flag use-before-declaration of mutually-recursive
+  // useCallback consts and manual-memoization patterns. They are NOT disabled
+  // for app/components/hooks/lib, where such diagnostics must be fixed in code.
+  {
+    files: ["plugins/**/*.ts", "plugins/**/*.tsx"],
+    rules: {
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/purity": "off",
+      "react-hooks/refs": "off",
       "react-hooks/immutability": "off",
       "react-hooks/preserve-manual-memoization": "off",
     },
