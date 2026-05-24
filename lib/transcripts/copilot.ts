@@ -12,7 +12,8 @@
  */
 
 import { readFile, readdir, stat } from "fs/promises";
-import { existsSync } from "fs";
+import { createReadStream, existsSync } from "fs";
+import { createInterface } from "readline";
 import { basename, join } from "path";
 import { homedir } from "os";
 import type { ParseResult, TranscriptMessage, TranscriptSession } from "./types";
@@ -60,15 +61,21 @@ export async function listCopilotSessions(): Promise<TranscriptSession[]> {
     const file = join(dir, e.name);
     const uuid = e.name.replace(/\.jsonl$/, "");
     try {
-      const content = await readFile(file, "utf-8");
-      const lines = content.split("\n").filter((l) => l.trim());
-      if (lines.length === 0) continue;
-
       let created = "";
       let firstPrompt = "";
       let messageCount = 0;
+      let sawLine = false;
 
-      for (const line of lines) {
+      // Stream the event log line-by-line so a long session never loads the
+      // whole file (plus a split array) into memory at once.
+      const rl = createInterface({
+        input: createReadStream(file, "utf-8"),
+        crlfDelay: Infinity,
+      });
+      for await (const raw of rl) {
+        const line = raw.trim();
+        if (!line) continue;
+        sawLine = true;
         let entry;
         try {
           entry = JSON.parse(line);
@@ -84,6 +91,7 @@ export async function listCopilotSessions(): Promise<TranscriptSession[]> {
           messageCount++;
         }
       }
+      if (!sawLine) continue;
 
       const cwd = await readWorkspaceCwd(dir, uuid);
       const fileStat = await stat(file);
