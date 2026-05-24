@@ -24,6 +24,14 @@ describe("MultiBacklogStore backup-restore integration", () => {
     projectDir = join(workspaceDir, "test-project");
     await fs.mkdir(projectDir, { recursive: true });
 
+    // MultiBacklogStore keys projects by their canonical (realpath-resolved)
+    // path. On macOS os.tmpdir() returns /var/... which is a symlink to
+    // /private/var/..., so the un-resolved tmp path would not match the store's
+    // keys. Resolve to canonical form to match the store's intentional symlink
+    // dedup behavior.
+    workspaceDir = await fs.realpath(workspaceDir);
+    projectDir = await fs.realpath(projectDir);
+
     // Create backlog structure inside project
     const backlogDir = join(projectDir, "backlog");
     const tasksDir = join(backlogDir, "tasks");
