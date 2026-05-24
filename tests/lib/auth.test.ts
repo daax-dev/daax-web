@@ -27,7 +27,14 @@ import type { AuthUser } from "@/lib/auth-types";
  */
 function createMockHeaders(headers: Record<string, string>): Headers {
   return {
-    get: (name: string) => headers[name.toLowerCase()] || null,
+    // Mirror the real Web Headers API: return the raw value (including "")
+    // when the key is present, and null only when it is genuinely absent.
+    get: (name: string) => {
+      const key = name.toLowerCase();
+      return Object.prototype.hasOwnProperty.call(headers, key)
+        ? headers[key]
+        : null;
+    },
   } as Headers;
 }
 
@@ -289,6 +296,27 @@ describe("auth module", () => {
         expect(result.user.groups).toEqual([]);
       }
     });
+
+    it("should return 401 when user header is present but empty and DAAX_REQUIRE_AUTH unset", async () => {
+      // Present-but-empty header is a malformed credential, NOT 'no proxy'.
+      // It must NOT bypass to the local operator even with strict auth off.
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "",
+        })
+      );
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(false);
+      if (!result.authenticated) {
+        expect(result.response.status).toBe(401);
+        expect(result.response.body).toEqual({
+          error: "Authentication required",
+          message: "You must be logged in to access this resource",
+        });
+      }
+    });
   });
 
   describe("requireAuthOrThrow", () => {
@@ -335,6 +363,19 @@ describe("auth module", () => {
 
       expect(user.authenticated).toBe(true);
       expect(user.username).toBe("local");
+    });
+
+    it("should throw when user header is present but empty and DAAX_REQUIRE_AUTH unset", async () => {
+      // Present-but-empty header is malformed; it must not bypass to local operator.
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "",
+        })
+      );
+
+      await expect(requireAuthOrThrow()).rejects.toThrow(
+        "Authentication required"
+      );
     });
   });
 

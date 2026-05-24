@@ -43,16 +43,35 @@ const OIDC_PROVIDER_URL =
 // container runs. In those cases no header is present and every guarded route
 // would otherwise return 401.
 //
-// Policy (operator-approved): when no authenticated user can be derived from
-// headers, requests are treated as a trusted local operator UNLESS
-// DAAX_REQUIRE_AUTH=1 is set, which restores strict enforcement (used when a
-// real proxy is in front). A one-time warning is logged whenever the bypass is
-// actually exercised so the relaxed posture is never silent.
+// Policy (operator-approved): when the forward-auth user header is ABSENT
+// (truly no header present), requests are treated as a trusted local operator
+// UNLESS DAAX_REQUIRE_AUTH=1 is set, which restores strict enforcement (used
+// when a real proxy is in front). A one-time warning is logged whenever the
+// bypass is actually exercised so the relaxed posture is never silent.
+//
+// A header that is PRESENT but empty/whitespace-only is treated as an invalid
+// (malformed) credential, not as "no proxy" — it returns 401 / throws even when
+// DAAX_REQUIRE_AUTH is unset. This prevents a client that can reach the app
+// directly and send an empty `X-Forwarded-User` from being silently bypassed.
 //
 // Evaluated at call time (not module load) so the gate honors the current
 // environment and stays straightforward to test.
 function authRequired(): boolean {
   return process.env.DAAX_REQUIRE_AUTH === "1";
+}
+
+/**
+ * Determine whether the forward-auth user header is truly absent.
+ *
+ * The Web Headers API returns `null` when a header is not present and `""`
+ * (or whitespace) when it is present but empty. Bypass is only permitted for a
+ * genuinely absent header; a present-but-empty/whitespace value is treated as
+ * an invalid credential.
+ */
+async function isUserHeaderAbsent(): Promise<boolean> {
+  const h = await headers();
+  const raw = h.get(USER_HEADER);
+  return raw === null;
 }
 
 // Synthetic user representing the trusted local operator when auth is bypassed.
@@ -157,8 +176,10 @@ export async function requireAuth(): Promise<AuthResult> {
     return { authenticated: true, user };
   }
 
-  // No proxy header. Bypass to a local operator unless strict auth is required.
-  if (!authRequired()) {
+  // Bypass to a local operator only when the user header is truly absent
+  // (no proxy) and strict auth is not required. A present-but-empty/invalid
+  // header is a malformed credential and always 401s.
+  if (!authRequired() && (await isUserHeaderAbsent())) {
     warnAuthBypassedOnce();
     return { authenticated: true, user: LOCAL_OPERATOR };
   }
@@ -203,7 +224,9 @@ export async function requireAuthOrThrow(): Promise<AuthUser> {
     return user;
   }
 
-  if (!authRequired()) {
+  // Bypass only for a truly absent header (see requireAuth). A present-but-empty
+  // header is a malformed credential and always throws.
+  if (!authRequired() && (await isUserHeaderAbsent())) {
     warnAuthBypassedOnce();
     return LOCAL_OPERATOR;
   }
