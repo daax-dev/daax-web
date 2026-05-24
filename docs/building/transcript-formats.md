@@ -11,15 +11,15 @@ OpenCode write their own session histories in different locations and formats, s
 transcripts never appear (silently empty). This note documents each format so the
 implementation can add per-tool discovery + parsing behind a common model.
 
-## Common target model
+## Common model (as implemented)
 
-Both existing routes already use this shape; keep it and add a `tool` discriminator:
+The normalized shapes are defined in `lib/transcripts/types.ts` and emitted by
+`app/api/transcripts/route.ts` (list) and `app/api/transcripts/[id]/route.ts` (detail).
+The `tool` discriminator (`"claude" | "codex" | "copilot"`) is part of `TranscriptSession`;
+the detail route dispatches the parser on the `${tool}:` prefix of the id.
 
-- Session (list): `{ id, tool, projectName, path, size|messageCount, mtime/created }`
-- Message (detail): `{ role: "user"|"assistant", text, timestamp, blocks?: (text|thinking|tool_use|tool_result) }`
-
-Add `tool: "claude" | "codex" | "copilot" | "opencode"` to `TranscriptSession` and switch
-the detail parser on it.
+- **Session (list) — `TranscriptSession`:** `{ id, sessionId, tool, projectPath, projectName, firstPrompt, summary, messageCount, created, modified, gitBranch, fullPath, size }`. `id` is `${tool}:${sessionId}`.
+- **Message (detail) — `TranscriptMessage`:** `{ type: "user"|"assistant"|"system"|"tool_use"|"tool_result", content, timestamp, thinking?, toolName?, toolId? }` (note `type`/`content`, not `role`/`text`). The detail route returns `{ sessionId, path, messageCount, messages, parseStats }`, where `messageCount === messages.length`; per-tool listers compute their `messageCount` to match that detail count.
 
 ---
 

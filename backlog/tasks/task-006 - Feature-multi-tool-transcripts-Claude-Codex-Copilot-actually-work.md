@@ -4,7 +4,7 @@ title: 'Feature: multi-tool transcripts (Claude + Codex + Copilot) actually work
 status: Done
 assignee: []
 created_date: '2026-05-23 17:50'
-updated_date: '2026-05-24 16:50'
+updated_date: '2026-05-24 19:53'
 labels:
   - feature
 dependencies:
@@ -35,9 +35,5 @@ Plan stub (refine after spike): abstract discovery into per-tool source provider
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Shipped in PR #34 (branch feature/multi-tool-transcripts). Added Codex + Copilot transcript support via lib/transcripts/{types,codex,copilot}.ts providers (discovery + parse), wired into the list route (each provider isolated; Claude path unchanged) and detail route (id namespaced ${tool}:${id}, dispatch by prefix, bare ids default to Claude). UI labels each session by tool; subtitle/empty-state copy generalized.
-
-Verified live (fresh next dev, real on-disk sessions): /api/transcripts returned 63 sessions (59 codex + 4 copilot; Claude indexes empty here); codex detail parsed 6 messages, copilot detail parsed user/assistant/tool_use/tool_result. Unit tests (tests/lib/transcripts.test.ts) cover both parsers + path-traversal guard + malformed-line robustness. bun run build passes; lint/typecheck no new issues; only pre-existing multi-store-backup failures remain (task-008).
-
-Cross-provider Codex validation: changes-needed → fixed (path-traversal guard via isSafeSessionId; list resilience when ~/.claude absent; parser null/non-array guards) with regression tests. OpenCode deferred to task-010; auth-gating consideration logged as task-011. AC #6 note: host docker build not re-run (no Dockerfile/runtime change; bun run build verified both-mode compile).
+Landed via the current multi-tool-transcripts PR (supersedes closed PR #34; the original #34 was closed without merging). Added Codex + Copilot transcript support via lib/transcripts/{types,codex,copilot}.ts providers (discovery + parse), wired into the list route (each provider isolated; Claude path unchanged) and detail route (id namespaced ${tool}:${id}, dispatch by prefix, bare ids default to Claude). UI labels each session by tool; subtitle/empty-state copy generalized. Per-tool list messageCount is computed to match the detail view's messages.length. Round-2 review fixes: exact-uuid-suffix match in findCodexSessionFile, first-line streaming in its fallback, and Copilot list/detail count alignment.
 <!-- SECTION:FINAL_SUMMARY:END -->
