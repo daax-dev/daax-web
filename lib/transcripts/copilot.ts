@@ -60,6 +60,9 @@ export async function listCopilotSessions(): Promise<TranscriptSession[]> {
     if (!e.isFile() || !e.name.endsWith(".jsonl")) continue;
     const file = join(dir, e.name);
     const uuid = e.name.replace(/\.jsonl$/, "");
+    // The uuid is used as a path segment (sibling workspace.yaml); reject any
+    // crafted filename that would escape the session-state dir.
+    if (!isSafeSessionId(uuid)) continue;
     try {
       let created = "";
       let firstPrompt = "";
@@ -68,36 +71,40 @@ export async function listCopilotSessions(): Promise<TranscriptSession[]> {
 
       // Stream the event log line-by-line so a long session never loads the
       // whole file (plus a split array) into memory at once.
-      const rl = createInterface({
-        input: createReadStream(file, "utf-8"),
-        crlfDelay: Infinity,
-      });
-      for await (const raw of rl) {
-        const line = raw.trim();
-        if (!line) continue;
-        sawLine = true;
-        let entry;
-        try {
-          entry = JSON.parse(line);
-        } catch {
-          continue;
+      const stream = createReadStream(file, "utf-8");
+      const rl = createInterface({ input: stream, crlfDelay: Infinity });
+      try {
+        for await (const raw of rl) {
+          const line = raw.trim();
+          if (!line) continue;
+          sawLine = true;
+          let entry;
+          try {
+            entry = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (!entry || typeof entry !== "object") continue;
+          if (entry.type === "session.start") {
+            created = entry.data?.startTime || entry.timestamp || "";
+          } else if (entry.type === "user.message") {
+            messageCount++;
+            if (!firstPrompt)
+              firstPrompt = String(entry.data?.content ?? "").slice(0, 200);
+          } else if (entry.type === "assistant.message") {
+            // Mirror parseCopilotJsonl: assistant text counts only when present,
+            // plus one message per tool request. Keeps the list count equal to
+            // the detail view's messages.length.
+            if (String(entry.data?.content ?? "")) messageCount++;
+            if (Array.isArray(entry.data?.toolRequests))
+              messageCount += entry.data.toolRequests.length;
+          } else if (entry.type === "tool.execution_complete") {
+            messageCount++;
+          }
         }
-        if (!entry || typeof entry !== "object") continue;
-        if (entry.type === "session.start") {
-          created = entry.data?.startTime || entry.timestamp || "";
-        } else if (entry.type === "user.message") {
-          messageCount++;
-          if (!firstPrompt) firstPrompt = String(entry.data?.content ?? "").slice(0, 200);
-        } else if (entry.type === "assistant.message") {
-          // Mirror parseCopilotJsonl: assistant text counts only when present,
-          // plus one message per tool request. Keeps the list count equal to
-          // the detail view's messages.length.
-          if (String(entry.data?.content ?? "")) messageCount++;
-          if (Array.isArray(entry.data?.toolRequests))
-            messageCount += entry.data.toolRequests.length;
-        } else if (entry.type === "tool.execution_complete") {
-          messageCount++;
-        }
+      } finally {
+        rl.close();
+        stream.destroy();
       }
       if (!sawLine) continue;
 

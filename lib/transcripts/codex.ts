@@ -93,38 +93,51 @@ export async function listCodexSessions(): Promise<TranscriptSession[]> {
 
       // Stream the rollout line-by-line so a large session never loads the
       // whole file (plus a split array) into memory at once.
-      const rl = createInterface({
-        input: createReadStream(file, "utf-8"),
-        crlfDelay: Infinity,
-      });
-      for await (const raw of rl) {
-        const line = raw.trim();
-        if (!line) continue;
-        sawLine = true;
-        let entry;
-        try {
-          entry = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        if (!entry || typeof entry !== "object") continue;
-        if (entry.type === "session_meta" && entry.payload) {
-          sessionId = entry.payload.id || sessionId;
-          cwd = entry.payload.cwd || "";
-          created = entry.payload.timestamp || entry.timestamp || "";
-        } else if (entry.type === "response_item" && entry.payload?.type === "message") {
-          // Mirror parseCodexJsonl: only user/assistant messages with non-empty
-          // extracted text are emitted, so count the same subset to keep the
-          // list count equal to the detail view's messages.length.
-          const role = entry.payload.role;
-          if (role !== "user" && role !== "assistant") continue;
-          const text = textFromContent(entry.payload.content);
-          if (!text) continue;
-          messageCount++;
-          if (!firstPrompt && role === "user") {
-            firstPrompt = text.slice(0, 200);
+      const stream = createReadStream(file, "utf-8");
+      const rl = createInterface({ input: stream, crlfDelay: Infinity });
+      try {
+        for await (const raw of rl) {
+          const line = raw.trim();
+          if (!line) continue;
+          sawLine = true;
+          let entry;
+          try {
+            entry = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (!entry || typeof entry !== "object") continue;
+          if (entry.type === "session_meta" && entry.payload) {
+            // session_meta is untrusted file content; only accept an id that is
+            // safe to use as a detail-route path segment.
+            if (
+              typeof entry.payload.id === "string" &&
+              isSafeSessionId(entry.payload.id)
+            ) {
+              sessionId = entry.payload.id;
+            }
+            cwd = entry.payload.cwd || "";
+            created = entry.payload.timestamp || entry.timestamp || "";
+          } else if (
+            entry.type === "response_item" &&
+            entry.payload?.type === "message"
+          ) {
+            // Mirror parseCodexJsonl: only user/assistant messages with non-empty
+            // extracted text are emitted, so count the same subset to keep the
+            // list count equal to the detail view's messages.length.
+            const role = entry.payload.role;
+            if (role !== "user" && role !== "assistant") continue;
+            const text = textFromContent(entry.payload.content);
+            if (!text) continue;
+            messageCount++;
+            if (!firstPrompt && role === "user") {
+              firstPrompt = text.slice(0, 200);
+            }
           }
         }
+      } finally {
+        rl.close();
+        stream.destroy();
       }
       if (!sawLine) continue;
 
