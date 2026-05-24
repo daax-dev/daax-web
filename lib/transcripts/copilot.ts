@@ -86,7 +86,12 @@ export async function listCopilotSessions(): Promise<TranscriptSession[]> {
           }
           if (!entry || typeof entry !== "object") continue;
           if (entry.type === "session.start") {
-            created = entry.data?.startTime || entry.timestamp || "";
+            // created is untrusted JSON; only accept string timestamps.
+            if (typeof entry.data?.startTime === "string") {
+              created = entry.data.startTime;
+            } else if (typeof entry.timestamp === "string") {
+              created = entry.timestamp;
+            }
           } else if (entry.type === "user.message") {
             messageCount++;
             if (!firstPrompt)

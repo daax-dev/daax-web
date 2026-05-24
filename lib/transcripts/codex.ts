@@ -119,7 +119,12 @@ export async function listCodexSessions(): Promise<TranscriptSession[]> {
             // cwd is untrusted; a non-string would throw in basename() below.
             cwd =
               typeof entry.payload.cwd === "string" ? entry.payload.cwd : "";
-            created = entry.payload.timestamp || entry.timestamp || "";
+            // created is untrusted JSON; only accept string timestamps.
+            if (typeof entry.payload.timestamp === "string") {
+              created = entry.payload.timestamp;
+            } else if (typeof entry.timestamp === "string") {
+              created = entry.timestamp;
+            }
           } else if (
             entry.type === "response_item" &&
             entry.payload?.type === "message"
