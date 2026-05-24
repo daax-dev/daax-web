@@ -82,6 +82,7 @@ export async function listCopilotSessions(): Promise<TranscriptSession[]> {
         } catch {
           continue;
         }
+        if (!entry || typeof entry !== "object") continue;
         if (entry.type === "session.start") {
           created = entry.data?.startTime || entry.timestamp || "";
         } else if (entry.type === "user.message") {
