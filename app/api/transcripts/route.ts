@@ -3,7 +3,7 @@ import { readdir, readFile, stat } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import type { TranscriptTool } from "@/lib/transcripts/types";
+import type { TranscriptSession } from "@/lib/transcripts/types";
 import { listCodexSessions } from "@/lib/transcripts/codex";
 import { listCopilotSessions } from "@/lib/transcripts/copilot";
 
@@ -28,22 +28,6 @@ function getClaudeProjectsDir(): string {
   }
 
   return hostPath; // Return default even if doesn't exist
-}
-
-export interface TranscriptSession {
-  id: string;
-  sessionId: string;
-  tool: TranscriptTool;
-  projectPath: string;
-  projectName: string;
-  firstPrompt: string;
-  summary: string;
-  messageCount: number;
-  created: string;
-  modified: string;
-  gitBranch: string | null;
-  fullPath: string;
-  size: number;
 }
 
 interface SessionIndexEntry {

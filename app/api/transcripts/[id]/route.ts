@@ -5,6 +5,7 @@ import { join } from "path";
 import { homedir } from "os";
 import { findCodexSessionFile, parseCodexJsonl } from "@/lib/transcripts/codex";
 import { findCopilotSessionFile, parseCopilotJsonl } from "@/lib/transcripts/copilot";
+import type { ParseResult, TranscriptMessage } from "@/lib/transcripts/types";
 
 // Get Claude projects directory
 function getClaudeProjectsDir(): string {
@@ -73,26 +74,6 @@ async function findSessionFile(sessionId: string): Promise<string | null> {
   }
 
   return null;
-}
-
-interface TranscriptMessage {
-  type: "user" | "assistant" | "system" | "tool_use" | "tool_result";
-  content: string;
-  timestamp: string;
-  thinking?: string;
-  toolName?: string;
-  toolId?: string;
-}
-
-interface ParseResult {
-  messages: TranscriptMessage[];
-  stats: {
-    totalLines: number;
-    parsedMessages: number;
-    skippedLines: number;
-    invalidJsonLines: number;
-    nonMessageEntries: number;
-  };
 }
 
 // Parse JSONL file into structured messages with tracking of skipped entries

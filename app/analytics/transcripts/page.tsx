@@ -27,7 +27,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { toast } from "sonner";
-import type { TranscriptSession } from "@/app/api/transcripts/route";
+import type { TranscriptSession } from "@/lib/transcripts/types";
 
 function formatDate(dateString: string): string {
   return new Date(dateString).toLocaleDateString("en-US", {
