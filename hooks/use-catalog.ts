@@ -108,6 +108,12 @@ interface UseFeaturesReturn {
 }
 
 export function useFeatures(options?: UseFeaturesOptions): UseFeaturesReturn {
+  // Destructure to stable locals: React Compiler cannot preserve manual
+  // memoization when the useCallback deps are optional-chain expressions on a
+  // possibly-unstable arg (options?.category). Plain identifiers are analyzable.
+  const category = options?.category;
+  const baseId = options?.baseId;
+
   const [features, setFeatures] = useState<Feature[]>([]);
   const [categories, setCategories] = useState<FeatureCategory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -119,8 +125,8 @@ export function useFeatures(options?: UseFeaturesOptions): UseFeaturesReturn {
       setError(null);
 
       const params = new URLSearchParams();
-      if (options?.category) params.set("category", options.category);
-      if (options?.baseId) params.set("baseId", options.baseId);
+      if (category) params.set("category", category);
+      if (baseId) params.set("baseId", baseId);
 
       const url = `/api/catalog/features${params.toString() ? `?${params}` : ""}`;
       const res = await fetch(url);
@@ -133,7 +139,7 @@ export function useFeatures(options?: UseFeaturesOptions): UseFeaturesReturn {
     } finally {
       setLoading(false);
     }
-  }, [options?.category, options?.baseId]);
+  }, [category, baseId]);
 
   useEffect(() => {
     fetchFeatures();

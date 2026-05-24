@@ -109,43 +109,6 @@ export function TaskDetailsModal({
     setIsEditing(isCreateMode);
   }, [task, isCreateMode, initialStatus, statuses]);
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isOpen) return;
-
-      // Escape to close
-      if (e.key === "Escape") {
-        onClose();
-        return;
-      }
-
-      // E to edit (when not already editing and not in an input)
-      if (
-        e.key === "e" &&
-        !isEditing &&
-        !isCreateMode &&
-        !(
-          e.target instanceof HTMLInputElement ||
-          e.target instanceof HTMLTextAreaElement
-        )
-      ) {
-        e.preventDefault();
-        setIsEditing(true);
-        return;
-      }
-
-      // Cmd/Ctrl + S to save
-      if ((e.metaKey || e.ctrlKey) && e.key === "s" && isEditing) {
-        e.preventDefault();
-        handleSave();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, isEditing, isCreateMode, onClose]);
-
   const handleSave = useCallback(async () => {
     if (!title.trim()) return;
 
@@ -194,6 +157,43 @@ export function TaskDetailsModal({
     onSave,
     onClose,
   ]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!isOpen) return;
+
+      // Escape to close
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+
+      // E to edit (when not already editing and not in an input)
+      if (
+        e.key === "e" &&
+        !isEditing &&
+        !isCreateMode &&
+        !(
+          e.target instanceof HTMLInputElement ||
+          e.target instanceof HTMLTextAreaElement
+        )
+      ) {
+        e.preventDefault();
+        setIsEditing(true);
+        return;
+      }
+
+      // Cmd/Ctrl + S to save
+      if ((e.metaKey || e.ctrlKey) && e.key === "s" && isEditing) {
+        e.preventDefault();
+        handleSave();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, isEditing, isCreateMode, onClose, handleSave]);
 
   const handleArchive = useCallback(async () => {
     if (!task || !onArchive) return;
