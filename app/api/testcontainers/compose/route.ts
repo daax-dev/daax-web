@@ -3,6 +3,8 @@
  *
  * GET /api/testcontainers/compose - List compose projects
  * POST /api/testcontainers/compose - Create compose project
+ *
+ * SECURITY: POST operations require authentication via requireAuth()
  */
 
 import { NextResponse } from 'next/server';
@@ -12,6 +14,7 @@ import {
   checkDockerStatus,
 } from '@/plugins/testcontainers/api';
 import type { ComposeCreateRequest } from '@/plugins/testcontainers/types/compose';
+import { requireAuth } from '@/lib/auth';
 
 export async function GET() {
   try {
@@ -40,6 +43,10 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  // Require authentication for compose project creation
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     // Check Docker connection first
     const status = await checkDockerStatus();
