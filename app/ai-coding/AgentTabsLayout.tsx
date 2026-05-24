@@ -113,6 +113,9 @@ export function AgentTabsLayout() {
   );
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Tab DOM nodes by tab id, so arrow-key navigation can move focus to the
+  // newly selected tab (roving tabindex / WAI-ARIA tabs pattern).
+  const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const { activeProject, directories, basePath } = useProject();
 
   const getLocationType = (locationName: string): LocationType => {
@@ -388,6 +391,28 @@ export function AgentTabsLayout() {
   );
   const activeStray = activeTab ? isStray(activeTab) : false;
 
+  // WAI-ARIA tabs keyboard handler (roving tabindex). Enter/Space activate
+  // the focused tab; Left/Right move selection AND focus to the adjacent tab
+  // (with wraparound). The target guard keeps these keys from hijacking the
+  // rename input and the info/close buttons nested inside the tab.
+  const onTabKeyDown = (tabId: string) => (e: React.KeyboardEvent) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault(); // suppress page scroll on Space
+      setActiveTabId(tabId);
+      return;
+    }
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const idx = tabs.findIndex((t) => t.id === tabId);
+    if (idx < 0) return;
+    e.preventDefault();
+    const delta = e.key === "ArrowRight" ? 1 : -1;
+    const nextIdx = (idx + delta + tabs.length) % tabs.length;
+    const nextId = tabs[nextIdx].id;
+    setActiveTabId(nextId);
+    tabRefs.current.get(nextId)?.focus();
+  };
+
   return (
     // Subtract both the main titlebar (h-14 = 3.5rem) and the AI Coding
     // sub-nav (h-10 = 2.5rem) so the terminal area runs to the viewport
@@ -430,29 +455,27 @@ export function AgentTabsLayout() {
                   <Tooltip key={tab.id}>
                     <TooltipTrigger asChild>
                       <div
+                        ref={(el) => {
+                          if (el) tabRefs.current.set(tab.id, el);
+                          else tabRefs.current.delete(tab.id);
+                        }}
                         draggable={editingTabId !== tab.id}
                         onDragStart={onDragStart(tab.id)}
                         onDragOver={onDragOver(tab.id)}
                         onDragEnd={onDragEnd}
                         role="tab"
+                        id={`agent-tab-${tab.id}`}
                         aria-selected={isActive}
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          // Only act on the tab itself — let Enter/Space reach
-                          // the rename input and the info/close buttons inside.
-                          if (e.target !== e.currentTarget) return;
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault(); // suppress page scroll on Space
-                            setActiveTabId(tab.id);
-                          }
-                        }}
+                        aria-controls={`agent-tabpanel-${tab.id}`}
+                        tabIndex={isActive ? 0 : -1}
+                        onKeyDown={onTabKeyDown(tab.id)}
                         className={cn(
                           "flex items-center gap-1.5 pl-2.5 pr-1 py-1.5 rounded-t-md border-b-2 -mb-px transition-colors cursor-pointer group select-none min-w-0",
                           isActive
                             ? "bg-background border-primary shadow-[0_-1px_0_0_var(--border)_inset,1px_0_0_0_var(--border),_-1px_0_0_0_var(--border)]"
                             : "bg-transparent border-transparent hover:bg-muted",
                           draggingTabId === tab.id && "opacity-60",
-                          stray && "text-amber-600",
+                          stray && "text-warning",
                         )}
                         onClick={() => setActiveTabId(tab.id)}
                       >
@@ -461,9 +484,9 @@ export function AgentTabsLayout() {
                           className={cn(
                             "inline-block h-2 w-2 rounded-full shrink-0",
                             stray
-                              ? "bg-amber-500"
+                              ? "bg-warning"
                               : isRunning(tab)
-                                ? "bg-emerald-500"
+                                ? "bg-success"
                                 : "bg-muted-foreground/50",
                           )}
                           aria-hidden
@@ -495,7 +518,7 @@ export function AgentTabsLayout() {
                         )}
                         {stray && (
                           <AlertTriangle
-                            className="h-3 w-3 shrink-0 text-amber-500"
+                            className="h-3 w-3 shrink-0 text-warning"
                             aria-label="Container missing"
                           />
                         )}
@@ -533,7 +556,7 @@ export function AgentTabsLayout() {
                           {tab.locationName})
                         </span>
                         {stray ? (
-                          <span className="text-amber-500">
+                          <span className="text-warning">
                             Container not found — session ended
                           </span>
                         ) : (
@@ -568,7 +591,7 @@ export function AgentTabsLayout() {
       {/* Stray banner — visible when the active tab's container has
           disappeared from docker ps. Points users at the Sessions page. */}
       {activeStray && (
-        <div className="border-b bg-amber-500/10 text-amber-600 px-4 py-2 text-xs flex items-center gap-2">
+        <div className="border-b bg-warning/10 text-warning px-4 py-2 text-xs flex items-center gap-2">
           <AlertTriangle className="h-3.5 w-3.5" />
           <span>
             This session&apos;s container is no longer running. Close this tab
@@ -605,9 +628,9 @@ export function AgentTabsLayout() {
                     className={cn(
                       "font-medium",
                       isStray(tab)
-                        ? "text-amber-600"
+                        ? "text-warning"
                         : isRunning(tab)
-                          ? "text-emerald-600"
+                          ? "text-success"
                           : "text-muted-foreground",
                     )}
                   >
@@ -679,6 +702,9 @@ export function AgentTabsLayout() {
           tabs.map((tab) => (
             <div
               key={tab.id}
+              role="tabpanel"
+              id={`agent-tabpanel-${tab.id}`}
+              aria-labelledby={`agent-tab-${tab.id}`}
               className={cn(
                 "absolute inset-0",
                 activeTabId === tab.id ? "block" : "hidden",
