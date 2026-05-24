@@ -116,7 +116,9 @@ export async function listCodexSessions(): Promise<TranscriptSession[]> {
             ) {
               sessionId = entry.payload.id;
             }
-            cwd = entry.payload.cwd || "";
+            // cwd is untrusted; a non-string would throw in basename() below.
+            cwd =
+              typeof entry.payload.cwd === "string" ? entry.payload.cwd : "";
             created = entry.payload.timestamp || entry.timestamp || "";
           } else if (
             entry.type === "response_item" &&

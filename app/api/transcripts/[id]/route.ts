@@ -257,7 +257,10 @@ export async function GET(
     const { messages, stats } = parse(content);
 
     return NextResponse.json({
-      sessionId: id,
+      // Bare native id (no `${tool}:` prefix), matching the list route's
+      // TranscriptSession.sessionId; `tool` is exposed as its own field.
+      sessionId: nativeId,
+      tool,
       path: sessionFile,
       messageCount: messages.length,
       messages,
