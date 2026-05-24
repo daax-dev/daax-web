@@ -4,27 +4,23 @@
  * POST: Set the active project
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { getMultiBacklogStore } from '@/server/backlog-multi-store';
+import { NextRequest, NextResponse } from "next/server";
+import { getMultiBacklogStore } from "@/server/backlog-multi-store";
 
 export async function GET() {
   try {
     const activeProject = getMultiBacklogStore().getActiveProject();
 
     if (!activeProject) {
-      return NextResponse.json(
-        { activeProject: null },
-        { status: 200 }
-      );
+      return NextResponse.json({ activeProject: null }, { status: 200 });
     }
 
     return NextResponse.json({ activeProject });
-
   } catch (error) {
-    console.error('[API] Error fetching active project:', error);
+    console.error("[API] Error fetching active project:", error);
     return NextResponse.json(
-      { error: 'Failed to fetch active project' },
-      { status: 500 }
+      { error: "Failed to fetch active project" },
+      { status: 500 },
     );
   }
 }
@@ -35,8 +31,8 @@ export async function POST(request: NextRequest) {
 
     if (!projectPath) {
       return NextResponse.json(
-        { error: 'Missing required field: projectPath' },
-        { status: 400 }
+        { error: "Missing required field: projectPath" },
+        { status: 400 },
       );
     }
 
@@ -45,7 +41,7 @@ export async function POST(request: NextRequest) {
     if (!project) {
       return NextResponse.json(
         { error: `Project not found: ${projectPath}` },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -53,12 +49,16 @@ export async function POST(request: NextRequest) {
     const activeProject = getMultiBacklogStore().getActiveProject();
 
     return NextResponse.json({ activeProject });
-
   } catch (error) {
-    console.error('[API] Error setting active project:', error);
+    console.error("[API] Error setting active project:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to set active project' },
-      { status: 500 }
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to set active project",
+      },
+      { status: 500 },
     );
   }
 }

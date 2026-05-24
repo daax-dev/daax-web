@@ -19,7 +19,9 @@ export function smokeTest<T extends Startable>(
   moduleId: string,
   label: string,
   makeContainer: () => T,
-  extraAssert?: (started: Awaited<ReturnType<T["start"]>>) => Promise<void> | void,
+  extraAssert?: (
+    started: Awaited<ReturnType<T["start"]>>,
+  ) => Promise<void> | void,
 ): void {
   let started: Stopped | undefined;
 
@@ -53,7 +55,10 @@ export function smokeTest<T extends Startable>(
             started = undefined;
           }
         } catch (err) {
-          console.error(`[${moduleId}] stop failed (afterAll will retry):`, err);
+          console.error(
+            `[${moduleId}] stop failed (afterAll will retry):`,
+            err,
+          );
         }
       }
     }

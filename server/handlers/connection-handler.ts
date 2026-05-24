@@ -16,7 +16,10 @@ import {
   expandPath,
   isAllowedOrigin,
 } from "../config/constants";
-import { resolveContainerImage, DEFAULT_CONTAINER_IMAGE } from "../docker/image-manager";
+import {
+  resolveContainerImage,
+  DEFAULT_CONTAINER_IMAGE,
+} from "../docker/image-manager";
 import { getPty } from "../sessions/pty-loader";
 import {
   TerminalSession,
@@ -50,10 +53,7 @@ export function setAuthPaths(claudePath: string, openCodePath: string): void {
 /**
  * Handle a new WebSocket connection
  */
-export function handleConnection(
-  ws: WebSocket,
-  req: IncomingMessage,
-): void {
+export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
   const origin = req.headers.origin;
 
   // Basic origin check
@@ -89,11 +89,16 @@ export function handleConnection(
 
   // OpenCode model/provider params (for opencode sessions)
   // Model format is "provider:model" (e.g., "copilot:gpt-4o", "openai:o1")
-  const opencodeModelParam = url.searchParams.get("opencodeModel") || "copilot:gpt-4o";
+  const opencodeModelParam =
+    url.searchParams.get("opencodeModel") || "copilot:gpt-4o";
   const colonIndex = opencodeModelParam.indexOf(":");
-  const [opencodeProvider, opencodeModel] = colonIndex >= 0
-    ? [opencodeModelParam.slice(0, colonIndex), opencodeModelParam.slice(colonIndex + 1)]
-    : ["copilot", opencodeModelParam]; // Fallback for legacy format
+  const [opencodeProvider, opencodeModel] =
+    colonIndex >= 0
+      ? [
+          opencodeModelParam.slice(0, colonIndex),
+          opencodeModelParam.slice(colonIndex + 1),
+        ]
+      : ["copilot", opencodeModelParam]; // Fallback for legacy format
   const isOpenCodeSession =
     command === "opencode" || command.startsWith("opencode ");
 
@@ -143,7 +148,9 @@ export function handleConnection(
   console.log(
     `Session ${sessionId}: requestedMount=${requestedMount}, HOST_WORKSPACE_PATH=${HOST_WORKSPACE_PATH}, mountPath=${mountPath}`,
   );
-  console.log(`Session ${sessionId}: recording=${enableRecording}${clientSessionId ? `, clientSessionId=${clientSessionId}` : ""}`);
+  console.log(
+    `Session ${sessionId}: recording=${enableRecording}${clientSessionId ? `, clientSessionId=${clientSessionId}` : ""}`,
+  );
 
   const { shell, shellArgs } = buildShellCommand(
     mode,
@@ -163,10 +170,13 @@ export function handleConnection(
   // Check if node-pty is available
   const pty = getPty();
   if (!pty) {
-    ws.send(JSON.stringify({
-      type: "error",
-      error: "Terminal functionality is unavailable. node-pty optional dependency is not installed."
-    }));
+    ws.send(
+      JSON.stringify({
+        type: "error",
+        error:
+          "Terminal functionality is unavailable. node-pty optional dependency is not installed.",
+      }),
+    );
     ws.close();
     return;
   }
@@ -318,7 +328,9 @@ export function handleConnection(
     ptyProcess,
     ws,
     getRecordingId: () => session.recordingId,
-    setRecordingId: (id) => { session.recordingId = id; },
+    setRecordingId: (id) => {
+      session.recordingId = id;
+    },
   };
 
   // WebSocket input -> PTY
@@ -467,7 +479,10 @@ function resolveMountPaths(
         mountPath = requestedMount.replace("/workspace", HOST_WORKSPACE_PATH);
       } else if (requestedMount.startsWith("/workspace")) {
         mountPath = HOST_WORKSPACE_PATH;
-      } else if (requestedMount === "/app" || requestedMount.startsWith("/app/")) {
+      } else if (
+        requestedMount === "/app" ||
+        requestedMount.startsWith("/app/")
+      ) {
         // Handle container's internal /app path (process.cwd() when running in container)
         // Translate to HOST_WORKSPACE_PATH for proper volume mounting
         mountPath = HOST_WORKSPACE_PATH;

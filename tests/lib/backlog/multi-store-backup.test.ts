@@ -12,15 +12,18 @@ import { tmpdir } from "os";
 import { MultiBacklogStore } from "@/lib/backlog/multi-store";
 
 describe("MultiBacklogStore backup-restore integration", () => {
-  let workspaceDir: string;  // Parent directory to scan
-  let projectDir: string;    // The actual project directory
+  let workspaceDir: string; // Parent directory to scan
+  let projectDir: string; // The actual project directory
   let store: MultiBacklogStore;
 
   beforeEach(async () => {
     // Create a unique workspace directory
     // The structure should be: workspace/project/backlog/...
     // This matches how findBacklogDirectories expects to find projects
-    workspaceDir = join(tmpdir(), `multi-store-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    workspaceDir = join(
+      tmpdir(),
+      `multi-store-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
     projectDir = join(workspaceDir, "test-project");
     await fs.mkdir(projectDir, { recursive: true });
 
@@ -47,7 +50,7 @@ statuses:
   - Done
 labels:
   - test
-`
+`,
     );
 
     // Create a sample task
@@ -61,7 +64,7 @@ priority: "high"
 created_date: "2026-01-15"
 ---
 Original task content.
-`
+`,
     );
 
     store = new MultiBacklogStore();
@@ -137,20 +140,26 @@ Original task content.
     store.on("error", errorSpy);
 
     // Perform updates sequentially (concurrent updates have race conditions on same file)
-    const result1 = await store.updateTask(projectDir, "task-001", { priority: "low" });
+    const result1 = await store.updateTask(projectDir, "task-001", {
+      priority: "low",
+    });
     expect(result1).not.toBeNull();
     expect(result1!.priority).toBe("low");
 
     // Rescan to sync state after update (file system changes trigger internal state updates)
     await store.scanWorkspace(workspaceDir);
 
-    const result2 = await store.updateTask(projectDir, "task-001", { labels: ["updated"] });
+    const result2 = await store.updateTask(projectDir, "task-001", {
+      labels: ["updated"],
+    });
     expect(result2).not.toBeNull();
     expect(result2!.labels).toContain("updated");
 
     await store.scanWorkspace(workspaceDir);
 
-    const result3 = await store.updateTask(projectDir, "task-001", { status: "In Progress" });
+    const result3 = await store.updateTask(projectDir, "task-001", {
+      status: "In Progress",
+    });
     expect(result3).not.toBeNull();
     expect(result3!.status).toBe("In Progress");
 

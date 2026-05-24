@@ -46,16 +46,22 @@ export type {
   SearchResponse,
   ConfigResponse,
   ErrorResponse,
-} from '../lib/backlog/types';
+} from "../lib/backlog/types";
 
-export { isLocalEditableTask, isDaaxDecision } from '../lib/backlog/types';
+export { isLocalEditableTask, isDaaxDecision } from "../lib/backlog/types";
 
 // Daax-specific multi-backlog types
-import type { Task, Document, Decision, Milestone, BacklogConfig } from '../lib/backlog/types';
+import type {
+  Task,
+  Document,
+  Decision,
+  Milestone,
+  BacklogConfig,
+} from "../lib/backlog/types";
 
 export interface BacklogProject {
-  path: string;                // Absolute path to project directory
-  name: string;                // From config.yml
+  path: string; // Absolute path to project directory
+  name: string; // From config.yml
   tasks: Task[];
   documents: Document[];
   decisions: Decision[];
@@ -86,22 +92,22 @@ export interface BacklogTaskUpdateRequest {
 
 // Multi-Store Event Types
 export type BacklogStoreEvent =
-  | 'projects-loaded'
-  | 'project-loaded'
-  | 'project-switched'
-  | 'project-error'
-  | 'project-removed'
-  | 'tasks-updated'
-  | 'task-created'
-  | 'task-updated'
-  | 'task-deleted'
-  | 'error';
+  | "projects-loaded"
+  | "project-loaded"
+  | "project-switched"
+  | "project-error"
+  | "project-removed"
+  | "tasks-updated"
+  | "task-created"
+  | "task-updated"
+  | "task-deleted"
+  | "error";
 
 export interface BacklogStoreEventData {
   event: BacklogStoreEvent;
   projectPath?: string;
   taskId?: string;
   error?: Error;
-  errorType?: 'missing' | 'read-error';
+  errorType?: "missing" | "read-error";
   data?: unknown;
 }

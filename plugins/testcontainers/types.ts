@@ -8,13 +8,13 @@
  * Container status values from Docker
  */
 export type ContainerStatus =
-  | 'created'
-  | 'running'
-  | 'paused'
-  | 'restarting'
-  | 'removing'
-  | 'exited'
-  | 'dead';
+  | "created"
+  | "running"
+  | "paused"
+  | "restarting"
+  | "removing"
+  | "exited"
+  | "dead";
 
 /**
  * Port mapping configuration
@@ -22,7 +22,7 @@ export type ContainerStatus =
 export interface PortMapping {
   containerPort: number;
   hostPort?: number;
-  protocol: 'tcp' | 'udp';
+  protocol: "tcp" | "udp";
 }
 
 /**
@@ -49,7 +49,7 @@ export interface HealthCheckConfig {
  * Container health status
  */
 export interface HealthStatus {
-  status: 'none' | 'starting' | 'healthy' | 'unhealthy';
+  status: "none" | "starting" | "healthy" | "unhealthy";
   failingStreak: number;
   log?: string[];
 }
@@ -110,22 +110,22 @@ export interface TestContainer {
  * Template category
  */
 export type TemplateCategory =
-  | 'database'
-  | 'messaging'
-  | 'cache'
-  | 'service'
-  | 'custom';
+  | "database"
+  | "messaging"
+  | "cache"
+  | "service"
+  | "custom";
 
 /**
  * Wait strategy types - modeled after testcontainers patterns
  */
-export type WaitStrategyType = 'port' | 'log' | 'http' | 'healthcheck';
+export type WaitStrategyType = "port" | "log" | "http" | "healthcheck";
 
 /**
  * Port wait strategy configuration
  */
 export interface PortWaitStrategy {
-  type: 'port';
+  type: "port";
   port: number;
   timeout?: number; // seconds, default 60
 }
@@ -134,7 +134,7 @@ export interface PortWaitStrategy {
  * Log wait strategy configuration - waits for a specific log pattern
  */
 export interface LogWaitStrategy {
-  type: 'log';
+  type: "log";
   pattern: string; // regex pattern to match in container logs
   timeout?: number; // seconds, default 60
 }
@@ -143,7 +143,7 @@ export interface LogWaitStrategy {
  * HTTP wait strategy configuration
  */
 export interface HttpWaitStrategy {
-  type: 'http';
+  type: "http";
   path: string; // e.g., "/health", "/"
   port?: number; // defaults to first exposed port
   statusCodes?: number[]; // defaults to [200]
@@ -154,7 +154,7 @@ export interface HttpWaitStrategy {
  * Healthcheck wait strategy - uses Docker's built-in healthcheck
  */
 export interface HealthcheckWaitStrategy {
-  type: 'healthcheck';
+  type: "healthcheck";
   timeout?: number; // seconds, default 120
 }
 
@@ -201,7 +201,7 @@ export interface ContainerTemplate {
 /**
  * Cleanup rule type
  */
-export type CleanupRuleType = 'age' | 'inactivity' | 'pattern' | 'schedule';
+export type CleanupRuleType = "age" | "inactivity" | "pattern" | "schedule";
 
 /**
  * Cleanup rule configuration
@@ -244,12 +244,12 @@ export interface ContainerFilter {
  * Container action types
  */
 export type ContainerAction =
-  | 'start'
-  | 'stop'
-  | 'restart'
-  | 'remove'
-  | 'logs'
-  | 'inspect';
+  | "start"
+  | "stop"
+  | "restart"
+  | "remove"
+  | "logs"
+  | "inspect";
 
 /**
  * API response types
@@ -290,12 +290,12 @@ export interface ContainerActionResponse {
  * WebSocket event types
  */
 export type DockerEventType =
-  | 'container.create'
-  | 'container.start'
-  | 'container.stop'
-  | 'container.die'
-  | 'container.destroy'
-  | 'container.health_status';
+  | "container.create"
+  | "container.start"
+  | "container.stop"
+  | "container.die"
+  | "container.destroy"
+  | "container.health_status";
 
 export interface DockerEvent {
   type: DockerEventType;
@@ -310,7 +310,7 @@ export interface DockerEvent {
  */
 export interface LogEntry {
   timestamp: string;
-  stream: 'stdout' | 'stderr';
+  stream: "stdout" | "stderr";
   message: string;
 }
 

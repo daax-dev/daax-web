@@ -10,7 +10,9 @@
 import { test, expect } from "./fixtures/auth-fixtures";
 
 test.describe("Authenticated API - Public GET endpoints", () => {
-  test("GET /api/backlog/projects returns 200", async ({ authenticatedRequest }) => {
+  test("GET /api/backlog/projects returns 200", async ({
+    authenticatedRequest,
+  }) => {
     const response = await authenticatedRequest.get("/api/backlog/projects");
     expect(response.status()).toBe(200);
     const data = await response.json();
@@ -22,7 +24,9 @@ test.describe("Authenticated API - Public GET endpoints", () => {
     expect(response.status()).toBe(200);
   });
 
-  test("GET /api/auth/user returns authenticated user", async ({ authenticatedRequest }) => {
+  test("GET /api/auth/user returns authenticated user", async ({
+    authenticatedRequest,
+  }) => {
     const response = await authenticatedRequest.get("/api/auth/user");
     expect(response.status()).toBe(200);
     const data = await response.json();
@@ -39,7 +43,9 @@ test.describe("Authenticated API - Protected endpoints", () => {
     expect(data.github).toBeDefined();
   });
 
-  test("POST /api/mcp/config returns non-401", async ({ authenticatedRequest }) => {
+  test("POST /api/mcp/config returns non-401", async ({
+    authenticatedRequest,
+  }) => {
     const response = await authenticatedRequest.post("/api/mcp/config", {
       data: { servers: {} },
     });
@@ -49,7 +55,9 @@ test.describe("Authenticated API - Protected endpoints", () => {
 });
 
 test.describe("Authenticated API - Backlog CRUD", () => {
-  test("GET /api/backlog/tasks returns tasks", async ({ authenticatedRequest }) => {
+  test("GET /api/backlog/tasks returns tasks", async ({
+    authenticatedRequest,
+  }) => {
     // First get a project
     const projectsRes = await authenticatedRequest.get("/api/backlog/projects");
     const projectsData = await projectsRes.json();
@@ -57,7 +65,7 @@ test.describe("Authenticated API - Backlog CRUD", () => {
     if (projectsData.projects?.length > 0) {
       const projectPath = projectsData.projects[0].path;
       const tasksRes = await authenticatedRequest.get(
-        `/api/backlog/tasks?project=${encodeURIComponent(projectPath)}`
+        `/api/backlog/tasks?project=${encodeURIComponent(projectPath)}`,
       );
       expect(tasksRes.status()).toBe(200);
       const tasksData = await tasksRes.json();

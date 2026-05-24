@@ -30,7 +30,10 @@ function getHealthRef(): BacklogHealthStatus {
   return globalForHealth.__backlogHealthStatus ?? defaultStatus;
 }
 
-export function setBacklogHealth(initialized: boolean, error: Error | null = null) {
+export function setBacklogHealth(
+  initialized: boolean,
+  error: Error | null = null,
+) {
   globalForHealth.__backlogHealthStatus = {
     initialized,
     error,

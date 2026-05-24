@@ -26,7 +26,10 @@ const CONTAINER_WORKSPACE_PATH = "/workspace";
 // Mock filesystem state for testing
 interface MockFs {
   existsSync: (path: string) => boolean;
-  mkdirSync: (path: string, options: { recursive: boolean; mode: number }) => void;
+  mkdirSync: (
+    path: string,
+    options: { recursive: boolean; mode: number },
+  ) => void;
   chownSync: (path: string, uid: number, gid: number) => void;
 }
 
@@ -50,7 +53,7 @@ interface ConsoleLogs {
  */
 function getClaudeAuthLocalPath(
   hostWorkspacePath: string,
-  homedir: string
+  homedir: string,
 ): string {
   if (hostWorkspacePath) {
     // Container mode: create inside the mounted workspace
@@ -66,7 +69,7 @@ function getClaudeAuthLocalPath(
  */
 function getClaudeAuthHostPath(
   hostWorkspacePath: string,
-  homedir: string
+  homedir: string,
 ): string {
   if (hostWorkspacePath) {
     // Container mode: translate to host path for Docker volume mount
@@ -83,7 +86,7 @@ function getClaudeAuthHostPath(
 function getOpenCodeAuthLocalPath(
   hostWorkspacePath: string,
   homedir: string,
-  xdgDataHome: string | undefined
+  xdgDataHome: string | undefined,
 ): string {
   if (hostWorkspacePath) {
     // Container mode: create inside the mounted workspace
@@ -103,7 +106,7 @@ function getOpenCodeAuthLocalPath(
 function getOpenCodeAuthHostPath(
   hostWorkspacePath: string,
   homedir: string,
-  xdgDataHome: string | undefined
+  xdgDataHome: string | undefined,
 ): string {
   if (hostWorkspacePath) {
     // Container mode: translate to host path for Docker volume mount
@@ -125,7 +128,7 @@ function initializeClaudeAuthDir(
   homedir: string,
   fs: MockFs,
   process: MockProcess,
-  console: ConsoleLogs
+  console: ConsoleLogs,
 ): { localPath: string; hostPath: string } {
   const localPath = getClaudeAuthLocalPath(hostWorkspacePath, homedir);
   const hostPath = getClaudeAuthHostPath(hostWorkspacePath, homedir);
@@ -140,27 +143,27 @@ function initializeClaudeAuthDir(
         fs.chownSync(localPath, 1000, 1000);
         if (dirExisted) {
           console.logs.push(
-            `[Terminal Server] Fixed ownership of ${localPath} to 1000:1000 (vscode user)`
+            `[Terminal Server] Fixed ownership of ${localPath} to 1000:1000 (vscode user)`,
           );
         } else {
           console.logs.push(
-            `[Terminal Server] Created ${localPath} with ownership 1000:1000 (vscode user)`
+            `[Terminal Server] Created ${localPath} with ownership 1000:1000 (vscode user)`,
           );
         }
         console.logs.push(
-          `[Terminal Server] Claude auth will be mounted from host path: ${hostPath}`
+          `[Terminal Server] Claude auth will be mounted from host path: ${hostPath}`,
         );
       } catch (_chownError) {
         console.warns.push(
           `[Terminal Server] Failed to set ownership of ${localPath}. ` +
-            "AI containers may have permission issues writing Claude config."
+            "AI containers may have permission issues writing Claude config.",
         );
       }
     }
   } catch (_error) {
     console.errors.push(
       `[Terminal Server] Failed to create Claude auth directory at ${localPath}. ` +
-        "Please check directory permissions and available disk space."
+        "Please check directory permissions and available disk space.",
     );
     // Fail fast: this directory is required for Claude containers to work correctly
     process.exit(1);
@@ -179,10 +182,18 @@ function initializeOpenCodeAuthDir(
   xdgDataHome: string | undefined,
   fs: MockFs,
   process: MockProcess,
-  console: ConsoleLogs
+  console: ConsoleLogs,
 ): { localPath: string; hostPath: string } {
-  const localPath = getOpenCodeAuthLocalPath(hostWorkspacePath, homedir, xdgDataHome);
-  const hostPath = getOpenCodeAuthHostPath(hostWorkspacePath, homedir, xdgDataHome);
+  const localPath = getOpenCodeAuthLocalPath(
+    hostWorkspacePath,
+    homedir,
+    xdgDataHome,
+  );
+  const hostPath = getOpenCodeAuthHostPath(
+    hostWorkspacePath,
+    homedir,
+    xdgDataHome,
+  );
 
   try {
     const dirExisted = fs.existsSync(localPath);
@@ -193,22 +204,22 @@ function initializeOpenCodeAuthDir(
         fs.chownSync(localPath, 1000, 1000);
         if (!dirExisted) {
           console.logs.push(
-            `[Terminal Server] Created ${localPath} with ownership 1000:1000 (vscode user)`
+            `[Terminal Server] Created ${localPath} with ownership 1000:1000 (vscode user)`,
           );
         }
         console.logs.push(
-          `[Terminal Server] OpenCode auth will be mounted from host path: ${hostPath}`
+          `[Terminal Server] OpenCode auth will be mounted from host path: ${hostPath}`,
         );
       } catch (_chownError) {
         console.warns.push(
           `[Terminal Server] Failed to set ownership of ${localPath}. ` +
-            "OpenCode containers may have permission issues."
+            "OpenCode containers may have permission issues.",
         );
       }
     }
   } catch (_error) {
     console.warns.push(
-      `[Terminal Server] Failed to create OpenCode auth directory at ${localPath}.`
+      `[Terminal Server] Failed to create OpenCode auth directory at ${localPath}.`,
     );
     // Don't fail - OpenCode is optional
   }
@@ -275,7 +286,10 @@ describe("auth-paths", () => {
 
     describe("container mode (HOST_WORKSPACE_PATH set)", () => {
       it("returns path inside mounted workspace", () => {
-        const result = getClaudeAuthLocalPath("/host/path/to/workspace", TEST_HOMEDIR);
+        const result = getClaudeAuthLocalPath(
+          "/host/path/to/workspace",
+          TEST_HOMEDIR,
+        );
         expect(result).toBe("/workspace/.daax/claude");
       });
     });
@@ -291,7 +305,10 @@ describe("auth-paths", () => {
 
     describe("container mode", () => {
       it("translates container path to host path for Docker volume mount", () => {
-        const result = getClaudeAuthHostPath("/host/path/to/workspace", TEST_HOMEDIR);
+        const result = getClaudeAuthHostPath(
+          "/host/path/to/workspace",
+          TEST_HOMEDIR,
+        );
         expect(result).toBe("/host/path/to/workspace/.daax/claude");
       });
     });
@@ -307,7 +324,11 @@ describe("auth-paths", () => {
 
     describe("host mode with XDG_DATA_HOME", () => {
       it("respects XDG_DATA_HOME environment variable", () => {
-        const result = getOpenCodeAuthLocalPath("", TEST_HOMEDIR, "/custom/data/home");
+        const result = getOpenCodeAuthLocalPath(
+          "",
+          TEST_HOMEDIR,
+          "/custom/data/home",
+        );
         expect(result).toBe("/custom/data/home/opencode");
       });
 
@@ -327,7 +348,7 @@ describe("auth-paths", () => {
         const result = getOpenCodeAuthLocalPath(
           "/host/path/to/workspace",
           TEST_HOMEDIR,
-          "/custom/data/home"
+          "/custom/data/home",
         );
         expect(result).toBe("/workspace/.daax/opencode");
       });
@@ -344,7 +365,11 @@ describe("auth-paths", () => {
 
     describe("host mode with XDG_DATA_HOME", () => {
       it("respects XDG_DATA_HOME environment variable", () => {
-        const result = getOpenCodeAuthHostPath("", TEST_HOMEDIR, "/custom/data/home");
+        const result = getOpenCodeAuthHostPath(
+          "",
+          TEST_HOMEDIR,
+          "/custom/data/home",
+        );
         expect(result).toBe("/custom/data/home/opencode");
       });
     });
@@ -354,7 +379,7 @@ describe("auth-paths", () => {
         const result = getOpenCodeAuthHostPath(
           "/host/path/to/workspace",
           TEST_HOMEDIR,
-          undefined
+          undefined,
         );
         expect(result).toBe("/host/path/to/workspace/.daax/opencode");
       });
@@ -368,7 +393,13 @@ describe("auth-paths", () => {
         const process = createMockProcess({ uid: 1000 });
         const console = createConsoleTracker();
 
-        const result = initializeClaudeAuthDir("", TEST_HOMEDIR, fs, process, console);
+        const result = initializeClaudeAuthDir(
+          "",
+          TEST_HOMEDIR,
+          fs,
+          process,
+          console,
+        );
 
         expect(fs.calls.mkdir).toHaveLength(1);
         expect(fs.calls.mkdir[0]).toEqual([
@@ -389,7 +420,7 @@ describe("auth-paths", () => {
           TEST_HOMEDIR,
           fs,
           process,
-          console
+          console,
         );
 
         expect(result.localPath).toBe("/workspace/.daax/claude");
@@ -406,7 +437,11 @@ describe("auth-paths", () => {
         initializeClaudeAuthDir("", TEST_HOMEDIR, fs, process, console);
 
         expect(fs.calls.chown).toHaveLength(1);
-        expect(fs.calls.chown[0]).toEqual(["/home/testuser/.daax-claude", 1000, 1000]);
+        expect(fs.calls.chown[0]).toEqual([
+          "/home/testuser/.daax-claude",
+          1000,
+          1000,
+        ]);
         expect(console.logs.some((log) => log.includes("Created"))).toBe(true);
       });
 
@@ -418,8 +453,14 @@ describe("auth-paths", () => {
         initializeClaudeAuthDir("", TEST_HOMEDIR, fs, process, console);
 
         expect(fs.calls.chown).toHaveLength(1);
-        expect(fs.calls.chown[0]).toEqual(["/home/testuser/.daax-claude", 1000, 1000]);
-        expect(console.logs.some((log) => log.includes("Fixed ownership"))).toBe(true);
+        expect(fs.calls.chown[0]).toEqual([
+          "/home/testuser/.daax-claude",
+          1000,
+          1000,
+        ]);
+        expect(
+          console.logs.some((log) => log.includes("Fixed ownership")),
+        ).toBe(true);
       });
 
       it("logs host path for volume mount", () => {
@@ -427,11 +468,17 @@ describe("auth-paths", () => {
         const process = createMockProcess({ uid: 0 });
         const console = createConsoleTracker();
 
-        initializeClaudeAuthDir("/host/workspace", TEST_HOMEDIR, fs, process, console);
-
-        expect(console.logs.some((log) => log.includes("mounted from host path"))).toBe(
-          true
+        initializeClaudeAuthDir(
+          "/host/workspace",
+          TEST_HOMEDIR,
+          fs,
+          process,
+          console,
         );
+
+        expect(
+          console.logs.some((log) => log.includes("mounted from host path")),
+        ).toBe(true);
       });
     });
 
@@ -465,9 +512,11 @@ describe("auth-paths", () => {
 
         initializeClaudeAuthDir("", TEST_HOMEDIR, fs, process, console);
 
-        expect(console.errors.some((err) =>
-          err.includes("Failed to create Claude auth directory")
-        )).toBe(true);
+        expect(
+          console.errors.some((err) =>
+            err.includes("Failed to create Claude auth directory"),
+          ),
+        ).toBe(true);
         expect(process.exitCode).toBe(1);
       });
 
@@ -476,11 +525,19 @@ describe("auth-paths", () => {
         const process = createMockProcess({ uid: 0 });
         const console = createConsoleTracker();
 
-        const result = initializeClaudeAuthDir("", TEST_HOMEDIR, fs, process, console);
-
-        expect(console.warns.some((warn) => warn.includes("Failed to set ownership"))).toBe(
-          true
+        const result = initializeClaudeAuthDir(
+          "",
+          TEST_HOMEDIR,
+          fs,
+          process,
+          console,
         );
+
+        expect(
+          console.warns.some((warn) =>
+            warn.includes("Failed to set ownership"),
+          ),
+        ).toBe(true);
         // Should still return paths (not exit)
         expect(result.localPath).toBe("/home/testuser/.daax-claude");
         expect(process.exitCode).toBeNull();
@@ -501,7 +558,7 @@ describe("auth-paths", () => {
           undefined,
           fs,
           process,
-          console
+          console,
         );
 
         expect(fs.calls.mkdir).toHaveLength(1);
@@ -524,7 +581,7 @@ describe("auth-paths", () => {
           undefined,
           fs,
           process,
-          console
+          console,
         );
 
         expect(result.localPath).toBe("/workspace/.daax/opencode");
@@ -538,7 +595,14 @@ describe("auth-paths", () => {
         const process = createMockProcess({ uid: 0 });
         const console = createConsoleTracker();
 
-        initializeOpenCodeAuthDir("", TEST_HOMEDIR, undefined, fs, process, console);
+        initializeOpenCodeAuthDir(
+          "",
+          TEST_HOMEDIR,
+          undefined,
+          fs,
+          process,
+          console,
+        );
 
         expect(fs.calls.chown).toHaveLength(1);
         expect(fs.calls.chown[0]).toEqual([
@@ -553,7 +617,14 @@ describe("auth-paths", () => {
         const process = createMockProcess({ uid: 0 });
         const console = createConsoleTracker();
 
-        initializeOpenCodeAuthDir("", TEST_HOMEDIR, undefined, fs, process, console);
+        initializeOpenCodeAuthDir(
+          "",
+          TEST_HOMEDIR,
+          undefined,
+          fs,
+          process,
+          console,
+        );
 
         expect(console.logs.some((log) => log.includes("Created"))).toBe(true);
       });
@@ -563,13 +634,20 @@ describe("auth-paths", () => {
         const process = createMockProcess({ uid: 0 });
         const console = createConsoleTracker();
 
-        initializeOpenCodeAuthDir("", TEST_HOMEDIR, undefined, fs, process, console);
+        initializeOpenCodeAuthDir(
+          "",
+          TEST_HOMEDIR,
+          undefined,
+          fs,
+          process,
+          console,
+        );
 
         // Should log mount path but NOT creation message
         expect(console.logs.some((log) => log.includes("Created"))).toBe(false);
-        expect(console.logs.some((log) => log.includes("mounted from host path"))).toBe(
-          true
-        );
+        expect(
+          console.logs.some((log) => log.includes("mounted from host path")),
+        ).toBe(true);
       });
     });
 
@@ -585,12 +663,14 @@ describe("auth-paths", () => {
           undefined,
           fs,
           process,
-          console
+          console,
         );
 
-        expect(console.warns.some((warn) =>
-          warn.includes("Failed to create OpenCode auth directory")
-        )).toBe(true);
+        expect(
+          console.warns.some((warn) =>
+            warn.includes("Failed to create OpenCode auth directory"),
+          ),
+        ).toBe(true);
         // Should NOT exit - OpenCode is optional
         expect(process.exitCode).toBeNull();
         // Should still return paths
@@ -608,12 +688,14 @@ describe("auth-paths", () => {
           undefined,
           fs,
           process,
-          console
+          console,
         );
 
-        expect(console.warns.some((warn) => warn.includes("Failed to set ownership"))).toBe(
-          true
-        );
+        expect(
+          console.warns.some((warn) =>
+            warn.includes("Failed to set ownership"),
+          ),
+        ).toBe(true);
         // Should still return paths
         expect(result.localPath).toBe("/home/testuser/.local/share/opencode");
         expect(process.exitCode).toBeNull();
@@ -632,7 +714,7 @@ describe("auth-paths", () => {
           "/custom/xdg/data",
           fs,
           process,
-          console
+          console,
         );
 
         expect(fs.calls.mkdir).toHaveLength(1);
@@ -676,8 +758,16 @@ describe("auth-paths", () => {
     });
 
     it("OpenCode paths differ correctly in container mode", () => {
-      const localPath = getOpenCodeAuthLocalPath("/host/projects", TEST_HOMEDIR, undefined);
-      const hostPath = getOpenCodeAuthHostPath("/host/projects", TEST_HOMEDIR, undefined);
+      const localPath = getOpenCodeAuthLocalPath(
+        "/host/projects",
+        TEST_HOMEDIR,
+        undefined,
+      );
+      const hostPath = getOpenCodeAuthHostPath(
+        "/host/projects",
+        TEST_HOMEDIR,
+        undefined,
+      );
 
       // In container mode, paths differ
       expect(localPath).toBe("/workspace/.daax/opencode");
@@ -702,7 +792,14 @@ describe("auth-paths", () => {
       const process = createMockProcess({ uid: 1000 });
       const console = createConsoleTracker();
 
-      initializeOpenCodeAuthDir("", TEST_HOMEDIR, undefined, fs, process, console);
+      initializeOpenCodeAuthDir(
+        "",
+        TEST_HOMEDIR,
+        undefined,
+        fs,
+        process,
+        console,
+      );
 
       expect(process.exitCode).toBeNull();
     });

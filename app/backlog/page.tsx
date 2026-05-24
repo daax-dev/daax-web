@@ -1,10 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import { KanbanBoard, TaskDetailsModal, useBacklog } from "@/components/backlog";
+import {
+  KanbanBoard,
+  TaskDetailsModal,
+  useBacklog,
+} from "@/components/backlog";
 import { Button } from "@/components/ui/button";
 import { Loader2, Plus, RefreshCw } from "lucide-react";
-import type { Task, TaskCreateInput, TaskUpdateInput } from "@/lib/backlog/types";
+import type {
+  Task,
+  TaskCreateInput,
+  TaskUpdateInput,
+} from "@/lib/backlog/types";
 import { toast } from "sonner";
 
 export default function BacklogBoardPage() {
@@ -16,7 +24,7 @@ export default function BacklogBoardPage() {
     setSelectedTask,
     isCreating,
     setIsCreating,
-    selectedProject
+    selectedProject,
   } = useBacklog();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [createStatus, setCreateStatus] = useState<string | undefined>();
@@ -38,13 +46,18 @@ export default function BacklogBoardPage() {
     if (!selectedProject) return;
     try {
       const response = await fetch(`/api/backlog/tasks/${taskId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project: selectedProject.path, updates: { status: newStatus } }),
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project: selectedProject.path,
+          updates: { status: newStatus },
+        }),
       });
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+        const error = await response
+          .json()
+          .catch(() => ({ error: "Unknown error" }));
         throw new Error(error.error || `HTTP ${response.status}`);
       }
 
@@ -65,13 +78,15 @@ export default function BacklogBoardPage() {
     if (!selectedProject) return;
     try {
       const response = await fetch(`/api/backlog/tasks/${taskId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project: selectedProject.path, updates }),
       });
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+        const error = await response
+          .json()
+          .catch(() => ({ error: "Unknown error" }));
         throw new Error(error.error || `HTTP ${response.status}`);
       }
 
@@ -87,14 +102,16 @@ export default function BacklogBoardPage() {
   const handleCreateNewTask = async (input: TaskCreateInput) => {
     if (!selectedProject) return;
     try {
-      const response = await fetch('/api/backlog/tasks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/backlog/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project: selectedProject.path, task: input }),
       });
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+        const error = await response
+          .json()
+          .catch(() => ({ error: "Unknown error" }));
         throw new Error(error.error || `HTTP ${response.status}`);
       }
 
@@ -111,13 +128,18 @@ export default function BacklogBoardPage() {
     if (!selectedProject) return;
     try {
       const response = await fetch(`/api/backlog/tasks/${taskId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project: selectedProject.path, updates: { status: "Archived" } }),
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project: selectedProject.path,
+          updates: { status: "Archived" },
+        }),
       });
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+        const error = await response
+          .json()
+          .catch(() => ({ error: "Unknown error" }));
         throw new Error(error.error || `HTTP ${response.status}`);
       }
 
@@ -135,13 +157,15 @@ export default function BacklogBoardPage() {
     if (!selectedProject) return;
     try {
       const response = await fetch(`/api/backlog/tasks/${taskId}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project: selectedProject.path }),
       });
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+        const error = await response
+          .json()
+          .catch(() => ({ error: "Unknown error" }));
         throw new Error(error.error || `HTTP ${response.status}`);
       }
 

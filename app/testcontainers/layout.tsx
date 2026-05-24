@@ -4,20 +4,22 @@
  * Shared layout for all testcontainers pages with persistent container sidebar.
  */
 
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { TooltipProvider } from '@/components/ui/tooltip';
-import { ContainerSidebar } from '@/plugins/testcontainers/components';
-import { cn } from '@/lib/utils';
+import { useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { ContainerSidebar } from "@/plugins/testcontainers/components";
+import { cn } from "@/lib/utils";
 
 interface TestContainersLayoutProps {
   children: React.ReactNode;
 }
 
-export default function TestContainersLayout({ children }: TestContainersLayoutProps) {
+export default function TestContainersLayout({
+  children,
+}: TestContainersLayoutProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   return (
@@ -32,8 +34,8 @@ export default function TestContainersLayout({ children }: TestContainersLayoutP
             variant="ghost"
             size="icon"
             className={cn(
-              'absolute top-3 -right-3 h-6 w-6 rounded-full border bg-background shadow-sm z-10',
-              'hover:bg-muted'
+              "absolute top-3 -right-3 h-6 w-6 rounded-full border bg-background shadow-sm z-10",
+              "hover:bg-muted",
             )}
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
           >
@@ -46,9 +48,7 @@ export default function TestContainersLayout({ children }: TestContainersLayoutP
         </div>
 
         {/* Main content */}
-        <main className="flex-1 overflow-auto bg-background">
-          {children}
-        </main>
+        <main className="flex-1 overflow-auto bg-background">{children}</main>
       </div>
     </TooltipProvider>
   );

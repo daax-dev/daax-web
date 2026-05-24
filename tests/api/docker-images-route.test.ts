@@ -49,7 +49,7 @@ describe("/api/docker/images", () => {
 
     it("returns 400 for empty images parameter", async () => {
       const request = new NextRequest(
-        "http://localhost/api/docker/images?images="
+        "http://localhost/api/docker/images?images=",
       );
 
       const response = await GET(request);
@@ -68,7 +68,7 @@ describe("/api/docker/images", () => {
       });
 
       const request = new NextRequest(
-        "http://localhost/api/docker/images?images=daax-agents&registry=jpoley"
+        "http://localhost/api/docker/images?images=daax-agents&registry=jpoley",
       );
 
       const response = await GET(request);
@@ -89,7 +89,7 @@ describe("/api/docker/images", () => {
       mockExecFileAsync.mockRejectedValue(new Error("No such image"));
 
       const request = new NextRequest(
-        "http://localhost/api/docker/images?images=nonexistent&registry=jpoley"
+        "http://localhost/api/docker/images?images=nonexistent&registry=jpoley",
       );
 
       const response = await GET(request);
@@ -115,7 +115,7 @@ describe("/api/docker/images", () => {
       });
 
       const request = new NextRequest(
-        "http://localhost/api/docker/images?images=available-image,missing-image&registry=jpoley"
+        "http://localhost/api/docker/images?images=available-image,missing-image&registry=jpoley",
       );
 
       const response = await GET(request);
@@ -125,10 +125,10 @@ describe("/api/docker/images", () => {
       expect(data.images).toHaveLength(2);
 
       const availableImage = data.images.find(
-        (i: { id: string }) => i.id === "available-image"
+        (i: { id: string }) => i.id === "available-image",
       );
       const missingImage = data.images.find(
-        (i: { id: string }) => i.id === "missing-image"
+        (i: { id: string }) => i.id === "missing-image",
       );
 
       expect(availableImage.available).toBe(true);
@@ -144,7 +144,7 @@ describe("/api/docker/images", () => {
       });
 
       const request = new NextRequest(
-        "http://localhost/api/docker/images?images=test-image"
+        "http://localhost/api/docker/images?images=test-image",
       );
 
       const response = await GET(request);
@@ -161,7 +161,7 @@ describe("/api/docker/images", () => {
       });
 
       const request = new NextRequest(
-        "http://localhost/api/docker/images?images=test-image&registry=ghcr.io/myorg"
+        "http://localhost/api/docker/images?images=test-image&registry=ghcr.io/myorg",
       );
 
       const response = await GET(request);
@@ -176,7 +176,7 @@ describe("/api/docker/images", () => {
     it("returns unavailable for invalid image names", async () => {
       // Image with invalid characters should fail validation
       const request = new NextRequest(
-        "http://localhost/api/docker/images?images=INVALID_UPPER_CASE&registry=jpoley"
+        "http://localhost/api/docker/images?images=INVALID_UPPER_CASE&registry=jpoley",
       );
 
       const response = await GET(request);
@@ -198,7 +198,7 @@ describe("/api/docker/images", () => {
       });
 
       const request = new NextRequest(
-        "http://localhost/api/docker/images?images=large-image&registry=jpoley"
+        "http://localhost/api/docker/images?images=large-image&registry=jpoley",
       );
 
       const response = await GET(request);
@@ -213,7 +213,7 @@ describe("/api/docker/images", () => {
       });
 
       const request = new NextRequest(
-        "http://localhost/api/docker/images?images=weird-image&registry=jpoley"
+        "http://localhost/api/docker/images?images=weird-image&registry=jpoley",
       );
 
       const response = await GET(request);

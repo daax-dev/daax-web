@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
   } catch {
     return NextResponse.json(
       { error: "Invalid JSON in request body" },
-      { status: 400 }
+      { status: 400 },
     );
   }
   const { image } = body;
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
   if (!image) {
     return NextResponse.json(
       { error: "Missing 'image' in request body" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
   if (!isValidDockerImageName(image)) {
     return NextResponse.json(
       { error: "Invalid image name format" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 

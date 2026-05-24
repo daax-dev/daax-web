@@ -14,9 +14,24 @@ export interface AnalyticsTab {
 
 // Static tabs configuration - defined once, never recreated
 const ANALYTICS_TABS_CONFIG: AnalyticsTab[] = [
-  { href: "/analytics", label: "Recordings", icon: Video, subFeatureId: "recordings" },
-  { href: "/analytics/transcripts", label: "Transcripts", icon: MessageSquareText, subFeatureId: "transcripts" },
-  { href: "/analytics/logs", label: "Logs", icon: FileJson, subFeatureId: "logs" },
+  {
+    href: "/analytics",
+    label: "Recordings",
+    icon: Video,
+    subFeatureId: "recordings",
+  },
+  {
+    href: "/analytics/transcripts",
+    label: "Transcripts",
+    icon: MessageSquareText,
+    subFeatureId: "transcripts",
+  },
+  {
+    href: "/analytics/logs",
+    label: "Logs",
+    icon: FileJson,
+    subFeatureId: "logs",
+  },
 ];
 
 // Empty array for SSR - stable reference
@@ -40,7 +55,7 @@ export function useAnalyticsTabs(): AnalyticsTab[] {
   const isClient = useSyncExternalStore(
     clientStore.subscribe,
     clientStore.getSnapshot,
-    clientStore.getServerSnapshot
+    clientStore.getServerSnapshot,
   );
 
   // Memoize the filtered tabs to prevent array reference changes
@@ -51,8 +66,8 @@ export function useAnalyticsTabs(): AnalyticsTab[] {
     }
 
     const settings = getSettings();
-    return ANALYTICS_TABS_CONFIG.filter(tab =>
-      isSubFeatureVisible("analytics", tab.subFeatureId, settings)
+    return ANALYTICS_TABS_CONFIG.filter((tab) =>
+      isSubFeatureVisible("analytics", tab.subFeatureId, settings),
     );
   }, [isClient]);
 

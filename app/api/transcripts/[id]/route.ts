@@ -49,7 +49,7 @@ async function findSessionFile(sessionId: string): Promise<string | null> {
       const indexContent = await readFile(indexPath, "utf-8");
       const index: SessionIndex = JSON.parse(indexContent);
 
-      const entry = index.entries.find(e => e.sessionId === sessionId);
+      const entry = index.entries.find((e) => e.sessionId === sessionId);
       if (entry) {
         // Try the original path first
         if (existsSync(entry.fullPath)) {
@@ -96,7 +96,7 @@ interface ParseResult {
 // Parse JSONL file into structured messages with tracking of skipped entries
 function parseJsonlToMessages(content: string): ParseResult {
   const messages: TranscriptMessage[] = [];
-  const lines = content.split("\n").filter(line => line.trim());
+  const lines = content.split("\n").filter((line) => line.trim());
 
   let invalidJsonLines = 0;
   let nonMessageEntries = 0;
@@ -116,9 +116,10 @@ function parseJsonlToMessages(content: string): ParseResult {
       if (entry.type === "user" && entry.message?.content) {
         messages.push({
           type: "user",
-          content: typeof entry.message.content === "string"
-            ? entry.message.content
-            : JSON.stringify(entry.message.content),
+          content:
+            typeof entry.message.content === "string"
+              ? entry.message.content
+              : JSON.stringify(entry.message.content),
           timestamp,
         });
       } else if (entry.type === "assistant" && entry.message?.content) {
@@ -152,9 +153,10 @@ function parseJsonlToMessages(content: string): ParseResult {
           } else if (block.type === "tool_result") {
             messages.push({
               type: "tool_result",
-              content: typeof block.content === "string"
-                ? block.content
-                : JSON.stringify(block.content),
+              content:
+                typeof block.content === "string"
+                  ? block.content
+                  : JSON.stringify(block.content),
               toolId: block.tool_use_id,
               timestamp,
             });
@@ -168,7 +170,9 @@ function parseJsonlToMessages(content: string): ParseResult {
       // Track invalid JSON lines for debugging
       invalidJsonLines++;
       if (process.env.NODE_ENV === "development") {
-        console.warn(`[parseJsonl] Skipped invalid JSON line: ${line.slice(0, 100)}...`);
+        console.warn(
+          `[parseJsonl] Skipped invalid JSON line: ${line.slice(0, 100)}...`,
+        );
       }
     }
   }
@@ -181,7 +185,7 @@ function parseJsonlToMessages(content: string): ParseResult {
     if (skipRatio > 0.5) {
       console.warn(
         `[parseJsonl] Warning: ${Math.round(skipRatio * 100)}% of lines skipped ` +
-        `(${invalidJsonLines} invalid JSON, ${nonMessageEntries} non-message entries)`
+          `(${invalidJsonLines} invalid JSON, ${nonMessageEntries} non-message entries)`,
       );
     }
   }

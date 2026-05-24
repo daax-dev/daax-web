@@ -1,13 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
-import type { AIAgent, CreateSessionRequest } from '@/types/ai-session';
-import { AI_AGENTS } from '@/types/ai-session';
-import { DEFAULT_AI_CODING_SETTINGS } from '@/lib/settings';
-import {
-  sessionStore,
-  createSession,
-  getAllSessions,
-} from '@/lib/ai-sessions';
-import { requireAuth } from '@/lib/auth';
+import { NextRequest, NextResponse } from "next/server";
+import type { AIAgent, CreateSessionRequest } from "@/types/ai-session";
+import { AI_AGENTS } from "@/types/ai-session";
+import { DEFAULT_AI_CODING_SETTINGS } from "@/lib/settings";
+import { sessionStore, createSession, getAllSessions } from "@/lib/ai-sessions";
+import { requireAuth } from "@/lib/auth";
 
 // SECURITY: POST operations require authentication via requireAuth()
 
@@ -27,9 +23,10 @@ export async function GET() {
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to fetch sessions',
+        error:
+          error instanceof Error ? error.message : "Failed to fetch sessions",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -46,8 +43,8 @@ export async function POST(request: NextRequest) {
     // Validate required fields
     if (!body.agent) {
       return NextResponse.json(
-        { success: false, error: 'Missing required field: agent' },
-        { status: 400 }
+        { success: false, error: "Missing required field: agent" },
+        { status: 400 },
       );
     }
 
@@ -56,32 +53,37 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: `Invalid agent value: ${body.agent}. Must be one of: ${VALID_AGENTS.join(', ')}`,
+          error: `Invalid agent value: ${body.agent}. Must be one of: ${VALID_AGENTS.join(", ")}`,
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (!body.workingDirectory) {
       return NextResponse.json(
-        { success: false, error: 'Missing required field: workingDirectory' },
-        { status: 400 }
+        { success: false, error: "Missing required field: workingDirectory" },
+        { status: 400 },
       );
     }
 
-    const containerImage = body.containerImage || DEFAULT_AI_CODING_SETTINGS.defaultContainerImage;
+    const containerImage =
+      body.containerImage || DEFAULT_AI_CODING_SETTINGS.defaultContainerImage;
 
-    const session = await createSession(body.agent, containerImage, body.workingDirectory);
+    const session = await createSession(
+      body.agent,
+      containerImage,
+      body.workingDirectory,
+    );
 
     // TODO: Actually spawn container here
     // For MVP, mark as running immediately (setTimeout is problematic in serverless)
     // Real implementation will spawn Docker container and update status on actual startup
     const current = sessionStore.get(session.id);
-    if (current && current.status === 'starting') {
+    if (current && current.status === "starting") {
       // Use immutable update pattern for clarity
       sessionStore.set(session.id, {
         ...current,
-        status: 'running',
+        status: "running",
         containerId: `mock-container-${session.id.slice(0, 8)}`,
       });
     }
@@ -93,15 +95,16 @@ export async function POST(request: NextRequest) {
         success: true,
         session: responseSession,
       },
-      { status: 201 }
+      { status: 201 },
     );
   } catch (error) {
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to create session',
+        error:
+          error instanceof Error ? error.message : "Failed to create session",
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

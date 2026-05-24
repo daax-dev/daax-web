@@ -3,7 +3,14 @@
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Download, Check, Loader2, AlertCircle, AlertTriangle, Edit2 } from "lucide-react";
+import {
+  Download,
+  Check,
+  Loader2,
+  AlertCircle,
+  AlertTriangle,
+  Edit2,
+} from "lucide-react";
 import { CONTAINER_VARIANTS } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 
@@ -27,7 +34,7 @@ export function ContainerImageSelector({
   onSelect,
 }: ContainerImageSelectorProps) {
   const [imageStatuses, setImageStatuses] = useState<Map<string, ImageStatus>>(
-    new Map()
+    new Map(),
   );
   const [loading, setLoading] = useState(true);
   const [apiAvailable, setApiAvailable] = useState(true);
@@ -44,9 +51,11 @@ export function ContainerImageSelector({
     try {
       // Encode each image ID individually, preserving commas as delimiters
       // so the server can correctly parse multiple image IDs
-      const imageIds = CONTAINER_VARIANTS.map((v) => encodeURIComponent(v.id)).join(",");
+      const imageIds = CONTAINER_VARIANTS.map((v) =>
+        encodeURIComponent(v.id),
+      ).join(",");
       const response = await fetch(
-        `/api/docker/images?images=${imageIds}&registry=${encodeURIComponent(registry)}`
+        `/api/docker/images?images=${imageIds}&registry=${encodeURIComponent(registry)}`,
       );
 
       // Check if we got a valid JSON response (not a 404 HTML page)
@@ -95,14 +104,17 @@ export function ContainerImageSelector({
       // Check if API is available
       const contentType = response.headers.get("content-type");
       if (response.status === 404) {
-        throw new Error("Pull API not available - rebuild the container to enable");
+        throw new Error(
+          "Pull API not available - rebuild the container to enable",
+        );
       }
 
       // Handle non-OK responses (validation errors, etc.)
       if (!response.ok) {
         // Read body once as text, then attempt to parse as JSON
         const bodyText = await response.text();
-        let errorMessage = bodyText || `Pull failed with status ${response.status}`;
+        let errorMessage =
+          bodyText || `Pull failed with status ${response.status}`;
 
         try {
           const parsed = JSON.parse(bodyText);
@@ -198,7 +210,7 @@ export function ContainerImageSelector({
   // (e.g., "daax-agents-flowspec" before "daax-agents")
   const getSelectedVariantId = () => {
     const sortedVariants = [...CONTAINER_VARIANTS].sort(
-      (a, b) => b.id.length - a.id.length
+      (a, b) => b.id.length - a.id.length,
     );
     for (const variant of sortedVariants) {
       if (selectedImage.includes(variant.id)) {
@@ -211,7 +223,8 @@ export function ContainerImageSelector({
   const selectedVariantId = getSelectedVariantId();
 
   // Check if current selection is a custom image (not matching any known variant)
-  const isCustomImageSelected = selectedVariantId === null && selectedImage.length > 0;
+  const isCustomImageSelected =
+    selectedVariantId === null && selectedImage.length > 0;
 
   // Handle custom image submission
   const handleCustomImageSubmit = () => {
@@ -234,7 +247,9 @@ export function ContainerImageSelector({
           <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
           <div>
             <p className="font-medium">Image status check unavailable</p>
-            <p className="text-xs opacity-80">Rebuild the container to enable. You can still select any image.</p>
+            <p className="text-xs opacity-80">
+              Rebuild the container to enable. You can still select any image.
+            </p>
           </div>
         </div>
       )}
@@ -248,7 +263,9 @@ export function ContainerImageSelector({
         <div className="grid gap-2">
           {CONTAINER_VARIANTS.map((variant) => {
             const status = imageStatuses.get(variant.id);
-            const isAvailable = apiAvailable ? (status?.available ?? false) : true;
+            const isAvailable = apiAvailable
+              ? (status?.available ?? false)
+              : true;
             const isSelected = selectedVariantId === variant.id;
             const isPulling = pullingImage === variant.id;
             const isClickable = canSelect(variant.id) && !isPulling;
@@ -259,11 +276,17 @@ export function ContainerImageSelector({
                 className={cn(
                   "relative flex items-center justify-between p-3 rounded-lg border transition-all cursor-pointer",
                   // Grey: not available (only when API is available and reports unavailable)
-                  apiAvailable && !isAvailable && !isSelected && "border-muted bg-muted/30 opacity-70 hover:opacity-100 hover:border-primary/50",
+                  apiAvailable &&
+                    !isAvailable &&
+                    !isSelected &&
+                    "border-muted bg-muted/30 opacity-70 hover:opacity-100 hover:border-primary/50",
                   // White: available but not selected (or API unavailable)
-                  (isAvailable || !apiAvailable) && !isSelected && "border-border bg-background hover:border-primary/50",
+                  (isAvailable || !apiAvailable) &&
+                    !isSelected &&
+                    "border-border bg-background hover:border-primary/50",
                   // Green: selected
-                  isSelected && "border-green-500 bg-green-500/10 ring-1 ring-green-500/30"
+                  isSelected &&
+                    "border-green-500 bg-green-500/10 ring-1 ring-green-500/30",
                 )}
                 onClick={() => {
                   if (isClickable) {
@@ -278,7 +301,10 @@ export function ContainerImageSelector({
                       className={cn(
                         "font-medium",
                         isSelected && "text-green-600 dark:text-green-400",
-                        apiAvailable && !isAvailable && !isSelected && "text-muted-foreground"
+                        apiAvailable &&
+                          !isAvailable &&
+                          !isSelected &&
+                          "text-muted-foreground",
                       )}
                     >
                       {variant.name}
@@ -297,7 +323,7 @@ export function ContainerImageSelector({
                       "text-xs mt-0.5",
                       isSelected
                         ? "text-green-600/80 dark:text-green-400/80"
-                        : "text-muted-foreground"
+                        : "text-muted-foreground",
                     )}
                   >
                     {variant.description}
@@ -388,21 +414,31 @@ export function ContainerImageSelector({
                 "relative flex items-center justify-between p-3 rounded-lg border transition-all cursor-pointer",
                 isCustomImageSelected
                   ? "border-green-500 bg-green-500/10 ring-1 ring-green-500/30"
-                  : "border-dashed border-muted-foreground/50 hover:border-primary/50"
+                  : "border-dashed border-muted-foreground/50 hover:border-primary/50",
               )}
               onClick={() => setShowCustomInput(true)}
             >
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <Edit2 className={cn(
-                    "h-4 w-4",
-                    isCustomImageSelected ? "text-green-600 dark:text-green-400" : "text-muted-foreground"
-                  )} />
-                  <span className={cn(
-                    "font-medium",
-                    isCustomImageSelected ? "text-green-600 dark:text-green-400" : "text-muted-foreground"
-                  )}>
-                    {isCustomImageSelected ? "Custom Image" : "Use Custom Image..."}
+                  <Edit2
+                    className={cn(
+                      "h-4 w-4",
+                      isCustomImageSelected
+                        ? "text-green-600 dark:text-green-400"
+                        : "text-muted-foreground",
+                    )}
+                  />
+                  <span
+                    className={cn(
+                      "font-medium",
+                      isCustomImageSelected
+                        ? "text-green-600 dark:text-green-400"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {isCustomImageSelected
+                      ? "Custom Image"
+                      : "Use Custom Image..."}
                   </span>
                   {isCustomImageSelected && (
                     <Check className="h-4 w-4 text-green-600 dark:text-green-400" />
@@ -446,9 +482,7 @@ export function ContainerImageSelector({
           disabled={loading}
           className="w-full"
         >
-          {loading ? (
-            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-          ) : null}
+          {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
           Refresh Image Status
         </Button>
       )}

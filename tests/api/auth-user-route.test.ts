@@ -75,7 +75,7 @@ describe("/api/auth/user", () => {
       const response = await GET();
 
       expect(response.headers.get("Cache-Control")).toBe(
-        "no-store, no-cache, must-revalidate"
+        "no-store, no-cache, must-revalidate",
       );
     });
 
@@ -95,7 +95,7 @@ describe("/api/auth/user", () => {
       const response = await GET();
 
       expect(response.headers.get("content-type")).toContain(
-        "application/json"
+        "application/json",
       );
     });
   });

@@ -66,7 +66,9 @@ export async function GET() {
 
   try {
     if (!existsSync(projectsDir)) {
-      console.log(`[transcripts API] Claude projects directory not found: ${projectsDir}`);
+      console.log(
+        `[transcripts API] Claude projects directory not found: ${projectsDir}`,
+      );
       return NextResponse.json({
         transcripts: [],
         path: projectsDir,
@@ -97,7 +99,10 @@ export async function GET() {
           // Translate fullPath from host path to container path if needed
           // e.g., /home/jpoley/.claude/projects/xxx -> /host-claude/projects/xxx
           let sessionFilePath = entry.fullPath;
-          if (!existsSync(sessionFilePath) && projectsDir.startsWith("/host-claude")) {
+          if (
+            !existsSync(sessionFilePath) &&
+            projectsDir.startsWith("/host-claude")
+          ) {
             // Extract relative path from the fullPath
             const match = entry.fullPath.match(/\.claude\/projects\/(.+)$/);
             if (match) {
@@ -179,14 +184,16 @@ export async function GET() {
           });
         }
       } catch (err) {
-        console.error(`Error reading sessions-index.json from ${projectPath}:`, err);
+        console.error(
+          `Error reading sessions-index.json from ${projectPath}:`,
+          err,
+        );
       }
     }
 
     // Sort by modified date, newest first
     allSessions.sort(
-      (a, b) =>
-        new Date(b.modified).getTime() - new Date(a.modified).getTime()
+      (a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime(),
     );
 
     console.log(`[transcripts API] Found ${allSessions.length} sessions`);
@@ -205,7 +212,7 @@ export async function GET() {
         details: errorMessage,
         transcripts: [],
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

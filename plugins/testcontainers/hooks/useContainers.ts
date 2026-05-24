@@ -4,9 +4,9 @@
  * React hook for managing test containers with auto-refresh.
  */
 
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type {
   TestContainer,
   ContainerListResponse,
@@ -14,8 +14,8 @@ import type {
   ContainerCreateRequest,
   ContainerActionResponse,
   DockerConnectionStatus,
-} from '../types';
-import { DEFAULT_SETTINGS } from '../constants';
+} from "../types";
+import { DEFAULT_SETTINGS } from "../constants";
 
 interface UseContainersOptions {
   autoRefresh?: boolean;
@@ -34,10 +34,15 @@ interface UseContainersReturn {
   startContainer: (id: string) => Promise<ContainerActionResponse>;
   stopContainer: (id: string) => Promise<ContainerActionResponse>;
   restartContainer: (id: string) => Promise<ContainerActionResponse>;
-  removeContainer: (id: string, force?: boolean) => Promise<ContainerActionResponse>;
+  removeContainer: (
+    id: string,
+    force?: boolean,
+  ) => Promise<ContainerActionResponse>;
 }
 
-export function useContainers(options: UseContainersOptions = {}): UseContainersReturn {
+export function useContainers(
+  options: UseContainersOptions = {},
+): UseContainersReturn {
   const {
     autoRefresh = true,
     refreshInterval = DEFAULT_SETTINGS.autoRefreshInterval * 1000,
@@ -48,7 +53,8 @@ export function useContainers(options: UseContainersOptions = {}): UseContainers
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [dockerStatus, setDockerStatus] = useState<DockerConnectionStatus | null>(null);
+  const [dockerStatus, setDockerStatus] =
+    useState<DockerConnectionStatus | null>(null);
 
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -73,16 +79,17 @@ export function useContainers(options: UseContainersOptions = {}): UseContainers
 
       // Build query params from filter
       const params = new URLSearchParams();
-      if (currentFilter?.status) params.set('status', currentFilter.status.join(','));
-      if (currentFilter?.project) params.set('project', currentFilter.project);
-      if (currentFilter?.search) params.set('search', currentFilter.search);
+      if (currentFilter?.status)
+        params.set("status", currentFilter.status.join(","));
+      if (currentFilter?.project) params.set("project", currentFilter.project);
+      if (currentFilter?.search) params.set("search", currentFilter.search);
 
-      const url = `/api/testcontainers${params.toString() ? `?${params}` : ''}`;
+      const url = `/api/testcontainers${params.toString() ? `?${params}` : ""}`;
       const response = await fetch(url, { signal: controller.signal });
 
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.error || 'Failed to fetch containers');
+        throw new Error(data.error || "Failed to fetch containers");
       }
 
       const data: ContainerListResponse = await response.json();
@@ -96,13 +103,13 @@ export function useContainers(options: UseContainersOptions = {}): UseContainers
       });
     } catch (err) {
       // Ignore aborted requests
-      if (err instanceof DOMException && err.name === 'AbortError') return;
+      if (err instanceof DOMException && err.name === "AbortError") return;
 
-      const message = err instanceof Error ? err.message : 'Unknown error';
+      const message = err instanceof Error ? err.message : "Unknown error";
       setError(message);
 
       // Check if it's a Docker connection error
-      if (message.includes('Docker daemon')) {
+      if (message.includes("Docker daemon")) {
         setDockerStatus({
           connected: false,
           error: message,
@@ -140,85 +147,100 @@ export function useContainers(options: UseContainersOptions = {}): UseContainers
     };
   }, [fetchContainers, autoRefresh, refreshInterval]);
 
-  const createContainer = useCallback(async (request: ContainerCreateRequest): Promise<TestContainer> => {
-    const response = await fetch('/api/testcontainers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(request),
-    });
+  const createContainer = useCallback(
+    async (request: ContainerCreateRequest): Promise<TestContainer> => {
+      const response = await fetch("/api/testcontainers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
 
-    if (!response.ok) {
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Failed to create container");
+      }
+
       const data = await response.json();
-      throw new Error(data.error || 'Failed to create container');
-    }
 
-    const data = await response.json();
+      // Refresh the list
+      await fetchContainers();
 
-    // Refresh the list
-    await fetchContainers();
+      return data.container;
+    },
+    [fetchContainers],
+  );
 
-    return data.container;
-  }, [fetchContainers]);
+  const startContainer = useCallback(
+    async (id: string): Promise<ContainerActionResponse> => {
+      const response = await fetch(`/api/testcontainers/${id}/start`, {
+        method: "POST",
+      });
 
-  const startContainer = useCallback(async (id: string): Promise<ContainerActionResponse> => {
-    const response = await fetch(`/api/testcontainers/${id}/start`, {
-      method: 'POST',
-    });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Failed to start container");
+      }
 
-    if (!response.ok) {
       const data = await response.json();
-      throw new Error(data.error || 'Failed to start container');
-    }
+      await fetchContainers();
+      return data;
+    },
+    [fetchContainers],
+  );
 
-    const data = await response.json();
-    await fetchContainers();
-    return data;
-  }, [fetchContainers]);
+  const stopContainer = useCallback(
+    async (id: string): Promise<ContainerActionResponse> => {
+      const response = await fetch(`/api/testcontainers/${id}/stop`, {
+        method: "POST",
+      });
 
-  const stopContainer = useCallback(async (id: string): Promise<ContainerActionResponse> => {
-    const response = await fetch(`/api/testcontainers/${id}/stop`, {
-      method: 'POST',
-    });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Failed to stop container");
+      }
 
-    if (!response.ok) {
       const data = await response.json();
-      throw new Error(data.error || 'Failed to stop container');
-    }
+      await fetchContainers();
+      return data;
+    },
+    [fetchContainers],
+  );
 
-    const data = await response.json();
-    await fetchContainers();
-    return data;
-  }, [fetchContainers]);
+  const restartContainer = useCallback(
+    async (id: string): Promise<ContainerActionResponse> => {
+      const response = await fetch(`/api/testcontainers/${id}/restart`, {
+        method: "POST",
+      });
 
-  const restartContainer = useCallback(async (id: string): Promise<ContainerActionResponse> => {
-    const response = await fetch(`/api/testcontainers/${id}/restart`, {
-      method: 'POST',
-    });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Failed to restart container");
+      }
 
-    if (!response.ok) {
       const data = await response.json();
-      throw new Error(data.error || 'Failed to restart container');
-    }
+      await fetchContainers();
+      return data;
+    },
+    [fetchContainers],
+  );
 
-    const data = await response.json();
-    await fetchContainers();
-    return data;
-  }, [fetchContainers]);
+  const removeContainer = useCallback(
+    async (id: string, force = false): Promise<ContainerActionResponse> => {
+      const response = await fetch(`/api/testcontainers/${id}?force=${force}`, {
+        method: "DELETE",
+      });
 
-  const removeContainer = useCallback(async (id: string, force = false): Promise<ContainerActionResponse> => {
-    const response = await fetch(`/api/testcontainers/${id}?force=${force}`, {
-      method: 'DELETE',
-    });
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Failed to remove container");
+      }
 
-    if (!response.ok) {
       const data = await response.json();
-      throw new Error(data.error || 'Failed to remove container');
-    }
-
-    const data = await response.json();
-    await fetchContainers();
-    return data;
-  }, [fetchContainers]);
+      await fetchContainers();
+      return data;
+    },
+    [fetchContainers],
+  );
 
   return {
     containers,

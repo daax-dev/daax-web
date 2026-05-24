@@ -26,7 +26,7 @@ test.describe("Settings", () => {
   test("can toggle theme", async ({ page }) => {
     // Find theme toggle
     const themeToggle = page.locator(
-      '[data-testid="theme-toggle"], button:has-text("Dark"), button:has-text("Light")'
+      '[data-testid="theme-toggle"], button:has-text("Dark"), button:has-text("Light")',
     );
 
     if ((await themeToggle.count()) > 0) {

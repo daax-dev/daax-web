@@ -213,9 +213,24 @@ const securityRoutes = [
 
 // Test Containers submenu items - shown in secondary nav bar
 const testcontainersItems: SubNavItem[] = [
-  { href: "/testcontainers", label: "Dashboard", icon: Container, subFeatureId: "dashboard" },
-  { href: "/testcontainers/catalog", label: "Catalog", icon: Database, subFeatureId: "catalog" },
-  { href: "/testcontainers/compose", label: "Compose", icon: Layers, subFeatureId: "compose" },
+  {
+    href: "/testcontainers",
+    label: "Dashboard",
+    icon: Container,
+    subFeatureId: "dashboard",
+  },
+  {
+    href: "/testcontainers/catalog",
+    label: "Catalog",
+    icon: Database,
+    subFeatureId: "catalog",
+  },
+  {
+    href: "/testcontainers/compose",
+    label: "Compose",
+    icon: Layers,
+    subFeatureId: "compose",
+  },
 ];
 
 // Routes that should show the Test Containers submenu
@@ -333,8 +348,8 @@ export function Titlebar() {
   );
 
   // Check if we're on a Test Containers related page
-  const isOnTestcontainersPage = testcontainersRoutes.some(route =>
-    pathname === route || pathname.startsWith(`${route}/`)
+  const isOnTestcontainersPage = testcontainersRoutes.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
   );
 
   // Get branding with fallback
@@ -861,32 +876,40 @@ export function Titlebar() {
           <div className="container flex h-10 max-w-screen-2xl items-center">
             <nav className="flex items-center space-x-1 text-sm">
               {testcontainersItems
-                .filter((item) => isSubFeatureVisible("testcontainers", item.subFeatureId, settings || undefined))
+                .filter((item) =>
+                  isSubFeatureVisible(
+                    "testcontainers",
+                    item.subFeatureId,
+                    settings || undefined,
+                  ),
+                )
                 .map((item) => {
-                const Icon = item.icon;
-                const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                  const Icon = item.icon;
+                  const isActive =
+                    pathname === item.href ||
+                    pathname.startsWith(`${item.href}/`);
 
-                return (
-                  <Button
-                    key={item.href}
-                    variant={isActive ? "secondary" : "ghost"}
-                    size="sm"
-                    asChild
-                    className="h-7"
-                  >
-                    <Link
-                      href={item.href}
-                      className={cn(
-                        "flex items-center gap-1.5",
-                        isActive && "text-foreground"
-                      )}
+                  return (
+                    <Button
+                      key={item.href}
+                      variant={isActive ? "secondary" : "ghost"}
+                      size="sm"
+                      asChild
+                      className="h-7"
                     >
-                      <Icon className="h-3.5 w-3.5" />
-                      <span>{item.label}</span>
-                    </Link>
-                  </Button>
-                );
-              })}
+                      <Link
+                        href={item.href}
+                        className={cn(
+                          "flex items-center gap-1.5",
+                          isActive && "text-foreground",
+                        )}
+                      >
+                        <Icon className="h-3.5 w-3.5" />
+                        <span>{item.label}</span>
+                      </Link>
+                    </Button>
+                  );
+                })}
             </nav>
           </div>
         </div>
