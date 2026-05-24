@@ -34,8 +34,6 @@ import {
   ClipboardCheck,
   Presentation,
   Container,
-  Database,
-  Layers,
   Boxes,
   FlaskConical,
 } from "lucide-react";

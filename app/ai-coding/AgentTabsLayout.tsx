@@ -115,6 +115,11 @@ export function AgentTabsLayout() {
   const [runningContainers, setRunningContainers] = useState<Set<string>>(
     new Set(),
   );
+  // Whether the active-sessions list has been fetched at least once. Until
+  // it has, the container sets are empty for "not loaded yet" reasons, not
+  // because the containers are gone — so stray detection stays suppressed to
+  // avoid a false "stray" flash on a freshly-assigned containerName.
+  const [hasLoadedContainers, setHasLoadedContainers] = useState(false);
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   // Tab DOM nodes by tab id, so arrow-key navigation can move focus to the
@@ -265,6 +270,7 @@ export function AgentTabsLayout() {
               .map((s) => s.containerName),
           ),
         );
+        setHasLoadedContainers(true);
       } catch {
         // Best-effort — leave previous state on failure.
       }
@@ -383,9 +389,13 @@ export function AgentTabsLayout() {
   const onDragEnd = () => setDraggingTabId(null);
 
   // Stray = the tab had a container assigned but it no longer exists in any
-  // state. A known-but-stopped container is NOT stray.
+  // state. A known-but-stopped container is NOT stray. Suppressed until the
+  // active-sessions list has loaded once, so a freshly-assigned containerName
+  // doesn't flash "stray" against the still-empty initial set.
   const isStray = (tab: AgentTab) =>
-    Boolean(tab.containerName) && !knownContainers.has(tab.containerName!);
+    hasLoadedContainers &&
+    Boolean(tab.containerName) &&
+    !knownContainers.has(tab.containerName!);
 
   // Running status reflects the live container state once one is assigned;
   // before a container name arrives we fall back to the tab's initial status.

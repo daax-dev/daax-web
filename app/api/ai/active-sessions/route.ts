@@ -82,8 +82,17 @@ async function inspectContainer(
       "{{.Created}}|{{.State.StartedAt}}",
       name,
     ]);
-    const [created, started] = stdout.trim().split("|");
-    return { createdAt: created, startedAt: started };
+    // Expect a `created|started` pair. Guard against malformed output
+    // (missing `|`, empty, partial) so a non-date string never reaches
+    // `new Date(...)` and produces NaN-valued timestamps downstream.
+    const epoch = new Date(0).toISOString();
+    const parts = stdout.trim().split("|");
+    const isValidDate = (v: string | undefined) =>
+      !!v && !Number.isNaN(new Date(v).getTime());
+    return {
+      createdAt: isValidDate(parts[0]) ? parts[0] : epoch,
+      startedAt: isValidDate(parts[1]) ? parts[1] : epoch,
+    };
   } catch {
     return {
       createdAt: new Date(0).toISOString(),
