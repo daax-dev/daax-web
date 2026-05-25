@@ -49,14 +49,23 @@ function getTerminalServerUrl(
       ? 443
       : 80;
 
-  // Production (HTTPS on port 443): use path-based routing on same domain
-  // Note: Only port 443 is standard for HTTPS; port 80 is HTTP's standard port
-  if (protocol === "wss:" && currentPort === 443) {
+  // Behind a reverse proxy on a standard port (http:80 or https:443) with a
+  // real hostname: same-origin path-based routing (/ws). Covers both
+  // https://daax.<host>.poley.dev (wss:443) and http://daax.localhost (ws:80).
+  const hostname = windowRef.location.hostname;
+  const isStandardPort =
+    (protocol === "wss:" && currentPort === 443) ||
+    (protocol === "ws:" && currentPort === 80);
+  const isLoopbackHost =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    /^\d+\.\d+\.\d+\.\d+$/.test(hostname);
+  if (isStandardPort && !isLoopbackHost) {
     return `${protocol}//${windowRef.location.host}/ws`;
   }
 
   // Development or non-standard: port-based routing (localhost:4200 -> localhost:4201)
-  return `${protocol}//${windowRef.location.hostname}:${currentPort + 1}`;
+  return `${protocol}//${hostname}:${currentPort + 1}`;
 }
 
 describe("getTerminalServerUrl", () => {
@@ -137,9 +146,9 @@ describe("getTerminalServerUrl", () => {
   });
 
   describe("edge cases", () => {
-    it("uses port-based routing for HTTP on standard port 80 (not path-based)", () => {
-      // HTTP on port 80 should use port-based routing (ws on port 81)
-      // because path-based routing is only for production HTTPS on port 443
+    it("uses port-based routing for bare localhost on standard port 80 (loopback host)", () => {
+      // Bare `localhost` is a loopback host, so even on standard port 80 it uses
+      // port-based routing (ws on port 81) rather than the reverse-proxy /ws path.
       const mockWindow = {
         location: createMockLocation({
           protocol: "http:",
@@ -179,6 +188,36 @@ describe("getTerminalServerUrl", () => {
       };
       const result = getTerminalServerUrl(mockWindow);
       expect(result).toBe("ws://100.64.1.1:4201");
+    });
+  });
+
+  describe("reverse proxy on HTTP standard port 80 (Traefik *.localhost)", () => {
+    // Regression: http://daax.localhost previously fell through to host:port+1
+    // (ws://daax.localhost:81 — connection refused) because path-based routing
+    // was gated to HTTPS:443 only. A real hostname on http:80 is a reverse proxy.
+    it("uses path-based /ws routing for http://daax.localhost", () => {
+      const mockWindow = {
+        location: createMockLocation({
+          protocol: "http:",
+          host: "daax.localhost",
+          hostname: "daax.localhost",
+          port: "", // Standard HTTP has no port in URL
+        }),
+      };
+      const result = getTerminalServerUrl(mockWindow);
+      expect(result).toBe("ws://daax.localhost/ws");
+    });
+
+    it("uses path-based /ws routing for any *.localhost host on http:80", () => {
+      const mockWindow = {
+        location: createMockLocation({
+          protocol: "http:",
+          host: "code.localhost",
+          hostname: "code.localhost",
+          port: "",
+        }),
+      };
+      expect(getTerminalServerUrl(mockWindow)).toBe("ws://code.localhost/ws");
     });
   });
 });

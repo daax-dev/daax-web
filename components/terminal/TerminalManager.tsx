@@ -79,15 +79,26 @@ export function getTerminalServerUrl(): string {
       ? 443
       : 80;
 
-  // Production (HTTPS on port 443): use path-based routing on same domain
-  // This avoids CORS issues and simplifies Traefik configuration
-  // Note: Only port 443 is standard for HTTPS; port 80 is HTTP's standard port
-  if (protocol === "wss:" && currentPort === 443) {
+  // Behind a reverse proxy (Traefik) on a standard port with a real hostname:
+  // use same-origin path-based routing (/ws). Traefik forwards PathPrefix(`/ws`)
+  // to the terminal server (:4201). This covers BOTH https://daax.<host>.poley.dev
+  // (wss:443) AND http://daax.localhost (ws:80) — the latter previously fell
+  // through to host:port+1 (e.g. ws://daax.localhost:81), which nothing serves.
+  const hostname = window.location.hostname;
+  const isStandardPort =
+    (protocol === "wss:" && currentPort === 443) ||
+    (protocol === "ws:" && currentPort === 80);
+  const isLoopbackHost =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    /^\d+\.\d+\.\d+\.\d+$/.test(hostname);
+  if (isStandardPort && !isLoopbackHost) {
     return `${protocol}//${window.location.host}/ws`;
   }
 
-  // Development or non-standard: port-based routing (localhost:4200 -> localhost:4201)
-  return `${protocol}//${window.location.hostname}:${currentPort + 1}`;
+  // Direct/dev access or port mapping: WebSocket port = HTTP port + 1
+  // (e.g. localhost:4200 -> ws://localhost:4201)
+  return `${protocol}//${hostname}:${currentPort + 1}`;
 }
 
 // Get container image from settings
