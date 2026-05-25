@@ -47,4 +47,44 @@ describe("useAnalyticsTabs", () => {
     });
     expect(result.current.length).toBeGreaterThan(0);
   });
+
+  it("returns a stable snapshot/tab reference when settings are unchanged", () => {
+    const { result, rerender } = renderHook(() => useAnalyticsTabs());
+    const first = result.current;
+
+    // Re-rendering without any settings change must NOT produce a new tab array.
+    // useSyncExternalStore + the cached getSnapshot keep the reference stable;
+    // a new object per getSnapshot would break referential equality (and, in
+    // React, trigger the "getSnapshot should be cached" infinite-loop guard).
+    rerender();
+    expect(result.current).toBe(first);
+
+    // Only a real settings update yields a new (recomputed) reference.
+    act(() => {
+      saveSettings({ featureVisibility: "disabled" });
+    });
+    expect(result.current).not.toBe(first);
+  });
+
+  it("does not re-render unboundedly across a settings change", () => {
+    let renderCount = 0;
+    renderHook(() => {
+      renderCount++;
+      return useAnalyticsTabs();
+    });
+
+    const initialRenders = renderCount;
+
+    // A single settings change must cause a bounded number of re-renders, not a
+    // runaway loop. A non-cached getSnapshot (new object each call) would make
+    // React throw "Maximum update depth exceeded" synchronously inside this
+    // act(); the bounded count below is the positive assertion of the contract.
+    // Use a value guaranteed to differ from any prior test's leftover state so
+    // the external-store notify fires a real update.
+    act(() => {
+      saveSettings({ featureVisibility: "ga" });
+    });
+
+    expect(renderCount - initialRenders).toBeLessThanOrEqual(2);
+  });
 });

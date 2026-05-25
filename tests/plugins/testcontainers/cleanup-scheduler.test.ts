@@ -67,4 +67,33 @@ describe("CleanupScheduler concurrency", () => {
     const result = await run;
     expect(result.skipped).toBeUndefined();
   });
+
+  it("preserves getLastResult() across a skipped concurrent call", async () => {
+    const scheduler = new CleanupScheduler();
+
+    // First real run completes and becomes lastResult.
+    const firstRun = scheduler.runCleanup();
+    await vi.waitFor(() => expect(listContainers).toHaveBeenCalledTimes(1));
+    releaseListContainers?.();
+    const firstResult = await firstRun;
+    expect(firstResult.skipped).toBeUndefined();
+    expect(scheduler.getLastResult()).toBe(firstResult);
+
+    // Start a second real run and block it so the scheduler is "running".
+    const secondRun = scheduler.runCleanup();
+    await vi.waitFor(() => expect(listContainers).toHaveBeenCalledTimes(2));
+
+    // A concurrent call while the second run is in flight is skipped, and must
+    // NOT overwrite lastResult: getLastResult() still returns the first run's
+    // result (not the skip marker, not the in-flight run).
+    const skipped = await scheduler.runCleanup();
+    expect(skipped.skipped).toBe(true);
+    expect(scheduler.getLastResult()).toBe(firstResult);
+
+    // Let the second run finish; lastResult now advances to it (a real run).
+    releaseListContainers?.();
+    const secondResult = await secondRun;
+    expect(secondResult.skipped).toBeUndefined();
+    expect(scheduler.getLastResult()).toBe(secondResult);
+  });
 });
