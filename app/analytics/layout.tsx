@@ -10,7 +10,7 @@ function AnalyticsSubNav() {
   const analyticsTabs = useAnalyticsTabs();
 
   return (
-    <div className="flex items-center gap-1 px-4 py-2 border-b border-zinc-800 bg-zinc-900">
+    <div className="flex items-center gap-1 px-4 py-2 border-b border-border bg-card">
       {analyticsTabs.map((tab) => {
         const Icon = tab.icon;
         // Special handling for /analytics root (recordings)
@@ -25,8 +25,8 @@ function AnalyticsSubNav() {
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors",
               isActive
-                ? "bg-zinc-800 text-foreground"
-                : "text-zinc-400 hover:text-foreground hover:bg-zinc-800/50",
+                ? "bg-muted text-foreground"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
             )}
           >
             <Icon className="h-4 w-4" />
