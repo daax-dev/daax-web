@@ -49,6 +49,12 @@ export interface CleanupResult {
   startedAt: string;
   completedAt: string;
   durationMs: number;
+  /**
+   * True when this invocation did NOT perform a cleanup because another run was
+   * already in progress. Callers should treat the empty removal arrays as "no
+   * work done by this call", not as a completed cleanup.
+   */
+  skipped?: boolean;
 }
 
 /**
@@ -117,17 +123,21 @@ export class CleanupScheduler {
   async runCleanup(): Promise<CleanupResult> {
     if (this.running) {
       console.log("[CleanupScheduler] Cleanup already in progress");
-      return (
-        this.lastResult || {
-          containersRemoved: [],
-          networksRemoved: [],
-          volumesRemoved: [],
-          errors: ["Cleanup already in progress"],
-          startedAt: new Date().toISOString(),
-          completedAt: new Date().toISOString(),
-          durationMs: 0,
-        }
-      );
+      // Return an explicit "skipped" result rather than the previous run's
+      // result, so callers are not misled into thinking this invocation ran a
+      // fresh cleanup. Empty removal arrays + skipped:true mark that no work
+      // was done by this call.
+      const now = new Date().toISOString();
+      return {
+        containersRemoved: [],
+        networksRemoved: [],
+        volumesRemoved: [],
+        errors: [],
+        startedAt: now,
+        completedAt: now,
+        durationMs: 0,
+        skipped: true,
+      };
     }
 
     this.running = true;
