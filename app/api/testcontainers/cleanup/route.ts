@@ -97,7 +97,9 @@ export async function POST(request: Request) {
         // Run cleanup immediately
         const result = await scheduler.runCleanup();
         return NextResponse.json({
-          message: "Cleanup completed",
+          message: result.skipped
+            ? "Cleanup already in progress; this request did not run a new cleanup"
+            : "Cleanup completed",
           result,
         });
       }
