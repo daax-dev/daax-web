@@ -31,7 +31,7 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
       <span
         className={cn(
           "h-1.5 w-1.5 rounded-full",
-          status === "running" ? "bg-green-500 animate-pulse" : "bg-current",
+          status === "running" ? "bg-success animate-pulse" : "bg-current",
         )}
       />
       {status}
