@@ -118,14 +118,16 @@ self_elevate() {
   #
   # The allowlist covers (a) the script's own knobs and (b) every
   # user-facing override the compose file consumes (CLAUDE_CONTAINER_IMAGE,
-  # CODE_SERVER_URL, TERMINAL_WS_URL, GITHUB_DAAX, CLAWD_GATEWAY_*,
-  # DOCKER_GID) — without these, a user-set override would be silently
-  # dropped on the sudo re-exec and the elevated `docker compose` would
-  # fall back to defaults. Note: this carries user-set values (incl. the
-  # CLAWD_GATEWAY_TOKEN and GITHUB_DAAX secrets) across the sudo boundary,
-  # where they are visible in the elevated process's environment.
+  # CODE_SERVER_URL, TERMINAL_WS_URL, GITHUB_DAAX, CLAWD_GATEWAY_*) — without
+  # these, a user-set override would be silently dropped on the sudo re-exec
+  # and the elevated `docker compose` would fall back to defaults. Note: this
+  # carries user-set values (incl. the CLAWD_GATEWAY_TOKEN and GITHUB_DAAX
+  # secrets) across the sudo boundary, where they are visible in the elevated
+  # process's environment. DOCKER_GID is deliberately NOT preserved: compose()
+  # recomputes it from the host's docker group, so a passed-in value would be
+  # overwritten anyway.
   if [[ $EUID -ne 0 ]]; then
-    exec sudo --preserve-env=DAAX_HOSTNAME,DAAX_WORKSPACE,CLAUDE_CONFIG_PATH,HOME_MCP_JSON_PATH,DAAX_ENV_FILE,DAAX_NETWORK,TRAEFIK_DYNAMIC_DIR,DOCKER_SOCKET,SNAP_DOCKERD_UNIT,CLAUDE_CONTAINER_IMAGE,CODE_SERVER_URL,TERMINAL_WS_URL,GITHUB_DAAX,CLAWD_GATEWAY_URL,CLAWD_GATEWAY_TOKEN,DOCKER_GID \
+    exec sudo --preserve-env=DAAX_HOSTNAME,DAAX_WORKSPACE,CLAUDE_CONFIG_PATH,HOME_MCP_JSON_PATH,DAAX_ENV_FILE,DAAX_NETWORK,TRAEFIK_DYNAMIC_DIR,DOCKER_SOCKET,SNAP_DOCKERD_UNIT,CLAUDE_CONTAINER_IMAGE,CODE_SERVER_URL,TERMINAL_WS_URL,GITHUB_DAAX,CLAWD_GATEWAY_URL,CLAWD_GATEWAY_TOKEN \
       -- "$SCRIPT_PATH" "$@"
   fi
 }
