@@ -61,8 +61,9 @@ interface AgentTab {
   containerName?: string;
 }
 
-// Tool icon + accent color mapping. We intentionally use generic Lucide
-// glyphs (not brand marks) to keep this dependency-free and on-theme.
+// Tool icon + accent color mapping. Each AI tool gets an associated Lucide
+// glyph (some are brand marks, e.g. Github for Copilot) and a fixed accent
+// color that serves as the tool's per-tool BRAND identity in the tab strip.
 const TOOL_META: Record<
   AIToolId,
   {
@@ -338,7 +339,7 @@ export function AgentTabsLayout() {
   };
 
   // Capture server-assigned container name when the Terminal first
-  // reports it via the session message — feeds the stray check.
+  // reports it via the session message — feeds the stray/running checks.
   const handleSessionStart = useCallback(
     (
       tabId: string,
@@ -350,6 +351,13 @@ export function AgentTabsLayout() {
       setTabs((prev) =>
         prev.map((t) => (t.id === tabId ? { ...t, containerName } : t)),
       );
+      // Optimistically seed both sets so the just-started session reads as
+      // known-and-running immediately, rather than being briefly mis-flagged
+      // (stray / not-running) in the window between containerName assignment
+      // and the next active-sessions poll. The poll reconciles afterward.
+      // Keeps isStray and isRunning consistent for the just-launched tab.
+      setKnownContainers((prev) => new Set(prev).add(containerName));
+      setRunningContainers((prev) => new Set(prev).add(containerName));
     },
     [],
   );
