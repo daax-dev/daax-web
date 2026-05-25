@@ -4,7 +4,7 @@
  * Testcontainers-style wait strategies for determining container readiness.
  */
 
-import Docker from 'dockerode';
+import Docker from "dockerode";
 import type {
   WaitStrategy,
   WaitResult,
@@ -12,7 +12,7 @@ import type {
   LogWaitStrategy,
   HttpWaitStrategy,
   HealthcheckWaitStrategy,
-} from '../types';
+} from "../types";
 
 const DEFAULT_TIMEOUT = 60; // seconds
 const POLL_INTERVAL = 500; // milliseconds
@@ -32,18 +32,21 @@ export class WaitStrategyExecutor {
   /**
    * Execute a wait strategy
    */
-  async execute(containerId: string, strategy: WaitStrategy): Promise<WaitResult> {
+  async execute(
+    containerId: string,
+    strategy: WaitStrategy,
+  ): Promise<WaitResult> {
     const startTime = Date.now();
 
     try {
       switch (strategy.type) {
-        case 'port':
+        case "port":
           return await this.waitForPort(containerId, strategy);
-        case 'log':
+        case "log":
           return await this.waitForLog(containerId, strategy);
-        case 'http':
+        case "http":
           return await this.waitForHttp(containerId, strategy);
-        case 'healthcheck':
+        case "healthcheck":
           return await this.waitForHealthcheck(containerId, strategy);
         default:
           return {
@@ -55,7 +58,7 @@ export class WaitStrategyExecutor {
     } catch (error) {
       return {
         success: false,
-        message: error instanceof Error ? error.message : 'Unknown error',
+        message: error instanceof Error ? error.message : "Unknown error",
         elapsed: Date.now() - startTime,
       };
     }
@@ -66,7 +69,7 @@ export class WaitStrategyExecutor {
    */
   private async waitForPort(
     containerId: string,
-    strategy: PortWaitStrategy
+    strategy: PortWaitStrategy,
   ): Promise<WaitResult> {
     const startTime = Date.now();
     const timeout = (strategy.timeout || DEFAULT_TIMEOUT) * 1000;
@@ -78,7 +81,7 @@ export class WaitStrategyExecutor {
         const data = await container.inspect();
 
         // Check if container is running
-        if (data.State.Status !== 'running') {
+        if (data.State.Status !== "running") {
           await this.sleep(POLL_INTERVAL);
           continue;
         }
@@ -92,7 +95,7 @@ export class WaitStrategyExecutor {
           const hostPort = parseInt(binding.HostPort, 10);
 
           // Try to connect to the port
-          if (await this.checkPort('localhost', hostPort)) {
+          if (await this.checkPort("localhost", hostPort)) {
             return {
               success: true,
               message: `Port ${port} is ready (mapped to host port ${hostPort})`,
@@ -119,7 +122,7 @@ export class WaitStrategyExecutor {
    */
   private async waitForLog(
     containerId: string,
-    strategy: LogWaitStrategy
+    strategy: LogWaitStrategy,
   ): Promise<WaitResult> {
     const startTime = Date.now();
     const timeout = (strategy.timeout || DEFAULT_TIMEOUT) * 1000;
@@ -137,7 +140,7 @@ export class WaitStrategyExecutor {
           tail: 1000,
         });
 
-        const logText = logs.toString('utf-8');
+        const logText = logs.toString("utf-8");
 
         if (pattern.test(logText)) {
           return {
@@ -165,12 +168,14 @@ export class WaitStrategyExecutor {
    */
   private async waitForHttp(
     containerId: string,
-    strategy: HttpWaitStrategy
+    strategy: HttpWaitStrategy,
   ): Promise<WaitResult> {
     const startTime = Date.now();
     const timeout = (strategy.timeout || DEFAULT_TIMEOUT) * 1000;
     const statusCodes = strategy.statusCodes || [200];
-    const path = strategy.path.startsWith('/') ? strategy.path : `/${strategy.path}`;
+    const path = strategy.path.startsWith("/")
+      ? strategy.path
+      : `/${strategy.path}`;
 
     while (Date.now() - startTime < timeout) {
       try {
@@ -178,7 +183,7 @@ export class WaitStrategyExecutor {
         const data = await container.inspect();
 
         // Check if container is running
-        if (data.State.Status !== 'running') {
+        if (data.State.Status !== "running") {
           await this.sleep(POLL_INTERVAL);
           continue;
         }
@@ -211,7 +216,7 @@ export class WaitStrategyExecutor {
         const url = `http://localhost:${hostPort}${path}`;
         try {
           const response = await fetch(url, {
-            method: 'GET',
+            method: "GET",
             signal: AbortSignal.timeout(5000),
           });
 
@@ -244,7 +249,7 @@ export class WaitStrategyExecutor {
    */
   private async waitForHealthcheck(
     containerId: string,
-    strategy: HealthcheckWaitStrategy
+    strategy: HealthcheckWaitStrategy,
   ): Promise<WaitResult> {
     const startTime = Date.now();
     const timeout = (strategy.timeout || 120) * 1000; // Healthchecks take longer
@@ -259,10 +264,10 @@ export class WaitStrategyExecutor {
         if (!health) {
           // Container doesn't have a healthcheck configured
           // Fall back to checking if it's running
-          if (data.State.Status === 'running') {
+          if (data.State.Status === "running") {
             return {
               success: true,
-              message: 'Container is running (no healthcheck configured)',
+              message: "Container is running (no healthcheck configured)",
               elapsed: Date.now() - startTime,
             };
           }
@@ -270,19 +275,19 @@ export class WaitStrategyExecutor {
           continue;
         }
 
-        if (health.Status === 'healthy') {
+        if (health.Status === "healthy") {
           return {
             success: true,
-            message: 'Healthcheck passed',
+            message: "Healthcheck passed",
             elapsed: Date.now() - startTime,
           };
         }
 
-        if (health.Status === 'unhealthy') {
+        if (health.Status === "unhealthy") {
           const lastLog = health.Log?.[health.Log.length - 1];
           return {
             success: false,
-            message: `Healthcheck failed: ${lastLog?.Output || 'Unknown reason'}`,
+            message: `Healthcheck failed: ${lastLog?.Output || "Unknown reason"}`,
             elapsed: Date.now() - startTime,
           };
         }
@@ -305,23 +310,23 @@ export class WaitStrategyExecutor {
    */
   private async checkPort(host: string, port: number): Promise<boolean> {
     // Dynamic import for net module (server-side only)
-    const net = await import('net');
+    const net = await import("net");
     return new Promise((resolve) => {
       const socket = new net.Socket();
 
       socket.setTimeout(1000);
 
-      socket.on('connect', () => {
+      socket.on("connect", () => {
         socket.destroy();
         resolve(true);
       });
 
-      socket.on('timeout', () => {
+      socket.on("timeout", () => {
         socket.destroy();
         resolve(false);
       });
 
-      socket.on('error', () => {
+      socket.on("error", () => {
         socket.destroy();
         resolve(false);
       });
@@ -343,18 +348,18 @@ export class WaitStrategyExecutor {
  */
 export function createDefaultWaitStrategy(
   ports: Array<{ containerPort: number; protocol: string }>,
-  hasHealthCheck: boolean
+  hasHealthCheck: boolean,
 ): WaitStrategy {
   // If healthcheck is configured, use that
   if (hasHealthCheck) {
-    return { type: 'healthcheck', timeout: 120 };
+    return { type: "healthcheck", timeout: 120 };
   }
 
   // Otherwise, wait for first port
   if (ports.length > 0) {
-    return { type: 'port', port: ports[0].containerPort, timeout: 60 };
+    return { type: "port", port: ports[0].containerPort, timeout: 60 };
   }
 
   // Fallback: no wait strategy
-  return { type: 'healthcheck', timeout: 30 };
+  return { type: "healthcheck", timeout: 30 };
 }

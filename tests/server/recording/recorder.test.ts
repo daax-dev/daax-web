@@ -21,7 +21,9 @@ const {
   mockMkdirSync: vi.fn(),
   mockWriteFileSync: vi.fn(),
   mockAppendFileSync: vi.fn(),
-  mockAppendFileAsync: vi.fn((_path: string, _data: string) => Promise.resolve()),
+  mockAppendFileAsync: vi.fn((_path: string, _data: string) =>
+    Promise.resolve(),
+  ),
   mockReaddirSync: vi.fn(() => [] as string[]),
   mockReadFileSync: vi.fn((_path: string) => ""),
   mockUnlinkSync: vi.fn(),
@@ -112,7 +114,9 @@ describe("Terminal Session Recorder", () => {
     });
 
     it("should handle errors gracefully when directory creation fails", async () => {
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const consoleSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
       mockMkdirSync.mockImplementation(() => {
         throw new Error("Permission denied");
       });
@@ -121,7 +125,7 @@ describe("Terminal Session Recorder", () => {
       expect(() => initializeRecordingsDir()).not.toThrow();
       expect(consoleSpy).toHaveBeenCalledWith(
         "[Terminal Recorder] Failed to create recordings directory:",
-        expect.any(Error)
+        expect.any(Error),
       );
 
       consoleSpy.mockRestore();
@@ -135,7 +139,7 @@ describe("Terminal Session Recorder", () => {
         "shell",
         "/bin/bash",
         120,
-        30
+        30,
       );
 
       // Recording ID format: ${sessionType}-${Date.now()}-${sessionId.slice(0, 8)}
@@ -184,7 +188,13 @@ describe("Terminal Session Recorder", () => {
     });
 
     it("should include session type in recording ID", async () => {
-      const id = startRecording("session-123", "claude", "claude code", 100, 40);
+      const id = startRecording(
+        "session-123",
+        "claude",
+        "claude code",
+        100,
+        40,
+      );
       expect(id).toMatch(/^claude-/);
 
       // Cleanup
@@ -202,7 +212,7 @@ describe("Terminal Session Recorder", () => {
         "/bin/bash",
         80,
         24,
-        "client-session-abc"
+        "client-session-abc",
       );
       const id2 = startRecording(
         "session-2",
@@ -210,7 +220,7 @@ describe("Terminal Session Recorder", () => {
         "/bin/bash",
         80,
         24,
-        "client-session-abc"
+        "client-session-abc",
       );
 
       expect(id1).not.toBeNull();
@@ -218,7 +228,7 @@ describe("Terminal Session Recorder", () => {
 
       // Verify log message
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Skipping duplicate for clientSessionId")
+        expect.stringContaining("Skipping duplicate for clientSessionId"),
       );
 
       consoleSpy.mockRestore();
@@ -234,7 +244,7 @@ describe("Terminal Session Recorder", () => {
         "/bin/bash",
         80,
         24,
-        "client-session-abc"
+        "client-session-abc",
       );
       // Advance time so timestamp differs
       vi.advanceTimersByTime(10);
@@ -244,7 +254,7 @@ describe("Terminal Session Recorder", () => {
         "/bin/bash",
         80,
         24,
-        "client-session-def"
+        "client-session-def",
       );
 
       expect(id1).not.toBeNull();
@@ -275,7 +285,7 @@ describe("Terminal Session Recorder", () => {
         "/bin/bash",
         80,
         24,
-        "client-session-reuse"
+        "client-session-reuse",
       );
       expect(id1).not.toBeNull();
 
@@ -289,7 +299,7 @@ describe("Terminal Session Recorder", () => {
         "/bin/bash",
         80,
         24,
-        "client-session-reuse"
+        "client-session-reuse",
       );
       expect(id2).not.toBeNull();
       expect(id2).not.toEqual(id1);
@@ -512,7 +522,7 @@ describe("Terminal Session Recorder", () => {
       // Should write metadata file
       expect(mockWriteFileSync).toHaveBeenCalledWith(
         expect.stringMatching(/\.json$/),
-        expect.any(String)
+        expect.any(String),
       );
 
       const metaContent = mockWriteFileSync.mock.calls[0][1] as string;
@@ -529,7 +539,7 @@ describe("Terminal Session Recorder", () => {
         "/bin/bash",
         80,
         24,
-        "client-cleanup-test"
+        "client-cleanup-test",
       );
       await stopRecording("session-cleanup");
 
@@ -541,7 +551,7 @@ describe("Terminal Session Recorder", () => {
         "/bin/bash",
         80,
         24,
-        "client-cleanup-test"
+        "client-cleanup-test",
       );
 
       expect(newId).not.toBeNull();
@@ -644,7 +654,9 @@ describe("Terminal Session Recorder", () => {
     });
 
     it("should handle parse errors gracefully", async () => {
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const consoleSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
 
       mockReaddirSync.mockReturnValue(["good.json", "bad.json"]);
 
@@ -665,14 +677,16 @@ describe("Terminal Session Recorder", () => {
       expect(recordings[0].id).toBe("good");
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining("Failed to parse recording metadata"),
-        expect.any(Error)
+        expect.any(Error),
       );
 
       consoleSpy.mockRestore();
     });
 
     it("should handle directory read errors gracefully", async () => {
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const consoleSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
 
       mockReaddirSync.mockImplementation(() => {
         throw new Error("Directory not found");
@@ -683,7 +697,7 @@ describe("Terminal Session Recorder", () => {
       expect(recordings).toEqual([]);
       expect(consoleSpy).toHaveBeenCalledWith(
         "[Terminal Recorder] Failed to list recordings:",
-        expect.any(Error)
+        expect.any(Error),
       );
 
       consoleSpy.mockRestore();
@@ -752,7 +766,9 @@ describe("Terminal Session Recorder", () => {
     });
 
     it("should handle read errors gracefully", async () => {
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const consoleSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
 
       mockExistsSync.mockReturnValue(true);
       mockReadFileSync.mockImplementation(() => {
@@ -764,7 +780,7 @@ describe("Terminal Session Recorder", () => {
       expect(result).toBeNull();
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining("Failed to get recording"),
-        expect.any(Error)
+        expect.any(Error),
       );
 
       consoleSpy.mockRestore();
@@ -779,10 +795,10 @@ describe("Terminal Session Recorder", () => {
 
       expect(result).toBe(true);
       expect(mockUnlinkSync).toHaveBeenCalledWith(
-        expect.stringMatching(/to-delete\.json$/)
+        expect.stringMatching(/to-delete\.json$/),
       );
       expect(mockUnlinkSync).toHaveBeenCalledWith(
-        expect.stringMatching(/to-delete\.cast$/)
+        expect.stringMatching(/to-delete\.cast$/),
       );
     });
 
@@ -809,7 +825,9 @@ describe("Terminal Session Recorder", () => {
     });
 
     it("should return false on deletion error", async () => {
-      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const consoleSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
 
       mockExistsSync.mockReturnValue(true);
       mockUnlinkSync.mockImplementation(() => {
@@ -821,7 +839,7 @@ describe("Terminal Session Recorder", () => {
       expect(result).toBe(false);
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining("Failed to delete recording"),
-        expect.any(Error)
+        expect.any(Error),
       );
 
       consoleSpy.mockRestore();
@@ -848,7 +866,7 @@ describe("Terminal Session Recorder", () => {
         "/bin/bash",
         80,
         24,
-        "lifecycle-client"
+        "lifecycle-client",
       );
       expect(recordingId).not.toBeNull();
 

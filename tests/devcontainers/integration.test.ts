@@ -71,7 +71,6 @@ describe("DevContainer Integration Tests", () => {
   // Skip CLI-dependent tests - these require manual testing with a working devcontainer CLI
   // The CLI may behave differently across environments and versions
   it.skip("validates generated config with devcontainer CLI read-configuration", async () => {
-
     const tmpDir = await createTempDir();
 
     try {

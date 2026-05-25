@@ -4,14 +4,14 @@
  * Handlers for container CRUD operations.
  */
 
-import { getDockerClient } from '../lib/docker-client';
+import { getDockerClient } from "../lib/docker-client";
 import type {
   ContainerListResponse,
   ContainerCreateRequest,
   ContainerCreateResponse,
   ContainerActionResponse,
   TestContainer,
-} from '../types';
+} from "../types";
 
 /**
  * List all test containers
@@ -19,7 +19,7 @@ import type {
 export async function listContainers(
   filter?: { status?: string; project?: string; search?: string },
   page = 1,
-  pageSize = 50
+  pageSize = 50,
 ): Promise<ContainerListResponse> {
   const client = getDockerClient();
   let containers = await client.listContainers(true);
@@ -27,7 +27,7 @@ export async function listContainers(
   // Apply filters
   if (filter?.status) {
     // Support comma-separated status values (e.g., "running,exited")
-    const statuses = filter.status.split(',').map((s) => s.trim());
+    const statuses = filter.status.split(",").map((s) => s.trim());
     containers = containers.filter((c) => statuses.includes(c.status));
   }
   if (filter?.project) {
@@ -38,13 +38,13 @@ export async function listContainers(
     containers = containers.filter(
       (c) =>
         c.name.toLowerCase().includes(search) ||
-        c.image.toLowerCase().includes(search)
+        c.image.toLowerCase().includes(search),
     );
   }
 
   // Sort by creation date (newest first)
   containers.sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
 
   // Paginate
@@ -72,7 +72,7 @@ export async function getContainer(id: string): Promise<TestContainer | null> {
  * Create a new container
  */
 export async function createContainer(
-  request: ContainerCreateRequest
+  request: ContainerCreateRequest,
 ): Promise<ContainerCreateResponse> {
   const client = getDockerClient();
   const container = await client.createContainer(request);
@@ -86,7 +86,9 @@ export async function createContainer(
 /**
  * Start a container
  */
-export async function startContainer(id: string): Promise<ContainerActionResponse> {
+export async function startContainer(
+  id: string,
+): Promise<ContainerActionResponse> {
   const client = getDockerClient();
   await client.startContainer(id);
   const container = await client.getContainer(id);
@@ -101,7 +103,9 @@ export async function startContainer(id: string): Promise<ContainerActionRespons
 /**
  * Stop a container
  */
-export async function stopContainer(id: string): Promise<ContainerActionResponse> {
+export async function stopContainer(
+  id: string,
+): Promise<ContainerActionResponse> {
   const client = getDockerClient();
   await client.stopContainer(id);
   const container = await client.getContainer(id);
@@ -116,7 +120,9 @@ export async function stopContainer(id: string): Promise<ContainerActionResponse
 /**
  * Restart a container
  */
-export async function restartContainer(id: string): Promise<ContainerActionResponse> {
+export async function restartContainer(
+  id: string,
+): Promise<ContainerActionResponse> {
   const client = getDockerClient();
   await client.restartContainer(id);
   const container = await client.getContainer(id);
@@ -133,7 +139,7 @@ export async function restartContainer(id: string): Promise<ContainerActionRespo
  */
 export async function removeContainer(
   id: string,
-  force = false
+  force = false,
 ): Promise<ContainerActionResponse> {
   const client = getDockerClient();
 
@@ -154,7 +160,7 @@ export async function removeContainer(
  */
 export async function getContainerLogs(
   id: string,
-  options?: { tail?: number; since?: number; timestamps?: boolean }
+  options?: { tail?: number; since?: number; timestamps?: boolean },
 ): Promise<string> {
   const client = getDockerClient();
   return client.getContainerLogs(id, options);

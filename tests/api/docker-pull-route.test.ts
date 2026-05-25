@@ -16,9 +16,8 @@ const { mockSpawn } = vi.hoisted(() => ({
 
 // Mock child_process.spawn (ESM requires default export)
 vi.mock("child_process", async () => {
-  const actual = await vi.importActual<typeof import("child_process")>(
-    "child_process"
-  );
+  const actual =
+    await vi.importActual<typeof import("child_process")>("child_process");
   return {
     ...actual,
     default: { ...actual, spawn: mockSpawn },
@@ -120,7 +119,7 @@ describe("/api/docker/pull", () => {
         // Should return streaming response, not 400
         expect(response.status).toBe(200);
         expect(response.headers.get("Content-Type")).toBe(
-          "application/x-ndjson"
+          "application/x-ndjson",
         );
 
         // Trigger close to clean up
@@ -158,7 +157,10 @@ describe("/api/docker/pull", () => {
 
       // Simulate Docker stdout output
       setTimeout(() => {
-        mockProcess.stdout.emit("data", Buffer.from("Pulling from library/nginx\n"));
+        mockProcess.stdout.emit(
+          "data",
+          Buffer.from("Pulling from library/nginx\n"),
+        );
         mockProcess.emit("close", 0);
       }, 10);
 
@@ -203,7 +205,7 @@ describe("/api/docker/pull", () => {
       setTimeout(() => {
         mockProcess.stderr.emit(
           "data",
-          Buffer.from("WARNING: deprecated feature used\n")
+          Buffer.from("WARNING: deprecated feature used\n"),
         );
         mockProcess.emit("close", 0); // Success despite warning
       }, 10);
@@ -359,7 +361,7 @@ describe("/api/docker/pull", () => {
         ["pull", "myregistry.com/myimage:v1.0"],
         expect.objectContaining({
           stdio: ["ignore", "pipe", "pipe"],
-        })
+        }),
       );
 
       mockProcess.emit("close", 0);

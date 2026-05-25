@@ -61,7 +61,7 @@ export function NewSessionModal({
   const [selectedAgent, setSelectedAgent] = useState<AIAgent>("claude-code");
   const [containerImage, setContainerImage] = useState("");
   const [workingDirectory, setWorkingDirectory] = useState(
-    defaultWorkingDirectory
+    defaultWorkingDirectory,
   );
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -85,7 +85,7 @@ export function NewSessionModal({
 
   const agentEntries = Object.entries(AI_AGENTS) as [
     AIAgent,
-    { name: string; command: string; icon: string }
+    { name: string; command: string; icon: string },
   ][];
 
   return (
@@ -120,7 +120,7 @@ export function NewSessionModal({
                       "flex items-center space-x-3 rounded-md border p-3 cursor-pointer transition-colors",
                       selectedAgent === agentId
                         ? "border-primary bg-primary/5"
-                        : "border-border hover:bg-muted/50"
+                        : "border-border hover:bg-muted/50",
                     )}
                     onClick={() => setSelectedAgent(agentId)}
                   >
@@ -159,7 +159,10 @@ export function NewSessionModal({
             <div className="space-y-4 rounded-md border p-4 bg-muted/30">
               {/* Container Image Override */}
               <div className="space-y-2">
-                <Label htmlFor="container-image" className="flex items-center gap-2">
+                <Label
+                  htmlFor="container-image"
+                  className="flex items-center gap-2"
+                >
                   <Container className="h-4 w-4" />
                   Container Image
                 </Label>
@@ -170,13 +173,17 @@ export function NewSessionModal({
                   onChange={(e) => setContainerImage(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Leave empty to use the server&apos;s default container image (flowspec variant)
+                  Leave empty to use the server&apos;s default container image
+                  (flowspec variant)
                 </p>
               </div>
 
               {/* Working Directory */}
               <div className="space-y-2">
-                <Label htmlFor="working-dir" className="flex items-center gap-2">
+                <Label
+                  htmlFor="working-dir"
+                  className="flex items-center gap-2"
+                >
                   <FolderOpen className="h-4 w-4" />
                   Working Directory
                 </Label>

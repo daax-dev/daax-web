@@ -23,7 +23,10 @@ function parseOpencodeModel(opencodeModelParam: string): [string, string] {
   const colonIndex = opencodeModelParam.indexOf(":");
   if (colonIndex >= 0) {
     // Split on first colon only - everything after is the model name
-    return [opencodeModelParam.slice(0, colonIndex), opencodeModelParam.slice(colonIndex + 1)];
+    return [
+      opencodeModelParam.slice(0, colonIndex),
+      opencodeModelParam.slice(colonIndex + 1),
+    ];
   }
   // Fallback for legacy format (bare model name)
   return ["copilot", opencodeModelParam];

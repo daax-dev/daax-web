@@ -11,8 +11,9 @@ export function ToolFreedom({ className }: { className?: string }) {
           <Wrench className="w-8 h-8 text-cyan-400" />
         </div>
         <p className="text-lg text-muted-foreground max-w-xl">
-          No vendor lock-in. Use any CLI tool, any AI agent, any IDE. daax provides the secure execution
-          layer—you choose the tools that work for your workflow.
+          No vendor lock-in. Use any CLI tool, any AI agent, any IDE. daax
+          provides the secure execution layer—you choose the tools that work for
+          your workflow.
         </p>
       </div>
 
@@ -46,8 +47,9 @@ export function DeploymentOptions({ className }: { className?: string }) {
           <Server className="w-8 h-8 text-violet-400" />
         </div>
         <p className="text-lg text-muted-foreground max-w-xl">
-          Deploy however you want. Run locally during development, self-host for your team,
-          or deploy to the cloud—same interface, same security, anywhere.
+          Deploy however you want. Run locally during development, self-host for
+          your team, or deploy to the cloud—same interface, same security,
+          anywhere.
         </p>
       </div>
 

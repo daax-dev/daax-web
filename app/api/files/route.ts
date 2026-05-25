@@ -20,11 +20,17 @@ function getWorkspacePath(): string {
 }
 
 // Discover all projects with .logs directories
-async function discoverProjectLogs(workspacePath: string): Promise<Map<string, string>> {
+async function discoverProjectLogs(
+  workspacePath: string,
+): Promise<Map<string, string>> {
   const projectLogs = new Map<string, string>();
 
   // Scan up to 3 levels deep for .logs directories
-  const scanDir = async (dir: string, depth: number, projectName: string = "") => {
+  const scanDir = async (
+    dir: string,
+    depth: number,
+    projectName: string = "",
+  ) => {
     if (depth > 3) return;
 
     try {
@@ -42,7 +48,9 @@ async function discoverProjectLogs(workspacePath: string): Promise<Map<string, s
           projectLogs.set(name, fullPath);
         } else {
           // Recurse into subdirectory
-          const newProjectName = projectName ? `${projectName}/${entry.name}` : entry.name;
+          const newProjectName = projectName
+            ? `${projectName}/${entry.name}`
+            : entry.name;
           await scanDir(fullPath, depth + 1, newProjectName);
         }
       }
@@ -176,19 +184,19 @@ export async function GET(request: Request) {
   if (projectFilter) {
     // Normalize the path first to catch edge cases
     const normalized = projectFilter
-      .replace(/\/+/g, "/")  // Collapse multiple consecutive slashes
-      .replace(/^\/+/, "")   // Remove leading slashes
-      .replace(/\/+$/, "");  // Remove trailing slashes
+      .replace(/\/+/g, "/") // Collapse multiple consecutive slashes
+      .replace(/^\/+/, "") // Remove leading slashes
+      .replace(/\/+$/, ""); // Remove trailing slashes
 
     // Block path traversal sequences
     if (
       normalized.includes("..") ||
       normalized.includes("\\") ||
-      projectFilter !== normalized  // Reject if normalization changed the input
+      projectFilter !== normalized // Reject if normalization changed the input
     ) {
       return NextResponse.json(
         { error: "Invalid project name: path traversal sequences not allowed" },
-        { status: 400 }
+        { status: 400 },
       );
     }
   }
@@ -197,10 +205,15 @@ export async function GET(request: Request) {
     const workspacePath = getWorkspacePath();
     const projectLogs = await discoverProjectLogs(workspacePath);
 
-    console.log(`[files API] Found ${projectLogs.size} projects with .logs directories`);
+    console.log(
+      `[files API] Found ${projectLogs.size} projects with .logs directories`,
+    );
 
     // Build response with project structure
-    const projects: Record<string, { path: string; files: FileInfo[]; errors: FileReadError[] }> = {};
+    const projects: Record<
+      string,
+      { path: string; files: FileInfo[]; errors: FileReadError[] }
+    > = {};
 
     for (const [projectName, logsPath] of projectLogs) {
       // Skip if filtering by project and this isn't it
@@ -228,7 +241,9 @@ export async function GET(request: Request) {
           path: `${projectName}/${file.path}`,
         });
       }
-      allErrors.push(...data.errors.map(e => ({ ...e, path: `${projectName}/${e.path}` })));
+      allErrors.push(
+        ...data.errors.map((e) => ({ ...e, path: `${projectName}/${e.path}` })),
+      );
     }
 
     return NextResponse.json({

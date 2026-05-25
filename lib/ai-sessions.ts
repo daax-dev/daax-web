@@ -1,6 +1,6 @@
 // AI Session lifecycle management
 
-import { AISession, AIAgent, SessionStatus } from '@/types/ai-session';
+import { AISession, AIAgent, SessionStatus } from "@/types/ai-session";
 
 // In-memory store for MVP development
 // NOTE: This will NOT persist across serverless function invocations or multiple instances.
@@ -11,7 +11,7 @@ export const sessionStore = new Map<string, AISession>();
 export async function createSession(
   agent: AIAgent,
   containerImage: string,
-  workingDirectory: string
+  workingDirectory: string,
 ): Promise<AISession> {
   const id = crypto.randomUUID();
 
@@ -20,7 +20,7 @@ export async function createSession(
     agent,
     containerImage,
     workingDirectory,
-    status: 'starting',
+    status: "starting",
     createdAt: new Date().toISOString(),
   };
 
@@ -38,7 +38,7 @@ export async function stopSession(id: string): Promise<boolean> {
 
   // In real implementation, stop Docker container here
   // Update status before deletion (useful if we switch to soft-delete later)
-  sessionStore.set(id, { ...session, status: 'stopped' });
+  sessionStore.set(id, { ...session, status: "stopped" });
   sessionStore.delete(id);
 
   return true;
@@ -52,7 +52,11 @@ export function getAllSessions(): AISession[] {
   return Array.from(sessionStore.values());
 }
 
-export function updateSessionStatus(id: string, status: SessionStatus, error?: string) {
+export function updateSessionStatus(
+  id: string,
+  status: SessionStatus,
+  error?: string,
+) {
   const session = sessionStore.get(id);
   if (session) {
     // Use immutable update pattern for consistency with API routes

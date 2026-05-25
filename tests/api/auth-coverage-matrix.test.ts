@@ -141,7 +141,7 @@ function setupUnauthenticated() {
     authenticated: false,
     response: new Response(
       JSON.stringify({ error: "Authentication required" }),
-      { status: 401, headers: { "Content-Type": "application/json" } }
+      { status: 401, headers: { "Content-Type": "application/json" } },
     ),
   });
   mockGetAuthUser.mockResolvedValue({
@@ -185,7 +185,10 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
     handlerExport: "POST",
     requestInit: {
       method: "POST",
-      body: JSON.stringify({ project: "/workspace/test", task: { title: "t" } }),
+      body: JSON.stringify({
+        project: "/workspace/test",
+        task: { title: "t" },
+      }),
     },
   },
   {
@@ -196,7 +199,10 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
     handlerExport: "PATCH",
     requestInit: {
       method: "PATCH",
-      body: JSON.stringify({ project: "/workspace/test", updates: { status: "Done" } }),
+      body: JSON.stringify({
+        project: "/workspace/test",
+        updates: { status: "Done" },
+      }),
     },
     routeParams: { id: "task-1" },
   },
@@ -392,7 +398,13 @@ describe("Auth Coverage Matrix", () => {
           documents: [],
           decisions: [],
           milestones: [],
-          config: { statuses: [], labels: [], milestones: [], dateFormat: "YYYY-MM-DD", projectName: "Test" },
+          config: {
+            statuses: [],
+            labels: [],
+            milestones: [],
+            dateFormat: "YYYY-MM-DD",
+            projectName: "Test",
+          },
           taskCount: 0,
           lastUpdated: new Date().toISOString(),
         });

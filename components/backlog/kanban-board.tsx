@@ -31,8 +31,12 @@ const NO_PRIORITY_ORDER = 3;
 const sortTasksByPriority = (tasks: Task[]): void => {
   tasks.sort((a, b) => {
     // 1. Sort by priority (high > medium > low > no priority)
-    const aPriority = a.priority ? PRIORITY_ORDER[a.priority] : NO_PRIORITY_ORDER;
-    const bPriority = b.priority ? PRIORITY_ORDER[b.priority] : NO_PRIORITY_ORDER;
+    const aPriority = a.priority
+      ? PRIORITY_ORDER[a.priority]
+      : NO_PRIORITY_ORDER;
+    const bPriority = b.priority
+      ? PRIORITY_ORDER[b.priority]
+      : NO_PRIORITY_ORDER;
     if (aPriority !== bPriority) {
       return aPriority - bPriority;
     }
@@ -78,17 +82,17 @@ export function KanbanBoard({
 
   // Detect mobile viewport
   useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+    const checkMobile = () =>
+      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
     checkMobile();
     window.addEventListener("resize", checkMobile);
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
   // Clamp activeColumnIndex to valid range (safe during render)
-  const safeColumnIndex = statuses.length > 0 
-    ? Math.min(activeColumnIndex, statuses.length - 1) 
-    : 0;
-  
+  const safeColumnIndex =
+    statuses.length > 0 ? Math.min(activeColumnIndex, statuses.length - 1) : 0;
+
   // Sync state if it drifted
   useEffect(() => {
     if (activeColumnIndex !== safeColumnIndex) {
@@ -106,7 +110,9 @@ export function KanbanBoard({
 
   const tasksByStatus = useMemo(() => {
     const grouped: Record<string, Task[]> = {};
-    statuses.forEach((status) => { grouped[status] = []; });
+    statuses.forEach((status) => {
+      grouped[status] = [];
+    });
 
     tasks.forEach((task) => {
       if (grouped[task.status]) {
@@ -135,7 +141,9 @@ export function KanbanBoard({
 
     allMilestones.forEach((milestone) => {
       grouped[milestone] = {};
-      statuses.forEach((status) => { grouped[milestone][status] = []; });
+      statuses.forEach((status) => {
+        grouped[milestone][status] = [];
+      });
     });
 
     tasks.forEach((task) => {
@@ -177,7 +185,8 @@ export function KanbanBoard({
             Group by Milestone
           </Label>
           <span id="milestone-lanes-description" className="sr-only">
-            Toggle between viewing tasks by status only or grouped by milestone lanes.
+            Toggle between viewing tasks by status only or grouped by milestone
+            lanes.
           </span>
         </div>
       )}
@@ -192,31 +201,37 @@ export function KanbanBoard({
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => setActiveColumnIndex(Math.max(0, safeColumnIndex - 1))}
+                  onClick={() =>
+                    setActiveColumnIndex(Math.max(0, safeColumnIndex - 1))
+                  }
                   disabled={safeColumnIndex === 0}
                   aria-label="Previous column"
                 >
                   <ChevronLeft className="h-5 w-5" />
                 </Button>
-                
+
                 <div className="text-center">
                   <span className="text-lg font-semibold">{currentStatus}</span>
                   <span className="ml-2 text-muted-foreground">
                     ({currentTasks.length})
                   </span>
                 </div>
-                
+
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => setActiveColumnIndex(Math.min(statuses.length - 1, safeColumnIndex + 1))}
+                  onClick={() =>
+                    setActiveColumnIndex(
+                      Math.min(statuses.length - 1, safeColumnIndex + 1),
+                    )
+                  }
                   disabled={safeColumnIndex === statuses.length - 1}
                   aria-label="Next column"
                 >
                   <ChevronRight className="h-5 w-5" />
                 </Button>
               </div>
-              
+
               {/* Dot indicators */}
               <div className="flex justify-center gap-2">
                 {statuses.map((status, index) => (
@@ -226,9 +241,9 @@ export function KanbanBoard({
                     aria-label={`Go to ${status}`}
                     className={cn(
                       "w-2 h-2 rounded-full transition-colors",
-                      safeColumnIndex === index 
-                        ? "bg-primary" 
-                        : "bg-zinc-600 hover:bg-zinc-500"
+                      safeColumnIndex === index
+                        ? "bg-primary"
+                        : "bg-zinc-600 hover:bg-zinc-500",
                     )}
                   />
                 ))}
@@ -237,33 +252,33 @@ export function KanbanBoard({
           )}
 
           {/* Desktop: All columns | Mobile: Single column */}
-          <div className={cn(
-            "p-4 min-h-[calc(100vh-200px)] h-full",
-            isMobile ? "flex flex-col" : "flex gap-4"
-          )}>
-            {isMobile ? (
-              statuses.length > 0 && (
-                <TaskColumn
-                  key={currentStatus}
-                  status={currentStatus}
-                  tasks={currentTasks}
-                  onTaskClick={onTaskClick}
-                  onCreateTask={onCreateTask}
-                  onDrop={handleDrop}
-                />
-              )
-            ) : (
-              statuses.map((status) => (
-                <TaskColumn
-                  key={status}
-                  status={status}
-                  tasks={tasksByStatus[status] || []}
-                  onTaskClick={onTaskClick}
-                  onCreateTask={onCreateTask}
-                  onDrop={handleDrop}
-                />
-              ))
+          <div
+            className={cn(
+              "p-4 min-h-[calc(100vh-200px)] h-full",
+              isMobile ? "flex flex-col" : "flex gap-4",
             )}
+          >
+            {isMobile
+              ? statuses.length > 0 && (
+                  <TaskColumn
+                    key={currentStatus}
+                    status={currentStatus}
+                    tasks={currentTasks}
+                    onTaskClick={onTaskClick}
+                    onCreateTask={onCreateTask}
+                    onDrop={handleDrop}
+                  />
+                )
+              : statuses.map((status) => (
+                  <TaskColumn
+                    key={status}
+                    status={status}
+                    tasks={tasksByStatus[status] || []}
+                    onTaskClick={onTaskClick}
+                    onCreateTask={onCreateTask}
+                    onDrop={handleDrop}
+                  />
+                ))}
           </div>
         </>
       )}

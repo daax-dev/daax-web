@@ -62,7 +62,11 @@ export function useBacklogNav() {
   return context;
 }
 
-export function BacklogNavProvider({ children }: { children: React.ReactNode }) {
+export function BacklogNavProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -82,7 +86,9 @@ export function BacklogNavProvider({ children }: { children: React.ReactNode }) 
   }, [isCollapsed, mounted]);
 
   return (
-    <NavContext.Provider value={{ isCollapsed, setIsCollapsed, isMobileOpen, setIsMobileOpen }}>
+    <NavContext.Provider
+      value={{ isCollapsed, setIsCollapsed, isMobileOpen, setIsMobileOpen }}
+    >
       {children}
     </NavContext.Provider>
   );
@@ -90,7 +96,7 @@ export function BacklogNavProvider({ children }: { children: React.ReactNode }) 
 
 export function BacklogMobileMenuButton() {
   const { setIsMobileOpen } = useBacklogNav();
-  
+
   return (
     <Button
       variant="ghost"
@@ -104,19 +110,19 @@ export function BacklogMobileMenuButton() {
   );
 }
 
-function NavLink({ 
-  item, 
-  active, 
+function NavLink({
+  item,
+  active,
   collapsed,
   onClick,
-}: { 
-  item: typeof navItems[0]; 
+}: {
+  item: (typeof navItems)[0];
   active: boolean;
   collapsed: boolean;
   onClick?: () => void;
 }) {
   const Icon = item.icon;
-  
+
   const link = (
     <Link
       href={item.href}
@@ -126,7 +132,7 @@ function NavLink({
         "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
         "hover:bg-zinc-800 hover:text-foreground",
         active ? "bg-zinc-800 text-foreground" : "text-zinc-400",
-        collapsed && "justify-center px-2"
+        collapsed && "justify-center px-2",
       )}
     >
       <Icon className="h-4 w-4 flex-shrink-0" />
@@ -138,7 +144,10 @@ function NavLink({
     return (
       <Tooltip delayDuration={0}>
         <TooltipTrigger asChild>{link}</TooltipTrigger>
-        <TooltipContent side="right" className="bg-zinc-800 text-zinc-100 border-zinc-700">
+        <TooltipContent
+          side="right"
+          className="bg-zinc-800 text-zinc-100 border-zinc-700"
+        >
           {item.label}
         </TooltipContent>
       </Tooltip>
@@ -159,10 +168,10 @@ function DesktopNav() {
 
   return (
     <TooltipProvider>
-      <nav 
+      <nav
         className={cn(
           "hidden md:flex flex-col gap-1 py-3 px-2 border-r bg-zinc-900/50 transition-all duration-200",
-          isCollapsed ? "w-14 min-w-14" : "w-48 min-w-48"
+          isCollapsed ? "w-14 min-w-14" : "w-48 min-w-48",
         )}
       >
         <div className="flex flex-col gap-1 flex-1">
@@ -175,8 +184,13 @@ function DesktopNav() {
             />
           ))}
         </div>
-        
-        <div className={cn("pt-2 border-t border-zinc-800", isCollapsed && "flex justify-center")}>
+
+        <div
+          className={cn(
+            "pt-2 border-t border-zinc-800",
+            isCollapsed && "flex justify-center",
+          )}
+        >
           <Tooltip delayDuration={0}>
             <TooltipTrigger asChild>
               <Button
@@ -186,7 +200,7 @@ function DesktopNav() {
                 aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
                 className={cn(
                   "text-zinc-400 hover:text-foreground hover:bg-zinc-800",
-                  !isCollapsed && "w-full justify-start gap-2"
+                  !isCollapsed && "w-full justify-start gap-2",
                 )}
               >
                 {isCollapsed ? (
@@ -200,7 +214,10 @@ function DesktopNav() {
               </Button>
             </TooltipTrigger>
             {isCollapsed && (
-              <TooltipContent side="right" className="bg-zinc-800 text-zinc-100 border-zinc-700">
+              <TooltipContent
+                side="right"
+                className="bg-zinc-800 text-zinc-100 border-zinc-700"
+              >
                 Expand sidebar
               </TooltipContent>
             )}
@@ -222,7 +239,10 @@ function MobileNav() {
 
   return (
     <Sheet open={isMobileOpen} onOpenChange={setIsMobileOpen}>
-      <SheetContent side="left" className="w-64 bg-zinc-900 border-zinc-800 p-0">
+      <SheetContent
+        side="left"
+        className="w-64 bg-zinc-900 border-zinc-800 p-0"
+      >
         <SheetHeader className="p-4 border-b border-zinc-800">
           <SheetTitle className="text-zinc-100">Backlog</SheetTitle>
         </SheetHeader>
@@ -230,7 +250,7 @@ function MobileNav() {
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.href);
-            
+
             return (
               <Link
                 key={item.href}
@@ -239,7 +259,7 @@ function MobileNav() {
                 className={cn(
                   "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                   "hover:bg-zinc-800 hover:text-foreground",
-                  active ? "bg-zinc-800 text-foreground" : "text-zinc-400"
+                  active ? "bg-zinc-800 text-foreground" : "text-zinc-400",
                 )}
               >
                 <Icon className="h-4 w-4 flex-shrink-0" />

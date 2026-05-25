@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import Image from 'next/image';
-import { useTheme } from 'next-themes';
-import { cn } from '@/lib/utils';
+import { useState, useEffect } from "react";
+import Image from "next/image";
+import { useTheme } from "next-themes";
+import { cn } from "@/lib/utils";
 
 interface McpIconProps {
   className?: string;
@@ -24,7 +24,10 @@ export function McpIcon({ className, size = 24 }: McpIconProps) {
   // mcp-black-bg.png = light/white icon for dark backgrounds
   // mcp-white-bg.png = dark/black icon for light backgrounds
   // Default to dark theme (black-bg = white icon) during SSR
-  const logoSrc = mounted && resolvedTheme === 'light' ? '/mcp-white-bg.png' : '/mcp-black-bg.png';
+  const logoSrc =
+    mounted && resolvedTheme === "light"
+      ? "/mcp-white-bg.png"
+      : "/mcp-black-bg.png";
 
   return (
     <Image
@@ -32,7 +35,7 @@ export function McpIcon({ className, size = 24 }: McpIconProps) {
       alt="MCP"
       width={size}
       height={size}
-      className={cn('object-contain', className)}
+      className={cn("object-contain", className)}
       unoptimized
       suppressHydrationWarning
     />
