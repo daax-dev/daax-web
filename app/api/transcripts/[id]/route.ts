@@ -3,6 +3,13 @@ import { readFile, readdir } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { findCodexSessionFile, parseCodexJsonl } from "@/lib/transcripts/codex";
+import {
+  findCopilotSessionFile,
+  parseCopilotJsonl,
+} from "@/lib/transcripts/copilot";
+import type { ParseResult, TranscriptMessage } from "@/lib/transcripts/types";
+import { isPathWithin } from "@/lib/transcripts/types";
 
 // Get Claude projects directory
 function getClaudeProjectsDir(): string {
@@ -29,6 +36,21 @@ interface SessionIndex {
   entries: SessionIndexEntry[];
 }
 
+/**
+ * sessions-index.json is untrusted on-disk content. Validate that an entry is
+ * an object carrying the string fields this route relies on before using it,
+ * so a malformed index (non-array entries, null/number elements, missing
+ * fields) is skipped rather than throwing.
+ */
+function isValidIndexEntry(e: unknown): e is SessionIndexEntry {
+  return (
+    !!e &&
+    typeof e === "object" &&
+    typeof (e as SessionIndexEntry).sessionId === "string" &&
+    typeof (e as SessionIndexEntry).fullPath === "string"
+  );
+}
+
 // Find session JSONL file by ID across all projects
 async function findSessionFile(sessionId: string): Promise<string | null> {
   const projectsDir = getClaudeProjectsDir();
@@ -49,18 +71,31 @@ async function findSessionFile(sessionId: string): Promise<string | null> {
       const indexContent = await readFile(indexPath, "utf-8");
       const index: SessionIndex = JSON.parse(indexContent);
 
-      const entry = index.entries.find((e) => e.sessionId === sessionId);
+      if (!Array.isArray(index.entries)) continue;
+      const entry = index.entries.find(
+        (e) => isValidIndexEntry(e) && e.sessionId === sessionId,
+      );
       if (entry) {
-        // Try the original path first
-        if (existsSync(entry.fullPath)) {
+        // entry.fullPath is untrusted on-disk index content: contain it to the
+        // configured Claude projects dir before reading, so a crafted index can
+        // never point the read at an arbitrary host file (path traversal).
+        if (
+          existsSync(entry.fullPath) &&
+          isPathWithin(projectsDir, entry.fullPath)
+        ) {
           return entry.fullPath;
         }
         // Translate path for container mode
         // e.g., /home/jpoley/.claude/projects/xxx -> /host-claude/projects/xxx
+        // match[1] is likewise untrusted (could contain `..`), so the joined
+        // candidate is also containment-checked before being returned.
         const match = entry.fullPath.match(/\.claude\/projects\/(.+)$/);
         if (match) {
           const containerPath = join("/host-claude/projects", match[1]);
-          if (existsSync(containerPath)) {
+          if (
+            existsSync(containerPath) &&
+            isPathWithin("/host-claude/projects", containerPath)
+          ) {
             return containerPath;
           }
         }
@@ -71,26 +106,6 @@ async function findSessionFile(sessionId: string): Promise<string | null> {
   }
 
   return null;
-}
-
-interface TranscriptMessage {
-  type: "user" | "assistant" | "system" | "tool_use" | "tool_result";
-  content: string;
-  timestamp: string;
-  thinking?: string;
-  toolName?: string;
-  toolId?: string;
-}
-
-interface ParseResult {
-  messages: TranscriptMessage[];
-  stats: {
-    totalLines: number;
-    parsedMessages: number;
-    skippedLines: number;
-    invalidJsonLines: number;
-    nonMessageEntries: number;
-  };
 }
 
 // Parse JSONL file into structured messages with tracking of skipped entries
@@ -111,7 +126,10 @@ function parseJsonlToMessages(content: string): ParseResult {
         continue;
       }
 
-      const timestamp = entry.timestamp || "";
+      // timestamp is untrusted JSON; only accept string values into the typed
+      // TranscriptMessage.timestamp.
+      const timestamp =
+        typeof entry.timestamp === "string" ? entry.timestamp : "";
 
       if (entry.type === "user" && entry.message?.content) {
         messages.push({
@@ -128,15 +146,25 @@ function parseJsonlToMessages(content: string): ParseResult {
           ? entry.message.content
           : [{ type: "text", text: entry.message.content }];
 
+        // Content-block fields are untrusted JSON; guard each typed string field
+        // so malformed JSONL can't inject non-strings into TranscriptMessage.
         for (const block of contentBlocks) {
-          if (block.type === "thinking" && block.thinking) {
+          if (
+            block.type === "thinking" &&
+            typeof block.thinking === "string" &&
+            block.thinking
+          ) {
             messages.push({
               type: "assistant",
               content: "",
               thinking: block.thinking,
               timestamp,
             });
-          } else if (block.type === "text" && block.text) {
+          } else if (
+            block.type === "text" &&
+            typeof block.text === "string" &&
+            block.text
+          ) {
             messages.push({
               type: "assistant",
               content: block.text,
@@ -146,8 +174,8 @@ function parseJsonlToMessages(content: string): ParseResult {
             messages.push({
               type: "tool_use",
               content: JSON.stringify(block.input, null, 2),
-              toolName: block.name,
-              toolId: block.id,
+              toolName: typeof block.name === "string" ? block.name : undefined,
+              toolId: typeof block.id === "string" ? block.id : undefined,
               timestamp,
             });
           } else if (block.type === "tool_result") {
@@ -157,7 +185,10 @@ function parseJsonlToMessages(content: string): ParseResult {
                 typeof block.content === "string"
                   ? block.content
                   : JSON.stringify(block.content),
-              toolId: block.tool_use_id,
+              toolId:
+                typeof block.tool_use_id === "string"
+                  ? block.tool_use_id
+                  : undefined,
               timestamp,
             });
           }
@@ -210,7 +241,31 @@ export async function GET(
   const { searchParams } = new URL(request.url);
   const format = searchParams.get("format") || "json";
 
-  const sessionFile = await findSessionFile(id);
+  // Ids are `${tool}:${sessionId}`. Bare ids (no recognized prefix) default to
+  // Claude for backward compatibility. Dispatch discovery + parsing per tool.
+  let tool = "claude";
+  let nativeId = id;
+  const sep = id.indexOf(":");
+  if (sep !== -1) {
+    const prefix = id.slice(0, sep);
+    if (prefix === "claude" || prefix === "codex" || prefix === "copilot") {
+      tool = prefix;
+      nativeId = id.slice(sep + 1);
+    }
+  }
+
+  let sessionFile: string | null;
+  let parse: (content: string) => ParseResult;
+  if (tool === "codex") {
+    sessionFile = await findCodexSessionFile(nativeId);
+    parse = parseCodexJsonl;
+  } else if (tool === "copilot") {
+    sessionFile = findCopilotSessionFile(nativeId);
+    parse = parseCopilotJsonl;
+  } else {
+    sessionFile = await findSessionFile(nativeId);
+    parse = parseJsonlToMessages;
+  }
 
   if (!sessionFile) {
     return NextResponse.json(
@@ -220,6 +275,10 @@ export async function GET(
   }
 
   try {
+    // Full read is intentional here: a detail view renders every message in a
+    // single session, so the whole file is needed regardless. Unlike the
+    // listing (which streams to scan many files for metadata), this is bounded
+    // to one user-selected session, so loading it once is acceptable.
     const content = await readFile(sessionFile, "utf-8");
 
     if (format === "raw") {
@@ -232,10 +291,13 @@ export async function GET(
     }
 
     // Parse and return structured messages with stats
-    const { messages, stats } = parseJsonlToMessages(content);
+    const { messages, stats } = parse(content);
 
     return NextResponse.json({
-      sessionId: id,
+      // Bare native id (no `${tool}:` prefix), matching the list route's
+      // TranscriptSession.sessionId; `tool` is exposed as its own field.
+      sessionId: nativeId,
+      tool,
       path: sessionFile,
       messageCount: messages.length,
       messages,

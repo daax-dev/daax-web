@@ -27,7 +27,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { toast } from "sonner";
-import type { TranscriptSession } from "@/app/api/transcripts/route";
+import type { TranscriptSession } from "@/lib/transcripts/types";
 
 function formatDate(dateString: string): string {
   return new Date(dateString).toLocaleDateString("en-US", {
@@ -109,14 +109,14 @@ export default function TranscriptsPage() {
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-zinc-800">
+      <div className="flex items-center justify-between p-4 border-b border-border">
         <div>
           <h1 className="text-xl font-semibold flex items-center gap-2">
             <MessageSquareText className="h-5 w-5" />
             Transcripts
           </h1>
           <p className="text-sm text-muted-foreground">
-            Claude Code session history from ~/.claude/projects
+            AI agent session history — Claude, Codex, and Copilot
           </p>
         </div>
         <Button
@@ -133,14 +133,14 @@ export default function TranscriptsPage() {
       </div>
 
       {/* Search */}
-      <div className="flex items-center gap-4 p-4 border-b border-zinc-800 bg-zinc-900/50">
+      <div className="flex items-center gap-4 p-4 border-b border-border bg-muted/50">
         <div className="flex items-center gap-2 flex-1">
           <Search className="h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Search by project, summary, branch..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="max-w-md bg-zinc-900"
+            className="max-w-md bg-muted"
           />
         </div>
         <Badge variant="secondary">
@@ -153,10 +153,7 @@ export default function TranscriptsPage() {
       <div className="flex-1 flex overflow-hidden">
         {/* Transcripts List */}
         <ScrollArea
-          className={cn(
-            "flex-1",
-            previewId && "w-1/3 border-r border-zinc-800",
-          )}
+          className={cn("flex-1", previewId && "w-1/3 border-r border-border")}
         >
           {loading ? (
             <div className="flex items-center justify-center py-16">
@@ -169,17 +166,17 @@ export default function TranscriptsPage() {
               <p className="text-sm mt-1">
                 {transcripts.length > 0
                   ? "Try adjusting your search"
-                  : "Claude Code session data not found. Check ~/.claude/projects"}
+                  : "No agent session data found (Claude ~/.claude, Codex ~/.codex, Copilot ~/.copilot)"}
               </p>
             </div>
           ) : (
-            <div className="divide-y divide-zinc-800">
+            <div className="divide-y divide-border">
               {filteredTranscripts.map((session) => (
                 <div
                   key={session.id}
                   className={cn(
-                    "group flex items-start gap-4 p-4 cursor-pointer hover:bg-zinc-800/50 transition-colors",
-                    previewId === session.id && "bg-zinc-800/50",
+                    "group flex items-start gap-4 p-4 cursor-pointer hover:bg-accent transition-colors",
+                    previewId === session.id && "bg-accent",
                   )}
                   onClick={() =>
                     setPreviewId(previewId === session.id ? null : session.id)
@@ -190,6 +187,9 @@ export default function TranscriptsPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
+                      <Badge variant="secondary" className="text-xs capitalize">
+                        {session.tool}
+                      </Badge>
                       <Badge variant="outline" className="text-xs">
                         {session.projectName}
                       </Badge>
@@ -270,8 +270,8 @@ export default function TranscriptsPage() {
 
         {/* Preview Panel */}
         {previewId && (
-          <div className="flex-1 flex flex-col bg-zinc-950">
-            <div className="flex items-center justify-between p-3 border-b border-zinc-800">
+          <div className="flex-1 flex flex-col bg-background">
+            <div className="flex items-center justify-between p-3 border-b border-border">
               <h3 className="font-medium text-sm">Preview</h3>
               <div className="flex items-center gap-2">
                 <Button
@@ -297,7 +297,7 @@ export default function TranscriptsPage() {
               </div>
             </div>
             <ScrollArea className="flex-1 p-4">
-              <pre className="text-xs text-zinc-400 whitespace-pre-wrap font-mono">
+              <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono">
                 {previewContent || "Loading..."}
               </pre>
             </ScrollArea>
