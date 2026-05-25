@@ -6,7 +6,7 @@
  * client-hydration flag, so it went stale after a settings change).
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useAnalyticsTabs } from "@/hooks/useAnalyticsTabs";
 import { saveSettings, clearSettings } from "@/lib/settings";
@@ -86,5 +86,32 @@ describe("useAnalyticsTabs", () => {
     });
 
     expect(renderCount - initialRenders).toBeLessThanOrEqual(2);
+  });
+
+  it("re-seeds fresh settings on remount after the last subscriber unsubscribed", () => {
+    // Mount once (seeds the module cache from getSettings() + subscribes), tabs
+    // visible. getSettings() reads localStorage, which the test harness mocks;
+    // default (no stored value) yields the visible "alpha" settings.
+    const first = renderHook(() => useAnalyticsTabs());
+    expect(first.result.current.length).toBeGreaterThan(0);
+
+    // Unmount: the last subscriber leaves, so the store unsubscribes from the
+    // settings module and must drop its cached snapshot.
+    first.unmount();
+
+    // Settings change while NO hook is mounted. No notification reaches the
+    // (now-detached) store; the only way a remount sees this is by re-seeding
+    // from getSettings(). Drive getSettings() via the mocked localStorage so
+    // the next read returns the NEW (all-hidden) settings.
+    vi.mocked(localStorage.getItem).mockReturnValue(
+      JSON.stringify({ featureVisibility: "disabled" }),
+    );
+
+    // Remount: getSnapshot() must re-seed from getSettings() and reflect the
+    // NEW settings (all sub-features hidden). A stale cache (the bug) would
+    // still return the prior "visible" snapshot here.
+    const second = renderHook(() => useAnalyticsTabs());
+    expect(second.result.current).toHaveLength(0);
+    second.unmount();
   });
 });
