@@ -11,20 +11,15 @@ OpenCode write their own session histories in different locations and formats, s
 transcripts never appear (silently empty). This note documents each format so the
 implementation can add per-tool discovery + parsing behind a common model.
 
-## Common target model
+## Common model (as implemented)
 
-Proposed normalized shape for task-006 (multi-tool transcripts), **not** the exact output of
-the current Claude-only routes:
+The normalized shapes are defined in `lib/transcripts/types.ts` and emitted by
+`app/api/transcripts/route.ts` (list) and `app/api/transcripts/[id]/route.ts` (detail).
+The `tool` discriminator (`"claude" | "codex" | "copilot"`) is part of `TranscriptSession`;
+the detail route dispatches the parser on the `${tool}:` prefix of the id.
 
-- Session (list): `{ id, tool, projectName, path, size|messageCount, mtime/created }`
-- Message (detail): `{ role: "user"|"assistant", text, timestamp, blocks?: (text|thinking|tool_use|tool_result) }`
-
-The existing routes currently return different field names / structures (for example,
-`TranscriptSession` fields such as `sessionId`, `projectPath`, `fullPath`, `created`,
-`modified`, and detail `messages` shaped around `type` + `content`). Task-006 should either
-normalize those current outputs to this model or refactor the routes to emit this model
-before adding `tool: "claude" | "codex" | "copilot" | "opencode"` and switching the detail
-parser on it.
+- **Session (list) — `TranscriptSession`:** `{ id, sessionId, tool, projectPath, projectName, firstPrompt, summary, messageCount, created, modified, gitBranch, fullPath, size }`. `id` is `${tool}:${sessionId}`.
+- **Message (detail) — `TranscriptMessage`:** `{ type: "user"|"assistant"|"system"|"tool_use"|"tool_result", content, timestamp, thinking?, toolName?, toolId? }` (note `type`/`content`, not `role`/`text`). The detail route returns `{ sessionId, path, messageCount, messages, parseStats }`, where `messageCount === messages.length`; per-tool listers compute their `messageCount` to match that detail count.
 
 ---
 
