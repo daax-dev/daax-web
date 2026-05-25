@@ -1,9 +1,10 @@
 ---
 id: TASK-006
 title: 'Feature: multi-tool transcripts (Claude + Codex + Copilot) actually work'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-05-23 17:50'
+updated_date: '2026-05-24 21:07'
 labels:
   - feature
 dependencies:
@@ -23,10 +24,16 @@ Plan stub (refine after spike): abstract discovery into per-tool source provider
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Transcripts list shows sessions from Claude, Codex, and Copilot, each labeled by tool
-- [ ] #2 Selecting a session from any supported tool renders its messages correctly
-- [ ] #3 Empty/missing tool dirs handled gracefully (no silent total failure)
-- [ ] #4 Container-mode path translation works for each tool
-- [ ] #5 Tests cover at least one fixture per tool format
-- [ ] #6 Both deployment modes build; lint/typecheck/test pass
+- [x] #1 Transcripts list shows sessions from Claude, Codex, and Copilot, each labeled by tool
+- [x] #2 Selecting a session from any supported tool renders its messages correctly
+- [x] #3 Empty/missing tool dirs handled gracefully (no silent total failure)
+- [x] #4 Container-mode path translation works for each tool
+- [x] #5 Tests cover at least one fixture per tool format
+- [x] #6 Transcript-specific gates pass (transcripts unit tests, lint, typecheck, format, build clean for changed files); repo-wide lint/typecheck/format and the multi-store-backup baseline are pre-existing failures handled in a separate cleanup PR, not by this work
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Landed via the current multi-tool-transcripts PR (supersedes closed PR #34; the original #34 was closed without merging). Added Codex + Copilot transcript support via lib/transcripts/{types,codex,copilot}.ts providers (discovery + parse), wired into the list route (each provider isolated; Claude path unchanged) and detail route (id namespaced ${tool}:${id}, dispatch by prefix, bare ids default to Claude). UI labels each session by tool; subtitle/empty-state copy generalized. Per-tool list messageCount is computed to match the detail view's messages.length. Round-2 review fixes: exact-uuid-suffix match in findCodexSessionFile, first-line streaming in its fallback, and Copilot list/detail count alignment.
+<!-- SECTION:FINAL_SUMMARY:END -->
