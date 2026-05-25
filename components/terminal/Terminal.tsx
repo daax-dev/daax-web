@@ -15,7 +15,14 @@ import "@xterm/xterm/css/xterm.css";
 
 export interface TerminalProps {
   wsUrl: string;
-  onSessionStart?: (sessionId: string, mode: string) => void;
+  // containerName is the server-assigned docker container name (e.g.
+  // "daax-abc12345") when running in container mode. Tabs use it to
+  // cross-reference live containers and surface a "stray/lost" state.
+  onSessionStart?: (
+    sessionId: string,
+    mode: string,
+    containerName?: string,
+  ) => void;
   onExit?: (code: number, signal?: number) => void;
   onError?: (error: string) => void;
   className?: string;
@@ -183,7 +190,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
                 }
                 term.writeln("");
                 term.focus();
-                onSessionStartRef.current?.(msg.id, msg.mode);
+                onSessionStartRef.current?.(
+                  msg.id,
+                  msg.mode,
+                  msg.containerName,
+                );
 
                 // Send initial command if provided (after shell is ready)
                 // Note: We use a 500ms delay as a heuristic for shell initialization.

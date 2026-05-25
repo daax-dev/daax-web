@@ -1,8 +1,24 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
-import { Bot, Plus, X, Mic, ChevronDown } from "lucide-react";
+import Link from "next/link";
+import {
+  Bot,
+  Plus,
+  X,
+  Mic,
+  ChevronDown,
+  Sparkles,
+  Github,
+  Stars,
+  Braces,
+  Code2,
+  MonitorSmartphone,
+  Cloud,
+  Network,
+  AlertTriangle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -10,6 +26,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { getSettings } from "@/lib/settings";
 import { useProject } from "@/lib/project-context";
@@ -29,11 +51,48 @@ interface AgentTab {
   key: number;
   tool: AIToolId;
   location: LocationType;
-  locationName: string; // e.g., "muckross", "kinsale", "AWS"
+  locationName: string;
   recording: boolean;
   status: "running" | "stopped";
   startTime: number;
+  // Server-assigned docker container name (`daax-<8>`), captured when
+  // the Terminal forwards the first session message. Used to detect
+  // "stray/lost" tabs when the container disappears from `docker ps`.
+  containerName?: string;
 }
+
+// Tool icon + accent color mapping. Each AI tool gets an associated Lucide
+// glyph (some are brand marks, e.g. GitHub for Copilot) and a fixed accent
+// color that serves as the tool's per-tool BRAND identity in the tab strip.
+const TOOL_META: Record<
+  AIToolId,
+  {
+    Icon: React.ComponentType<{ className?: string }>;
+    accent: string;
+    label: string;
+  }
+> = {
+  // Intentional fixed palette: these accents are per-tool BRAND identity for the
+  // five AI tools, not theme state. They are deliberately exempt from the
+  // semantic-token rule — collapsing them to one token would erase the visual
+  // distinction between tools. Brand hues stay constant across light/dark.
+  claude: { Icon: Sparkles, accent: "text-orange-500", label: "Claude" },
+  copilot: { Icon: Github, accent: "text-emerald-500", label: "Copilot" },
+  gemini: { Icon: Stars, accent: "text-blue-500", label: "Gemini" },
+  codex: { Icon: Braces, accent: "text-violet-500", label: "Codex" },
+  opencode: { Icon: Code2, accent: "text-cyan-500", label: "OpenCode" },
+};
+
+const LOCATION_META: Record<
+  LocationType,
+  { Icon: React.ComponentType<{ className?: string }>; label: string }
+> = {
+  local: { Icon: MonitorSmartphone, label: "Local" },
+  tailscale: { Icon: Network, label: "Tailscale" },
+  cloud: { Icon: Cloud, label: "Cloud" },
+};
+
+const ACTIVE_SESSIONS_POLL_MS = 7_000;
 
 export function AgentTabsLayout() {
   const [tabs, setTabs] = useState<AgentTab[]>([]);
@@ -45,10 +104,30 @@ export function AgentTabsLayout() {
   const [launchDialogOpen, setLaunchDialogOpen] = useState(false);
   const [selectedTool, setSelectedTool] = useState<AIToolId>("claude");
   const [selectedLocationName, setSelectedLocationName] = useState("muckross");
+  // Sets of `daax-*` container names from /api/ai/active-sessions (which
+  // queries `docker ps -a`, so it includes stopped/exited containers).
+  // `knownContainers` holds every session container regardless of state — a
+  // tab whose containerName is missing from it has truly disappeared (stray).
+  // `runningContainers` holds only `state === "running"` ones and drives the
+  // running/stopped status UI without conflating "stopped" with "gone".
+  const [knownContainers, setKnownContainers] = useState<Set<string>>(
+    new Set(),
+  );
+  const [runningContainers, setRunningContainers] = useState<Set<string>>(
+    new Set(),
+  );
+  // Whether the active-sessions list has been fetched at least once. Until
+  // it has, the container sets are empty for "not loaded yet" reasons, not
+  // because the containers are gone — so stray detection stays suppressed to
+  // avoid a false "stray" flash on a freshly-assigned containerName.
+  const [hasLoadedContainers, setHasLoadedContainers] = useState(false);
+  const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Tab DOM nodes by tab id, so arrow-key navigation can move focus to the
+  // newly selected tab (roving tabindex / WAI-ARIA tabs pattern).
+  const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const { activeProject, directories, basePath } = useProject();
 
-  // Determine location type from location name
   const getLocationType = (locationName: string): LocationType => {
     if (locationName === "muckross") return "local";
     if (["kinsale", "galway", "adare"].includes(locationName))
@@ -62,17 +141,9 @@ export function AgentTabsLayout() {
       const newCounter = tabCounter + 1;
       setTabCounter(newCounter);
 
-      const toolNames = {
-        claude: "Claude",
-        opencode: "OpenCode",
-        copilot: "Copilot",
-        gemini: "Gemini",
-        codex: "Codex",
-      };
-
       const newTab: AgentTab = {
         id: newId,
-        name: `${toolNames[tool]} ${newCounter}`,
+        name: `${TOOL_META[tool].label} ${newCounter}`,
         key: newCounter,
         tool,
         location,
@@ -156,13 +227,69 @@ export function AgentTabsLayout() {
     }
   }, [editingTabId]);
 
+  // Keyboard shortcuts: Cmd/Ctrl + 1..9 to switch tabs. We bind on the
+  // window so this works even when focus is inside the xterm canvas
+  // (xterm.js wraps a textarea but still surfaces metaKey/ctrlKey).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Don't hijack the shortcut while renaming a tab — the inline rename
+      // input is only mounted when editingTabId is set, so this single guard
+      // covers it without breaking the deliberate xterm-focus behavior
+      // (xterm's textarea must still receive Cmd/Ctrl+1..9 tab switching).
+      if (editingTabId !== null) return;
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key < "1" || e.key > "9") return;
+      const idx = Number(e.key) - 1;
+      if (idx >= tabs.length) return;
+      e.preventDefault();
+      setActiveTabId(tabs[idx].id);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tabs, editingTabId]);
+
+  // Poll for live container names so tabs can flag strays/lost sessions.
+  // Skipped entirely when there are no tabs to avoid pointless network.
+  useEffect(() => {
+    if (tabs.length === 0) return;
+    let cancelled = false;
+    const fetchNow = async () => {
+      try {
+        const res = await fetch("/api/ai/active-sessions", {
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled || !data?.success) return;
+        const sessions: { state: string; containerName: string }[] =
+          data.sessions ?? [];
+        setKnownContainers(new Set(sessions.map((s) => s.containerName)));
+        setRunningContainers(
+          new Set(
+            sessions
+              .filter((s) => s.state === "running")
+              .map((s) => s.containerName),
+          ),
+        );
+        setHasLoadedContainers(true);
+      } catch {
+        // Best-effort — leave previous state on failure.
+      }
+    };
+    fetchNow();
+    const id = setInterval(fetchNow, ACTIVE_SESSIONS_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [tabs.length]);
+
   const buildWsUrl = useCallback(
     (tab: AgentTab) => {
       const params = new URLSearchParams();
       const settings = getSettings();
 
       params.set("mode", "container");
-      // Use AI Coding settings for container image, fall back to legacy containerImage setting
       const containerImage =
         settings.aiCoding?.defaultContainerImage || settings.containerImage;
       params.set("image", containerImage);
@@ -184,7 +311,6 @@ export function AgentTabsLayout() {
         params.set("record", "true");
       }
 
-      // Set command based on tool - CRITICAL for launching the right AI tool
       const toolCommands = {
         claude: "claude",
         opencode: "opencode",
@@ -205,23 +331,6 @@ export function AgentTabsLayout() {
     [activeProject, directories, basePath],
   );
 
-  const getToolIcon = (tool: AIToolId) => {
-    // Placeholder - will use proper icons
-    return "◆";
-  };
-
-  const getLocationIcon = (location: LocationType) => {
-    // Placeholder - will use proper icons
-    switch (location) {
-      case "local":
-        return "⌂";
-      case "cloud":
-        return "☁";
-      case "tailscale":
-        return "🌐";
-    }
-  };
-
   const formatUptime = (startTime: number) => {
     const seconds = Math.floor((Date.now() - startTime) / 1000);
     const m = Math.floor(seconds / 60);
@@ -229,8 +338,117 @@ export function AgentTabsLayout() {
     return `${m}m ${s}s`;
   };
 
+  // Capture server-assigned container name when the Terminal first
+  // reports it via the session message — feeds the stray/running checks.
+  const handleSessionStart = useCallback(
+    (
+      tabId: string,
+      _sessionId: string,
+      _mode: string,
+      containerName?: string,
+    ) => {
+      if (!containerName) return;
+      setTabs((prev) =>
+        prev.map((t) => (t.id === tabId ? { ...t, containerName } : t)),
+      );
+      // Optimistically seed both sets so the just-started session reads as
+      // known-and-running immediately, rather than being briefly mis-flagged
+      // (stray / not-running) in the window between containerName assignment
+      // and the next active-sessions poll. The poll reconciles afterward.
+      // Keeps isStray and isRunning consistent for the just-launched tab.
+      setKnownContainers((prev) => new Set(prev).add(containerName));
+      setRunningContainers((prev) => new Set(prev).add(containerName));
+    },
+    [],
+  );
+
+  // Drag-to-reorder using native HTML5 drag-and-drop — no new deps. We
+  // don't bother with reorder animations; this is a low-frequency action.
+  const onDragStart = (tabId: string) => (e: React.DragEvent) => {
+    setDraggingTabId(tabId);
+    e.dataTransfer.effectAllowed = "move";
+    // Required for the drag to actually start in Firefox/Safari
+    e.dataTransfer.setData("text/plain", tabId);
+  };
+  const onDragOver = (overTabId: string) => (e: React.DragEvent) => {
+    if (!draggingTabId || draggingTabId === overTabId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    // Position-aware insert: only move when the pointer is past the target's
+    // horizontal midpoint, on the side it's heading toward. Without this the
+    // tab oscillates — a plain "swap on every dragover" reinserts the dragged
+    // tab on the far side of the target, which the next dragover undoes.
+    const rect = e.currentTarget.getBoundingClientRect();
+    const insertAfter = e.clientX > rect.left + rect.width / 2;
+    setTabs((prev) => {
+      const fromIdx = prev.findIndex((t) => t.id === draggingTabId);
+      const overIdx = prev.findIndex((t) => t.id === overTabId);
+      if (fromIdx < 0 || overIdx < 0) return prev;
+      let toIdx = insertAfter ? overIdx + 1 : overIdx;
+      // Removing the dragged tab first shifts every later index down by one.
+      if (fromIdx < toIdx) toIdx -= 1;
+      if (toIdx === fromIdx) return prev; // already in place — no-op
+      const next = prev.slice();
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIdx, 0, moved);
+      return next;
+    });
+  };
+  const onDragEnd = () => setDraggingTabId(null);
+
+  // Stray = the tab had a container assigned but it no longer exists in any
+  // state. A known-but-stopped container is NOT stray. Suppressed until the
+  // active-sessions list has loaded once, so a freshly-assigned containerName
+  // doesn't flash "stray" against the still-empty initial set.
+  const isStray = (tab: AgentTab) =>
+    hasLoadedContainers &&
+    Boolean(tab.containerName) &&
+    !knownContainers.has(tab.containerName!);
+
+  // Running status reflects the live container state once one is assigned AND
+  // the active-sessions set has loaded at least once. Before the first load
+  // (or before a container name arrives) fall back to the tab's optimistic
+  // initial status — consistent with the isStray guard, so the two never
+  // disagree (e.g. report "not running" while not yet "stray") on a freshly
+  // launched tab whose set hasn't been polled.
+  const isRunning = (tab: AgentTab) =>
+    hasLoadedContainers && tab.containerName
+      ? runningContainers.has(tab.containerName)
+      : tab.status === "running";
+
+  const activeTab = useMemo(
+    () => tabs.find((t) => t.id === activeTabId) ?? null,
+    [tabs, activeTabId],
+  );
+  const activeStray = activeTab ? isStray(activeTab) : false;
+
+  // WAI-ARIA tabs keyboard handler (roving tabindex). Enter/Space activate
+  // the focused tab; Left/Right move selection AND focus to the adjacent tab
+  // (with wraparound). The target guard keeps these keys from hijacking the
+  // rename input and the info/close buttons nested inside the tab.
+  const onTabKeyDown = (tabId: string) => (e: React.KeyboardEvent) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault(); // suppress page scroll on Space
+      setActiveTabId(tabId);
+      return;
+    }
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    const idx = tabs.findIndex((t) => t.id === tabId);
+    if (idx < 0) return;
+    e.preventDefault();
+    const delta = e.key === "ArrowRight" ? 1 : -1;
+    const nextIdx = (idx + delta + tabs.length) % tabs.length;
+    const nextId = tabs[nextIdx].id;
+    setActiveTabId(nextId);
+    tabRefs.current.get(nextId)?.focus();
+  };
+
   return (
-    <div className="flex flex-col h-[calc(100vh-3.5rem)]">
+    // Subtract both the main titlebar (h-14 = 3.5rem) and the AI Coding
+    // sub-nav (h-10 = 2.5rem) so the terminal area runs to the viewport
+    // bottom. Use dvh so mobile browser chrome doesn't clip the bottom.
+    <div className="flex flex-col h-[calc(100dvh-6rem)]">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b">
         <div className="flex items-center gap-4">
@@ -252,69 +470,168 @@ export function AgentTabsLayout() {
       {/* Tab Bar */}
       {tabs.length > 0 && (
         <div className="flex items-center border-b bg-muted/30 px-2">
-          <div className="flex items-center gap-1 overflow-x-auto py-1">
-            {tabs.map((tab) => (
-              <div
-                key={tab.id}
-                className={cn(
-                  "flex items-center gap-1 px-3 py-1.5 rounded-t-md border-b-2 transition-colors cursor-pointer group",
-                  activeTabId === tab.id
-                    ? "bg-background border-primary"
-                    : "bg-transparent border-transparent hover:bg-muted",
-                )}
-                onClick={() => setActiveTabId(tab.id)}
-              >
-                <span className="text-xs opacity-60">
-                  {getToolIcon(tab.tool)} {getLocationIcon(tab.location)}
-                </span>
-                {editingTabId === tab.id ? (
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={editingName}
-                    onChange={(e) => setEditingName(e.target.value)}
-                    onBlur={finishEditing}
-                    onKeyDown={handleKeyDown}
-                    className="w-24 px-1 text-sm bg-background border rounded"
-                  />
-                ) : (
-                  <>
-                    <span
-                      className="text-sm font-medium"
-                      onDoubleClick={(e) => startEditing(tab.id, tab.name, e)}
-                    >
-                      {tab.name}
-                    </span>
-                    <button
-                      onClick={(e) => toggleInfoPanel(tab.id, e)}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      <ChevronDown
+          <div
+            role="tablist"
+            aria-label="AI agent sessions"
+            className="flex items-center gap-0.5 overflow-x-auto py-1 flex-1"
+          >
+            <TooltipProvider delayDuration={400}>
+              {tabs.map((tab, idx) => {
+                const isActive = activeTabId === tab.id;
+                const stray = isStray(tab);
+                const { Icon: ToolIcon, accent } = TOOL_META[tab.tool];
+                const { Icon: LocIcon, label: locLabel } =
+                  LOCATION_META[tab.location];
+                return (
+                  <Tooltip key={tab.id}>
+                    <TooltipTrigger asChild>
+                      <div
+                        ref={(el) => {
+                          if (el) tabRefs.current.set(tab.id, el);
+                          else tabRefs.current.delete(tab.id);
+                        }}
+                        draggable={editingTabId !== tab.id}
+                        onDragStart={onDragStart(tab.id)}
+                        onDragOver={onDragOver(tab.id)}
+                        onDragEnd={onDragEnd}
+                        role="tab"
+                        id={`agent-tab-${tab.id}`}
+                        aria-selected={isActive}
+                        aria-controls={`agent-tabpanel-${tab.id}`}
+                        tabIndex={isActive ? 0 : -1}
+                        onKeyDown={onTabKeyDown(tab.id)}
                         className={cn(
-                          "h-3 w-3 transition-transform",
-                          expandedTabId === tab.id && "rotate-180",
+                          "flex items-center gap-1.5 pl-2.5 pr-1 py-1.5 rounded-t-md border-b-2 -mb-px transition-colors cursor-pointer group select-none min-w-0",
+                          isActive
+                            ? "bg-background border-primary shadow-[0_-1px_0_0_var(--border)_inset,1px_0_0_0_var(--border),_-1px_0_0_0_var(--border)]"
+                            : "bg-transparent border-transparent hover:bg-muted",
+                          draggingTabId === tab.id && "opacity-60",
+                          stray && "text-warning",
                         )}
-                      />
-                    </button>
-                  </>
-                )}
-                <button
-                  onClick={(e) => closeTab(tab.id, e)}
-                  className="ml-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            ))}
+                        onClick={() => setActiveTabId(tab.id)}
+                      >
+                        {/* Status / stray dot */}
+                        <span
+                          className={cn(
+                            "inline-block h-2 w-2 rounded-full shrink-0",
+                            stray
+                              ? "bg-warning"
+                              : isRunning(tab)
+                                ? "bg-success"
+                                : "bg-muted-foreground/50",
+                          )}
+                          aria-hidden
+                        />
+                        {/* Tool + location icons */}
+                        <ToolIcon
+                          className={cn("h-3.5 w-3.5 shrink-0", accent)}
+                        />
+                        <LocIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
+                        {editingTabId === tab.id ? (
+                          <input
+                            ref={inputRef}
+                            type="text"
+                            value={editingName}
+                            onChange={(e) => setEditingName(e.target.value)}
+                            onBlur={finishEditing}
+                            onKeyDown={handleKeyDown}
+                            className="w-24 px-1 text-sm bg-background border rounded"
+                          />
+                        ) : (
+                          <span
+                            className="text-sm font-medium truncate max-w-[14ch]"
+                            onDoubleClick={(e) =>
+                              startEditing(tab.id, tab.name, e)
+                            }
+                          >
+                            {tab.name}
+                          </span>
+                        )}
+                        {stray && (
+                          <AlertTriangle
+                            className="h-3 w-3 shrink-0 text-warning"
+                            aria-label="Container missing"
+                          />
+                        )}
+                        {/* Tab-number hint shows on hover for tabs 1..9 */}
+                        {idx < 9 && (
+                          <kbd className="hidden md:inline-block ml-0.5 text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity font-mono">
+                            ⌘{idx + 1}
+                          </kbd>
+                        )}
+                        <button
+                          onClick={(e) => toggleInfoPanel(tab.id, e)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted"
+                          aria-label="Show details"
+                        >
+                          <ChevronDown
+                            className={cn(
+                              "h-3 w-3 transition-transform",
+                              expandedTabId === tab.id && "rotate-180",
+                            )}
+                          />
+                        </button>
+                        <button
+                          onClick={(e) => closeTab(tab.id, e)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-destructive/20 hover:text-destructive"
+                          aria-label="Close tab"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="text-xs">
+                      <div className="flex flex-col gap-0.5">
+                        <span>
+                          {TOOL_META[tab.tool].label} · {locLabel} (
+                          {tab.locationName})
+                        </span>
+                        {stray ? (
+                          <span className="text-warning">
+                            Container not found — session ended
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">
+                            {isRunning(tab) ? "● Running" : "○ Stopped"}
+                            {tab.containerName ? ` · ${tab.containerName}` : ""}
+                          </span>
+                        )}
+                        {idx < 9 && (
+                          <span className="text-muted-foreground">
+                            Switch: ⌘/Ctrl + {idx + 1}
+                          </span>
+                        )}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              })}
+            </TooltipProvider>
           </div>
           <Button
             variant="ghost"
             size="sm"
-            className="ml-auto"
             onClick={() => setLaunchDialogOpen(true)}
+            aria-label="Launch new agent"
           >
             <Plus className="h-4 w-4" />
           </Button>
+        </div>
+      )}
+
+      {/* Stray banner — visible when the active tab's container has
+          disappeared from docker ps. Points users at the Sessions page. */}
+      {activeStray && (
+        <div className="border-b bg-warning/10 text-warning px-4 py-2 text-xs flex items-center gap-2">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          <span>
+            This session&apos;s container is no longer running. Close this tab
+            or visit{" "}
+            <Link className="underline" href="/ai-coding/sessions">
+              Sessions
+            </Link>{" "}
+            to review.
+          </span>
         </div>
       )}
 
@@ -338,8 +655,21 @@ export function AgentTabsLayout() {
                 </div>
                 <div>
                   <span className="text-muted-foreground">Status:</span>{" "}
-                  <span className="font-medium text-green-600">
-                    ● Running ({formatUptime(tab.startTime)})
+                  <span
+                    className={cn(
+                      "font-medium",
+                      isStray(tab)
+                        ? "text-warning"
+                        : isRunning(tab)
+                          ? "text-success"
+                          : "text-muted-foreground",
+                    )}
+                  >
+                    {isStray(tab)
+                      ? "● Stray (container missing)"
+                      : isRunning(tab)
+                        ? `● Running (${formatUptime(tab.startTime)})`
+                        : "○ Stopped"}
                   </span>
                 </div>
                 <div>
@@ -348,6 +678,14 @@ export function AgentTabsLayout() {
                     {tab.recording ? "● Enabled" : "○ Disabled"}
                   </span>
                 </div>
+                {tab.containerName && (
+                  <div className="col-span-2">
+                    <span className="text-muted-foreground">Container:</span>{" "}
+                    <code className="font-mono text-xs">
+                      {tab.containerName}
+                    </code>
+                  </div>
+                )}
                 <div className="col-span-2">
                   <span className="text-muted-foreground">Project:</span>{" "}
                   <span className="font-medium">
@@ -369,8 +707,8 @@ export function AgentTabsLayout() {
                   >
                     Stop
                   </Button>
-                  <Button size="sm" variant="outline">
-                    Settings
+                  <Button size="sm" variant="outline" asChild>
+                    <Link href="/ai-coding/sessions">Manage sessions</Link>
                   </Button>
                 </div>
               </div>
@@ -395,12 +733,21 @@ export function AgentTabsLayout() {
           tabs.map((tab) => (
             <div
               key={tab.id}
+              role="tabpanel"
+              id={`agent-tabpanel-${tab.id}`}
+              aria-labelledby={`agent-tab-${tab.id}`}
               className={cn(
                 "absolute inset-0",
                 activeTabId === tab.id ? "block" : "hidden",
               )}
             >
-              <Terminal wsUrl={buildWsUrl(tab)} />
+              <Terminal
+                wsUrl={buildWsUrl(tab)}
+                className="h-full w-full"
+                onSessionStart={(sessionId, mode, containerName) =>
+                  handleSessionStart(tab.id, sessionId, mode, containerName)
+                }
+              />
             </div>
           ))
         )}
@@ -416,29 +763,35 @@ export function AgentTabsLayout() {
             <div>
               <label className="text-sm font-medium mb-3 block">Agent:</label>
               <div className="space-y-2">
-                {[
-                  { id: "claude" as const, label: "Claude Code" },
-                  { id: "opencode" as const, label: "OpenCode" },
-                  { id: "copilot" as const, label: "GitHub Copilot" },
-                  { id: "gemini" as const, label: "Gemini CLI" },
-                  { id: "codex" as const, label: "Codex CLI" },
-                ].map(({ id, label }) => (
-                  <label
-                    key={id}
-                    className="flex items-center gap-2 cursor-pointer"
-                  >
-                    <input
-                      type="radio"
-                      value={id}
-                      checked={selectedTool === id}
-                      onChange={(e) =>
-                        setSelectedTool(e.target.value as AIToolId)
-                      }
-                      className="text-primary"
-                    />
-                    <span>{label}</span>
-                  </label>
-                ))}
+                {(
+                  [
+                    { id: "claude", label: "Claude Code" },
+                    { id: "opencode", label: "OpenCode" },
+                    { id: "copilot", label: "GitHub Copilot" },
+                    { id: "gemini", label: "Gemini CLI" },
+                    { id: "codex", label: "Codex CLI" },
+                  ] as { id: AIToolId; label: string }[]
+                ).map(({ id, label }) => {
+                  const { Icon, accent } = TOOL_META[id];
+                  return (
+                    <label
+                      key={id}
+                      className="flex items-center gap-2 cursor-pointer"
+                    >
+                      <input
+                        type="radio"
+                        value={id}
+                        checked={selectedTool === id}
+                        onChange={(e) =>
+                          setSelectedTool(e.target.value as AIToolId)
+                        }
+                        className="text-primary"
+                      />
+                      <Icon className={cn("h-4 w-4", accent)} />
+                      <span>{label}</span>
+                    </label>
+                  );
+                })}
               </div>
             </div>
 
