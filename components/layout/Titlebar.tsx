@@ -94,6 +94,12 @@ const DEFAULT_AI_CODING_ITEMS: SubNavItem[] = [
     subFeatureId: "shell",
   },
   {
+    href: "/ai-coding/sessions",
+    label: "Sessions",
+    icon: Boxes,
+    subFeatureId: "sessions",
+  },
+  {
     href: "/workflow-editor",
     label: "Workflow Editor",
     icon: Workflow,

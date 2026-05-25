@@ -257,6 +257,12 @@ export const DEFAULT_PLUGINS: PluginConfig[] = [
         description: "Model Context Protocol tools and servers",
         maturity: "beta",
       },
+      {
+        id: "sessions",
+        name: "Sessions",
+        description: "Active and orphaned (stray) AI coding container sessions",
+        maturity: "beta",
+      },
       // Agent categories (shown on main AI Coding page)
       {
         id: "local-agents",
