@@ -115,8 +115,17 @@ self_elevate() {
   # Re-exec under sudo preserving the env vars we depend on. The first arg
   # is the subcommand name, remaining args are passed through. Uses the
   # absolute script path so cwd changes don't break the re-exec.
+  #
+  # The allowlist covers (a) the script's own knobs and (b) every
+  # user-facing override the compose file consumes (CLAUDE_CONTAINER_IMAGE,
+  # CODE_SERVER_URL, TERMINAL_WS_URL, GITHUB_DAAX, CLAWD_GATEWAY_*,
+  # DOCKER_GID) — without these, a user-set override would be silently
+  # dropped on the sudo re-exec and the elevated `docker compose` would
+  # fall back to defaults. Note: this carries user-set values (incl. the
+  # CLAWD_GATEWAY_TOKEN secret) across the sudo boundary, where they are
+  # visible in the elevated process's environment.
   if [[ $EUID -ne 0 ]]; then
-    exec sudo --preserve-env=DAAX_HOSTNAME,DAAX_WORKSPACE,CLAUDE_CONFIG_PATH,HOME_MCP_JSON_PATH,DAAX_ENV_FILE,DAAX_NETWORK,TRAEFIK_DYNAMIC_DIR,DOCKER_SOCKET,SNAP_DOCKERD_UNIT \
+    exec sudo --preserve-env=DAAX_HOSTNAME,DAAX_WORKSPACE,CLAUDE_CONFIG_PATH,HOME_MCP_JSON_PATH,DAAX_ENV_FILE,DAAX_NETWORK,TRAEFIK_DYNAMIC_DIR,DOCKER_SOCKET,SNAP_DOCKERD_UNIT,CLAUDE_CONTAINER_IMAGE,CODE_SERVER_URL,TERMINAL_WS_URL,GITHUB_DAAX,CLAWD_GATEWAY_URL,CLAWD_GATEWAY_TOKEN,DOCKER_GID \
       -- "$SCRIPT_PATH" "$@"
   fi
 }
@@ -140,6 +149,16 @@ list_docker_proxies() {
       }
       print daemon, hip, hp, cip, cp
     }'
+}
+
+# Echo the daax container's published host ports, one per line. Empty if the
+# container is absent / not running / publishes nothing. Used to prove a
+# native docker-proxy on 4200/4201 actually belongs to daax (so a
+# force-recreate will replace it) before allowing port reuse.
+daax_published_host_ports() {
+  docker inspect --format \
+    '{{range $cp, $b := .NetworkSettings.Ports}}{{range $b}}{{.HostPort}}{{"\n"}}{{end}}{{end}}' \
+    "$CONTAINER_NAME" 2>/dev/null || true
 }
 
 port_owner_daemon() {
@@ -296,11 +315,14 @@ cmd_deploy() {
   # Fail fast on any port conflict on 4200/4201 — `compose up` would
   # otherwise fail later with a far worse error. Three cases:
   #   snap    -> snap docker-proxy holds it; user must migrate-daax first.
-  #   native  -> a native docker-proxy holds it; allowed ONLY when it is the
-  #              daax container's own (force-recreate replaces it). Any other
-  #              native container (a separate stack/test container) must die.
+  #   native  -> a native docker-proxy holds it; allowed ONLY when the daax
+  #              container we are about to force-recreate actually publishes
+  #              that host port (a running status alone does not prove the
+  #              proxy is daax's — a separate native container could own it).
   #   empty   -> a non-docker-proxy process (Traefik, a stray node, etc.)
   #              is listening; always a conflict.
+  local daax_ports
+  daax_ports="$(daax_published_host_ports)"
   for p in 4200 4201; do
     local owner
     owner="$(port_owner_daemon "$p")"
@@ -308,9 +330,9 @@ cmd_deploy() {
       die "port $p is held by the SNAP docker daemon. Run once: $0 migrate-daax"
     fi
     if [[ "$owner" == native ]]; then
-      # Only the daax container we are about to force-recreate may hold it.
-      if [[ "$(docker inspect --format '{{.State.Status}}' "$CONTAINER_NAME" 2>/dev/null || true)" != running ]]; then
-        die "port $p is held by a native docker-proxy that is not the daax container. Identify it: ss -ltnp 'sport = :$p'"
+      # The native proxy may stay only if daax itself publishes this port.
+      if ! grep -qxF "$p" <<<"$daax_ports"; then
+        die "port $p is held by a native docker-proxy that the daax container does not publish. Identify it: ss -ltnp 'sport = :$p'"
       fi
     elif port_has_listener "$p"; then
       die "port $p is already in use by a non-docker process. Identify it: ss -ltnp 'sport = :$p'"
