@@ -64,8 +64,8 @@ export function FilesystemGrants({ className }: { className?: string }) {
                   className={cn(
                     "flex items-center gap-1.5 px-2 py-1 rounded text-xs",
                     grant.read
-                      ? "bg-green-500/20 text-green-400"
-                      : "bg-red-500/20 text-red-400",
+                      ? "bg-success/20 text-success"
+                      : "bg-destructive/20 text-destructive",
                   )}
                 >
                   {grant.read ? (
@@ -79,8 +79,8 @@ export function FilesystemGrants({ className }: { className?: string }) {
                   className={cn(
                     "flex items-center gap-1.5 px-2 py-1 rounded text-xs",
                     grant.write
-                      ? "bg-green-500/20 text-green-400"
-                      : "bg-red-500/20 text-red-400",
+                      ? "bg-success/20 text-success"
+                      : "bg-destructive/20 text-destructive",
                   )}
                 >
                   {grant.write ? (
