@@ -65,6 +65,53 @@ describe("listAndProbeSessions", () => {
     expect(sessions[0].state).toBe("running");
   });
 
+  it("skips a malformed docker ps line and keeps the valid ones", async () => {
+    const exec = stubExec((args) => {
+      switch (args[0]) {
+        case "ps":
+          return [
+            psLine({
+              ID: "aaaa",
+              Names: "daax-11111111",
+              Image: "img",
+              Command: "claude",
+              Status: "Up",
+              State: "running",
+              CreatedAt: "2026-01-01",
+            }),
+            // Truncated / non-JSON line (e.g. a partial write) — must be
+            // skipped rather than throwing and breaking the whole listing.
+            '{"ID":"bbbb","Names":"daax-22222222"',
+            "not json at all",
+            psLine({
+              ID: "cccc",
+              Names: "daax-33333333",
+              Image: "img",
+              Command: "codex",
+              Status: "Up",
+              State: "running",
+              CreatedAt: "2026-01-01",
+            }),
+          ].join("\n");
+        case "inspect":
+          return "2026-01-01T00:00:00Z|2026-01-01T00:00:00Z";
+        case "logs":
+          return "2026-01-01T00:01:00Z some log line";
+        default:
+          return "";
+      }
+    });
+
+    const sessions = await listAndProbeSessions(exec, NOW);
+
+    // Only the two well-formed session rows survive; the malformed lines are
+    // silently dropped.
+    expect(sessions.map((s) => s.containerName).sort()).toEqual([
+      "daax-11111111",
+      "daax-33333333",
+    ]);
+  });
+
   it("skips `docker logs` for non-running containers", async () => {
     const calls: string[] = [];
     const exec: DockerExec = async (args) => {

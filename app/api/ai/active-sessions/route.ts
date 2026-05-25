@@ -68,7 +68,16 @@ async function dockerPs(exec: DockerExec): Promise<DockerPsRow[]> {
     .trim()
     .split("\n")
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as DockerPsRow);
+    .map((line) => {
+      // Tolerate a malformed/partial line (truncated output, stray text)
+      // rather than letting one bad line throw and break the whole listing.
+      try {
+        return JSON.parse(line) as DockerPsRow;
+      } catch {
+        return null;
+      }
+    })
+    .filter((row): row is DockerPsRow => row !== null);
 }
 
 async function inspectContainer(

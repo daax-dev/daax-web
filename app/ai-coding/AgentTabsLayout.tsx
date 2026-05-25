@@ -62,7 +62,7 @@ interface AgentTab {
 }
 
 // Tool icon + accent color mapping. Each AI tool gets an associated Lucide
-// glyph (some are brand marks, e.g. Github for Copilot) and a fixed accent
+// glyph (some are brand marks, e.g. GitHub for Copilot) and a fixed accent
 // color that serves as the tool's per-tool BRAND identity in the tab strip.
 const TOOL_META: Record<
   AIToolId,
