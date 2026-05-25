@@ -12,8 +12,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-const LOGOUT_URL =
-  process.env.NEXT_PUBLIC_LOGOUT_URL || "/portals/main/logout";
+const LOGOUT_URL = process.env.NEXT_PUBLIC_LOGOUT_URL || "/portals/main/logout";
 const OIDC_END_SESSION_URL =
   process.env.NEXT_PUBLIC_OIDC_END_SESSION_URL ||
   "https://auth.poley.dev/api/oidc/end-session";
@@ -67,24 +66,29 @@ export function UserMenu() {
             </Avatar>
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" side="bottom" sideOffset={8} className="w-56 z-[100]">
-        <DropdownMenuLabel className="font-normal">
-          <div className="flex flex-col space-y-1">
-            <p className="text-sm font-medium leading-none">
-              {user.username}
-            </p>
-            {user.email && (
-              <p className="text-xs leading-none text-muted-foreground">
-                {user.email}
+        <DropdownMenuContent
+          align="end"
+          side="bottom"
+          sideOffset={8}
+          className="w-56 z-[100]"
+        >
+          <DropdownMenuLabel className="font-normal">
+            <div className="flex flex-col space-y-1">
+              <p className="text-sm font-medium leading-none">
+                {user.username}
               </p>
-            )}
-          </div>
-        </DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={handleLogout} className="cursor-pointer">
-          <LogOut className="mr-2 h-4 w-4" />
-          Log out
-        </DropdownMenuItem>
+              {user.email && (
+                <p className="text-xs leading-none text-muted-foreground">
+                  {user.email}
+                </p>
+              )}
+            </div>
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={handleLogout} className="cursor-pointer">
+            <LogOut className="mr-2 h-4 w-4" />
+            Log out
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

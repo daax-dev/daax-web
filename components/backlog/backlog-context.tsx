@@ -1,11 +1,19 @@
 "use client";
 
-import { createContext, useContext, useState, useCallback, useEffect, useRef, ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  ReactNode,
+} from "react";
 import type {
   BacklogProject,
   BacklogProjectsResponse,
   BacklogTasksResponse,
-  Task
+  Task,
 } from "@/types/backlog";
 import { fetchWithRetry } from "@/lib/fetch-with-retry";
 // getServerStatus API removed - multi-store uses in-process backend
@@ -28,7 +36,7 @@ interface BacklogContextValue {
   selectedProject: BacklogProject | null;
   setSelectedProject: (projectPath: string) => Promise<void>;
   isLoadingProjects: boolean;
-  
+
   // Tasks for selected project
   tasks: Task[];
   isLoadingTasks: boolean;
@@ -49,11 +57,14 @@ interface BacklogContextValue {
   error: string | null;
 }
 
-const BacklogContext = createContext<BacklogContextValue | undefined>(undefined);
+const BacklogContext = createContext<BacklogContextValue | undefined>(
+  undefined,
+);
 
 export function BacklogProvider({ children }: { children: ReactNode }) {
   const [projects, setProjects] = useState<BacklogProject[]>([]);
-  const [selectedProject, setSelectedProjectState] = useState<BacklogProject | null>(null);
+  const [selectedProject, setSelectedProjectState] =
+    useState<BacklogProject | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isLoadingTasks, setIsLoadingTasks] = useState(false);
@@ -63,7 +74,7 @@ export function BacklogProvider({ children }: { children: ReactNode }) {
 
   // Use ref to avoid recreating refreshTasks callback on every selectedProject change
   const selectedProjectRef = useRef<BacklogProject | null>(null);
-  
+
   // Keep ref in sync with state
   useEffect(() => {
     selectedProjectRef.current = selectedProject;
@@ -75,9 +86,10 @@ export function BacklogProvider({ children }: { children: ReactNode }) {
       try {
         setIsLoadingProjects(true);
         setError(null);
-        
-        const response = await fetchWithRetry('/api/backlog/projects');
-        if (!response.ok) throw new Error(describeHttpError(response.status, 'load projects'));
+
+        const response = await fetchWithRetry("/api/backlog/projects");
+        if (!response.ok)
+          throw new Error(describeHttpError(response.status, "load projects"));
 
         const data: BacklogProjectsResponse = await response.json();
         setProjects(data.projects);
@@ -87,43 +99,57 @@ export function BacklogProvider({ children }: { children: ReactNode }) {
           const firstProject = data.projects[0];
 
           // Set active project on backend
-          const activeResponse = await fetchWithRetry('/api/backlog/active-project', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ projectPath: firstProject.path }),
-          });
+          const activeResponse = await fetchWithRetry(
+            "/api/backlog/active-project",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ projectPath: firstProject.path }),
+            },
+          );
 
           if (activeResponse.ok) {
             setSelectedProjectState(firstProject);
-            localStorage.setItem('backlog:selectedProject', firstProject.path);
+            localStorage.setItem("backlog:selectedProject", firstProject.path);
 
             // Load tasks for initial project
-            const tasksResponse = await fetchWithRetry(`/api/backlog/tasks?project=${encodeURIComponent(firstProject.path)}`);
+            const tasksResponse = await fetchWithRetry(
+              `/api/backlog/tasks?project=${encodeURIComponent(firstProject.path)}`,
+            );
             if (tasksResponse.ok) {
-              const tasksData: BacklogTasksResponse = await tasksResponse.json();
+              const tasksData: BacklogTasksResponse =
+                await tasksResponse.json();
               setTasks(tasksData.tasks);
             } else {
-              setError(describeHttpError(tasksResponse.status, 'load tasks'));
+              setError(describeHttpError(tasksResponse.status, "load tasks"));
             }
           } else {
             // Backend could not record active project; continue locally but inform the user
             setSelectedProjectState(firstProject);
-            localStorage.setItem('backlog:selectedProject', firstProject.path);
-            let errorMessage = describeHttpError(activeResponse.status, 'set active project') + ' Working locally only.';
+            localStorage.setItem("backlog:selectedProject", firstProject.path);
+            let errorMessage =
+              describeHttpError(activeResponse.status, "set active project") +
+              " Working locally only.";
 
             // Still attempt to load tasks so the UI is usable
-            const tasksResponse = await fetchWithRetry(`/api/backlog/tasks?project=${encodeURIComponent(firstProject.path)}`);
+            const tasksResponse = await fetchWithRetry(
+              `/api/backlog/tasks?project=${encodeURIComponent(firstProject.path)}`,
+            );
             if (tasksResponse.ok) {
-              const tasksData: BacklogTasksResponse = await tasksResponse.json();
+              const tasksData: BacklogTasksResponse =
+                await tasksResponse.json();
               setTasks(tasksData.tasks);
             } else {
-              errorMessage += ' Additionally, failed to load tasks for the project.';
+              errorMessage +=
+                " Additionally, failed to load tasks for the project.";
             }
             setError(errorMessage);
           }
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load projects');
+        setError(
+          err instanceof Error ? err.message : "Failed to load projects",
+        );
       } finally {
         setIsLoadingProjects(false);
       }
@@ -141,56 +167,72 @@ export function BacklogProvider({ children }: { children: ReactNode }) {
       setIsLoadingTasks(true);
       setError(null);
 
-      const response = await fetchWithRetry(`/api/backlog/tasks?project=${encodeURIComponent(targetProject)}`);
-      if (!response.ok) throw new Error(describeHttpError(response.status, 'load tasks'));
+      const response = await fetchWithRetry(
+        `/api/backlog/tasks?project=${encodeURIComponent(targetProject)}`,
+      );
+      if (!response.ok)
+        throw new Error(describeHttpError(response.status, "load tasks"));
 
       const data: BacklogTasksResponse = await response.json();
       setTasks(data.tasks);
-
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load tasks');
+      setError(err instanceof Error ? err.message : "Failed to load tasks");
     } finally {
       setIsLoadingTasks(false);
     }
   }, []); // No dependencies - uses ref instead
 
   // Switch to a different project
-  const setSelectedProject = useCallback(async (projectPath: string) => {
-    try {
-      setIsLoadingTasks(true);
-      setError(null);
+  const setSelectedProject = useCallback(
+    async (projectPath: string) => {
+      try {
+        setIsLoadingTasks(true);
+        setError(null);
 
-      // Set active project on backend
-      const activeResponse = await fetchWithRetry('/api/backlog/active-project', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectPath }),
-      });
+        // Set active project on backend
+        const activeResponse = await fetchWithRetry(
+          "/api/backlog/active-project",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ projectPath }),
+          },
+        );
 
-      if (!activeResponse.ok) throw new Error(describeHttpError(activeResponse.status, 'set active project'));
+        if (!activeResponse.ok)
+          throw new Error(
+            describeHttpError(activeResponse.status, "set active project"),
+          );
 
-      // Find project in list
-      const project = projects.find(p => p.path === projectPath);
-      if (!project) throw new Error('Project not found');
+        // Find project in list
+        const project = projects.find((p) => p.path === projectPath);
+        if (!project) throw new Error("Project not found");
 
-      setSelectedProjectState(project);
+        setSelectedProjectState(project);
 
-      // Load tasks for this project
-      await refreshTasks(projectPath);
+        // Load tasks for this project
+        await refreshTasks(projectPath);
 
-      // Store in localStorage for persistence
-      localStorage.setItem('backlog:selectedProject', projectPath);
-
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to switch project');
-    } finally {
-      setIsLoadingTasks(false);
-    }
-  }, [projects]); // refreshTasks omitted - it uses refs internally and has no deps
+        // Store in localStorage for persistence
+        localStorage.setItem("backlog:selectedProject", projectPath);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to switch project",
+        );
+      } finally {
+        setIsLoadingTasks(false);
+      }
+    },
+    [projects],
+  ); // refreshTasks omitted - it uses refs internally and has no deps
 
   // Get statuses from selected project config
-  const statuses = selectedProject?.config?.statuses ??
-                   ["Open", "In Progress", "Review", "Done"];
+  const statuses = selectedProject?.config?.statuses ?? [
+    "Open",
+    "In Progress",
+    "Review",
+    "Done",
+  ];
 
   return (
     <BacklogContext.Provider

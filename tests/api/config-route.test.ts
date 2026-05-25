@@ -73,9 +73,15 @@ describe("/api/config", () => {
     aiCodingLayout: "tree" as const,
     pluginMaturity: {} as Record<string, "disabled" | "alpha" | "beta" | "ga">,
     pluginOrder: [] as string[],
-    subFeatureMaturity: {} as Record<string, "disabled" | "alpha" | "beta" | "ga">,
+    subFeatureMaturity: {} as Record<
+      string,
+      "disabled" | "alpha" | "beta" | "ga"
+    >,
     subFeatureOrder: {} as Record<string, string[]>,
-    homepageCards: {} as Record<string, { enabled: boolean; color: "blue" | "green" | "white"; tagline?: string }>,
+    homepageCards: {} as Record<
+      string,
+      { enabled: boolean; color: "blue" | "green" | "white"; tagline?: string }
+    >,
     homepageCardOrder: [] as string[],
   };
 
@@ -86,7 +92,7 @@ describe("/api/config", () => {
     vi.mocked(configModule.loadConfig).mockResolvedValue(mockConfig);
     vi.mocked(configModule.getDefaultConfig).mockReturnValue(mockDefaultConfig);
     vi.mocked(configModule.configToSettingsDefaults).mockReturnValue(
-      mockSettingsDefaults
+      mockSettingsDefaults,
     );
   });
 
@@ -115,7 +121,7 @@ describe("/api/config", () => {
       await GET();
 
       expect(configModule.configToSettingsDefaults).toHaveBeenCalledWith(
-        mockConfig
+        mockConfig,
       );
     });
   });
@@ -123,7 +129,7 @@ describe("/api/config", () => {
   describe("error handling and fallback", () => {
     it("returns defaults on loadConfig error", async () => {
       vi.mocked(configModule.loadConfig).mockRejectedValue(
-        new Error("Failed to parse TOML")
+        new Error("Failed to parse TOML"),
       );
 
       const response = await GET();
@@ -190,7 +196,9 @@ describe("/api/config", () => {
     it("returns JSON response", async () => {
       const response = await GET();
 
-      expect(response.headers.get("content-type")).toContain("application/json");
+      expect(response.headers.get("content-type")).toContain(
+        "application/json",
+      );
     });
 
     it("includes all expected fields on success", async () => {
@@ -204,7 +212,7 @@ describe("/api/config", () => {
 
     it("includes error field on failure", async () => {
       vi.mocked(configModule.loadConfig).mockRejectedValue(
-        new Error("Test error")
+        new Error("Test error"),
       );
 
       const response = await GET();

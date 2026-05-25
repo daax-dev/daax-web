@@ -51,7 +51,7 @@ function createMockWebSocket(overrides: Partial<WebSocket> = {}): WebSocket {
  * Creates a mock TerminalSession for testing
  */
 function createMockSession(
-  overrides: Partial<TerminalSession> = {}
+  overrides: Partial<TerminalSession> = {},
 ): TerminalSession {
   return {
     pty: createMockPty(),
@@ -319,7 +319,9 @@ describe("Session Manager", () => {
       ];
 
       specialIds.forEach((id, index) => {
-        const session = createMockSession({ containerId: `container-${index}` });
+        const session = createMockSession({
+          containerId: `container-${index}`,
+        });
         setSession(id, session);
         expect(hasSession(id)).toBe(true);
         expect(getSession(id)?.containerId).toBe(`container-${index}`);

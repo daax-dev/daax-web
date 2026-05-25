@@ -702,7 +702,7 @@ function getConfigDefaults(): Partial<DaaxSettings> {
   } catch (error) {
     console.warn(
       "[Settings] Failed to load config.toml, using hardcoded defaults:",
-      error
+      error,
     );
     configBasedDefaults = {};
     return configBasedDefaults;
@@ -721,9 +721,7 @@ function getConfigDefaults(): Partial<DaaxSettings> {
  * If ConfigProvider's blocking behavior is changed, this initialization pattern
  * would need to be revisited to prevent incorrect defaults being used.
  */
-export function initConfigDefaults(
-  defaults: Partial<DaaxSettings>
-): void {
+export function initConfigDefaults(defaults: Partial<DaaxSettings>): void {
   configBasedDefaults = defaults;
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { FileText, Package, Search, ExternalLink, Loader2 } from "lucide-react";
 import {
   Dialog,
@@ -39,13 +39,7 @@ export function SBOMViewer({
     null,
   );
 
-  useEffect(() => {
-    if (open && !sbomData && !loading) {
-      fetchSBOM();
-    }
-  }, [open]);
-
-  const fetchSBOM = async () => {
+  const fetchSBOM = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -68,7 +62,18 @@ export function SBOMViewer({
     } finally {
       setLoading(false);
     }
-  };
+  }, [imageName, tagName]);
+
+  useEffect(() => {
+    if (open && !sbomData && !loading) {
+      fetchSBOM();
+    }
+    // Preserve original behavior: one-shot fetch keyed only on `open`. The body
+    // already guards on !sbomData && !loading; fetchSBOM/sbomData/loading are
+    // intentionally omitted to avoid refetching mid-load or on prop changes
+    // while the dialog stays open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   // Get unique ecosystems from packages
   const ecosystems: string[] = sbomData

@@ -4,15 +4,15 @@
  * Parses docker-compose.yml files and extracts service configurations.
  */
 
-import yaml from 'yaml';
-import type { PortMapping, VolumeMount, HealthCheckConfig } from '../types';
+import yaml from "yaml";
+import type { PortMapping, VolumeMount, HealthCheckConfig } from "../types";
 import type {
   RawComposeFile,
   RawComposeService,
   ComposeService,
   ComposeProject,
   DependencyNode,
-} from '../types/compose';
+} from "../types/compose";
 
 /**
  * Generate a unique ID for a compose project
@@ -25,12 +25,14 @@ function generateProjectId(): string {
  * Parse port mapping from compose format
  * Supports formats: "8080:80", "8080:80/tcp", { target: 80, published: 8080 }
  */
-function parsePort(port: string | { target: number; published?: number; protocol?: string }): PortMapping | null {
-  if (typeof port === 'object') {
+function parsePort(
+  port: string | { target: number; published?: number; protocol?: string },
+): PortMapping | null {
+  if (typeof port === "object") {
     return {
       containerPort: port.target,
       hostPort: port.published,
-      protocol: (port.protocol as 'tcp' | 'udp') || 'tcp',
+      protocol: (port.protocol as "tcp" | "udp") || "tcp",
     };
   }
 
@@ -42,7 +44,7 @@ function parsePort(port: string | { target: number; published?: number; protocol
   return {
     containerPort: parseInt(containerPort, 10),
     hostPort: hostPort ? parseInt(hostPort, 10) : undefined,
-    protocol: (protocol as 'tcp' | 'udp') || 'tcp',
+    protocol: (protocol as "tcp" | "udp") || "tcp",
   };
 }
 
@@ -51,14 +53,14 @@ function parsePort(port: string | { target: number; published?: number; protocol
  * Supports formats: "/host/path:/container/path", "/host/path:/container/path:ro"
  */
 function parseVolume(volume: string): VolumeMount | null {
-  const parts = volume.split(':');
+  const parts = volume.split(":");
   if (parts.length < 2) return null;
 
   const [source, target, mode] = parts;
   return {
     source,
     target,
-    readOnly: mode === 'ro',
+    readOnly: mode === "ro",
   };
 }
 
@@ -66,15 +68,20 @@ function parseVolume(volume: string): VolumeMount | null {
  * Parse environment variables
  * Supports formats: { KEY: "value" } or ["KEY=value", "KEY2=value2"]
  */
-function parseEnvironment(env: Record<string, string> | string[] | undefined): Record<string, string> {
+function parseEnvironment(
+  env: Record<string, string> | string[] | undefined,
+): Record<string, string> {
   if (!env) return {};
 
   if (Array.isArray(env)) {
-    return env.reduce((acc, item) => {
-      const [key, ...valueParts] = item.split('=');
-      acc[key] = valueParts.join('=');
-      return acc;
-    }, {} as Record<string, string>);
+    return env.reduce(
+      (acc, item) => {
+        const [key, ...valueParts] = item.split("=");
+        acc[key] = valueParts.join("=");
+        return acc;
+      },
+      {} as Record<string, string>,
+    );
   }
 
   return env;
@@ -84,7 +91,9 @@ function parseEnvironment(env: Record<string, string> | string[] | undefined): R
  * Parse depends_on field
  * Supports formats: ["service1", "service2"] or { service1: { condition: "service_healthy" } }
  */
-function parseDependsOn(dependsOn: string[] | Record<string, { condition?: string }> | undefined): string[] {
+function parseDependsOn(
+  dependsOn: string[] | Record<string, { condition?: string }> | undefined,
+): string[] {
   if (!dependsOn) return [];
 
   if (Array.isArray(dependsOn)) {
@@ -97,12 +106,14 @@ function parseDependsOn(dependsOn: string[] | Record<string, { condition?: strin
 /**
  * Parse healthcheck configuration
  */
-function parseHealthCheck(healthcheck: RawComposeService['healthcheck']): HealthCheckConfig | undefined {
+function parseHealthCheck(
+  healthcheck: RawComposeService["healthcheck"],
+): HealthCheckConfig | undefined {
   if (!healthcheck) return undefined;
 
   let test: string[];
-  if (typeof healthcheck.test === 'string') {
-    test = ['CMD-SHELL', healthcheck.test];
+  if (typeof healthcheck.test === "string") {
+    test = ["CMD-SHELL", healthcheck.test];
   } else if (Array.isArray(healthcheck.test)) {
     test = healthcheck.test;
   } else {
@@ -123,7 +134,7 @@ function parseHealthCheck(healthcheck: RawComposeService['healthcheck']): Health
  */
 function parseService(name: string, raw: RawComposeService): ComposeService {
   // Determine the image
-  let image = raw.image || '';
+  let image = raw.image || "";
   if (!image && raw.build) {
     // For build-based services, we'll need to handle this specially
     image = `${name}:local`;
@@ -142,7 +153,8 @@ function parseService(name: string, raw: RawComposeService): ComposeService {
   // Parse command
   let command: string[] | undefined;
   if (raw.command) {
-    command = typeof raw.command === 'string' ? raw.command.split(' ') : raw.command;
+    command =
+      typeof raw.command === "string" ? raw.command.split(" ") : raw.command;
   }
 
   return {
@@ -156,22 +168,25 @@ function parseService(name: string, raw: RawComposeService): ComposeService {
     networks: raw.networks || [],
     command,
     labels: raw.labels || {},
-    status: 'pending',
+    status: "pending",
   };
 }
 
 /**
  * Parse a docker-compose.yml string into a ComposeProject
  */
-export function parseComposeYaml(yamlContent: string, projectName: string): ComposeProject {
+export function parseComposeYaml(
+  yamlContent: string,
+  projectName: string,
+): ComposeProject {
   const raw = yaml.parse(yamlContent) as RawComposeFile;
 
-  if (!raw.services || typeof raw.services !== 'object') {
-    throw new Error('Invalid docker-compose.yml: missing services');
+  if (!raw.services || typeof raw.services !== "object") {
+    throw new Error("Invalid docker-compose.yml: missing services");
   }
 
   const services = Object.entries(raw.services).map(([name, service]) =>
-    parseService(name, service)
+    parseService(name, service),
   );
 
   const networks = raw.networks ? Object.keys(raw.networks) : [];
@@ -183,7 +198,7 @@ export function parseComposeYaml(yamlContent: string, projectName: string): Comp
     services,
     networks,
     volumes,
-    status: 'created',
+    status: "created",
     createdAt: new Date().toISOString(),
     yaml: yamlContent,
   };
@@ -194,7 +209,7 @@ export function parseComposeYaml(yamlContent: string, projectName: string): Comp
  * Uses topological sort to ensure dependencies start first
  */
 export function getStartupOrder(services: ComposeService[]): ComposeService[] {
-  const serviceMap = new Map(services.map(s => [s.name, s]));
+  const serviceMap = new Map(services.map((s) => [s.name, s]));
   const visited = new Set<string>();
   const visiting = new Set<string>();
   const result: ComposeService[] = [];
@@ -202,7 +217,9 @@ export function getStartupOrder(services: ComposeService[]): ComposeService[] {
   function visit(name: string) {
     if (visited.has(name)) return;
     if (visiting.has(name)) {
-      throw new Error(`Circular dependency detected involving service: ${name}`);
+      throw new Error(
+        `Circular dependency detected involving service: ${name}`,
+      );
     }
 
     visiting.add(name);
@@ -231,8 +248,10 @@ export function getStartupOrder(services: ComposeService[]): ComposeService[] {
 /**
  * Build dependency graph for visualization
  */
-export function buildDependencyGraph(services: ComposeService[]): DependencyNode[] {
-  const serviceMap = new Map(services.map(s => [s.name, s]));
+export function buildDependencyGraph(
+  services: ComposeService[],
+): DependencyNode[] {
+  const serviceMap = new Map(services.map((s) => [s.name, s]));
   const depths = new Map<string, number>();
 
   function getDepth(name: string, visited: Set<string> = new Set()): number {
@@ -248,8 +267,8 @@ export function buildDependencyGraph(services: ComposeService[]): DependencyNode
 
     const maxDepth = Math.max(
       ...service.dependsOn
-        .filter(dep => serviceMap.has(dep))
-        .map(dep => getDepth(dep, visited))
+        .filter((dep) => serviceMap.has(dep))
+        .map((dep) => getDepth(dep, visited)),
     );
 
     const depth = maxDepth + 1;
@@ -257,7 +276,7 @@ export function buildDependencyGraph(services: ComposeService[]): DependencyNode
     return depth;
   }
 
-  return services.map(service => ({
+  return services.map((service) => ({
     name: service.name,
     dependsOn: service.dependsOn,
     depth: getDepth(service.name),
@@ -267,15 +286,18 @@ export function buildDependencyGraph(services: ComposeService[]): DependencyNode
 /**
  * Validate compose project configuration
  */
-export function validateComposeProject(project: ComposeProject): { valid: boolean; errors: string[] } {
+export function validateComposeProject(project: ComposeProject): {
+  valid: boolean;
+  errors: string[];
+} {
   const errors: string[] = [];
 
-  if (!project.name || project.name.trim() === '') {
-    errors.push('Project name is required');
+  if (!project.name || project.name.trim() === "") {
+    errors.push("Project name is required");
   }
 
   if (project.services.length === 0) {
-    errors.push('At least one service is required');
+    errors.push("At least one service is required");
   }
 
   for (const service of project.services) {
@@ -285,8 +307,10 @@ export function validateComposeProject(project: ComposeProject): { valid: boolea
 
     // Check for missing dependencies
     for (const dep of service.dependsOn) {
-      if (!project.services.find(s => s.name === dep)) {
-        errors.push(`Service "${service.name}" depends on unknown service "${dep}"`);
+      if (!project.services.find((s) => s.name === dep)) {
+        errors.push(
+          `Service "${service.name}" depends on unknown service "${dep}"`,
+        );
       }
     }
   }

@@ -70,7 +70,12 @@ export function isAllowedOrigin(origin: string | undefined): boolean {
   // Allow Tailscale IPs (100.64.0.0/10 = 100.64.0.0 – 100.127.255.255)
   // This is the CGNAT range used by Tailscale, not the full 100/8 block
   // Octets 3 & 4 are validated to 0-255 range
-  if (/^https?:\/\/100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(:\d{1,5})?$/.test(origin)) return true;
+  if (
+    /^https?:\/\/100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(:\d{1,5})?$/.test(
+      origin,
+    )
+  )
+    return true;
 
   // Allow production domains (daax.HOSTNAME.poley.dev)
   // This regex matches the Origin header (scheme + host), not full URLs with paths

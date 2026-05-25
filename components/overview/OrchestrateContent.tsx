@@ -11,8 +11,9 @@ export function LocalAgents({ className }: { className?: string }) {
           <Monitor className="w-8 h-8 text-cyan-400" />
         </div>
         <p className="text-lg text-muted-foreground max-w-xl">
-          Run agents directly on your machine with full access to local resources. Zero network latency,
-          maximum privacy—your code never leaves your hardware.
+          Run agents directly on your machine with full access to local
+          resources. Zero network latency, maximum privacy—your code never
+          leaves your hardware.
         </p>
       </div>
 
@@ -46,8 +47,9 @@ export function RemoteAgents({ className }: { className?: string }) {
           <Cloud className="w-8 h-8 text-violet-400" />
         </div>
         <p className="text-lg text-muted-foreground max-w-xl">
-          Execute agents on remote machines via Tailscale mesh networking. End-to-end encrypted,
-          no port forwarding—access powerful cloud resources as if they were local.
+          Execute agents on remote machines via Tailscale mesh networking.
+          End-to-end encrypted, no port forwarding—access powerful cloud
+          resources as if they were local.
         </p>
       </div>
 
@@ -81,8 +83,9 @@ export function AutonomyControls({ className }: { className?: string }) {
           <Sliders className="w-8 h-8 text-amber-400" />
         </div>
         <p className="text-lg text-muted-foreground max-w-xl">
-          Control how much freedom agents have. Set approval gates for destructive operations,
-          auto-approve safe actions—calibrate autonomy to your comfort level.
+          Control how much freedom agents have. Set approval gates for
+          destructive operations, auto-approve safe actions—calibrate autonomy
+          to your comfort level.
         </p>
       </div>
 

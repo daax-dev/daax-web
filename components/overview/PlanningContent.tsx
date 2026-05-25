@@ -11,8 +11,9 @@ export function MultiProjectView({ className }: { className?: string }) {
           <Layers className="w-8 h-8 text-cyan-400" />
         </div>
         <p className="text-lg text-muted-foreground max-w-xl">
-          Manage multiple projects from a single interface. Visualize dependencies between repos,
-          track cross-project tasks, and coordinate work across your entire codebase.
+          Manage multiple projects from a single interface. Visualize
+          dependencies between repos, track cross-project tasks, and coordinate
+          work across your entire codebase.
         </p>
       </div>
 
@@ -46,8 +47,9 @@ export function ContextSwitching({ className }: { className?: string }) {
           <ArrowRightLeft className="w-8 h-8 text-violet-400" />
         </div>
         <p className="text-lg text-muted-foreground max-w-xl">
-          Switch projects seamlessly. daax detects your current directory, loads the relevant CLAUDE.md,
-          and configures tools automatically—zero manual setup on context switches.
+          Switch projects seamlessly. daax detects your current directory, loads
+          the relevant CLAUDE.md, and configures tools automatically—zero manual
+          setup on context switches.
         </p>
       </div>
 

@@ -6,13 +6,15 @@ import { FileJson, Download, Clock, Shield } from "lucide-react";
 const exportFormats = [
   {
     format: "JSONL Events",
-    description: "Line-delimited JSON for every agent action, decision, and file change",
+    description:
+      "Line-delimited JSON for every agent action, decision, and file change",
     extension: ".jsonl",
     icon: <FileJson className="w-5 h-5" />,
   },
   {
     format: "Session Archive",
-    description: "Complete session bundle: terminal recordings, screenshots, and metadata",
+    description:
+      "Complete session bundle: terminal recordings, screenshots, and metadata",
     extension: ".tar.gz",
     icon: <Download className="w-5 h-5" />,
   },
@@ -40,8 +42,9 @@ export function ComplianceExports({ className }: { className?: string }) {
       {/* Description */}
       <div className="text-center mb-8">
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-          Every session generates audit-ready exports. Structured logs for automation,
-          human-readable reports for review—compliance without extra effort.
+          Every session generates audit-ready exports. Structured logs for
+          automation, human-readable reports for review—compliance without extra
+          effort.
         </p>
       </div>
 
@@ -58,12 +61,16 @@ export function ComplianceExports({ className }: { className?: string }) {
               </div>
               <div className="flex-1">
                 <div className="flex items-center gap-2 mb-1">
-                  <h4 className="font-semibold text-foreground">{format.format}</h4>
+                  <h4 className="font-semibold text-foreground">
+                    {format.format}
+                  </h4>
                   <span className="text-xs text-muted-foreground font-mono bg-muted px-1.5 py-0.5 rounded">
                     {format.extension}
                   </span>
                 </div>
-                <p className="text-sm text-muted-foreground">{format.description}</p>
+                <p className="text-sm text-muted-foreground">
+                  {format.description}
+                </p>
               </div>
             </div>
           </div>
@@ -74,7 +81,9 @@ export function ComplianceExports({ className }: { className?: string }) {
       <div className="rounded-xl border border-border/50 bg-muted/10 overflow-hidden">
         <div className="p-3 border-b border-border/50 bg-muted/20 flex items-center gap-2">
           <FileJson className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm font-medium text-foreground">session-2026-01-26.jsonl</span>
+          <span className="text-sm font-medium text-foreground">
+            session-2026-01-26.jsonl
+          </span>
         </div>
         <pre className="p-4 text-xs font-mono text-muted-foreground overflow-x-auto">
           {sampleLog}
@@ -83,7 +92,8 @@ export function ComplianceExports({ className }: { className?: string }) {
 
       {/* Bottom note */}
       <p className="mt-6 text-sm text-muted-foreground text-center">
-        Exports integrate with SIEM tools, compliance dashboards, and incident response workflows.
+        Exports integrate with SIEM tools, compliance dashboards, and incident
+        response workflows.
       </p>
     </div>
   );

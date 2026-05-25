@@ -5,7 +5,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, Mock } from "vitest";
-import { handleMessage, MessageHandlerContext } from "@/server/handlers/message-handler";
+import {
+  handleMessage,
+  MessageHandlerContext,
+} from "@/server/handlers/message-handler";
 
 // Mock the recording module
 vi.mock("@/server/recording/recorder", () => ({
@@ -64,7 +67,9 @@ function createMockWebSocket() {
 /**
  * Create a test message handler context
  */
-function createTestContext(overrides?: Partial<MessageHandlerContext>): MessageHandlerContext {
+function createTestContext(
+  overrides?: Partial<MessageHandlerContext>,
+): MessageHandlerContext {
   let recordingId: string | undefined;
 
   return {
@@ -109,7 +114,9 @@ describe("handleMessage", () => {
     });
 
     it("should handle Buffer input", () => {
-      const message = Buffer.from(JSON.stringify({ type: "input", data: "pwd\r" }));
+      const message = Buffer.from(
+        JSON.stringify({ type: "input", data: "pwd\r" }),
+      );
 
       handleMessage(message, ctx);
 
@@ -123,7 +130,10 @@ describe("handleMessage", () => {
       handleMessage(message, ctx);
 
       expect(ctx.ptyProcess.write).toHaveBeenCalledWith("echo hello");
-      expect(mockRecordInput).toHaveBeenCalledWith("test-session-123", "echo hello");
+      expect(mockRecordInput).toHaveBeenCalledWith(
+        "test-session-123",
+        "echo hello",
+      );
     });
 
     it("should not record input when recording is not active", () => {
@@ -227,7 +237,11 @@ describe("handleMessage", () => {
     });
 
     it("should not resize when values are strings", () => {
-      const message = JSON.stringify({ type: "resize", cols: "120", rows: "40" });
+      const message = JSON.stringify({
+        type: "resize",
+        cols: "120",
+        rows: "40",
+      });
 
       handleMessage(message, ctx);
 
@@ -235,7 +249,11 @@ describe("handleMessage", () => {
     });
 
     it("should not resize when values are floats", () => {
-      const message = JSON.stringify({ type: "resize", cols: 120.5, rows: 40.5 });
+      const message = JSON.stringify({
+        type: "resize",
+        cols: 120.5,
+        rows: 40.5,
+      });
 
       handleMessage(message, ctx);
 
@@ -245,7 +263,10 @@ describe("handleMessage", () => {
 
   describe("command message type", () => {
     it("should write command with carriage return", () => {
-      const message = JSON.stringify({ type: "command", data: "npm run build" });
+      const message = JSON.stringify({
+        type: "command",
+        data: "npm run build",
+      });
 
       handleMessage(message, ctx);
 
@@ -271,13 +292,13 @@ describe("handleMessage", () => {
     it("should handle complex command with arguments", () => {
       const message = JSON.stringify({
         type: "command",
-        data: "docker run -it --rm -v $(pwd):/app node:18"
+        data: "docker run -it --rm -v $(pwd):/app node:18",
       });
 
       handleMessage(message, ctx);
 
       expect(ctx.ptyProcess.write).toHaveBeenCalledWith(
-        "docker run -it --rm -v $(pwd):/app node:18\r"
+        "docker run -it --rm -v $(pwd):/app node:18\r",
       );
     });
 
@@ -297,7 +318,7 @@ describe("handleMessage", () => {
         type: "startRecording",
         cols: 100,
         rows: 30,
-        clientSessionId: "client-abc"
+        clientSessionId: "client-abc",
       });
 
       handleMessage(message, ctx);
@@ -308,11 +329,14 @@ describe("handleMessage", () => {
         "/bin/zsh",
         100,
         30,
-        "client-abc"
+        "client-abc",
       );
       expect(ctx.getRecordingId()).toBe("recording-456");
       expect(ctx.ws.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "recordingStarted", recordingId: "recording-456" })
+        JSON.stringify({
+          type: "recordingStarted",
+          recordingId: "recording-456",
+        }),
       );
     });
 
@@ -327,8 +351,8 @@ describe("handleMessage", () => {
         "shell",
         "/bin/zsh",
         120, // default cols
-        30,  // default rows
-        undefined
+        30, // default rows
+        undefined,
       );
     });
 
@@ -345,7 +369,7 @@ describe("handleMessage", () => {
         "claude",
         120,
         30,
-        undefined
+        undefined,
       );
     });
 
@@ -363,7 +387,7 @@ describe("handleMessage", () => {
       mockStartRecording.mockReturnValue(null);
       const message = JSON.stringify({
         type: "startRecording",
-        clientSessionId: "duplicate-client"
+        clientSessionId: "duplicate-client",
       });
 
       handleMessage(message, ctx);
@@ -386,7 +410,7 @@ describe("handleMessage", () => {
         "/bin/bash",
         120,
         30,
-        undefined
+        undefined,
       );
     });
   });
@@ -410,7 +434,7 @@ describe("handleMessage", () => {
       expect(mockStopRecording).toHaveBeenCalledWith("test-session-123");
       expect(ctx.getRecordingId()).toBeUndefined();
       expect(ctx.ws.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "recordingStopped", metadata: mockMetadata })
+        JSON.stringify({ type: "recordingStopped", metadata: mockMetadata }),
       );
     });
 
@@ -450,7 +474,10 @@ describe("handleMessage", () => {
 
       expect(mockListRecordings).toHaveBeenCalled();
       expect(ctx.ws.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "recordingsList", recordings: mockRecordingsList })
+        JSON.stringify({
+          type: "recordingsList",
+          recordings: mockRecordingsList,
+        }),
       );
     });
 
@@ -462,7 +489,7 @@ describe("handleMessage", () => {
       handleMessage(message, ctx);
 
       expect(ctx.ws.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "recordingsList", recordings: [] })
+        JSON.stringify({ type: "recordingsList", recordings: [] }),
       );
     });
   });
@@ -471,7 +498,7 @@ describe("handleMessage", () => {
     it("should send recording data for valid id", () => {
       const mockRecordingData = {
         metadata: { id: "rec-1", sessionType: "shell" },
-        content: "[header]\n[0.1,\"o\",\"test\"]",
+        content: '[header]\n[0.1,"o","test"]',
       };
       mockGetRecording.mockReturnValue(mockRecordingData);
 
@@ -481,20 +508,23 @@ describe("handleMessage", () => {
 
       expect(mockGetRecording).toHaveBeenCalledWith("rec-1");
       expect(ctx.ws.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "recordingData", recording: mockRecordingData })
+        JSON.stringify({ type: "recordingData", recording: mockRecordingData }),
       );
     });
 
     it("should send null recording when id not found", () => {
       mockGetRecording.mockReturnValue(null);
 
-      const message = JSON.stringify({ type: "getRecording", id: "nonexistent" });
+      const message = JSON.stringify({
+        type: "getRecording",
+        id: "nonexistent",
+      });
 
       handleMessage(message, ctx);
 
       expect(mockGetRecording).toHaveBeenCalledWith("nonexistent");
       expect(ctx.ws.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "recordingData", recording: null })
+        JSON.stringify({ type: "recordingData", recording: null }),
       );
     });
 
@@ -512,26 +542,40 @@ describe("handleMessage", () => {
     it("should delete recording and send success confirmation", () => {
       mockDeleteRecording.mockReturnValue(true);
 
-      const message = JSON.stringify({ type: "deleteRecording", id: "rec-to-delete" });
+      const message = JSON.stringify({
+        type: "deleteRecording",
+        id: "rec-to-delete",
+      });
 
       handleMessage(message, ctx);
 
       expect(mockDeleteRecording).toHaveBeenCalledWith("rec-to-delete");
       expect(ctx.ws.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "recordingDeleted", id: "rec-to-delete", success: true })
+        JSON.stringify({
+          type: "recordingDeleted",
+          id: "rec-to-delete",
+          success: true,
+        }),
       );
     });
 
     it("should send failure confirmation when delete fails", () => {
       mockDeleteRecording.mockReturnValue(false);
 
-      const message = JSON.stringify({ type: "deleteRecording", id: "rec-fail" });
+      const message = JSON.stringify({
+        type: "deleteRecording",
+        id: "rec-fail",
+      });
 
       handleMessage(message, ctx);
 
       expect(mockDeleteRecording).toHaveBeenCalledWith("rec-fail");
       expect(ctx.ws.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "recordingDeleted", id: "rec-fail", success: false })
+        JSON.stringify({
+          type: "recordingDeleted",
+          id: "rec-fail",
+          success: false,
+        }),
       );
     });
 
@@ -551,7 +595,9 @@ describe("handleMessage", () => {
 
       handleMessage(message, ctx);
 
-      expect(consoleLogSpy).toHaveBeenCalledWith("Unknown message type: unknownType");
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        "Unknown message type: unknownType",
+      );
     });
 
     it("should not throw for unknown types", () => {
@@ -568,7 +614,7 @@ describe("handleMessage", () => {
       expect(() => handleMessage(invalidJson, ctx)).not.toThrow();
       expect(consoleErrorSpy).toHaveBeenCalled();
       expect(consoleErrorSpy.mock.calls[0][0]).toContain(
-        "[Terminal Server] Failed to parse WebSocket message:"
+        "[Terminal Server] Failed to parse WebSocket message:",
       );
     });
 
@@ -581,7 +627,9 @@ describe("handleMessage", () => {
       const message = JSON.stringify({ data: "some data" });
 
       expect(() => handleMessage(message, ctx)).not.toThrow();
-      expect(consoleLogSpy).toHaveBeenCalledWith("Unknown message type: undefined");
+      expect(consoleLogSpy).toHaveBeenCalledWith(
+        "Unknown message type: undefined",
+      );
     });
 
     it("should handle null message body", () => {
@@ -648,7 +696,7 @@ describe("handleMessage", () => {
         expect.any(String),
         expect.any(Number),
         expect.any(Number),
-        undefined
+        undefined,
       );
     });
 

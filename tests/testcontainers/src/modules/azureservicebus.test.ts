@@ -6,5 +6,8 @@ import { smokeTest } from "../helper";
 smokeTest(
   "azureservicebus",
   "starts servicebus-emulator 2.0.0 + mssql sidecar",
-  () => new AzureServiceBusContainer("mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.0").acceptLicense(),
+  () =>
+    new AzureServiceBusContainer(
+      "mcr.microsoft.com/azure-messaging/servicebus-emulator:2.0.0",
+    ).acceptLicense(),
 );

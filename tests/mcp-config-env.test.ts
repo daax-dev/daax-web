@@ -43,7 +43,7 @@ describe("MCP Config Environment Variables", () => {
     // Also verify via diagnostics
     const diag = getMcpDiagnostics();
     expect(diag.configPaths.claudeCodeConfig.path).toBe(
-      "/host-config/.claude.json"
+      "/host-config/.claude.json",
     );
     expect(diag.configPaths.claudeCodeConfig.fromEnvVar).toBe(true);
     expect(diag.configPaths.homeMcpJson.path).toBe("/host-config/.mcp.json");
@@ -62,7 +62,7 @@ describe("MCP Config Environment Variables", () => {
     // Also verify via diagnostics
     const diag = getMcpDiagnostics();
     expect(diag.configPaths.claudeCodeConfig.path).toBe(
-      join(home, ".claude.json")
+      join(home, ".claude.json"),
     );
     expect(diag.configPaths.claudeCodeConfig.fromEnvVar).toBe(false);
     expect(diag.configPaths.homeMcpJson.path).toBe(join(home, ".mcp.json"));

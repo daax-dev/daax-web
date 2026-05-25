@@ -11,6 +11,9 @@ export default defineConfig({
     hookTimeout: DEFAULT_TIMEOUT_MS,
     sequence: { concurrent: false },
     fileParallelism: false,
-    reporters: ["default", ["json", { outputFile: "results/vitest-report.json" }]],
+    reporters: [
+      "default",
+      ["json", { outputFile: "results/vitest-report.json" }],
+    ],
   },
 });

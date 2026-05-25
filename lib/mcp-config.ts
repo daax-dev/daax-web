@@ -6,11 +6,7 @@
 // - CLAUDE_DESKTOP_CONFIG: Override path to Claude Desktop config
 // - HOME_MCP_JSON: Override path to ~/.mcp.json
 
-import {
-  readFileSync,
-  writeFileSync,
-  existsSync,
-} from "fs";
+import { readFileSync, writeFileSync, existsSync } from "fs";
 import { readdir, stat, access, constants } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
@@ -66,7 +62,9 @@ let backgroundScanPromise: Promise<void> | null = null;
  * Async workspace scanner that populates the cache in the background.
  * Uses async fs operations to avoid blocking the event loop.
  */
-async function scanWorkspaceAsync(workspacePath: string): Promise<Array<{ dirPath: string; mcpJsonPath: string }>> {
+async function scanWorkspaceAsync(
+  workspacePath: string,
+): Promise<Array<{ dirPath: string; mcpJsonPath: string }>> {
   const results: Array<{ dirPath: string; mcpJsonPath: string }> = [];
 
   const scanForMcpJson = async (dirPath: string) => {
@@ -267,43 +265,47 @@ export function getMcpDiagnostics(): McpDiagnostics {
   if (isLikelyContainer) {
     // Running in container - check for proper env var setup
     if (!process.env.CLAUDE_CODE_CONFIG && !process.env.HOME_MCP_JSON) {
-      hints.push(
-        "⚠️ Running in container but MCP config env vars not set!"
-      );
+      hints.push("⚠️ Running in container but MCP config env vars not set!");
       hints.push(
         "Add to docker-compose.yml environment section:\n" +
-        "  - CLAUDE_CODE_CONFIG=/host-config/.claude.json\n" +
-        "  - HOME_MCP_JSON=/host-config/.mcp.json"
+          "  - CLAUDE_CODE_CONFIG=/host-config/.claude.json\n" +
+          "  - HOME_MCP_JSON=/host-config/.mcp.json",
       );
     }
 
     if (hostConfigClaudeExists && !process.env.CLAUDE_CODE_CONFIG) {
       hints.push(
         "Found /host-config/.claude.json but CLAUDE_CODE_CONFIG env var not set. " +
-        "Set CLAUDE_CODE_CONFIG=/host-config/.claude.json in container environment."
+          "Set CLAUDE_CODE_CONFIG=/host-config/.claude.json in container environment.",
       );
     }
 
     if (!hostConfigClaudeExists && !hostConfigMcpExists) {
       hints.push(
         "No config files found at /host-config/. Mount your host configs:\n" +
-        "  volumes:\n" +
-        "    - ${CLAUDE_CONFIG_PATH}:/host-config/.claude.json:rw\n" +
-        "    - ${HOME_MCP_PATH}:/host-config/.mcp.json:ro\n" +
-        "Then set: export CLAUDE_CONFIG_PATH=\"$HOME/.claude.json\""
+          "  volumes:\n" +
+          "    - ${CLAUDE_CONFIG_PATH}:/host-config/.claude.json:rw\n" +
+          "    - ${HOME_MCP_PATH}:/host-config/.mcp.json:ro\n" +
+          'Then set: export CLAUDE_CONFIG_PATH="$HOME/.claude.json"',
       );
     }
 
     if (process.env.CLAUDE_CODE_CONFIG && !claudeCodeConfigExists) {
       hints.push(
         `CLAUDE_CODE_CONFIG="${process.env.CLAUDE_CODE_CONFIG}" but file not found. ` +
-        "Check volume mount in docker-compose.yml"
+          "Check volume mount in docker-compose.yml",
       );
     }
   } else {
     // Not in container - check for local config
-    if (!claudeCodeConfigExists && !claudeDesktopConfigExists && !homeMcpJsonExists) {
-      hints.push("No MCP config files found. Run Claude Code once to generate ~/.claude.json");
+    if (
+      !claudeCodeConfigExists &&
+      !claudeDesktopConfigExists &&
+      !homeMcpJsonExists
+    ) {
+      hints.push(
+        "No MCP config files found. Run Claude Code once to generate ~/.claude.json",
+      );
     }
   }
 
@@ -609,11 +611,11 @@ export function discoverAllMcps(currentProjectPath: string): McpConfigState {
   // (e.g., network-mounted volumes). Initial request uses stale cache or empty results,
   // while background scan populates cache for subsequent requests.
   const workspacePath = "/workspace";
-  const isContainerMode = existsSync(workspacePath) && (
-    existsSync("/host-config") ||
-    !!process.env.CLAUDE_CODE_CONFIG ||
-    !!process.env.HOME_MCP_JSON
-  );
+  const isContainerMode =
+    existsSync(workspacePath) &&
+    (existsSync("/host-config") ||
+      !!process.env.CLAUDE_CODE_CONFIG ||
+      !!process.env.HOME_MCP_JSON);
   if (isContainerMode) {
     // Check cache first
     const now = Date.now();
@@ -931,7 +933,10 @@ export function addMcpServer(
       projectMcps[id] = config;
     }
 
-    writeFileSync(getClaudeCodeConfigPath(), JSON.stringify(claudeConfig, null, 2));
+    writeFileSync(
+      getClaudeCodeConfigPath(),
+      JSON.stringify(claudeConfig, null, 2),
+    );
     return { success: true };
   } catch (err) {
     return {
@@ -1138,7 +1143,10 @@ export function deleteMcpServer(
         };
       }
 
-      writeFileSync(getClaudeCodeConfigPath(), JSON.stringify(claudeConfig, null, 2));
+      writeFileSync(
+        getClaudeCodeConfigPath(),
+        JSON.stringify(claudeConfig, null, 2),
+      );
       return { success: true };
     } catch (err) {
       return {

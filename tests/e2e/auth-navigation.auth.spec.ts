@@ -55,14 +55,14 @@ test.describe("Authenticated Page Navigation", () => {
       const auth401s = failedRequests.filter((r) => r.status === 401);
       expect(
         auth401s,
-        `Found 401 errors: ${auth401s.map((r) => r.url).join(", ")}`
+        `Found 401 errors: ${auth401s.map((r) => r.url).join(", ")}`,
       ).toHaveLength(0);
 
       // No 429 rate limit errors
       const rateLimits = failedRequests.filter((r) => r.status === 429);
       expect(
         rateLimits,
-        `Found 429 rate-limit errors: ${rateLimits.map((r) => r.url).join(", ")}`
+        `Found 429 rate-limit errors: ${rateLimits.map((r) => r.url).join(", ")}`,
       ).toHaveLength(0);
     });
   }

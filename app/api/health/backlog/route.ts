@@ -1,5 +1,5 @@
-import { NextResponse } from 'next/server';
-import { getBacklogHealth } from '@/lib/backlog/health';
+import { NextResponse } from "next/server";
+import { getBacklogHealth } from "@/lib/backlog/health";
 
 /**
  * Health check endpoint for backlog initialization status
@@ -12,14 +12,16 @@ export async function GET() {
 
   return NextResponse.json(
     {
-      service: 'backlog',
-      status: health.initialized ? 'initialized' : 'unavailable',
+      service: "backlog",
+      status: health.initialized ? "initialized" : "unavailable",
       timestamp: health.timestamp,
-      error: health.error ? {
-        message: health.error.message,
-        name: health.error.name,
-      } : null,
+      error: health.error
+        ? {
+            message: health.error.message,
+            name: health.error.name,
+          }
+        : null,
     },
-    { status }
+    { status },
   );
 }

@@ -58,10 +58,12 @@ describe("error-handler", () => {
     // Setup mocks
     registeredHandlers = new Map();
 
-    mockProcessOn = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
-      registeredHandlers.set(event, handler);
-      return process;
-    });
+    mockProcessOn = vi.fn(
+      (event: string, handler: (...args: unknown[]) => void) => {
+        registeredHandlers.set(event, handler);
+        return process;
+      },
+    );
     mockProcessExit = vi.fn();
 
     // Replace process methods
@@ -96,7 +98,7 @@ describe("error-handler", () => {
 
         expect(consoleErrorSpy).toHaveBeenCalledWith(
           expect.stringContaining("[Terminal Server] uncaughtException"),
-          error
+          error,
         );
       });
 
@@ -108,7 +110,7 @@ describe("error-handler", () => {
 
         expect(consoleErrorSpy).toHaveBeenCalledWith(
           expect.stringContaining("[Terminal Server] unhandledRejection"),
-          error
+          error,
         );
       });
 
@@ -119,7 +121,7 @@ describe("error-handler", () => {
 
         expect(consoleErrorSpy).toHaveBeenCalledWith(
           expect.stringMatching(/recent errors in last 60s: 1/),
-          expect.any(Error)
+          expect.any(Error),
         );
       });
 
@@ -130,7 +132,7 @@ describe("error-handler", () => {
 
         expect(consoleErrorSpy).toHaveBeenCalledWith(
           expect.stringContaining("[Terminal Server] uncaughtException"),
-          "string error"
+          "string error",
         );
       });
 
@@ -153,14 +155,14 @@ describe("error-handler", () => {
         handleGlobalError("uncaughtException", new Error("error 1"));
         expect(consoleErrorSpy).toHaveBeenLastCalledWith(
           expect.stringMatching(/recent errors in last 60s: 1/),
-          expect.any(Error)
+          expect.any(Error),
         );
 
         // Second error at same time
         handleGlobalError("uncaughtException", new Error("error 2"));
         expect(consoleErrorSpy).toHaveBeenLastCalledWith(
           expect.stringMatching(/recent errors in last 60s: 2/),
-          expect.any(Error)
+          expect.any(Error),
         );
 
         // Third error 30 seconds later (still within window)
@@ -168,7 +170,7 @@ describe("error-handler", () => {
         handleGlobalError("uncaughtException", new Error("error 3"));
         expect(consoleErrorSpy).toHaveBeenLastCalledWith(
           expect.stringMatching(/recent errors in last 60s: 3/),
-          expect.any(Error)
+          expect.any(Error),
         );
       });
 
@@ -184,7 +186,7 @@ describe("error-handler", () => {
         handleGlobalError("uncaughtException", new Error("error 2"));
         expect(consoleErrorSpy).toHaveBeenLastCalledWith(
           expect.stringMatching(/recent errors in last 60s: 2/),
-          expect.any(Error)
+          expect.any(Error),
         );
 
         // Third error at baseTime + 61s (first error should be expired)
@@ -195,7 +197,7 @@ describe("error-handler", () => {
         handleGlobalError("uncaughtException", new Error("error 3"));
         expect(consoleErrorSpy).toHaveBeenLastCalledWith(
           expect.stringMatching(/recent errors in last 60s: 2/),
-          expect.any(Error)
+          expect.any(Error),
         );
       });
 
@@ -209,7 +211,7 @@ describe("error-handler", () => {
         }
         expect(consoleErrorSpy).toHaveBeenLastCalledWith(
           expect.stringMatching(/recent errors in last 60s: 5/),
-          expect.any(Error)
+          expect.any(Error),
         );
 
         // New error after window expires all previous errors
@@ -220,7 +222,7 @@ describe("error-handler", () => {
         handleGlobalError("uncaughtException", new Error("new error"));
         expect(consoleErrorSpy).toHaveBeenLastCalledWith(
           expect.stringMatching(/recent errors in last 60s: 1/),
-          expect.any(Error)
+          expect.any(Error),
         );
       });
 
@@ -249,7 +251,7 @@ describe("error-handler", () => {
         }
 
         expect(consoleErrorSpy).toHaveBeenCalledWith(
-          "[Terminal Server] Too many global errors, initiating graceful shutdown and exiting."
+          "[Terminal Server] Too many global errors, initiating graceful shutdown and exiting.",
         );
         expect(mockShutdown).toHaveBeenCalledWith("FATAL_ERROR");
       });
@@ -299,7 +301,7 @@ describe("error-handler", () => {
 
         expect(consoleErrorSpy).toHaveBeenCalledWith(
           "[Terminal Server] Error during graceful shutdown:",
-          expect.any(Error)
+          expect.any(Error),
         );
         expect(mockProcessExit).toHaveBeenCalledWith(1);
       });
@@ -310,7 +312,7 @@ describe("error-handler", () => {
 
         // Make shutdown hang forever
         mockShutdown.mockImplementation(
-          () => new Promise(() => {}) // Never resolves
+          () => new Promise(() => {}), // Never resolves
         );
 
         // Trigger shutdown
@@ -322,7 +324,7 @@ describe("error-handler", () => {
         vi.advanceTimersByTime(5000);
 
         expect(consoleErrorSpy).toHaveBeenCalledWith(
-          "[Terminal Server] Graceful shutdown timeout, forcing exit."
+          "[Terminal Server] Graceful shutdown timeout, forcing exit.",
         );
         expect(mockProcessExit).toHaveBeenCalledWith(1);
       });
@@ -345,7 +347,7 @@ describe("error-handler", () => {
         // Verify exit happened from finally block, not timeout
         expect(mockProcessExit).toHaveBeenCalledTimes(1);
         expect(consoleErrorSpy).not.toHaveBeenCalledWith(
-          "[Terminal Server] Graceful shutdown timeout, forcing exit."
+          "[Terminal Server] Graceful shutdown timeout, forcing exit.",
         );
       });
     });
@@ -366,7 +368,7 @@ describe("error-handler", () => {
 
         expect(consoleErrorSpy).toHaveBeenLastCalledWith(
           expect.stringMatching(/recent errors in last 60s: 1/),
-          expect.any(Error)
+          expect.any(Error),
         );
       });
 
@@ -385,7 +387,7 @@ describe("error-handler", () => {
 
         expect(consoleErrorSpy).toHaveBeenLastCalledWith(
           expect.stringMatching(/recent errors in last 60s: 2/),
-          expect.any(Error)
+          expect.any(Error),
         );
       });
 
@@ -416,7 +418,7 @@ describe("error-handler", () => {
 
         expect(consoleErrorSpy).toHaveBeenLastCalledWith(
           expect.stringMatching(/recent errors in last 60s: 4/),
-          expect.any(Error)
+          expect.any(Error),
         );
       });
 
@@ -429,7 +431,7 @@ describe("error-handler", () => {
 
         expect(consoleErrorSpy).toHaveBeenCalledWith(
           expect.stringContaining("[Terminal Server] uncaughtException"),
-          objectError
+          objectError,
         );
       });
     });
@@ -441,7 +443,7 @@ describe("error-handler", () => {
 
       expect(mockProcessOn).toHaveBeenCalledWith(
         "uncaughtException",
-        expect.any(Function)
+        expect.any(Function),
       );
     });
 
@@ -450,7 +452,7 @@ describe("error-handler", () => {
 
       expect(mockProcessOn).toHaveBeenCalledWith(
         "unhandledRejection",
-        expect.any(Function)
+        expect.any(Function),
       );
     });
 
@@ -466,7 +468,7 @@ describe("error-handler", () => {
 
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining("[Terminal Server] uncaughtException"),
-        error
+        error,
       );
     });
 
@@ -482,7 +484,7 @@ describe("error-handler", () => {
 
       expect(consoleErrorSpy).toHaveBeenCalledWith(
         expect.stringContaining("[Terminal Server] unhandledRejection"),
-        reason
+        reason,
       );
     });
 
@@ -515,7 +517,7 @@ describe("error-handler", () => {
       // All 4 within window
       expect(consoleErrorSpy).toHaveBeenLastCalledWith(
         expect.stringMatching(/recent errors in last 60s: 4/),
-        expect.any(Error)
+        expect.any(Error),
       );
 
       // Jump ahead, first error expires
@@ -525,7 +527,7 @@ describe("error-handler", () => {
       handleGlobalError("uncaughtException", new Error("error 5"));
       expect(consoleErrorSpy).toHaveBeenLastCalledWith(
         expect.stringMatching(/recent errors in last 60s: 4/),
-        expect.any(Error)
+        expect.any(Error),
       );
 
       // No shutdown triggered yet
@@ -580,7 +582,7 @@ describe("error-handler", () => {
       handleGlobalError("uncaughtException", new Error("error 2"));
       expect(consoleErrorSpy).toHaveBeenLastCalledWith(
         expect.stringMatching(/recent errors in last 60s: 2/),
-        expect.any(Error)
+        expect.any(Error),
       );
 
       // Reset
@@ -590,7 +592,7 @@ describe("error-handler", () => {
       handleGlobalError("uncaughtException", new Error("error 3"));
       expect(consoleErrorSpy).toHaveBeenLastCalledWith(
         expect.stringMatching(/recent errors in last 60s: 1/),
-        expect.any(Error)
+        expect.any(Error),
       );
     });
   });
