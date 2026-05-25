@@ -13,6 +13,13 @@ import { saveSettings, clearSettings } from "@/lib/settings";
 
 describe("useAnalyticsTabs", () => {
   beforeEach(() => {
+    // Reset the localStorage.getItem mock so a value stubbed by one test (e.g.
+    // the remount test below stubs a "disabled" settings blob) cannot leak into
+    // later tests via suite order. Default: no stored value -> getSettings()
+    // falls back to defaults.
+    vi.mocked(localStorage.getItem).mockReset();
+    vi.mocked(localStorage.getItem).mockReturnValue(null);
+
     // NOTE: the hook's settings store caches a module-scope snapshot. Each test
     // calls saveSettings() (which notifies subscribers with a fresh object)
     // before asserting, so the snapshot is always overwritten and cannot leak
