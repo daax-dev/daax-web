@@ -65,6 +65,13 @@ const settingsStore = {
       if (storeListeners.size === 0 && unsubscribeFromSettings) {
         unsubscribeFromSettings();
         unsubscribeFromSettings = null;
+        // Drop the cached snapshot once there are no subscribers. While
+        // unsubscribed no notification refreshes it, so a settings change made
+        // in the meantime would otherwise be missed; clearing it forces
+        // getSnapshot() to re-seed from getSettings() on the next mount. This
+        // only fires at zero subscribers, so the stable-reference contract
+        // during an active subscription is unaffected.
+        settingsSnapshot = null;
       }
     };
   },
