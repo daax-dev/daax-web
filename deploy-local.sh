@@ -122,8 +122,8 @@ self_elevate() {
   # DOCKER_GID) — without these, a user-set override would be silently
   # dropped on the sudo re-exec and the elevated `docker compose` would
   # fall back to defaults. Note: this carries user-set values (incl. the
-  # CLAWD_GATEWAY_TOKEN secret) across the sudo boundary, where they are
-  # visible in the elevated process's environment.
+  # CLAWD_GATEWAY_TOKEN and GITHUB_DAAX secrets) across the sudo boundary,
+  # where they are visible in the elevated process's environment.
   if [[ $EUID -ne 0 ]]; then
     exec sudo --preserve-env=DAAX_HOSTNAME,DAAX_WORKSPACE,CLAUDE_CONFIG_PATH,HOME_MCP_JSON_PATH,DAAX_ENV_FILE,DAAX_NETWORK,TRAEFIK_DYNAMIC_DIR,DOCKER_SOCKET,SNAP_DOCKERD_UNIT,CLAUDE_CONTAINER_IMAGE,CODE_SERVER_URL,TERMINAL_WS_URL,GITHUB_DAAX,CLAWD_GATEWAY_URL,CLAWD_GATEWAY_TOKEN,DOCKER_GID \
       -- "$SCRIPT_PATH" "$@"
@@ -152,12 +152,15 @@ list_docker_proxies() {
 }
 
 # Echo the daax container's published host ports, one per line. Empty if the
-# container is absent / not running / publishes nothing. Used to prove a
-# native docker-proxy on 4200/4201 actually belongs to daax (so a
-# force-recreate will replace it) before allowing port reuse.
-daax_published_host_ports() {
+# container is absent / not running / publishes nothing. Each line is a
+# `<HostIp>:<HostPort>` binding (e.g. `0.0.0.0:4200`). Used to prove a native
+# docker-proxy holding 4200/4201 actually belongs to daax (so a
+# force-recreate will replace it) before allowing port reuse — matching the
+# full host binding, not just the port number, so a different container
+# publishing the same port on another host IP is not mistaken for daax.
+daax_published_bindings() {
   docker inspect --format \
-    '{{range $cp, $b := .NetworkSettings.Ports}}{{range $b}}{{.HostPort}}{{"\n"}}{{end}}{{end}}' \
+    '{{range $cp, $b := .NetworkSettings.Ports}}{{range $b}}{{.HostIp}}:{{.HostPort}}{{"\n"}}{{end}}{{end}}' \
     "$CONTAINER_NAME" 2>/dev/null || true
 }
 
@@ -317,22 +320,31 @@ cmd_deploy() {
   #   snap    -> snap docker-proxy holds it; user must migrate-daax first.
   #   native  -> a native docker-proxy holds it; allowed ONLY when the daax
   #              container we are about to force-recreate actually publishes
-  #              that host port (a running status alone does not prove the
-  #              proxy is daax's — a separate native container could own it).
+  #              the SAME host binding (HostIp:HostPort) the proxy is bound
+  #              to. Matching the full binding — not just the port number —
+  #              rejects a different container that publishes the same port
+  #              on another host IP (multi-IP false positive).
   #   empty   -> a non-docker-proxy process (Traefik, a stray node, etc.)
   #              is listening; always a conflict.
-  local daax_ports
-  daax_ports="$(daax_published_host_ports)"
+  #
+  # Residual limitation: the match is string-exact on docker-proxy's reported
+  # HostIp vs daax's inspected HostIp. The common forms agree (empty/0.0.0.0
+  # both surface as `0.0.0.0`), but a rare specific-IP binding whose canonical
+  # form differs between the two sources would not match — in which case this
+  # fails closed (die), the safe direction.
+  local daax_bindings
+  daax_bindings="$(daax_published_bindings)"
   for p in 4200 4201; do
-    local owner
+    local owner owner_ip
     owner="$(port_owner_daemon "$p")"
     if [[ "$owner" == snap ]]; then
       die "port $p is held by the SNAP docker daemon. Run once: $0 migrate-daax"
     fi
     if [[ "$owner" == native ]]; then
-      # The native proxy may stay only if daax itself publishes this port.
-      if ! grep -qxF "$p" <<<"$daax_ports"; then
-        die "port $p is held by a native docker-proxy that the daax container does not publish. Identify it: ss -ltnp 'sport = :$p'"
+      # The native proxy may stay only if daax publishes this exact binding.
+      owner_ip="$(list_docker_proxies | awk -v p="$p" '$3==p {print $2; exit}')"
+      if ! grep -qxF "${owner_ip}:${p}" <<<"$daax_bindings"; then
+        die "port $p is held by a native docker-proxy (bound ${owner_ip}:${p}) that the daax container does not publish. Identify it: ss -ltnp 'sport = :$p'"
       fi
     elif port_has_listener "$p"; then
       die "port $p is already in use by a non-docker process. Identify it: ss -ltnp 'sport = :$p'"
