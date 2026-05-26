@@ -136,6 +136,10 @@ interface AISession {
   projectType?: "git" | "planning";
   // Timestamp when session was created (used for deduplication)
   createdAt: number;
+  // Server-assigned docker container name (`daax-<8>`), captured from the
+  // Terminal's first session message. Lets the Sessions page cross-reference
+  // a docker-ps row back to a client-side session to "return" to it.
+  containerName?: string;
   // Git worktree fields
   isWorktree?: boolean;
   worktreePath?: string;
@@ -175,6 +179,7 @@ interface TerminalManagerContextType {
   restartAISession: (sessionId: string) => void;
   removeAISession: (sessionId: string) => Promise<void>;
   renameAISession: (sessionId: string, name: string) => void;
+  setAISessionContainerName: (sessionId: string, containerName: string) => void;
   getAISessionRef: (sessionId: string) => TerminalRef | null;
   setAISessionRef: (sessionId: string, ref: TerminalRef | null) => void;
 }
@@ -597,6 +602,19 @@ export function TerminalManagerProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  // Capture the server-assigned container name when the Terminal reports its
+  // first session message. Used by the Sessions page to map a docker-ps row
+  // back to this client-side session for "return to session".
+  const setAISessionContainerName = useCallback(
+    (sessionId: string, containerName: string) => {
+      if (!containerName) return;
+      setAISessions((prev) =>
+        prev.map((s) => (s.id === sessionId ? { ...s, containerName } : s)),
+      );
+    },
+    [],
+  );
+
   const getAISessionRef = useCallback(
     (sessionId: string): TerminalRef | null => {
       return aiTerminalRefs.current.get(sessionId) || null;
@@ -670,6 +688,7 @@ export function TerminalManagerProvider({ children }: { children: ReactNode }) {
       restartAISession,
       removeAISession,
       renameAISession,
+      setAISessionContainerName,
       getAISessionRef,
       setAISessionRef,
     }),
@@ -686,6 +705,7 @@ export function TerminalManagerProvider({ children }: { children: ReactNode }) {
       restartAISession,
       removeAISession,
       renameAISession,
+      setAISessionContainerName,
       getAISessionRef,
       setAISessionRef,
     ],
@@ -735,6 +755,11 @@ export function TerminalManagerProvider({ children }: { children: ReactNode }) {
                 <Terminal
                   ref={(ref) => setAISessionRef(session.id, ref)}
                   wsUrl={session.wsUrl}
+                  onSessionStart={(_id, _mode, containerName) => {
+                    if (containerName) {
+                      setAISessionContainerName(session.id, containerName);
+                    }
+                  }}
                   onExit={getAIExitHandler(session.id)}
                   onError={handleError}
                   className="h-full"

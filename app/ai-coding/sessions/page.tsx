@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Boxes,
   RefreshCw,
@@ -19,6 +20,7 @@ import {
   Trash2,
   Clock,
   AlertTriangle,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -67,6 +69,7 @@ function formatDuration(totalSeconds: number): string {
 }
 
 export default function SessionsPage() {
+  const router = useRouter();
   const [sessions, setSessions] = useState<ActiveSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -122,6 +125,18 @@ export default function SessionsPage() {
       });
     }
   }, []);
+
+  // Return to a running session: navigate to AI Coding with the container
+  // name as a deep-link param. The AI Coding page matches it against a
+  // live client-side session (by captured containerName) and focuses it.
+  // If no client-side session matches (e.g. a stray from another browser),
+  // the page simply lands on AI Coding with nothing focused.
+  const returnToSession = useCallback(
+    (name: string) => {
+      router.push(`/ai-coding?session=${encodeURIComponent(name)}`);
+    },
+    [router],
+  );
 
   const reapIdle = useCallback(async () => {
     setReaping(true);
@@ -248,7 +263,7 @@ export default function SessionsPage() {
               <TableHead>State</TableHead>
               <TableHead className="text-right">Uptime</TableHead>
               <TableHead className="text-right">Idle</TableHead>
-              <TableHead className="w-24 text-right">Actions</TableHead>
+              <TableHead className="w-32 text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -307,24 +322,43 @@ export default function SessionsPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <TooltipProvider delayDuration={200}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            disabled={killing.has(s.containerName)}
-                            onClick={() => killOne(s.containerName)}
-                            aria-label={`Remove ${s.containerName}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <code className="text-xs">
-                            docker rm -f {s.containerName}
-                          </code>
-                        </TooltipContent>
-                      </Tooltip>
+                      <div className="flex items-center justify-end gap-1">
+                        {s.state === "running" && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => returnToSession(s.containerName)}
+                                aria-label={`Return to ${s.containerName}`}
+                              >
+                                <ExternalLink className="h-4 w-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              Return to this session
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              disabled={killing.has(s.containerName)}
+                              onClick={() => killOne(s.containerName)}
+                              aria-label={`Remove ${s.containerName}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <code className="text-xs">
+                              docker rm -f {s.containerName}
+                            </code>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
                     </TooltipProvider>
                   </TableCell>
                 </TableRow>
