@@ -11,16 +11,38 @@
 import { NextResponse } from "next/server";
 import Docker from "dockerode";
 
-export function getDocker(): Docker {
-  const socketPath = process.env.DOCKER_HOST || "/var/run/docker.sock";
-  if (socketPath.startsWith("tcp://")) {
-    const url = new URL(socketPath.replace("tcp://", "http://"));
-    return new Docker({
+function getDockerOptions(
+  dockerHost: string,
+): { host: string; port: number } | { socketPath: string } {
+  if (dockerHost.startsWith("tcp://")) {
+    const url = new URL(dockerHost.replace("tcp://", "http://"));
+    return {
       host: url.hostname,
       port: parseInt(url.port || "2375", 10),
-    });
+    };
   }
-  return new Docker({ socketPath });
+
+  if (dockerHost.startsWith("unix://")) {
+    const url = new URL(dockerHost);
+    return {
+      socketPath: decodeURIComponent(
+        `${url.pathname}${url.search}${url.hash}`,
+      ),
+    };
+  }
+
+  if (dockerHost.startsWith("npipe://")) {
+    return {
+      socketPath: dockerHost.slice("npipe://".length),
+    };
+  }
+
+  return { socketPath: dockerHost };
+}
+
+export function getDocker(): Docker {
+  const dockerHost = process.env.DOCKER_HOST || "/var/run/docker.sock";
+  return new Docker(getDockerOptions(dockerHost));
 }
 
 /**
