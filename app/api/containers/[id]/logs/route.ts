@@ -73,7 +73,9 @@ function demuxDockerLogs(buf: Buffer): string {
     const streamType = buf[offset];
     // Valid stream types are 0 (stdin), 1 (stdout), 2 (stderr). Anything
     // else means this isn't a multiplexed stream (TTY) — bail to raw.
-    if (streamType > 2) {
+    const hasReservedBytes =
+      buf[offset + 1] === 0 && buf[offset + 2] === 0 && buf[offset + 3] === 0;
+    if (streamType > 2 || !hasReservedBytes) {
       return buf.toString("utf-8");
     }
     const size = buf.readUInt32BE(offset + 4);
