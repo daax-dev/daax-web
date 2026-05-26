@@ -180,6 +180,14 @@ describe("host container action routes", () => {
       const res = await logs(new Request("http://localhost/x"), params("c1"));
       expect(await res.text()).toBe("multiplexed line\n");
     });
+
+    it("logs preserves raw output when reserved header bytes are non-zero", async () => {
+      authed();
+      const raw = Buffer.from([1, 9, 8, 7, 0, 0, 0, 4, 65, 66, 67, 68]);
+      mockLogs.mockResolvedValue(raw);
+      const res = await logs(new Request("http://localhost/x"), params("c1"));
+      expect(await res.text()).toBe(raw.toString("utf-8"));
+    });
   });
 
   describe("503 when Docker is unavailable", () => {
