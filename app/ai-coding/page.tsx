@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Play,
   Square,
@@ -91,7 +92,7 @@ const CLOUD_PROVIDERS = [
   { id: "gcp" as const, name: "GCP" },
 ];
 
-export default function AICodingPage() {
+function AICodingLayoutSwitch() {
   // Check layout setting - render Agent Tabs or Agent Tree
   const settings = typeof window !== "undefined" ? getSettings() : null;
   const layout = settings?.aiCodingLayout || "tree";
@@ -101,6 +102,17 @@ export default function AICodingPage() {
   }
 
   return <AgentTreeLayout />;
+}
+
+export default function AICodingPage() {
+  // Suspense boundary required because both layouts call useSearchParams()
+  // (Issue 2 "return to session" deep-link), which Next.js requires to be
+  // wrapped to avoid de-opting the whole route to client-side rendering.
+  return (
+    <Suspense fallback={null}>
+      <AICodingLayoutSwitch />
+    </Suspense>
+  );
 }
 
 // Agent Tree layout component - separated to avoid conditional hook calls
@@ -169,6 +181,21 @@ function AgentTreeLayout() {
 
   const activeSession = aiSessions.find((s) => s.id === activeAISessionId);
   const terminalContainerRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Issue 2: "return to session" deep-link from the Sessions page.
+  // /ai-coding?session=<containerName> selects the matching live session.
+  useEffect(() => {
+    const target = searchParams.get("session");
+    if (!target) return;
+    const match = aiSessions.find((s) => s.containerName === target);
+    if (match) {
+      setActiveAISessionId(match.id);
+    }
+    // Clear the param so a refresh doesn't re-trigger selection.
+    router.replace("/ai-coding");
+  }, [searchParams, aiSessions, setActiveAISessionId, router]);
 
   // Position terminal over display area using CSS (no DOM movement)
   // Terminal stays in TerminalManager, we position it to overlay terminalContainerRef
