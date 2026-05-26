@@ -79,20 +79,18 @@ export function getTerminalServerUrl(): string {
       ? 443
       : 80;
 
-  // Behind a reverse proxy (Traefik) on a standard port with a real hostname:
+  // Behind a reverse proxy (Traefik) on a standard port with a non-loopback host:
   // use same-origin path-based routing (/ws). Traefik forwards PathPrefix(`/ws`)
   // to the terminal server (:4201). This covers BOTH https://daax.<host>.poley.dev
-  // (wss:443) AND http://daax.localhost (ws:80) — the latter previously fell
-  // through to host:port+1 (e.g. ws://daax.localhost:81), which nothing serves.
+  // (wss:443) AND standard-port access via non-loopback IP/hostnames. Only true
+  // local loopback hosts should fall through to the direct host:port+1 mapping.
   const hostname = window.location.hostname;
   const isStandardPort =
     (protocol === "wss:" && currentPort === 443) ||
     (protocol === "ws:" && currentPort === 80);
-  const isLoopbackHost =
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    /^\d+\.\d+\.\d+\.\d+$/.test(hostname);
-  if (isStandardPort && !isLoopbackHost) {
+  const isLocalLoopback =
+    hostname === "localhost" || hostname === "127.0.0.1";
+  if (isStandardPort && !isLocalLoopback) {
     return `${protocol}//${window.location.host}/ws`;
   }
 
