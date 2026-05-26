@@ -12,7 +12,7 @@ function DevContainersContent() {
   const [activeTab, setActiveTab] = useState("quickstart");
 
   return (
-    <div className="space-y-4">
+    <div className="container mx-auto py-6 px-4 max-w-screen-2xl space-y-4">
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold flex items-center gap-2">
