@@ -124,15 +124,11 @@ function handleStartRecording(
   // Start recording if not already
   if (!ctx.getRecordingId()) {
     const cols =
-      typeof msg.cols === "number" &&
-      Number.isInteger(msg.cols) &&
-      msg.cols > 0
+      typeof msg.cols === "number" && Number.isInteger(msg.cols) && msg.cols > 0
         ? msg.cols
         : 120;
     const rows =
-      typeof msg.rows === "number" &&
-      Number.isInteger(msg.rows) &&
-      msg.rows > 0
+      typeof msg.rows === "number" && Number.isInteger(msg.rows) && msg.rows > 0
         ? msg.rows
         : 30;
     // Note: msg.clientSessionId can be provided by client for deduplication

@@ -7,13 +7,13 @@
  * SECURITY: POST operations require authentication via requireAuth()
  */
 
-import { NextResponse } from 'next/server';
+import { NextResponse } from "next/server";
 import {
   getCleanupScheduler,
   initCleanupScheduler,
-} from '@/plugins/testcontainers/lib/cleanup-scheduler';
-import { checkDockerStatus } from '@/plugins/testcontainers/api';
-import { requireAuth } from '@/lib/auth';
+} from "@/plugins/testcontainers/lib/cleanup-scheduler";
+import { checkDockerStatus } from "@/plugins/testcontainers/api";
+import { requireAuth } from "@/lib/auth";
 
 export async function GET() {
   try {
@@ -21,10 +21,10 @@ export async function GET() {
     if (!status.connected) {
       return NextResponse.json(
         {
-          error: 'Docker daemon not available',
+          error: "Docker daemon not available",
           details: status.error,
         },
-        { status: 503 }
+        { status: 503 },
       );
     }
 
@@ -36,10 +36,10 @@ export async function GET() {
       lastResult,
     });
   } catch (error) {
-    console.error('[Test Containers] Cleanup status error:', error);
+    console.error("[Test Containers] Cleanup status error:", error);
     return NextResponse.json(
-      { error: 'Failed to get cleanup status', details: String(error) },
-      { status: 500 }
+      { error: "Failed to get cleanup status", details: String(error) },
+      { status: 500 },
     );
   }
 }
@@ -54,20 +54,20 @@ export async function POST(request: Request) {
     if (!status.connected) {
       return NextResponse.json(
         {
-          error: 'Docker daemon not available',
+          error: "Docker daemon not available",
           details: status.error,
         },
-        { status: 503 }
+        { status: 503 },
       );
     }
 
     const { searchParams } = new URL(request.url);
-    const action = searchParams.get('action') || 'run';
+    const action = searchParams.get("action") || "run";
 
     const scheduler = getCleanupScheduler();
 
     switch (action) {
-      case 'start': {
+      case "start": {
         // Start the cleanup scheduler
         const body = await request.json().catch(() => ({}));
         const intervalMs = body.intervalMs || 5 * 60 * 1000; // Default 5 minutes
@@ -79,34 +79,36 @@ export async function POST(request: Request) {
           newScheduler.start(intervalMs);
         }
         return NextResponse.json({
-          message: 'Cleanup scheduler started',
+          message: "Cleanup scheduler started",
           running: newScheduler.isRunning(),
         });
       }
 
-      case 'stop': {
+      case "stop": {
         scheduler.stop();
         return NextResponse.json({
-          message: 'Cleanup scheduler stopped',
+          message: "Cleanup scheduler stopped",
           running: false,
         });
       }
 
-      case 'run':
+      case "run":
       default: {
         // Run cleanup immediately
         const result = await scheduler.runCleanup();
         return NextResponse.json({
-          message: 'Cleanup completed',
+          message: result.skipped
+            ? "Cleanup already in progress; this request did not run a new cleanup"
+            : "Cleanup completed",
           result,
         });
       }
     }
   } catch (error) {
-    console.error('[Test Containers] Cleanup error:', error);
+    console.error("[Test Containers] Cleanup error:", error);
     return NextResponse.json(
-      { error: 'Failed to perform cleanup', details: String(error) },
-      { status: 500 }
+      { error: "Failed to perform cleanup", details: String(error) },
+      { status: 500 },
     );
   }
 }

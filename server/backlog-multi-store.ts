@@ -6,7 +6,7 @@
  * (Turbopack/webpack can create separate module instances)
  */
 
-import { MultiBacklogStore } from '@/lib/backlog/multi-store';
+import { MultiBacklogStore } from "@/lib/backlog/multi-store";
 
 // Use globalThis to ensure singleton persists across module contexts
 const globalForBacklog = globalThis as typeof globalThis & {
@@ -43,23 +43,27 @@ function isInitialized(): boolean {
  * Thread-safe: If called concurrently, subsequent calls will wait for
  * the first initialization to complete instead of triggering multiple scans.
  */
-export async function initializeBacklogStore(workspacePath: string): Promise<void> {
+export async function initializeBacklogStore(
+  workspacePath: string,
+): Promise<void> {
   // Already initialized - fast path
   if (isInitialized()) {
-    console.log('[BacklogStore] Already initialized, skipping...');
+    console.log("[BacklogStore] Already initialized, skipping...");
     return;
   }
 
   // Another initialization is in progress - wait for it
   if (globalForBacklog.__backlogStoreInitializing) {
-    console.log('[BacklogStore] Initialization in progress, waiting...');
+    console.log("[BacklogStore] Initialization in progress, waiting...");
     return globalForBacklog.__backlogStoreInitializing;
   }
 
   // Create a promise that concurrent callers can await
   const initPromise = (async () => {
     try {
-      console.log(`[BacklogStore] Initializing from workspace: ${workspacePath}`);
+      console.log(
+        `[BacklogStore] Initializing from workspace: ${workspacePath}`,
+      );
       const startTime = Date.now();
 
       // Use getter to ensure we always work with the current singleton
@@ -74,9 +78,8 @@ export async function initializeBacklogStore(workspacePath: string): Promise<voi
       console.log(`[BacklogStore] - Duration: ${duration}ms`);
 
       globalForBacklog.__backlogStoreInitialized = true;
-
     } catch (error) {
-      console.error('[BacklogStore] Initialization failed:', error);
+      console.error("[BacklogStore] Initialization failed:", error);
       throw error;
     } finally {
       // Clear the initializing promise so future calls can retry if needed

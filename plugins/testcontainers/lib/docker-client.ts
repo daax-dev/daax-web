@@ -5,7 +5,7 @@
  * Uses dockerode for proper Unix socket support.
  */
 
-import Docker from 'dockerode';
+import Docker from "dockerode";
 import type {
   TestContainer,
   ContainerStatus,
@@ -16,17 +16,17 @@ import type {
   ContainerCreateRequest,
   WaitStrategy,
   WaitResult,
-} from '../types';
-import type { ComposeProject } from '../types/compose';
-import { WaitStrategyExecutor } from './wait-strategies';
-import { getStartupOrder } from './compose-parser';
+} from "../types";
+import type { ComposeProject } from "../types/compose";
+import { WaitStrategyExecutor } from "./wait-strategies";
+import { getStartupOrder } from "./compose-parser";
 import {
   CONTAINER_LABEL,
   CONTAINER_LABEL_VALUE,
   TEMPLATE_LABEL,
   PROJECT_LABEL,
   SENSITIVE_PATTERNS,
-} from '../constants';
+} from "../constants";
 
 /**
  * Check if a key is sensitive and should be redacted
@@ -40,49 +40,45 @@ function isSensitiveKey(key: string): boolean {
  */
 function mapContainerStatus(state: string): ContainerStatus {
   const statusMap: Record<string, ContainerStatus> = {
-    created: 'created',
-    running: 'running',
-    paused: 'paused',
-    restarting: 'restarting',
-    removing: 'removing',
-    exited: 'exited',
-    dead: 'dead',
+    created: "created",
+    running: "running",
+    paused: "paused",
+    restarting: "restarting",
+    removing: "removing",
+    exited: "exited",
+    dead: "dead",
   };
-  return statusMap[state.toLowerCase()] || 'dead';
+  return statusMap[state.toLowerCase()] || "dead";
 }
 
 /**
  * Parse port mappings from Docker API response
  */
-function parsePortMappings(
-  ports: Docker.Port[] | undefined
-): PortMapping[] {
+function parsePortMappings(ports: Docker.Port[] | undefined): PortMapping[] {
   if (!ports) return [];
 
   return ports.map((p) => ({
     containerPort: p.PrivatePort,
     hostPort: p.PublicPort,
-    protocol: (p.Type as 'tcp' | 'udp') || 'tcp',
+    protocol: (p.Type as "tcp" | "udp") || "tcp",
   }));
 }
 
 /**
  * Parse port bindings from inspect response
  */
-function parsePortBindings(
-  ports: Docker.PortMap | undefined
-): PortMapping[] {
+function parsePortBindings(ports: Docker.PortMap | undefined): PortMapping[] {
   if (!ports) return [];
 
   const mappings: PortMapping[] = [];
   for (const [containerPort, hostPorts] of Object.entries(ports)) {
-    const [port, protocol] = containerPort.split('/');
+    const [port, protocol] = containerPort.split("/");
     const hostPort = hostPorts?.[0]?.HostPort;
 
     mappings.push({
       containerPort: parseInt(port, 10),
       hostPort: hostPort ? parseInt(hostPort, 10) : undefined,
-      protocol: (protocol as 'tcp' | 'udp') || 'tcp',
+      protocol: (protocol as "tcp" | "udp") || "tcp",
     });
   }
   return mappings;
@@ -101,17 +97,16 @@ interface ContainerMount {
  * Parse volume mounts from listContainers response
  */
 function parseContainerMounts(
-  mounts: ContainerMount[] | undefined
+  mounts: ContainerMount[] | undefined,
 ): VolumeMount[] {
   if (!mounts) return [];
 
   return mounts.map((m) => ({
-    source: m.Source || '',
-    target: m.Destination || '',
+    source: m.Source || "",
+    target: m.Destination || "",
     readOnly: !m.RW,
   }));
 }
-
 
 /**
  * Docker Client class
@@ -124,14 +119,14 @@ export class DockerClient {
   constructor() {
     // Initialize dockerode - it automatically uses Unix socket on Linux
     // or named pipe on Windows
-    const socketPath = process.env.DOCKER_HOST || '/var/run/docker.sock';
+    const socketPath = process.env.DOCKER_HOST || "/var/run/docker.sock";
 
-    if (socketPath.startsWith('tcp://')) {
+    if (socketPath.startsWith("tcp://")) {
       // TCP connection
-      const url = new URL(socketPath.replace('tcp://', 'http://'));
+      const url = new URL(socketPath.replace("tcp://", "http://"));
       this.docker = new Docker({
         host: url.hostname,
-        port: parseInt(url.port || '2375', 10),
+        port: parseInt(url.port || "2375", 10),
       });
     } else {
       // Unix socket connection
@@ -156,7 +151,7 @@ export class DockerClient {
       };
     } catch (error) {
       this.connected = false;
-      this.lastError = error instanceof Error ? error.message : 'Unknown error';
+      this.lastError = error instanceof Error ? error.message : "Unknown error";
 
       return {
         connected: false,
@@ -187,7 +182,7 @@ export class DockerClient {
     return containers.map((c) => ({
       id: c.Id.substring(0, 12),
       containerId: c.Id,
-      name: c.Names[0]?.replace(/^\//, '') || c.Id.substring(0, 12),
+      name: c.Names[0]?.replace(/^\//, "") || c.Id.substring(0, 12),
       image: c.Image,
       status: mapContainerStatus(c.State),
       ports: parsePortMappings(c.Ports),
@@ -211,13 +206,13 @@ export class DockerClient {
 
       // Extract environment variable keys only (for security)
       const envKeys = (data.Config.Env || [])
-        .map((e) => e.split('=')[0])
+        .map((e) => e.split("=")[0])
         .filter((key) => !isSensitiveKey(key));
 
       return {
         id: data.Id.substring(0, 12),
         containerId: data.Id,
-        name: data.Name.replace(/^\//, ''),
+        name: data.Name.replace(/^\//, ""),
         image: data.Config.Image,
         status: mapContainerStatus(data.State.Status),
         ports: parsePortBindings(data.NetworkSettings.Ports),
@@ -231,7 +226,11 @@ export class DockerClient {
         templateId: data.Config.Labels[TEMPLATE_LABEL],
         health: data.State.Health
           ? {
-              status: data.State.Health.Status as 'none' | 'starting' | 'healthy' | 'unhealthy',
+              status: data.State.Health.Status as
+                | "none"
+                | "starting"
+                | "healthy"
+                | "unhealthy",
               failingStreak: data.State.Health.FailingStreak,
               log: data.State.Health.Log?.map((l) => l.Output),
             }
@@ -247,7 +246,7 @@ export class DockerClient {
    */
   async createContainer(
     request: ContainerCreateRequest,
-    options?: { skipWait?: boolean }
+    options?: { skipWait?: boolean },
   ): Promise<TestContainer & { waitResult?: WaitResult }> {
     const labels: Record<string, string> = {
       [CONTAINER_LABEL]: CONTAINER_LABEL_VALUE,
@@ -268,24 +267,26 @@ export class DockerClient {
     for (const port of request.ports || []) {
       const key = `${port.containerPort}/${port.protocol}`;
       exposedPorts[key] = {};
-      portBindings[key] = [{ HostPort: port.hostPort?.toString() || '' }];
+      portBindings[key] = [{ HostPort: port.hostPort?.toString() || "" }];
     }
 
     // Build environment array
     const env = Object.entries(request.environment || {}).map(
-      ([k, v]) => `${k}=${v}`
+      ([k, v]) => `${k}=${v}`,
     );
 
     // Build volume bindings
     const binds = (request.volumes || []).map(
-      (v) => `${v.source}:${v.target}${v.readOnly ? ':ro' : ''}`
+      (v) => `${v.source}:${v.target}${v.readOnly ? ":ro" : ""}`,
     );
 
-    const image = request.tag ? `${request.image}:${request.tag}` : request.image;
+    const image = request.tag
+      ? `${request.image}:${request.tag}`
+      : request.image;
 
     // Pull image if not available locally
     try {
-      await this.pullImage(request.image, request.tag || 'latest');
+      await this.pullImage(request.image, request.tag || "latest");
     } catch (pullErr) {
       // Image might already exist, continue and let createContainer handle it
       console.warn(`[DockerClient] Image pull warning: ${pullErr}`);
@@ -312,15 +313,18 @@ export class DockerClient {
     // Return the container details
     const result = await this.getContainer(container.id);
     if (!result) {
-      throw new Error('Container created but could not be retrieved');
+      throw new Error("Container created but could not be retrieved");
     }
 
     // Execute wait strategy if provided
     let waitResult: WaitResult | undefined;
     if (request.waitStrategy && !options?.skipWait) {
-      waitResult = await this.executeWaitStrategy(container.id, request.waitStrategy);
+      waitResult = await this.executeWaitStrategy(
+        container.id,
+        request.waitStrategy,
+      );
       console.log(
-        `[DockerClient] Wait strategy result: ${waitResult.success ? 'success' : 'failed'} - ${waitResult.message}`
+        `[DockerClient] Wait strategy result: ${waitResult.success ? "success" : "failed"} - ${waitResult.message}`,
       );
     }
 
@@ -332,7 +336,7 @@ export class DockerClient {
    */
   async executeWaitStrategy(
     containerId: string,
-    strategy: WaitStrategy
+    strategy: WaitStrategy,
   ): Promise<WaitResult> {
     const executor = new WaitStrategyExecutor(this.docker);
     return executor.execute(containerId, strategy);
@@ -375,7 +379,7 @@ export class DockerClient {
    */
   async getContainerLogs(
     id: string,
-    options: { tail?: number; since?: number; timestamps?: boolean } = {}
+    options: { tail?: number; since?: number; timestamps?: boolean } = {},
   ): Promise<string> {
     const container = this.docker.getContainer(id);
 
@@ -388,7 +392,7 @@ export class DockerClient {
     });
 
     // logs is a Buffer, convert to string
-    return logs.toString('utf-8');
+    return logs.toString("utf-8");
   }
 
   /**
@@ -442,25 +446,28 @@ export class DockerClient {
   /**
    * Pull an image
    */
-  async pullImage(image: string, tag = 'latest'): Promise<void> {
+  async pullImage(image: string, tag = "latest"): Promise<void> {
     const fullImage = `${image}:${tag}`;
 
     await new Promise<void>((resolve, reject) => {
-      this.docker.pull(fullImage, (err: Error | null, stream: NodeJS.ReadableStream) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-
-        // Follow the pull progress
-        this.docker.modem.followProgress(stream, (error: Error | null) => {
-          if (error) {
-            reject(error);
-          } else {
-            resolve();
+      this.docker.pull(
+        fullImage,
+        (err: Error | null, stream: NodeJS.ReadableStream) => {
+          if (err) {
+            reject(err);
+            return;
           }
-        });
-      });
+
+          // Follow the pull progress
+          this.docker.modem.followProgress(stream, (error: Error | null) => {
+            if (error) {
+              reject(error);
+            } else {
+              resolve();
+            }
+          });
+        },
+      );
     });
   }
 
@@ -469,7 +476,7 @@ export class DockerClient {
   /**
    * Create a Docker network
    */
-  async createNetwork(name: string, driver = 'bridge'): Promise<string> {
+  async createNetwork(name: string, driver = "bridge"): Promise<string> {
     try {
       // Check if network already exists
       const networks = await this.docker.listNetworks({
@@ -527,52 +534,66 @@ export class DockerClient {
 
       // Start services in order
       for (const service of orderedServices) {
-        const serviceIndex = updatedProject.services.findIndex(s => s.name === service.name);
+        const serviceIndex = updatedProject.services.findIndex(
+          (s) => s.name === service.name,
+        );
         try {
-          updatedProject.services[serviceIndex].status = 'creating';
+          updatedProject.services[serviceIndex].status = "creating";
 
           // Create container for this service
           const containerName = `${project.name}_${service.name}_1`;
-          const container = await this.createContainer({
-            name: containerName,
-            image: service.image,
-            ports: service.ports,
-            environment: service.environment,
-            volumes: service.volumes,
-            labels: {
-              ...service.labels,
-              'com.docker.compose.project': project.name,
-              'com.docker.compose.service': service.name,
-              'org.daax.testcontainers.compose': project.id,
+          const container = await this.createContainer(
+            {
+              name: containerName,
+              image: service.image,
+              ports: service.ports,
+              environment: service.environment,
+              volumes: service.volumes,
+              labels: {
+                ...service.labels,
+                "com.docker.compose.project": project.name,
+                "com.docker.compose.service": service.name,
+                "org.daax.testcontainers.compose": project.id,
+              },
             },
-          }, { skipWait: true });
+            { skipWait: true },
+          );
 
           updatedProject.services[serviceIndex].containerId = container.id;
-          updatedProject.services[serviceIndex].status = 'running';
+          updatedProject.services[serviceIndex].status = "running";
 
-          console.log(`[DockerClient] Started compose service: ${service.name}`);
+          console.log(
+            `[DockerClient] Started compose service: ${service.name}`,
+          );
         } catch (err) {
-          updatedProject.services[serviceIndex].status = 'error';
-          updatedProject.services[serviceIndex].error = err instanceof Error ? err.message : 'Unknown error';
-          console.error(`[DockerClient] Failed to start service ${service.name}:`, err);
+          updatedProject.services[serviceIndex].status = "error";
+          updatedProject.services[serviceIndex].error =
+            err instanceof Error ? err.message : "Unknown error";
+          console.error(
+            `[DockerClient] Failed to start service ${service.name}:`,
+            err,
+          );
         }
       }
 
       // Update project status
-      const runningCount = updatedProject.services.filter(s => s.status === 'running').length;
+      const runningCount = updatedProject.services.filter(
+        (s) => s.status === "running",
+      ).length;
       if (runningCount === updatedProject.services.length) {
-        updatedProject.status = 'running';
+        updatedProject.status = "running";
       } else if (runningCount > 0) {
-        updatedProject.status = 'partial';
+        updatedProject.status = "partial";
       } else {
-        updatedProject.status = 'error';
+        updatedProject.status = "error";
       }
 
       updatedProject.startedAt = new Date().toISOString();
       return updatedProject;
     } catch (err) {
-      updatedProject.status = 'error';
-      updatedProject.error = err instanceof Error ? err.message : 'Unknown error';
+      updatedProject.status = "error";
+      updatedProject.error =
+        err instanceof Error ? err.message : "Unknown error";
       return updatedProject;
     }
   }
@@ -590,16 +611,23 @@ export class DockerClient {
       if (service.containerId) {
         try {
           await this.stopContainer(service.containerId);
-          const serviceIndex = updatedProject.services.findIndex(s => s.name === service.name);
-          updatedProject.services[serviceIndex].status = 'stopped';
-          console.log(`[DockerClient] Stopped compose service: ${service.name}`);
+          const serviceIndex = updatedProject.services.findIndex(
+            (s) => s.name === service.name,
+          );
+          updatedProject.services[serviceIndex].status = "stopped";
+          console.log(
+            `[DockerClient] Stopped compose service: ${service.name}`,
+          );
         } catch (err) {
-          console.warn(`[DockerClient] Failed to stop service ${service.name}:`, err);
+          console.warn(
+            `[DockerClient] Failed to stop service ${service.name}:`,
+            err,
+          );
         }
       }
     }
 
-    updatedProject.status = 'stopped';
+    updatedProject.status = "stopped";
     updatedProject.stoppedAt = new Date().toISOString();
     return updatedProject;
   }
@@ -616,9 +644,14 @@ export class DockerClient {
       if (service.containerId) {
         try {
           await this.removeContainer(service.containerId, true);
-          console.log(`[DockerClient] Removed compose service: ${service.name}`);
+          console.log(
+            `[DockerClient] Removed compose service: ${service.name}`,
+          );
         } catch (err) {
-          console.warn(`[DockerClient] Failed to remove service ${service.name}:`, err);
+          console.warn(
+            `[DockerClient] Failed to remove service ${service.name}:`,
+            err,
+          );
         }
       }
     }
@@ -642,7 +675,7 @@ export class DockerClient {
     return containers.map((c) => ({
       id: c.Id.substring(0, 12),
       containerId: c.Id,
-      name: c.Names[0]?.replace(/^\//, '') || c.Id.substring(0, 12),
+      name: c.Names[0]?.replace(/^\//, "") || c.Id.substring(0, 12),
       image: c.Image,
       status: mapContainerStatus(c.State),
       ports: parsePortMappings(c.Ports),

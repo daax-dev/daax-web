@@ -141,7 +141,7 @@ function setupUnauthenticated() {
     authenticated: false,
     response: new Response(
       JSON.stringify({ error: "Authentication required" }),
-      { status: 401, headers: { "Content-Type": "application/json" } }
+      { status: 401, headers: { "Content-Type": "application/json" } },
     ),
   });
   mockGetAuthUser.mockResolvedValue({
@@ -185,7 +185,10 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
     handlerExport: "POST",
     requestInit: {
       method: "POST",
-      body: JSON.stringify({ project: "/workspace/test", task: { title: "t" } }),
+      body: JSON.stringify({
+        project: "/workspace/test",
+        task: { title: "t" },
+      }),
     },
   },
   {
@@ -196,7 +199,10 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
     handlerExport: "PATCH",
     requestInit: {
       method: "PATCH",
-      body: JSON.stringify({ project: "/workspace/test", updates: { status: "Done" } }),
+      body: JSON.stringify({
+        project: "/workspace/test",
+        updates: { status: "Done" },
+      }),
     },
     routeParams: { id: "task-1" },
   },
@@ -256,6 +262,59 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
     importPath: "@/app/api/testcontainers/cleanup/route",
     handlerExport: "POST",
     requestInit: { method: "POST" },
+  },
+  {
+    label: "POST /api/testcontainers/compose",
+    method: "POST",
+    url: "http://localhost/api/testcontainers/compose",
+    importPath: "@/app/api/testcontainers/compose/route",
+    handlerExport: "POST",
+    requestInit: {
+      method: "POST",
+      body: JSON.stringify({ name: "stack", yaml: "services: {}" }),
+    },
+  },
+  {
+    label: "POST /api/testcontainers/templates",
+    method: "POST",
+    url: "http://localhost/api/testcontainers/templates",
+    importPath: "@/app/api/testcontainers/templates/route",
+    handlerExport: "POST",
+    requestInit: {
+      method: "POST",
+      body: JSON.stringify({
+        name: "tmpl",
+        image: "nginx:latest",
+        category: "database",
+      }),
+    },
+  },
+  {
+    label: "DELETE /api/testcontainers/compose/[id]",
+    method: "DELETE",
+    url: "http://localhost/api/testcontainers/compose/stack-1",
+    importPath: "@/app/api/testcontainers/compose/[id]/route",
+    handlerExport: "DELETE",
+    requestInit: { method: "DELETE" },
+    routeParams: { id: "stack-1" },
+  },
+  {
+    label: "POST /api/testcontainers/compose/[id]/start",
+    method: "POST",
+    url: "http://localhost/api/testcontainers/compose/stack-1/start",
+    importPath: "@/app/api/testcontainers/compose/[id]/start/route",
+    handlerExport: "POST",
+    requestInit: { method: "POST" },
+    routeParams: { id: "stack-1" },
+  },
+  {
+    label: "POST /api/testcontainers/compose/[id]/stop",
+    method: "POST",
+    url: "http://localhost/api/testcontainers/compose/stack-1/stop",
+    importPath: "@/app/api/testcontainers/compose/[id]/stop/route",
+    handlerExport: "POST",
+    requestInit: { method: "POST" },
+    routeParams: { id: "stack-1" },
   },
   {
     label: "POST /api/mcp/config",
@@ -339,7 +398,13 @@ describe("Auth Coverage Matrix", () => {
           documents: [],
           decisions: [],
           milestones: [],
-          config: { statuses: [], labels: [], milestones: [], dateFormat: "YYYY-MM-DD", projectName: "Test" },
+          config: {
+            statuses: [],
+            labels: [],
+            milestones: [],
+            dateFormat: "YYYY-MM-DD",
+            projectName: "Test",
+          },
           taskCount: 0,
           lastUpdated: new Date().toISOString(),
         });

@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
   if (!imagesParam) {
     return NextResponse.json(
       { error: "Missing 'images' query parameter" },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -51,14 +51,8 @@ export async function GET(request: NextRequest) {
     try {
       const { stdout } = await execFileAsync(
         "docker",
-        [
-          "image",
-          "inspect",
-          fullName,
-          "--format",
-          "{{.Size}}|{{.Created}}",
-        ],
-        { timeout: 5000 }
+        ["image", "inspect", fullName, "--format", "{{.Size}}|{{.Created}}"],
+        { timeout: 5000 },
       );
 
       const [sizeBytes, created] = stdout.trim().split("|");

@@ -18,7 +18,7 @@ describe("/api/backlog/projects", () => {
   const createMockProject = (
     path: string,
     name: string,
-    taskCount: number
+    taskCount: number,
   ): BacklogProject => ({
     path,
     name,
@@ -57,7 +57,7 @@ describe("/api/backlog/projects", () => {
     vi.mocked(backlogMultiStore.getMultiBacklogStore).mockReturnValue(
       mockStore as unknown as ReturnType<
         typeof backlogMultiStore.getMultiBacklogStore
-      >
+      >,
     );
   });
 
@@ -77,7 +77,11 @@ describe("/api/backlog/projects", () => {
     });
 
     it("returns projects without full task content", async () => {
-      const mockProject = createMockProject("/workspace/myproject", "My Project", 5);
+      const mockProject = createMockProject(
+        "/workspace/myproject",
+        "My Project",
+        5,
+      );
       mockStore.getAllProjects.mockReturnValue([mockProject]);
 
       const response = await GET();
@@ -99,7 +103,11 @@ describe("/api/backlog/projects", () => {
   describe("deduplication", () => {
     it("deduplicates projects with same path", async () => {
       const project1 = createMockProject("/workspace/project", "Project", 3);
-      const project2 = createMockProject("/workspace/project", "Project Copy", 3);
+      const project2 = createMockProject(
+        "/workspace/project",
+        "Project Copy",
+        3,
+      );
 
       mockStore.getAllProjects.mockReturnValue([project1, project2]);
 
@@ -116,10 +124,7 @@ describe("/api/backlog/projects", () => {
       const secondProject = createMockProject("/prj/daax", "Daax-Second", 10);
       // Same path but different metadata - first one should be kept
 
-      mockStore.getAllProjects.mockReturnValue([
-        firstProject,
-        secondProject,
-      ]);
+      mockStore.getAllProjects.mockReturnValue([firstProject, secondProject]);
 
       const response = await GET();
       const data = await response.json();
@@ -135,7 +140,11 @@ describe("/api/backlog/projects", () => {
       // MultiBacklogStore handles symlink canonicalization upstream; this route
       // only sees the already-resolved paths and keeps both if they differ.
       const project1 = createMockProject("/prj/daax", "Daax", 5);
-      const project2 = createMockProject("/home/user/linked-daax", "Linked-Daax", 5);
+      const project2 = createMockProject(
+        "/home/user/linked-daax",
+        "Linked-Daax",
+        5,
+      );
 
       mockStore.getAllProjects.mockReturnValue([project1, project2]);
 
@@ -156,7 +165,7 @@ describe("/api/backlog/projects", () => {
       const nestedProject = createMockProject(
         "/workspace/sub/deep/nested",
         "Nested",
-        3
+        3,
       );
       const subProject = createMockProject("/workspace/sub", "Sub", 1);
 
@@ -198,7 +207,7 @@ describe("/api/backlog/projects", () => {
       const deepProject = createMockProject(
         "/very/deep/nested/project",
         "Deep",
-        2
+        2,
       );
       const baseProject = createMockProject("/prj", "Base", 5);
       const middleProject = createMockProject("/prj/middle", "Middle", 3);

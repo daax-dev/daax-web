@@ -85,16 +85,40 @@ export function SignedAttestations({ className }: { className?: string }) {
             Attestation
           </text>
           {/* Document content lines */}
-          <text x="20" y="55" fill="hsl(var(--muted-foreground))" fontSize="10" fontFamily="monospace">
+          <text
+            x="20"
+            y="55"
+            fill="hsl(var(--muted-foreground))"
+            fontSize="10"
+            fontFamily="monospace"
+          >
             builder: github-actions
           </text>
-          <text x="20" y="70" fill="hsl(var(--muted-foreground))" fontSize="10" fontFamily="monospace">
+          <text
+            x="20"
+            y="70"
+            fill="hsl(var(--muted-foreground))"
+            fontSize="10"
+            fontFamily="monospace"
+          >
             commit: a1b2c3d
           </text>
-          <text x="20" y="85" fill="hsl(var(--muted-foreground))" fontSize="10" fontFamily="monospace">
+          <text
+            x="20"
+            y="85"
+            fill="hsl(var(--muted-foreground))"
+            fontSize="10"
+            fontFamily="monospace"
+          >
             digest: sha256:e4f5...
           </text>
-          <text x="20" y="100" fill="hsl(var(--muted-foreground))" fontSize="10" fontFamily="monospace">
+          <text
+            x="20"
+            y="100"
+            fill="hsl(var(--muted-foreground))"
+            fontSize="10"
+            fontFamily="monospace"
+          >
             timestamp: 2026-01-26
           </text>
         </g>
@@ -122,10 +146,36 @@ export function SignedAttestations({ className }: { className?: string }) {
           />
           {/* Key icon */}
           <g transform="translate(50, 25)">
-            <circle r="8" fill="none" stroke="hsl(140 60% 60%)" strokeWidth="2" />
-            <line x1="6" y1="6" x2="20" y2="20" stroke="hsl(140 60% 60%)" strokeWidth="2" />
-            <line x1="15" y1="15" x2="15" y2="22" stroke="hsl(140 60% 60%)" strokeWidth="2" />
-            <line x1="18" y1="18" x2="18" y2="22" stroke="hsl(140 60% 60%)" strokeWidth="2" />
+            <circle
+              r="8"
+              fill="none"
+              stroke="hsl(140 60% 60%)"
+              strokeWidth="2"
+            />
+            <line
+              x1="6"
+              y1="6"
+              x2="20"
+              y2="20"
+              stroke="hsl(140 60% 60%)"
+              strokeWidth="2"
+            />
+            <line
+              x1="15"
+              y1="15"
+              x2="15"
+              y2="22"
+              stroke="hsl(140 60% 60%)"
+              strokeWidth="2"
+            />
+            <line
+              x1="18"
+              y1="18"
+              x2="18"
+              y2="22"
+              stroke="hsl(140 60% 60%)"
+              strokeWidth="2"
+            />
           </g>
           <text
             x="50"
@@ -152,7 +202,12 @@ export function SignedAttestations({ className }: { className?: string }) {
 
         {/* Signed Attestation (checkmark badge) */}
         <g transform="translate(700, 90)">
-          <circle r="30" fill="hsl(140 40% 20%)" stroke="hsl(140 50% 50%)" strokeWidth="2" />
+          <circle
+            r="30"
+            fill="hsl(140 40% 20%)"
+            stroke="hsl(140 50% 50%)"
+            strokeWidth="2"
+          />
           {/* Checkmark */}
           <path
             d="M -10 0 L -3 8 L 12 -8"
@@ -221,21 +276,26 @@ export function SignedAttestations({ className }: { className?: string }) {
       {/* Key points */}
       <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
         <div className="p-4 rounded-lg bg-muted/20 border border-border/40">
-          <h4 className="font-semibold text-foreground mb-2">What is Signed?</h4>
+          <h4 className="font-semibold text-foreground mb-2">
+            What is Signed?
+          </h4>
           <p className="text-muted-foreground">
-            Build provenance: who built it, from what source, using which tools, and when.
+            Build provenance: who built it, from what source, using which tools,
+            and when.
           </p>
         </div>
         <div className="p-4 rounded-lg bg-muted/20 border border-border/40">
           <h4 className="font-semibold text-foreground mb-2">Who Signs?</h4>
           <p className="text-muted-foreground">
-            Workload identity via OIDC—GitHub Actions, GitLab CI, or your own builder signs automatically.
+            Workload identity via OIDC—GitHub Actions, GitLab CI, or your own
+            builder signs automatically.
           </p>
         </div>
         <div className="p-4 rounded-lg bg-muted/20 border border-border/40">
           <h4 className="font-semibold text-foreground mb-2">Why It Matters</h4>
           <p className="text-muted-foreground">
-            Consumers can verify artifacts haven&apos;t been tampered with and came from a trusted source.
+            Consumers can verify artifacts haven&apos;t been tampered with and
+            came from a trusted source.
           </p>
         </div>
       </div>

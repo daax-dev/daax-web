@@ -1,9 +1,10 @@
 ---
 id: TASK-005
 title: 'Research: Codex + Copilot + OpenCode session/transcript formats and locations'
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-05-23 17:50'
+updated_date: '2026-05-24 16:38'
 labels:
   - documentation
 dependencies: []
@@ -20,7 +21,13 @@ Deliverable: a docs/ note documenting, for each of Codex, GitHub Copilot CLI, an
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 docs/ note covers Codex, Copilot, OpenCode: location + format + schema + mapping
-- [ ] #2 Findings validated against real files on disk where available, else marked unverified with source
-- [ ] #3 Clear go/no-go and effort estimate for the implementation task
+- [x] #1 docs/ note covers Codex, Copilot, OpenCode: location + format + schema + mapping
+- [x] #2 Findings validated against real files on disk where available, else marked unverified with source
+- [x] #3 Clear go/no-go and effort estimate for the implementation task
 <!-- AC:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Delivered docs/building/transcript-formats.md (PR #33). Documented all three tools' session storage + format + schema + mapping, validated against real files on disk (macOS 2026-05-24): Codex ~/.codex/sessions/**/rollout-*.jsonl (session_meta + response_item, role+content[].text); Copilot ~/.copilot/session-state/<uuid>.jsonl (event stream: user.message/assistant.message + tool events); OpenCode ~/.local/share/opencode/storage/{session,message,part}/ (structured JSON, text in part files type:text, 3-level join). Go decision; suggested order Codex → Copilot → OpenCode with shared scaffold (add tool discriminator, per-tool discovery, dispatch parser, /host-* mounts, settings, fixtures). Unverified items flagged (exhaustive block types; Windows/Linux roots).
+<!-- SECTION:FINAL_SUMMARY:END -->

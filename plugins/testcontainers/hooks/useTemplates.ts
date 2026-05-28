@@ -4,10 +4,10 @@
  * React hook for managing container templates.
  */
 
-'use client';
+"use client";
 
-import { useState, useEffect, useCallback } from 'react';
-import type { ContainerTemplate, TemplateCategory } from '../types';
+import { useState, useEffect, useCallback } from "react";
+import type { ContainerTemplate, TemplateCategory } from "../types";
 
 interface UseTemplatesReturn {
   templates: ContainerTemplate[];
@@ -20,7 +20,9 @@ interface UseTemplatesReturn {
 
 export function useTemplates(): UseTemplatesReturn {
   const [templates, setTemplates] = useState<ContainerTemplate[]>([]);
-  const [templatesByCategory, setTemplatesByCategory] = useState<Record<TemplateCategory, ContainerTemplate[]>>({
+  const [templatesByCategory, setTemplatesByCategory] = useState<
+    Record<TemplateCategory, ContainerTemplate[]>
+  >({
     database: [],
     messaging: [],
     cache: [],
@@ -35,21 +37,24 @@ export function useTemplates(): UseTemplatesReturn {
       setError(null);
 
       // Fetch grouped templates
-      const response = await fetch('/api/testcontainers/templates?grouped=true');
+      const response = await fetch(
+        "/api/testcontainers/templates?grouped=true",
+      );
 
       if (!response.ok) {
         const data = await response.json();
-        throw new Error(data.error || 'Failed to fetch templates');
+        throw new Error(data.error || "Failed to fetch templates");
       }
 
-      const grouped: Record<TemplateCategory, ContainerTemplate[]> = await response.json();
+      const grouped: Record<TemplateCategory, ContainerTemplate[]> =
+        await response.json();
       setTemplatesByCategory(grouped);
 
       // Flatten for easy access
       const allTemplates = Object.values(grouped).flat();
       setTemplates(allTemplates);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
+      const message = err instanceof Error ? err.message : "Unknown error";
       setError(message);
     } finally {
       setLoading(false);
@@ -62,8 +67,9 @@ export function useTemplates(): UseTemplatesReturn {
   }, [fetchTemplates]);
 
   const getTemplate = useCallback(
-    (id: string): ContainerTemplate | undefined => templates.find((t) => t.id === id),
-    [templates]
+    (id: string): ContainerTemplate | undefined =>
+      templates.find((t) => t.id === id),
+    [templates],
   );
 
   useEffect(() => {

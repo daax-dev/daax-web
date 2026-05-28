@@ -35,7 +35,11 @@ import {
   ArrowDown,
 } from "lucide-react";
 import { safeParseDateToTime, formatDate } from "@/lib/backlog/date-utils";
-import type { Task, TaskCreateInput, TaskUpdateInput } from "@/lib/backlog/types";
+import type {
+  Task,
+  TaskCreateInput,
+  TaskUpdateInput,
+} from "@/lib/backlog/types";
 import { toast } from "sonner";
 
 type SortField = "id" | "title" | "status" | "priority" | "createdDate";
@@ -79,7 +83,7 @@ export default function TasksListPage() {
     setSelectedTask,
     isCreating,
     setIsCreating,
-    selectedProject
+    selectedProject,
   } = useBacklog();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -181,7 +185,14 @@ export default function TasksListPage() {
 
       return sortDirection === "asc" ? comparison : -comparison;
     });
-  }, [tasks, searchQuery, statusFilter, priorityFilter, sortField, sortDirection]);
+  }, [
+    tasks,
+    searchQuery,
+    statusFilter,
+    priorityFilter,
+    sortField,
+    sortDirection,
+  ]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -196,7 +207,8 @@ export default function TasksListPage() {
   const getSortAriaLabel = (field: SortField, fieldLabel: string): string => {
     if (sortField === field) {
       // Clicking will toggle direction, so announce the next state
-      const nextDirection = sortDirection === "asc" ? "Descending" : "Ascending";
+      const nextDirection =
+        sortDirection === "asc" ? "Descending" : "Ascending";
       return `Sort by ${fieldLabel} ${nextDirection}`;
     }
     // Clicking will sort by this field ascending
@@ -211,13 +223,15 @@ export default function TasksListPage() {
     if (!selectedProject) return;
     try {
       const response = await fetch(`/api/backlog/tasks/${taskId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project: selectedProject.path, updates }),
       });
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+        const error = await response
+          .json()
+          .catch(() => ({ error: "Unknown error" }));
         throw new Error(error.error || `HTTP ${response.status}`);
       }
 
@@ -233,14 +247,16 @@ export default function TasksListPage() {
   const handleCreateNewTask = async (input: TaskCreateInput) => {
     if (!selectedProject) return;
     try {
-      const response = await fetch('/api/backlog/tasks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/backlog/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project: selectedProject.path, task: input }),
       });
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+        const error = await response
+          .json()
+          .catch(() => ({ error: "Unknown error" }));
         throw new Error(error.error || `HTTP ${response.status}`);
       }
 
@@ -259,7 +275,8 @@ export default function TasksListPage() {
     setPriorityFilter("all");
   };
 
-  const hasActiveFilters = searchQuery || statusFilter !== "all" || priorityFilter !== "all";
+  const hasActiveFilters =
+    searchQuery || statusFilter !== "all" || priorityFilter !== "all";
 
   if (isLoadingTasks) {
     return (
@@ -324,7 +341,11 @@ export default function TasksListPage() {
           )}
 
           {/* View Toggle */}
-          <div className="flex items-center border rounded-md" role="group" aria-label="View mode">
+          <div
+            className="flex items-center border rounded-md"
+            role="group"
+            aria-label="View mode"
+          >
             <Button
               type="button"
               variant={viewMode === "grid" ? "secondary" : "ghost"}
@@ -388,7 +409,9 @@ export default function TasksListPage() {
             </div>
           ) : (
             <div className="flex h-48 items-center justify-center text-muted-foreground">
-              {hasActiveFilters ? "No tasks match your filters" : "No tasks found"}
+              {hasActiveFilters
+                ? "No tasks match your filters"
+                : "No tasks found"}
             </div>
           )}
         </ScrollArea>
@@ -399,7 +422,8 @@ export default function TasksListPage() {
         <ScrollArea id="task-list-content" className="flex-1">
           {/* Visually hidden description for screen readers */}
           <span id="task-row-description" className="sr-only">
-            Press Enter or Space to open task details. Use Tab to navigate between rows.
+            Press Enter or Space to open task details. Use Tab to navigate
+            between rows.
           </span>
           {filteredAndSortedTasks.length > 0 ? (
             <Table>
@@ -415,7 +439,11 @@ export default function TasksListPage() {
                       aria-label={getSortAriaLabel("id", "ID")}
                     >
                       ID
-                      <SortIconComponent field="id" currentSortField={sortField} currentSortDirection={sortDirection} />
+                      <SortIconComponent
+                        field="id"
+                        currentSortField={sortField}
+                        currentSortDirection={sortDirection}
+                      />
                     </Button>
                   </TableHead>
                   <TableHead>
@@ -428,7 +456,11 @@ export default function TasksListPage() {
                       aria-label={getSortAriaLabel("title", "Title")}
                     >
                       Title
-                      <SortIconComponent field="title" currentSortField={sortField} currentSortDirection={sortDirection} />
+                      <SortIconComponent
+                        field="title"
+                        currentSortField={sortField}
+                        currentSortDirection={sortDirection}
+                      />
                     </Button>
                   </TableHead>
                   <TableHead className="w-[120px]">
@@ -441,7 +473,11 @@ export default function TasksListPage() {
                       aria-label={getSortAriaLabel("status", "Status")}
                     >
                       Status
-                      <SortIconComponent field="status" currentSortField={sortField} currentSortDirection={sortDirection} />
+                      <SortIconComponent
+                        field="status"
+                        currentSortField={sortField}
+                        currentSortDirection={sortDirection}
+                      />
                     </Button>
                   </TableHead>
                   <TableHead className="w-[100px]">
@@ -454,7 +490,11 @@ export default function TasksListPage() {
                       aria-label={getSortAriaLabel("priority", "Priority")}
                     >
                       Priority
-                      <SortIconComponent field="priority" currentSortField={sortField} currentSortDirection={sortDirection} />
+                      <SortIconComponent
+                        field="priority"
+                        currentSortField={sortField}
+                        currentSortDirection={sortDirection}
+                      />
                     </Button>
                   </TableHead>
                   <TableHead className="w-[120px]">
@@ -464,10 +504,17 @@ export default function TasksListPage() {
                       size="sm"
                       className="-ml-3 h-8"
                       onClick={() => handleSort("createdDate")}
-                      aria-label={getSortAriaLabel("createdDate", "Created Date")}
+                      aria-label={getSortAriaLabel(
+                        "createdDate",
+                        "Created Date",
+                      )}
                     >
                       Created
-                      <SortIconComponent field="createdDate" currentSortField={sortField} currentSortDirection={sortDirection} />
+                      <SortIconComponent
+                        field="createdDate"
+                        currentSortField={sortField}
+                        currentSortDirection={sortDirection}
+                      />
                     </Button>
                   </TableHead>
                 </TableRow>
@@ -489,14 +536,20 @@ export default function TasksListPage() {
                     aria-label={`View task ${task.id}: ${task.title}`}
                     aria-describedby="task-row-description"
                   >
-                    <TableCell className="font-mono text-xs">{task.id}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {task.id}
+                    </TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-1">
                         <span className="font-medium">{task.title}</span>
                         {task.labels.length > 0 && (
                           <div className="flex flex-wrap gap-1">
                             {task.labels.slice(0, 3).map((label) => (
-                              <Badge key={label} variant="secondary" className="text-xs">
+                              <Badge
+                                key={label}
+                                variant="secondary"
+                                className="text-xs"
+                              >
                                 {label}
                               </Badge>
                             ))}
@@ -518,9 +571,12 @@ export default function TasksListPage() {
                           variant="outline"
                           className={cn(
                             "capitalize",
-                            task.priority === "high" && "border-emerald-500/30 text-emerald-400",
-                            task.priority === "medium" && "border-blue-500/30 text-blue-400",
-                            task.priority === "low" && "border-zinc-500/30 text-zinc-400"
+                            task.priority === "high" &&
+                              "border-emerald-500/30 text-emerald-400",
+                            task.priority === "medium" &&
+                              "border-blue-500/30 text-blue-400",
+                            task.priority === "low" &&
+                              "border-zinc-500/30 text-zinc-400",
                           )}
                         >
                           {task.priority}
@@ -536,7 +592,9 @@ export default function TasksListPage() {
             </Table>
           ) : (
             <div className="flex h-48 items-center justify-center text-muted-foreground">
-              {hasActiveFilters ? "No tasks match your filters" : "No tasks found"}
+              {hasActiveFilters
+                ? "No tasks match your filters"
+                : "No tasks found"}
             </div>
           )}
         </ScrollArea>

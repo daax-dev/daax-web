@@ -59,7 +59,7 @@ describe("buildFullCommand", () => {
       const result = buildFullCommand("opencode");
 
       expect(result).toBe(
-        "export PATH=/usr/local/bin:/home/vscode/.local/share/pnpm:/home/vscode/.local/bin:$PATH && opencode"
+        "export PATH=/usr/local/bin:/home/vscode/.local/share/pnpm:/home/vscode/.local/bin:$PATH && opencode",
       );
     });
 
@@ -67,7 +67,7 @@ describe("buildFullCommand", () => {
       const result = buildFullCommand("opencode --help");
 
       expect(result).toBe(
-        "export PATH=/usr/local/bin:/home/vscode/.local/share/pnpm:/home/vscode/.local/bin:$PATH && opencode --help"
+        "export PATH=/usr/local/bin:/home/vscode/.local/share/pnpm:/home/vscode/.local/bin:$PATH && opencode --help",
       );
     });
 
@@ -241,7 +241,7 @@ describe("buildFullCommand", () => {
 
     it("handles claude as substring in path", () => {
       expect(buildFullCommand("/usr/bin/claude-wrapper")).toBe(
-        "/usr/bin/claude-wrapper"
+        "/usr/bin/claude-wrapper",
       );
     });
   });
@@ -301,7 +301,7 @@ describe("scheduleCommand", () => {
     vi.advanceTimersByTime(1000);
 
     expect(mockPty.write).toHaveBeenCalledWith(
-      "/home/vscode/.local/share/pnpm/gemini\r"
+      "/home/vscode/.local/share/pnpm/gemini\r",
     );
   });
 
@@ -311,7 +311,7 @@ describe("scheduleCommand", () => {
     vi.advanceTimersByTime(1000);
 
     expect(consoleLogSpy).toHaveBeenCalledWith(
-      "[terminal] Session session-1: Running command: ls"
+      "[terminal] Session session-1: Running command: ls",
     );
   });
 
@@ -324,7 +324,7 @@ describe("scheduleCommand", () => {
 
     expect(mockPty.write).not.toHaveBeenCalled();
     expect(consoleLogSpy).toHaveBeenCalledWith(
-      "[terminal] Session session-1: session no longer exists, skipping command"
+      "[terminal] Session session-1: session no longer exists, skipping command",
     );
   });
 
@@ -337,7 +337,7 @@ describe("scheduleCommand", () => {
 
     expect(mockPty.write).not.toHaveBeenCalled();
     expect(consoleLogSpy).toHaveBeenCalledWith(
-      "[terminal] Session session-1: WebSocket not open (state=2), skipping command"
+      "[terminal] Session session-1: WebSocket not open (state=2), skipping command",
     );
   });
 
@@ -395,7 +395,9 @@ describe("scheduleCommand", () => {
 
   describe("WebSocket state checks", () => {
     it("skips when WebSocket is CONNECTING", () => {
-      const connectingWs = { readyState: WebSocket.CONNECTING } as unknown as WebSocket;
+      const connectingWs = {
+        readyState: WebSocket.CONNECTING,
+      } as unknown as WebSocket;
 
       scheduleCommand("ls", "session-1", mockPty, connectingWs);
       vi.advanceTimersByTime(1000);
@@ -412,7 +414,9 @@ describe("scheduleCommand", () => {
     });
 
     it("skips when WebSocket is CLOSING", () => {
-      const closingWs = { readyState: WebSocket.CLOSING } as unknown as WebSocket;
+      const closingWs = {
+        readyState: WebSocket.CLOSING,
+      } as unknown as WebSocket;
 
       scheduleCommand("ls", "session-1", mockPty, closingWs);
       vi.advanceTimersByTime(1000);

@@ -1,6 +1,13 @@
 "use client";
 
-import { BacklogNav, BacklogNavProvider, BacklogMobileMenuButton, BacklogProvider, useBacklog, ProjectSelector } from "@/components/backlog";
+import {
+  BacklogNav,
+  BacklogNavProvider,
+  BacklogMobileMenuButton,
+  BacklogProvider,
+  useBacklog,
+  ProjectSelector,
+} from "@/components/backlog";
 import { BacklogHealthBanner } from "@/components/backlog/backlog-health-banner";
 import { Loader2, AlertCircle } from "lucide-react";
 

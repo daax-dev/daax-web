@@ -18,14 +18,14 @@ import type { BacklogProject } from "@/types/backlog";
 // Extract last directory segment from a path
 // Handles container mode where /workspace maps to a default project directory
 function getDirectoryName(path: string): string {
-  const cleaned = path.replace(/\/+$/, '');
+  const cleaned = path.replace(/\/+$/, "");
 
   // In container mode, /workspace is the base; use a stable default directory name.
-  if (cleaned === '/workspace') {
-    return 'prj';
+  if (cleaned === "/workspace") {
+    return "prj";
   }
 
-  const segments = cleaned.split('/');
+  const segments = cleaned.split("/");
   return segments[segments.length - 1] || path;
 }
 
@@ -42,19 +42,19 @@ function getSubfolder(projectPath: string, basePath: string): string | null {
   }
 
   const nextChar = projectPath.charAt(basePath.length);
-  if (nextChar === '') {
+  if (nextChar === "") {
     // No next character (end of string). This should already be covered by the
     // equality check above, but return null defensively for clarity.
     return null;
   }
-  if (nextChar !== '/') {
+  if (nextChar !== "/") {
     // basePath is only a partial prefix (e.g. "/foo" vs "/foo-bar")
     return null;
   }
 
   // Get the relative path from base
-  const relative = projectPath.slice(basePath.length).replace(/^\/+/, '');
-  const segments = relative.split('/');
+  const relative = projectPath.slice(basePath.length).replace(/^\/+/, "");
+  const segments = relative.split("/");
 
   // Return first segment (top-level subfolder)
   return segments[0] || null;
@@ -66,11 +66,18 @@ interface ProjectGroup {
 }
 
 export function ProjectSelector() {
-  const { projects, selectedProject, setSelectedProject, isLoadingProjects, isLoadingTasks } = useBacklog();
+  const {
+    projects,
+    selectedProject,
+    setSelectedProject,
+    isLoadingProjects,
+    isLoadingTasks,
+  } = useBacklog();
 
   // Group projects by subfolder, with base project first
   const { groupedProjects, baseProjectPath } = useMemo(() => {
-    if (projects.length === 0) return { groupedProjects: [], baseProjectPath: null };
+    if (projects.length === 0)
+      return { groupedProjects: [], baseProjectPath: null };
 
     // Find the base project (shortest path)
     let basePath: string | null = null;
@@ -109,7 +116,7 @@ export function ProjectSelector() {
 
     // Then other groups sorted alphabetically
     const sortedGroupNames = Array.from(groups.keys()).sort((a, b) =>
-      (a || '').localeCompare(b || '')
+      (a || "").localeCompare(b || ""),
     );
 
     for (const groupName of sortedGroupNames) {
@@ -128,16 +135,18 @@ export function ProjectSelector() {
   };
 
   // Flatten for finding effective selected project
-  const allProjects = useMemo(() =>
-    groupedProjects.flatMap(g => g.projects),
-    [groupedProjects]
+  const allProjects = useMemo(
+    () => groupedProjects.flatMap((g) => g.projects),
+    [groupedProjects],
   );
 
   if (isLoadingProjects) {
     return (
       <div className="flex items-center gap-2">
         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-        <span className="text-sm text-muted-foreground">Loading projects...</span>
+        <span className="text-sm text-muted-foreground">
+          Loading projects...
+        </span>
       </div>
     );
   }
@@ -145,7 +154,9 @@ export function ProjectSelector() {
   if (allProjects.length === 0) {
     return (
       <div className="flex items-center gap-2">
-        <span className="text-sm text-muted-foreground">No backlog projects found</span>
+        <span className="text-sm text-muted-foreground">
+          No backlog projects found
+        </span>
       </div>
     );
   }
@@ -156,7 +167,7 @@ export function ProjectSelector() {
     <div className="flex items-center gap-2">
       <span className="text-sm text-muted-foreground">Project:</span>
       <Select
-        value={effectiveSelectedProject?.path || ''}
+        value={effectiveSelectedProject?.path || ""}
         onValueChange={(value) => setSelectedProject(value)}
         disabled={isLoadingTasks}
       >
@@ -168,13 +179,20 @@ export function ProjectSelector() {
             </div>
           ) : (
             <SelectValue placeholder="Select a project">
-              {effectiveSelectedProject ? getDisplayName(effectiveSelectedProject) : 'Select a project'}
+              {effectiveSelectedProject
+                ? getDisplayName(effectiveSelectedProject)
+                : "Select a project"}
             </SelectValue>
           )}
         </SelectTrigger>
-        <SelectContent position="popper" side="bottom" align="start" className="max-h-[300px] z-[70]">
+        <SelectContent
+          position="popper"
+          side="bottom"
+          align="start"
+          className="max-h-[300px] z-[70]"
+        >
           {groupedProjects.map((group) => (
-            <SelectGroup key={group.name ?? '__base__'}>
+            <SelectGroup key={group.name ?? "__base__"}>
               {group.name !== null && (
                 <SelectLabel className="text-xs text-muted-foreground font-normal px-2 py-1">
                   {group.name}/
@@ -187,7 +205,11 @@ export function ProjectSelector() {
                 return (
                   <SelectItem key={project.path} value={project.path}>
                     <div className="flex items-center gap-2">
-                      <span className={cn(isBaseProject && "text-green-500 font-medium")}>
+                      <span
+                        className={cn(
+                          isBaseProject && "text-green-500 font-medium",
+                        )}
+                      >
                         {displayName}
                       </span>
                       <span className="text-xs text-muted-foreground">

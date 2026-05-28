@@ -3,11 +3,11 @@
  * Manages multiple backlog.md projects in memory with file watching
  */
 
-import { promises as fs } from 'fs';
-import { watch, type FSWatcher } from 'fs';
-import { join, basename } from 'path';
-import { EventEmitter } from 'events';
-import { glob } from 'glob';
+import { promises as fs } from "fs";
+import { watch, type FSWatcher } from "fs";
+import { join, basename } from "path";
+import { EventEmitter } from "events";
+import { glob } from "glob";
 import {
   parseTask,
   parseDocument,
@@ -15,7 +15,7 @@ import {
   parseMilestone,
   parseConfig,
   serializeTask,
-} from './parser';
+} from "./parser";
 import type {
   BacklogProject,
   Task,
@@ -24,13 +24,13 @@ import type {
   Milestone,
   BacklogStoreEvent,
   BacklogStoreEventData,
-} from '@/types/backlog';
+} from "@/types/backlog";
 
 export class MultiBacklogStore extends EventEmitter {
   private projects = new Map<string, BacklogProject>();
   private activeProjectPath: string | null = null;
   private watchers = new Map<string, FSWatcher[]>();
-  private workspaceRoot: string = '';
+  private workspaceRoot: string = "";
   // Map from project path -> (task ID -> filename) for efficient deleted task lookup
   private taskIdToFilename = new Map<string, Map<string, string>>();
 
@@ -44,38 +44,41 @@ export class MultiBacklogStore extends EventEmitter {
   async scanWorkspace(basePath: string): Promise<void> {
     this.workspaceRoot = basePath;
     const dirs = await this.findBacklogDirectories(basePath);
-    
+
     console.log(`[MultiBacklogStore] Found ${dirs.length} backlog directories`);
-    
-    await Promise.all(dirs.map(dir => this.loadProject(dir)));
-    
-    this.emit('projects-loaded', { projects: this.getAllProjects() });
+
+    await Promise.all(dirs.map((dir) => this.loadProject(dir)));
+
+    this.emit("projects-loaded", { projects: this.getAllProjects() });
   }
 
   /**
    * Find all directories containing backlog/config.yml
    * Resolves symlinks and deduplicates to avoid showing the same project multiple times
    */
-  private async findBacklogDirectories(basePath: string, maxDepth: number = 5): Promise<string[]> {
+  private async findBacklogDirectories(
+    basePath: string,
+    maxDepth: number = 5,
+  ): Promise<string[]> {
     try {
-      const configFiles = await glob('**/backlog/config.yml', {
+      const configFiles = await glob("**/backlog/config.yml", {
         cwd: basePath,
         absolute: false,
         maxDepth,
         ignore: [
-          '**/node_modules/**',
-          '**/.git/**',
-          '**/dist/**',
-          '**/build/**',
+          "**/node_modules/**",
+          "**/.git/**",
+          "**/dist/**",
+          "**/build/**",
           // Exclude task worktrees/clones (e.g., flowspec-task-582/, project-task-5/)
           // Match both the directory itself and its contents using wildcards
-          '**/*-task-[0-9]*',    // any task worktree directory (single or multi-digit)
-          '**/*-task-[0-9]*/**', // any task worktree directory contents
+          "**/*-task-[0-9]*", // any task worktree directory (single or multi-digit)
+          "**/*-task-[0-9]*/**", // any task worktree directory contents
           // Exclude archived/hidden backlogs
-          '**/.backlog/**',
+          "**/.backlog/**",
           // Exclude completed/archived task folders
-          '**/completed/**',
-          '**/archived/**',
+          "**/completed/**",
+          "**/archived/**",
         ],
         follow: true, // Follow symlinks; we then resolve to canonical paths with realpath and deduplicate
       });
@@ -88,7 +91,7 @@ export class MultiBacklogStore extends EventEmitter {
       for (const file of configFiles) {
         // Remove 'backlog/config.yml' suffix to get project directory
         // Handle both root level (backlog/config.yml) and nested (foo/backlog/config.yml)
-        const projectDir = file.replace(/\/?backlog\/config\.yml$/, '');
+        const projectDir = file.replace(/\/?backlog\/config\.yml$/, "");
         // If projectDir is empty, we're at the base path itself
         const fullPath = projectDir ? join(basePath, projectDir) : basePath;
 
@@ -104,13 +107,19 @@ export class MultiBacklogStore extends EventEmitter {
           // Note: Duplicate symlink paths are silently skipped - this is expected behavior
         } catch (realpathError) {
           // If realpath fails (e.g., broken symlink), skip this path
-          console.warn(`[MultiBacklogStore] Could not resolve path ${fullPath}:`, realpathError);
+          console.warn(
+            `[MultiBacklogStore] Could not resolve path ${fullPath}:`,
+            realpathError,
+          );
         }
       }
 
       return uniqueDirs;
     } catch (error) {
-      console.error('[MultiBacklogStore] Error finding backlog directories:', error);
+      console.error(
+        "[MultiBacklogStore] Error finding backlog directories:",
+        error,
+      );
       return [];
     }
   }
@@ -120,28 +129,30 @@ export class MultiBacklogStore extends EventEmitter {
    */
   async loadProject(projectDir: string): Promise<void> {
     try {
-      const backlogDir = join(projectDir, 'backlog');
+      const backlogDir = join(projectDir, "backlog");
 
       // 1. Load config (required)
-      const configPath = join(backlogDir, 'config.yml');
+      const configPath = join(backlogDir, "config.yml");
       let config;
 
       try {
-        const configContent = await fs.readFile(configPath, 'utf-8');
+        const configContent = await fs.readFile(configPath, "utf-8");
         config = parseConfig(configContent);
       } catch (configError: any) {
         // Note: parseConfig internally handles YAML parse errors and returns defaults,
         // so errors here are typically file system issues (missing, permission denied, etc.)
-        const errorType = configError.code === 'ENOENT' ? 'missing' : 'read-error';
-        const errorMessage = errorType === 'missing'
-          ? `Config file not found: ${configPath}`
-          : `Failed to read config: ${configError.message}`;
+        const errorType =
+          configError.code === "ENOENT" ? "missing" : "read-error";
+        const errorMessage =
+          errorType === "missing"
+            ? `Config file not found: ${configPath}`
+            : `Failed to read config: ${configError.message}`;
 
         console.error(`[MultiBacklogStore] ${errorMessage}`);
-        this.emitEvent('project-error', {
+        this.emitEvent("project-error", {
           projectPath: projectDir,
           error: new Error(errorMessage),
-          errorType
+          errorType,
         });
         // Remove any previously loaded project state to avoid stale data
         this.removeProject(projectDir);
@@ -149,13 +160,16 @@ export class MultiBacklogStore extends EventEmitter {
       }
 
       // 2. Load tasks and build ID-to-filename map
-      const taskFiles = await glob('tasks/*.md', { cwd: backlogDir });
+      const taskFiles = await glob("tasks/*.md", { cwd: backlogDir });
       const tasks: Task[] = [];
       const idToFilename = new Map<string, string>();
 
       for (const taskFile of taskFiles) {
         try {
-          const content = await fs.readFile(join(backlogDir, taskFile), 'utf-8');
+          const content = await fs.readFile(
+            join(backlogDir, taskFile),
+            "utf-8",
+          );
           const task = parseTask(content);
           tasks.push(task);
           // Track which filename contains which task ID for efficient deletion lookup
@@ -166,12 +180,15 @@ export class MultiBacklogStore extends EventEmitter {
             const previousFile = idToFilename.get(task.id);
             console.warn(
               `[MultiBacklogStore] Duplicate task ID "${task.id}" detected in project "${projectDir}". ` +
-              `Previously mapped to "${previousFile}", now also found in "${taskFilename}".`
+                `Previously mapped to "${previousFile}", now also found in "${taskFilename}".`,
             );
           }
           idToFilename.set(task.id, taskFilename);
         } catch (error) {
-          console.error(`[MultiBacklogStore] Error parsing task ${taskFile}:`, error);
+          console.error(
+            `[MultiBacklogStore] Error parsing task ${taskFile}:`,
+            error,
+          );
         }
       }
       this.taskIdToFilename.set(projectDir, idToFilename);
@@ -179,9 +196,9 @@ export class MultiBacklogStore extends EventEmitter {
       // 3. Load documents (optional)
       const documents: Document[] = [];
       try {
-        const docFiles = await glob('docs/*.md', { cwd: backlogDir });
+        const docFiles = await glob("docs/*.md", { cwd: backlogDir });
         for (const docFile of docFiles) {
-          const content = await fs.readFile(join(backlogDir, docFile), 'utf-8');
+          const content = await fs.readFile(join(backlogDir, docFile), "utf-8");
           const doc = parseDocument(content);
           documents.push(doc);
         }
@@ -192,10 +209,15 @@ export class MultiBacklogStore extends EventEmitter {
       // 4. Load decisions (optional)
       const decisions: Decision[] = [];
       try {
-        const decisionFiles = await glob('.logs/decisions/*.jsonl', { cwd: backlogDir });
+        const decisionFiles = await glob(".logs/decisions/*.jsonl", {
+          cwd: backlogDir,
+        });
         for (const decisionFile of decisionFiles) {
-          const content = await fs.readFile(join(backlogDir, decisionFile), 'utf-8');
-          const lines = content.split('\n').filter(line => line.trim());
+          const content = await fs.readFile(
+            join(backlogDir, decisionFile),
+            "utf-8",
+          );
+          const lines = content.split("\n").filter((line) => line.trim());
           for (const line of lines) {
             const decision = parseDecisionLine(line);
             if (decision) decisions.push(decision);
@@ -208,9 +230,14 @@ export class MultiBacklogStore extends EventEmitter {
       // 5. Load milestones (optional)
       const milestones: Milestone[] = [];
       try {
-        const milestoneFiles = await glob('milestones/*.md', { cwd: backlogDir });
+        const milestoneFiles = await glob("milestones/*.md", {
+          cwd: backlogDir,
+        });
         for (const milestoneFile of milestoneFiles) {
-          const content = await fs.readFile(join(backlogDir, milestoneFile), 'utf-8');
+          const content = await fs.readFile(
+            join(backlogDir, milestoneFile),
+            "utf-8",
+          );
           const milestone = parseMilestone(content);
           milestones.push(milestone);
         }
@@ -237,11 +264,15 @@ export class MultiBacklogStore extends EventEmitter {
       this.unwatchProject(projectDir);
       this.watchProject(projectDir);
 
-      console.log(`[MultiBacklogStore] Loaded project: ${config.projectName} (${tasks.length} tasks)`);
-      this.emit('project-loaded', { projectPath: projectDir });
-
+      console.log(
+        `[MultiBacklogStore] Loaded project: ${config.projectName} (${tasks.length} tasks)`,
+      );
+      this.emit("project-loaded", { projectPath: projectDir });
     } catch (error) {
-      console.error(`[MultiBacklogStore] Error loading project ${projectDir}:`, error);
+      console.error(
+        `[MultiBacklogStore] Error loading project ${projectDir}:`,
+        error,
+      );
     }
   }
 
@@ -251,11 +282,14 @@ export class MultiBacklogStore extends EventEmitter {
   private unwatchProject(projectPath: string): void {
     const existingWatchers = this.watchers.get(projectPath);
     if (existingWatchers) {
-      existingWatchers.forEach(watcher => {
+      existingWatchers.forEach((watcher) => {
         try {
           watcher.close();
         } catch (error) {
-          console.error(`[MultiBacklogStore] Error closing watcher for ${projectPath}:`, error);
+          console.error(
+            `[MultiBacklogStore] Error closing watcher for ${projectPath}:`,
+            error,
+          );
         }
       });
       this.watchers.delete(projectPath);
@@ -266,7 +300,7 @@ export class MultiBacklogStore extends EventEmitter {
    * Watch a project directory for file changes
    */
   private watchProject(projectPath: string): void {
-    const backlogDir = join(projectPath, 'backlog');
+    const backlogDir = join(projectPath, "backlog");
     const watchers: FSWatcher[] = [];
 
     // Handler for watcher errors (e.g., directory deleted)
@@ -274,40 +308,52 @@ export class MultiBacklogStore extends EventEmitter {
       const nodeError = error as NodeJS.ErrnoException;
 
       // Directory was deleted - clean up the project
-      if (nodeError.code === 'ENOENT' || nodeError.code === 'EPERM') {
-        console.log(`[MultiBacklogStore] Project directory deleted or inaccessible: ${projectPath}`);
+      if (nodeError.code === "ENOENT" || nodeError.code === "EPERM") {
+        console.log(
+          `[MultiBacklogStore] Project directory deleted or inaccessible: ${projectPath}`,
+        );
         this.removeProject(projectPath);
         return;
       }
 
-      console.error(`[MultiBacklogStore] Watcher error for ${projectPath}:`, error);
-      this.emitEvent('error', { error, projectPath });
+      console.error(
+        `[MultiBacklogStore] Watcher error for ${projectPath}:`,
+        error,
+      );
+      this.emitEvent("error", { error, projectPath });
     };
 
     try {
       // Watch tasks directory
-      const tasksWatcher = watch(join(backlogDir, 'tasks'), async (event, filename) => {
-        if (filename && filename.endsWith('.md')) {
-          console.log(`[MultiBacklogStore] Task file changed: ${filename}`);
-          await this.reloadTask(projectPath, filename);
-          this.emitEvent('tasks-updated', { projectPath });
-        }
-      });
-      tasksWatcher.on('error', handleWatcherError);
+      const tasksWatcher = watch(
+        join(backlogDir, "tasks"),
+        async (event, filename) => {
+          if (filename && filename.endsWith(".md")) {
+            console.log(`[MultiBacklogStore] Task file changed: ${filename}`);
+            await this.reloadTask(projectPath, filename);
+            this.emitEvent("tasks-updated", { projectPath });
+          }
+        },
+      );
+      tasksWatcher.on("error", handleWatcherError);
       watchers.push(tasksWatcher);
 
       // Watch config file
-      const configWatcher = watch(join(backlogDir, 'config.yml'), async () => {
-        console.log(`[MultiBacklogStore] Config changed, reloading project: ${projectPath}`);
+      const configWatcher = watch(join(backlogDir, "config.yml"), async () => {
+        console.log(
+          `[MultiBacklogStore] Config changed, reloading project: ${projectPath}`,
+        );
         await this.loadProject(projectPath);
       });
-      configWatcher.on('error', handleWatcherError);
+      configWatcher.on("error", handleWatcherError);
       watchers.push(configWatcher);
 
       this.watchers.set(projectPath, watchers);
-
     } catch (error) {
-      console.error(`[MultiBacklogStore] Error setting up watchers for ${projectPath}:`, error);
+      console.error(
+        `[MultiBacklogStore] Error setting up watchers for ${projectPath}:`,
+        error,
+      );
     }
   }
 
@@ -330,26 +376,29 @@ export class MultiBacklogStore extends EventEmitter {
 
     if (removed) {
       console.log(`[MultiBacklogStore] Removed project: ${projectPath}`);
-      this.emitEvent('project-removed', { projectPath });
+      this.emitEvent("project-removed", { projectPath });
     }
   }
 
   /**
    * Reload a single task file
    */
-  private async reloadTask(projectPath: string, filename: string): Promise<void> {
+  private async reloadTask(
+    projectPath: string,
+    filename: string,
+  ): Promise<void> {
     try {
       const project = this.projects.get(projectPath);
       if (!project) return;
 
-      const taskPath = join(projectPath, 'backlog', 'tasks', filename);
+      const taskPath = join(projectPath, "backlog", "tasks", filename);
 
       try {
-        const content = await fs.readFile(taskPath, 'utf-8');
+        const content = await fs.readFile(taskPath, "utf-8");
         const task = parseTask(content);
 
         // Update or add task
-        const existingIndex = project.tasks.findIndex(t => t.id === task.id);
+        const existingIndex = project.tasks.findIndex((t) => t.id === task.id);
         if (existingIndex >= 0) {
           project.tasks[existingIndex] = task;
         } else {
@@ -357,17 +406,19 @@ export class MultiBacklogStore extends EventEmitter {
         }
 
         // Update ID-to-filename mapping
-        const idToFilename = this.taskIdToFilename.get(projectPath) || new Map();
+        const idToFilename =
+          this.taskIdToFilename.get(projectPath) || new Map();
         idToFilename.set(task.id, filename);
         this.taskIdToFilename.set(projectPath, idToFilename);
 
         project.lastUpdated = new Date().toISOString();
         project.taskCount = project.tasks.length;
-
       } catch (error: any) {
         // Handle deleted/renamed files by removing the task from memory
-        if (error.code === 'ENOENT') {
-          console.log(`[MultiBacklogStore] Task file deleted/renamed: ${filename}, removing from memory`);
+        if (error.code === "ENOENT") {
+          console.log(
+            `[MultiBacklogStore] Task file deleted/renamed: ${filename}, removing from memory`,
+          );
 
           // Use ID-to-filename map to find task ID by filename (O(n) in map size, but avoids I/O)
           const idToFilename = this.taskIdToFilename.get(projectPath);
@@ -385,15 +436,19 @@ export class MultiBacklogStore extends EventEmitter {
 
           // Fallback: try by filename (common case: filename matches task ID)
           if (!taskIdToRemove) {
-            const filenameWithoutExt = filename.replace(/\.md$/, '');
-            const exists = project.tasks.some(t => t.id === filenameWithoutExt);
+            const filenameWithoutExt = filename.replace(/\.md$/, "");
+            const exists = project.tasks.some(
+              (t) => t.id === filenameWithoutExt,
+            );
             if (exists) {
               taskIdToRemove = filenameWithoutExt;
             }
           }
 
           if (taskIdToRemove) {
-            const existingIndex = project.tasks.findIndex(t => t.id === taskIdToRemove);
+            const existingIndex = project.tasks.findIndex(
+              (t) => t.id === taskIdToRemove,
+            );
             if (existingIndex >= 0) {
               project.tasks.splice(existingIndex, 1);
               project.lastUpdated = new Date().toISOString();
@@ -402,16 +457,20 @@ export class MultiBacklogStore extends EventEmitter {
               if (idToFilename) {
                 idToFilename.delete(taskIdToRemove);
               }
-              console.log(`[MultiBacklogStore] Removed task from memory: ${taskIdToRemove}`);
+              console.log(
+                `[MultiBacklogStore] Removed task from memory: ${taskIdToRemove}`,
+              );
             }
           }
         } else {
           throw error;
         }
       }
-
     } catch (error) {
-      console.error(`[MultiBacklogStore] Error reloading task ${filename}:`, error);
+      console.error(
+        `[MultiBacklogStore] Error reloading task ${filename}:`,
+        error,
+      );
     }
   }
 
@@ -422,9 +481,9 @@ export class MultiBacklogStore extends EventEmitter {
     if (!this.projects.has(projectPath)) {
       throw new Error(`Project not found: ${projectPath}`);
     }
-    
+
     this.activeProjectPath = projectPath;
-    this.emitEvent('project-switched', { projectPath });
+    this.emitEvent("project-switched", { projectPath });
   }
 
   /**
@@ -459,17 +518,21 @@ export class MultiBacklogStore extends EventEmitter {
   /**
    * Update a task (writes to file)
    */
-  async updateTask(projectPath: string, taskId: string, updates: Partial<Task>): Promise<Task | null> {
+  async updateTask(
+    projectPath: string,
+    taskId: string,
+    updates: Partial<Task>,
+  ): Promise<Task | null> {
     try {
       const project = this.projects.get(projectPath);
       if (!project) throw new Error(`Project not found: ${projectPath}`);
 
-      const task = project.tasks.find(t => t.id === taskId);
+      const task = project.tasks.find((t) => t.id === taskId);
       if (!task) throw new Error(`Task not found: ${taskId}`);
 
       // Apply updates
       Object.assign(task, updates);
-      task.updatedDate = new Date().toISOString().split('T')[0];
+      task.updatedDate = new Date().toISOString().split("T")[0];
 
       // Find task file
       const taskFilePath = await this.findTaskFile(projectPath, taskId);
@@ -482,23 +545,29 @@ export class MultiBacklogStore extends EventEmitter {
       const tmpPath = `${taskFilePath}.tmp`;
       const backupPath = `${taskFilePath}.bak`;
 
-      await fs.writeFile(tmpPath, content, 'utf-8');
+      await fs.writeFile(tmpPath, content, "utf-8");
 
       try {
         await fs.rename(taskFilePath, backupPath);
       } catch (renameError) {
         const err = renameError as NodeJS.ErrnoException;
         // File may not exist on first write - this is expected, skip logging but allow proceed
-        if (err.code === 'ENOENT') {
+        if (err.code === "ENOENT") {
           // No original file to back up; continue with write
         } else {
           // For any other error, log, clean up temp file, and abort to avoid data loss
-          console.warn(`[MultiBacklogStore] Failed to create backup file ${backupPath}:`, renameError);
+          console.warn(
+            `[MultiBacklogStore] Failed to create backup file ${backupPath}:`,
+            renameError,
+          );
           try {
             await fs.unlink(tmpPath);
           } catch (tmpUnlinkError) {
-            if ((tmpUnlinkError as NodeJS.ErrnoException).code !== 'ENOENT') {
-              console.warn(`[MultiBacklogStore] Failed to remove temporary file ${tmpPath}:`, tmpUnlinkError);
+            if ((tmpUnlinkError as NodeJS.ErrnoException).code !== "ENOENT") {
+              console.warn(
+                `[MultiBacklogStore] Failed to remove temporary file ${tmpPath}:`,
+                tmpUnlinkError,
+              );
             }
           }
           throw renameError;
@@ -509,18 +578,28 @@ export class MultiBacklogStore extends EventEmitter {
         await fs.rename(tmpPath, taskFilePath);
       } catch (finalRenameError) {
         // Critical: Final rename failed - attempt to restore from backup to prevent data loss
-        console.error(`[MultiBacklogStore] Final rename failed for ${taskFilePath}:`, finalRenameError);
+        console.error(
+          `[MultiBacklogStore] Final rename failed for ${taskFilePath}:`,
+          finalRenameError,
+        );
         try {
           await fs.rename(backupPath, taskFilePath);
-          console.log(`[MultiBacklogStore] Restored original file from backup: ${taskFilePath}`);
+          console.log(
+            `[MultiBacklogStore] Restored original file from backup: ${taskFilePath}`,
+          );
         } catch (restoreError) {
           // Only log as CRITICAL if backup existed (not ENOENT)
           // ENOENT is expected when no original file existed (first write scenario)
           const errCode = (restoreError as NodeJS.ErrnoException).code;
-          if (errCode === 'ENOENT') {
-            console.warn(`[MultiBacklogStore] No backup to restore for ${taskFilePath} (file may be new)`);
+          if (errCode === "ENOENT") {
+            console.warn(
+              `[MultiBacklogStore] No backup to restore for ${taskFilePath} (file may be new)`,
+            );
           } else {
-            console.error(`[MultiBacklogStore] CRITICAL: Failed to restore backup for ${taskFilePath}:`, restoreError);
+            console.error(
+              `[MultiBacklogStore] CRITICAL: Failed to restore backup for ${taskFilePath}:`,
+              restoreError,
+            );
           }
         }
         // Clean up temp file
@@ -537,17 +616,22 @@ export class MultiBacklogStore extends EventEmitter {
         await fs.unlink(backupPath);
       } catch (unlinkError) {
         // Only log if error is not ENOENT (file not found)
-        if ((unlinkError as NodeJS.ErrnoException).code !== 'ENOENT') {
-          console.warn(`[MultiBacklogStore] Failed to remove backup file ${backupPath}:`, unlinkError);
+        if ((unlinkError as NodeJS.ErrnoException).code !== "ENOENT") {
+          console.warn(
+            `[MultiBacklogStore] Failed to remove backup file ${backupPath}:`,
+            unlinkError,
+          );
         }
       }
 
-      this.emitEvent('task-updated', { projectPath, taskId, data: task });
+      this.emitEvent("task-updated", { projectPath, taskId, data: task });
       return task;
-
     } catch (error) {
-      console.error(`[MultiBacklogStore] Error updating task ${taskId}:`, error);
-      this.emitEvent('error', { error: error as Error });
+      console.error(
+        `[MultiBacklogStore] Error updating task ${taskId}:`,
+        error,
+      );
+      this.emitEvent("error", { error: error as Error });
       return null;
     }
   }
@@ -555,13 +639,16 @@ export class MultiBacklogStore extends EventEmitter {
   /**
    * Find task file by ID
    */
-  private async findTaskFile(projectPath: string, taskId: string): Promise<string | null> {
-    const tasksDir = join(projectPath, 'backlog', 'tasks');
-    const files = await glob('*.md', { cwd: tasksDir });
+  private async findTaskFile(
+    projectPath: string,
+    taskId: string,
+  ): Promise<string | null> {
+    const tasksDir = join(projectPath, "backlog", "tasks");
+    const files = await glob("*.md", { cwd: tasksDir });
 
     for (const file of files) {
       const filePath = join(tasksDir, file);
-      const content = await fs.readFile(filePath, 'utf-8');
+      const content = await fs.readFile(filePath, "utf-8");
       const task = parseTask(content);
       if (task.id === taskId) {
         return filePath;
@@ -580,16 +667,16 @@ export class MultiBacklogStore extends EventEmitter {
       if (!project) throw new Error(`Project not found: ${projectPath}`);
 
       // Set created date
-      task.createdDate = new Date().toISOString().split('T')[0];
+      task.createdDate = new Date().toISOString().split("T")[0];
       task.updatedDate = task.createdDate;
 
       // Generate filename
       const filename = `${task.id}.md`;
-      const taskFilePath = join(projectPath, 'backlog', 'tasks', filename);
+      const taskFilePath = join(projectPath, "backlog", "tasks", filename);
 
       // Write file
       const content = serializeTask(task);
-      await fs.writeFile(taskFilePath, content, 'utf-8');
+      await fs.writeFile(taskFilePath, content, "utf-8");
 
       // Add to project
       project.tasks.push(task);
@@ -601,12 +688,15 @@ export class MultiBacklogStore extends EventEmitter {
       idToFilename.set(task.id, filename);
       this.taskIdToFilename.set(projectPath, idToFilename);
 
-      this.emitEvent('task-created', { projectPath, taskId: task.id, data: task });
+      this.emitEvent("task-created", {
+        projectPath,
+        taskId: task.id,
+        data: task,
+      });
       return task;
-
     } catch (error) {
       console.error(`[MultiBacklogStore] Error creating task:`, error);
-      this.emitEvent('error', { error: error as Error });
+      this.emitEvent("error", { error: error as Error });
       return null;
     }
   }
@@ -619,7 +709,7 @@ export class MultiBacklogStore extends EventEmitter {
       const project = this.projects.get(projectPath);
       if (!project) throw new Error(`Project not found: ${projectPath}`);
 
-      const taskIndex = project.tasks.findIndex(t => t.id === taskId);
+      const taskIndex = project.tasks.findIndex((t) => t.id === taskId);
       if (taskIndex < 0) throw new Error(`Task not found: ${taskId}`);
 
       // Find and delete file
@@ -639,12 +729,14 @@ export class MultiBacklogStore extends EventEmitter {
         idToFilename.delete(taskId);
       }
 
-      this.emitEvent('task-deleted', { projectPath, taskId });
+      this.emitEvent("task-deleted", { projectPath, taskId });
       return true;
-
     } catch (error) {
-      console.error(`[MultiBacklogStore] Error deleting task ${taskId}:`, error);
-      this.emitEvent('error', { error: error as Error });
+      console.error(
+        `[MultiBacklogStore] Error deleting task ${taskId}:`,
+        error,
+      );
+      this.emitEvent("error", { error: error as Error });
       return false;
     }
   }
@@ -652,7 +744,10 @@ export class MultiBacklogStore extends EventEmitter {
   /**
    * Emit typed event
    */
-  private emitEvent(event: BacklogStoreEvent, data: Partial<BacklogStoreEventData> = {}): void {
+  private emitEvent(
+    event: BacklogStoreEvent,
+    data: Partial<BacklogStoreEventData> = {},
+  ): void {
     const eventData: BacklogStoreEventData = {
       event,
       ...data,

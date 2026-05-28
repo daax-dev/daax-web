@@ -107,7 +107,7 @@ export function SessionTabs({
       setEditingSessionId(session.id);
       setEditingName(session.name || getDefaultSessionName(session));
     },
-    [onRenameSession]
+    [onRenameSession],
   );
 
   const handleFinishEditing = useCallback(() => {
@@ -127,7 +127,7 @@ export function SessionTabs({
         setEditingName("");
       }
     },
-    [handleFinishEditing]
+    [handleFinishEditing],
   );
 
   const handleClose = useCallback(
@@ -135,12 +135,17 @@ export function SessionTabs({
       e.stopPropagation();
       onCloseSession(sessionId);
     },
-    [onCloseSession]
+    [onCloseSession],
   );
 
   if (sessions.length === 0) {
     return (
-      <div className={cn("flex items-center border-b bg-muted/30 px-2 py-1", className)}>
+      <div
+        className={cn(
+          "flex items-center border-b bg-muted/30 px-2 py-1",
+          className,
+        )}
+      >
         <Button
           variant="ghost"
           size="sm"
@@ -172,14 +177,14 @@ export function SessionTabs({
                 "flex items-center gap-2 px-3 py-1.5 rounded-t-md cursor-pointer text-sm transition-colors group min-w-[120px] max-w-[200px] border-b-2",
                 isActive
                   ? "bg-background border-primary text-foreground"
-                  : "bg-transparent border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  : "bg-transparent border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50",
               )}
             >
               {/* Status indicator */}
               <Circle
                 className={cn(
                   "h-2 w-2 shrink-0 fill-current",
-                  statusColors[session.status]
+                  statusColors[session.status],
                 )}
               />
 

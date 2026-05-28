@@ -32,7 +32,8 @@ async function scanRoutes(): Promise<RouteInfo[]> {
     const content = readFileSync(fullPath, "utf-8");
 
     // Find exported HTTP methods
-    const methodPattern = /export\s+(?:async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)/g;
+    const methodPattern =
+      /export\s+(?:async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)/g;
     const methods: string[] = [];
     let match;
     while ((match = methodPattern.exec(content)) !== null) {
@@ -100,8 +101,11 @@ async function main() {
     const unprotected = route.methods.filter(
       (m) => !route.protectedMethods.includes(m),
     );
-    const unprotStr = unprotected.length > 0 ? ` (public: ${unprotected.join(", ")})` : "";
-    console.log(`  /api/${route.path}  [${allMethods}]  auth: ${protMethods}${unprotStr}`);
+    const unprotStr =
+      unprotected.length > 0 ? ` (public: ${unprotected.join(", ")})` : "";
+    console.log(
+      `  /api/${route.path}  [${allMethods}]  auth: ${protMethods}${unprotStr}`,
+    );
   }
   console.log();
 
@@ -135,7 +139,9 @@ async function main() {
     console.log(
       `\n[ERROR] ${unprotectedWithWrites.length} route(s) have write methods without requireAuth.`,
     );
-    console.log("Review these routes and add auth protection or add to the allowlist.");
+    console.log(
+      "Review these routes and add auth protection or add to the allowlist.",
+    );
     process.exit(1);
   }
 }

@@ -26,8 +26,8 @@ export function FilesystemGrants({ className }: { className?: string }) {
       {/* Description */}
       <div className="text-center mb-8">
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-          Agents see only what you explicitly allow. Each path grant specifies read, write, or both—
-          everything else is invisible and inaccessible.
+          Agents see only what you explicitly allow. Each path grant specifies
+          read, write, or both—everything else is invisible and inaccessible.
         </p>
       </div>
 
@@ -35,7 +35,9 @@ export function FilesystemGrants({ className }: { className?: string }) {
       <div className="rounded-xl border border-border/50 bg-muted/10 overflow-hidden">
         <div className="p-4 border-b border-border/50 bg-muted/20 flex items-center gap-3">
           <Folder className="w-5 h-5 text-primary" />
-          <span className="font-semibold text-foreground">Filesystem Access Grants</span>
+          <span className="font-semibold text-foreground">
+            Filesystem Access Grants
+          </span>
         </div>
 
         <div className="divide-y divide-border/30">
@@ -52,7 +54,9 @@ export function FilesystemGrants({ className }: { className?: string }) {
               )}
 
               {/* Path */}
-              <span className="font-mono text-sm text-foreground flex-1">{grant.path}</span>
+              <span className="font-mono text-sm text-foreground flex-1">
+                {grant.path}
+              </span>
 
               {/* Permissions */}
               <div className="flex items-center gap-3">
@@ -60,22 +64,30 @@ export function FilesystemGrants({ className }: { className?: string }) {
                   className={cn(
                     "flex items-center gap-1.5 px-2 py-1 rounded text-xs",
                     grant.read
-                      ? "bg-green-500/20 text-green-400"
-                      : "bg-red-500/20 text-red-400"
+                      ? "bg-success/20 text-success"
+                      : "bg-destructive/20 text-destructive",
                   )}
                 >
-                  {grant.read ? <Eye className="w-3 h-3" /> : <X className="w-3 h-3" />}
+                  {grant.read ? (
+                    <Eye className="w-3 h-3" />
+                  ) : (
+                    <X className="w-3 h-3" />
+                  )}
                   Read
                 </div>
                 <div
                   className={cn(
                     "flex items-center gap-1.5 px-2 py-1 rounded text-xs",
                     grant.write
-                      ? "bg-green-500/20 text-green-400"
-                      : "bg-red-500/20 text-red-400"
+                      ? "bg-success/20 text-success"
+                      : "bg-destructive/20 text-destructive",
                   )}
                 >
-                  {grant.write ? <Pencil className="w-3 h-3" /> : <X className="w-3 h-3" />}
+                  {grant.write ? (
+                    <Pencil className="w-3 h-3" />
+                  ) : (
+                    <X className="w-3 h-3" />
+                  )}
                   Write
                 </div>
               </div>
@@ -87,15 +99,22 @@ export function FilesystemGrants({ className }: { className?: string }) {
       {/* Key points */}
       <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
         <div className="p-4 rounded-lg bg-muted/20 border border-border/40">
-          <h4 className="font-semibold text-foreground mb-2">Explicit Over Implicit</h4>
+          <h4 className="font-semibold text-foreground mb-2">
+            Explicit Over Implicit
+          </h4>
           <p className="text-muted-foreground">
-            No default access. Every file and directory must be explicitly granted—fail-safe by design.
+            No default access. Every file and directory must be explicitly
+            granted—fail-safe by design.
           </p>
         </div>
         <div className="p-4 rounded-lg bg-muted/20 border border-border/40">
-          <h4 className="font-semibold text-foreground mb-2">Glob Patterns Supported</h4>
+          <h4 className="font-semibold text-foreground mb-2">
+            Glob Patterns Supported
+          </h4>
           <p className="text-muted-foreground">
-            Use wildcards like <code className="text-xs bg-muted px-1 rounded">/src/**/*.ts</code> to grant access to patterns, not just individual paths.
+            Use wildcards like{" "}
+            <code className="text-xs bg-muted px-1 rounded">/src/**/*.ts</code>{" "}
+            to grant access to patterns, not just individual paths.
           </p>
         </div>
       </div>

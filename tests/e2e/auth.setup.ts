@@ -22,14 +22,14 @@ setup("authenticate via Pocket ID OAT", async ({ page }) => {
   if (!baseUrl) {
     throw new Error(
       "DAAX_AUTH_BASE_URL is required for auth setup. " +
-        "Set it to the Traefik-fronted daax URL (e.g., https://daax.galway.poley.dev)"
+        "Set it to the Traefik-fronted daax URL (e.g., https://daax.galway.poley.dev)",
     );
   }
 
   if (!oatCommand) {
     throw new Error(
       "POCKET_ID_OAT_COMMAND is required for auth setup. " +
-        'It should output a URL like "https://auth.galway.poley.dev/lc/oat/<token>"'
+        'It should output a URL like "https://auth.galway.poley.dev/lc/oat/<token>"',
     );
   }
 
@@ -41,9 +41,7 @@ setup("authenticate via Pocket ID OAT", async ({ page }) => {
   // OAT command may output extra text; find the URL line
   const urlMatch = oatOutput.match(/https?:\/\/\S+/);
   if (!urlMatch) {
-    throw new Error(
-      `Could not find URL in OAT command output:\n${oatOutput}`
-    );
+    throw new Error(`Could not find URL in OAT command output:\n${oatOutput}`);
   }
   const oatUrl = urlMatch[0];
   console.log(`OAT URL: ${oatUrl}`);

@@ -4,17 +4,32 @@
  * Type definitions for Docker Compose stack management.
  */
 
-import type { PortMapping, VolumeMount, HealthCheckConfig, WaitStrategy } from '../types';
+import type {
+  PortMapping,
+  VolumeMount,
+  HealthCheckConfig,
+  WaitStrategy,
+} from "../types";
 
 /**
  * Compose project status
  */
-export type ComposeProjectStatus = 'created' | 'running' | 'partial' | 'stopped' | 'error';
+export type ComposeProjectStatus =
+  | "created"
+  | "running"
+  | "partial"
+  | "stopped"
+  | "error";
 
 /**
  * Compose service status
  */
-export type ComposeServiceStatus = 'pending' | 'creating' | 'running' | 'stopped' | 'error';
+export type ComposeServiceStatus =
+  | "pending"
+  | "creating"
+  | "running"
+  | "stopped"
+  | "error";
 
 /**
  * Raw docker-compose.yml service definition
@@ -22,7 +37,9 @@ export type ComposeServiceStatus = 'pending' | 'creating' | 'running' | 'stopped
 export interface RawComposeService {
   image?: string;
   build?: string | { context: string; dockerfile?: string };
-  ports?: Array<string | { target: number; published?: number; protocol?: string }>;
+  ports?: Array<
+    string | { target: number; published?: number; protocol?: string }
+  >;
   environment?: Record<string, string> | string[];
   volumes?: string[];
   depends_on?: string[] | Record<string, { condition?: string }>;
@@ -129,5 +146,5 @@ export interface ComposeServiceLog {
   service: string;
   timestamp: string;
   message: string;
-  stream: 'stdout' | 'stderr';
+  stream: "stdout" | "stderr";
 }

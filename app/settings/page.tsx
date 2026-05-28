@@ -961,7 +961,8 @@ export default function SettingsPage() {
                 <div className="space-y-2">
                   <Label>Container Image</Label>
                   <p className="text-xs text-muted-foreground mb-3">
-                    Select a container variant for AI coding sessions. Grey images need to be pulled first.
+                    Select a container variant for AI coding sessions. Grey
+                    images need to be pulled first.
                   </p>
                   <ContainerImageSelector
                     registry={
@@ -1004,7 +1005,8 @@ export default function SettingsPage() {
                     placeholder="jpoley"
                   />
                   <p className="text-xs text-muted-foreground">
-                    Username/namespace for images (e.g., jpoley, ghcr.io/username)
+                    Username/namespace for images (e.g., jpoley,
+                    ghcr.io/username)
                   </p>
                 </div>
 

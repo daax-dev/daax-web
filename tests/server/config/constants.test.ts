@@ -125,7 +125,7 @@ describe("isAllowedOrigin", () => {
     it("should return true for production domains with hyphenated hostnames", () => {
       expect(isAllowedOrigin("https://daax.my-host.poley.dev")).toBe(true);
       expect(isAllowedOrigin("https://daax.my-long-hostname.poley.dev")).toBe(
-        true
+        true,
       );
     });
 
@@ -141,8 +141,12 @@ describe("isAllowedOrigin", () => {
     });
 
     it("should reject production domains with non-443 ports", () => {
-      expect(isAllowedOrigin("https://daax.kinsale.poley.dev:8080")).toBe(false);
-      expect(isAllowedOrigin("https://daax.kinsale.poley.dev:4200")).toBe(false);
+      expect(isAllowedOrigin("https://daax.kinsale.poley.dev:8080")).toBe(
+        false,
+      );
+      expect(isAllowedOrigin("https://daax.kinsale.poley.dev:4200")).toBe(
+        false,
+      );
     });
   });
 
@@ -152,9 +156,22 @@ describe("isAllowedOrigin", () => {
       expect(isAllowedOrigin("http://127.1.1.1")).toBe(false);
     });
 
-    it("should reject localhost subdomains", () => {
-      expect(isAllowedOrigin("http://app.localhost")).toBe(false);
-      expect(isAllowedOrigin("http://api.localhost:3000")).toBe(false);
+    it("should allow *.localhost subdomains (Traefik loopback hostnames)", () => {
+      // The .localhost TLD is reserved to loopback (RFC 6761), so *.localhost
+      // resolves to the local machine. The default `docker compose up` workflow
+      // serves the app via Traefik at http://daax.localhost (and code.localhost),
+      // so these origins must be allowed for the terminal WebSocket to connect.
+      // (Previously rejected; loosened intentionally to support local reverse-proxy.)
+      expect(isAllowedOrigin("http://daax.localhost")).toBe(true);
+      expect(isAllowedOrigin("http://app.localhost")).toBe(true);
+      expect(isAllowedOrigin("http://api.localhost:3000")).toBe(true);
+    });
+
+    it("should reject hosts that merely contain 'localhost' but don't end in .localhost", () => {
+      // Anchored to end with `.localhost` — spoofed external hosts are rejected.
+      expect(isAllowedOrigin("http://daax.localhost.evil.com")).toBe(false);
+      expect(isAllowedOrigin("http://localhost.evil.com")).toBe(false);
+      expect(isAllowedOrigin("http://notlocalhost")).toBe(false);
     });
 
     it("should reject localhost with path (should be origin only)", () => {
@@ -207,9 +224,11 @@ describe("isAllowedOrigin", () => {
     });
 
     it("should reject domains that contain the pattern but don't match", () => {
-      expect(isAllowedOrigin("https://fake-daax.kinsale.poley.dev")).toBe(false);
+      expect(isAllowedOrigin("https://fake-daax.kinsale.poley.dev")).toBe(
+        false,
+      );
       expect(isAllowedOrigin("https://daax.kinsale.poley.dev.evil.com")).toBe(
-        false
+        false,
       );
       expect(isAllowedOrigin("https://notdaax.kinsale.poley.dev")).toBe(false);
     });
