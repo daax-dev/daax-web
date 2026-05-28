@@ -214,9 +214,18 @@ export async function PATCH(
     );
 
     if (!updatedTask) {
+      // The project and task were both validated to exist above, so a null
+      // result here means the persist step failed (e.g. the task's markdown
+      // file is missing on disk, or a filesystem error occurred). Surface it
+      // as a server error with a clear message rather than a misleading 404 —
+      // a blanket 404 previously masked write failures as "task not found".
       return NextResponse.json(
-        { error: "Task not found or update failed" },
-        { status: 404 },
+        {
+          error: "Failed to persist task update",
+          message:
+            "The task exists in memory but its update could not be written to disk. Check server logs for the underlying error.",
+        },
+        { status: 500 },
       );
     }
 

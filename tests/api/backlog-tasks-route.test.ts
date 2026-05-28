@@ -473,6 +473,27 @@ describe("PATCH /api/backlog/tasks/[id]", () => {
     expect(data.error).toContain("not found");
   });
 
+  it("returns 500 (not 404) when update persist fails after task exists", async () => {
+    // Project and task both exist, but the store's write step fails and
+    // returns null. The route must surface this as a server error, not a
+    // misleading 404 (regression guard for the masked-write-failure bug).
+    mockUpdateTask.mockResolvedValue(null);
+
+    const request = createTestRequest("http://localhost/api/backlog/tasks/task-001", {
+      method: "PATCH",
+      body: JSON.stringify({
+        project: "/workspace/test-project",
+        updates: { status: "Done" },
+      }),
+    });
+
+    const response = await PATCH(request, { params: Promise.resolve({ id: "task-001" }) });
+    const data = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(data.error).toContain("persist");
+  });
+
   describe("label operations", () => {
     it("adds labels with addLabels", async () => {
       const request = createTestRequest(
