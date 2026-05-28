@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect, useMemo } from "react";
-import dynamic from "next/dynamic";
+import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Bot,
@@ -15,8 +15,6 @@ import {
   Braces,
   Code2,
   MonitorSmartphone,
-  Cloud,
-  Network,
   AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -33,33 +31,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getSettings } from "@/lib/settings";
 import { useProject } from "@/lib/project-context";
-import { buildTerminalWsUrl } from "@/lib/websocket-utils";
-
-const Terminal = dynamic(
-  () => import("@/components/terminal/Terminal").then((mod) => mod.Terminal),
-  { ssr: false },
-);
+import {
+  useTerminalManager,
+  type AIToolId as ManagerAIToolId,
+} from "@/components/terminal/TerminalManager";
 
 export type AIToolId = "claude" | "opencode" | "copilot" | "gemini" | "codex";
-export type LocationType = "local" | "tailscale" | "cloud";
-
-interface AgentTab {
-  id: string;
-  name: string;
-  key: number;
-  tool: AIToolId;
-  location: LocationType;
-  locationName: string;
-  recording: boolean;
-  status: "running" | "stopped";
-  startTime: number;
-  // Server-assigned docker container name (`daax-<8>`), captured when
-  // the Terminal forwards the first session message. Used to detect
-  // "stray/lost" tabs when the container disappears from `docker ps`.
-  containerName?: string;
-}
 
 // Tool icon + accent color mapping. Each AI tool gets an associated Lucide
 // glyph (some are brand marks, e.g. GitHub for Copilot) and a fixed accent
@@ -83,106 +61,101 @@ const TOOL_META: Record<
   opencode: { Icon: Code2, accent: "text-cyan-500", label: "OpenCode" },
 };
 
-const LOCATION_META: Record<
-  LocationType,
-  { Icon: React.ComponentType<{ className?: string }>; label: string }
-> = {
-  local: { Icon: MonitorSmartphone, label: "Local" },
-  tailscale: { Icon: Network, label: "Tailscale" },
-  cloud: { Icon: Cloud, label: "Cloud" },
-};
-
-const ACTIVE_SESSIONS_POLL_MS = 7_000;
-
 export function AgentTabsLayout() {
-  const [tabs, setTabs] = useState<AgentTab[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  const [tabCounter, setTabCounter] = useState(0);
+  // The tab bar is a thin view over the TerminalManager singleton. The
+  // manager renders the actual <Terminal> instances in a fixed-position
+  // container OUTSIDE any page (TerminalManagerProvider), so a session's
+  // WebSocket + container survive client-side navigation. This component
+  // therefore NEVER renders its own <Terminal> — it derives tabs from
+  // `aiSessions` and overlays the manager's persistent terminal onto the
+  // tab panel via getBoundingClientRect (same technique as AgentTreeLayout).
+  // On remount (e.g. nav away + back) the tabs repopulate automatically
+  // because they are computed from the still-live `aiSessions`.
+  const {
+    aiSessions,
+    activeAISessionId,
+    setActiveAISessionId,
+    createAISession,
+    removeAISession,
+    renameAISession,
+  } = useTerminalManager();
+
+  const { activeProject, getProjectPath, basePath } = useProject();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
   const [expandedTabId, setExpandedTabId] = useState<string | null>(null);
   const [launchDialogOpen, setLaunchDialogOpen] = useState(false);
   const [selectedTool, setSelectedTool] = useState<AIToolId>("claude");
-  const [selectedLocationName, setSelectedLocationName] = useState("muckross");
-  // Sets of `daax-*` container names from /api/ai/active-sessions (which
-  // queries `docker ps -a`, so it includes stopped/exited containers).
-  // `knownContainers` holds every session container regardless of state — a
-  // tab whose containerName is missing from it has truly disappeared (stray).
-  // `runningContainers` holds only `state === "running"` ones and drives the
-  // running/stopped status UI without conflating "stopped" with "gone".
-  const [knownContainers, setKnownContainers] = useState<Set<string>>(
-    new Set(),
-  );
-  const [runningContainers, setRunningContainers] = useState<Set<string>>(
-    new Set(),
-  );
-  // Whether the active-sessions list has been fetched at least once. Until
-  // it has, the container sets are empty for "not loaded yet" reasons, not
-  // because the containers are gone — so stray detection stays suppressed to
-  // avoid a false "stray" flash on a freshly-assigned containerName.
-  const [hasLoadedContainers, setHasLoadedContainers] = useState(false);
-  const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  // Tab DOM nodes by tab id, so arrow-key navigation can move focus to the
+  // Tab DOM nodes by session id, so arrow-key navigation can move focus to the
   // newly selected tab (roving tabindex / WAI-ARIA tabs pattern).
   const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const { activeProject, directories, basePath } = useProject();
+  const terminalContainerRef = useRef<HTMLDivElement>(null);
 
-  const getLocationType = (locationName: string): LocationType => {
-    if (locationName === "muckross") return "local";
-    if (["kinsale", "galway", "adare"].includes(locationName))
-      return "tailscale";
-    return "cloud";
-  };
+  const tabs = aiSessions;
+  const activeSession = useMemo(
+    () => aiSessions.find((s) => s.id === activeAISessionId) ?? null,
+    [aiSessions, activeAISessionId],
+  );
 
-  const addTab = useCallback(
-    (tool: AIToolId, location: LocationType, locationName: string) => {
-      const newId = `agent-${Date.now()}`;
-      const newCounter = tabCounter + 1;
-      setTabCounter(newCounter);
+  // If no tab is active but sessions exist (e.g. after returning from another
+  // page where activeAISessionId was cleared), select the most recent one so
+  // the tab bar always shows a live selection.
+  useEffect(() => {
+    if (!activeAISessionId && aiSessions.length > 0) {
+      setActiveAISessionId(aiSessions[aiSessions.length - 1].id);
+    }
+  }, [activeAISessionId, aiSessions, setActiveAISessionId]);
 
-      const newTab: AgentTab = {
-        id: newId,
-        name: `${TOOL_META[tool].label} ${newCounter}`,
-        key: newCounter,
-        tool,
-        location,
-        locationName,
-        recording: true,
-        status: "running",
-        startTime: Date.now(),
-      };
+  // Issue 2: deep-link "return to session" from the Sessions page.
+  // /ai-coding?session=<containerName> selects the matching live session.
+  useEffect(() => {
+    const target = searchParams.get("session");
+    if (!target) return;
+    const match = aiSessions.find((s) => s.containerName === target);
+    if (match) {
+      setActiveAISessionId(match.id);
+    }
+    // Clear the param so a refresh doesn't re-trigger selection.
+    router.replace("/ai-coding");
+  }, [searchParams, aiSessions, setActiveAISessionId, router]);
 
-      setTabs((prev) => [...prev, newTab]);
-      setActiveTabId(newId);
+  const launchSession = useCallback(
+    (tool: AIToolId) => {
+      const projectPath = getProjectPath();
+      if (activeProject) {
+        createAISession(tool as ManagerAIToolId, {
+          projectName: activeProject,
+          mountPath: projectPath,
+        });
+      } else {
+        createAISession(tool as ManagerAIToolId, { mountPath: basePath });
+      }
       setLaunchDialogOpen(false);
     },
-    [tabCounter],
+    [activeProject, getProjectPath, basePath, createAISession],
   );
 
   const closeTab = useCallback(
-    (tabId: string, e: React.MouseEvent) => {
+    (sessionId: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      setTabs((prev) => {
-        const newTabs = prev.filter((t) => t.id !== tabId);
-        if (activeTabId === tabId && newTabs.length > 0) {
-          setActiveTabId(newTabs[newTabs.length - 1].id);
-        } else if (newTabs.length === 0) {
-          setActiveTabId(null);
-        }
-        return newTabs;
-      });
-      if (expandedTabId === tabId) {
+      // removeAISession handles active-session reselection and worktree
+      // cleanup, and stops the underlying terminal/container.
+      void removeAISession(sessionId);
+      if (expandedTabId === sessionId) {
         setExpandedTabId(null);
       }
     },
-    [activeTabId, expandedTabId],
+    [removeAISession, expandedTabId],
   );
 
   const startEditing = useCallback(
-    (tabId: string, currentName: string, e: React.MouseEvent) => {
+    (sessionId: string, currentName: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      setEditingTabId(tabId);
+      setEditingTabId(sessionId);
       setEditingName(currentName);
     },
     [],
@@ -190,15 +163,11 @@ export function AgentTabsLayout() {
 
   const finishEditing = useCallback(() => {
     if (editingTabId && editingName.trim()) {
-      setTabs((prev) =>
-        prev.map((tab) =>
-          tab.id === editingTabId ? { ...tab, name: editingName.trim() } : tab,
-        ),
-      );
+      renameAISession(editingTabId, editingName.trim());
     }
     setEditingTabId(null);
     setEditingName("");
-  }, [editingTabId, editingName]);
+  }, [editingTabId, editingName, renameAISession]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -213,9 +182,9 @@ export function AgentTabsLayout() {
   );
 
   const toggleInfoPanel = useCallback(
-    (tabId: string, e: React.MouseEvent) => {
+    (sessionId: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      setExpandedTabId(expandedTabId === tabId ? null : tabId);
+      setExpandedTabId(expandedTabId === sessionId ? null : sessionId);
     },
     [expandedTabId],
   );
@@ -227,109 +196,89 @@ export function AgentTabsLayout() {
     }
   }, [editingTabId]);
 
-  // Keyboard shortcuts: Cmd/Ctrl + 1..9 to switch tabs. We bind on the
-  // window so this works even when focus is inside the xterm canvas
-  // (xterm.js wraps a textarea but still surfaces metaKey/ctrlKey).
+  // Keyboard shortcuts: Cmd/Ctrl + 1..9 to switch tabs. Bound on the window
+  // so it works even when focus is inside the xterm canvas.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Don't hijack the shortcut while renaming a tab — the inline rename
-      // input is only mounted when editingTabId is set, so this single guard
-      // covers it without breaking the deliberate xterm-focus behavior
-      // (xterm's textarea must still receive Cmd/Ctrl+1..9 tab switching).
       if (editingTabId !== null) return;
       if (!(e.metaKey || e.ctrlKey)) return;
       if (e.key < "1" || e.key > "9") return;
       const idx = Number(e.key) - 1;
       if (idx >= tabs.length) return;
       e.preventDefault();
-      setActiveTabId(tabs[idx].id);
+      setActiveAISessionId(tabs[idx].id);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tabs, editingTabId]);
+  }, [tabs, editingTabId, setActiveAISessionId]);
 
-  // Poll for live container names so tabs can flag strays/lost sessions.
-  // Skipped entirely when there are no tabs to avoid pointless network.
+  // Overlay the manager's persistent terminal (#ai-terminal-<id>) onto the
+  // tab panel by syncing its fixed position to terminalContainerRef. Same
+  // approach AgentTreeLayout uses — the terminal element lives in the
+  // TerminalManagerProvider tree and we only move/position it via CSS.
   useEffect(() => {
-    if (tabs.length === 0) return;
-    let cancelled = false;
-    const fetchNow = async () => {
+    if (!activeSession?.active || !terminalContainerRef.current) return;
+
+    const terminalEl = document.getElementById(
+      `ai-terminal-${activeSession.id}`,
+    );
+    const container = terminalContainerRef.current;
+    if (!terminalEl) return;
+
+    let isCleanedUp = false;
+    let rafId: number | null = null;
+
+    const updatePosition = () => {
+      if (isCleanedUp || !terminalEl.isConnected) return;
       try {
-        const res = await fetch("/api/ai/active-sessions", {
-          cache: "no-store",
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (cancelled || !data?.success) return;
-        const sessions: { state: string; containerName: string }[] =
-          data.sessions ?? [];
-        setKnownContainers(new Set(sessions.map((s) => s.containerName)));
-        setRunningContainers(
-          new Set(
-            sessions
-              .filter((s) => s.state === "running")
-              .map((s) => s.containerName),
-          ),
-        );
-        setHasLoadedContainers(true);
+        const rect = container.getBoundingClientRect();
+        terminalEl.style.visibility = "visible";
+        terminalEl.style.pointerEvents = "auto";
+        terminalEl.style.position = "fixed";
+        terminalEl.style.left = `${rect.left}px`;
+        terminalEl.style.top = `${rect.top}px`;
+        terminalEl.style.width = `${rect.width}px`;
+        terminalEl.style.height = `${rect.height}px`;
       } catch {
-        // Best-effort — leave previous state on failure.
+        // Ignore errors if element is being unmounted
       }
     };
-    fetchNow();
-    const id = setInterval(fetchNow, ACTIVE_SESSIONS_POLL_MS);
+
+    const debouncedUpdatePosition = () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        updatePosition();
+      });
+    };
+
+    updatePosition();
+
+    const resizeObserver = new ResizeObserver(debouncedUpdatePosition);
+    resizeObserver.observe(container);
+    window.addEventListener("resize", debouncedUpdatePosition);
+
     return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [tabs.length]);
-
-  const buildWsUrl = useCallback(
-    (tab: AgentTab) => {
-      const params = new URLSearchParams();
-      const settings = getSettings();
-
-      params.set("mode", "container");
-      const containerImage =
-        settings.aiCoding?.defaultContainerImage || settings.containerImage;
-      params.set("image", containerImage);
-
-      if (activeProject) {
-        params.set("project", activeProject);
-        params.set("basePath", basePath);
-
-        const projectInfo = directories.find((d) => d.name === activeProject);
-        if (projectInfo?.type) {
-          params.set("projectType", projectInfo.type);
+      if (isCleanedUp) return;
+      isCleanedUp = true;
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", debouncedUpdatePosition);
+      try {
+        if (terminalEl && terminalEl.isConnected) {
+          terminalEl.style.visibility = "hidden";
+          terminalEl.style.pointerEvents = "none";
+          terminalEl.style.position = "";
+          terminalEl.style.left = "";
+          terminalEl.style.top = "";
+          terminalEl.style.width = "";
+          terminalEl.style.height = "";
         }
-      } else {
-        params.set("mount", basePath);
+      } catch {
+        // Ignore cleanup errors
       }
-
-      params.set("sessionType", `ai-${tab.tool}`);
-      if (tab.recording) {
-        params.set("record", "true");
-      }
-
-      const toolCommands = {
-        claude: "claude",
-        opencode: "opencode",
-        copilot: "copilot",
-        gemini: "gemini",
-        codex: "codex",
-      };
-
-      const command = toolCommands[tab.tool];
-      if (tab.tool === "claude" && settings.claudeSkipPermissions) {
-        params.set("command", `${command} --dangerously-skip-permissions`);
-      } else {
-        params.set("command", command);
-      }
-
-      return buildTerminalWsUrl(params);
-    },
-    [activeProject, directories, basePath],
-  );
+    };
+  }, [activeSession?.id, activeSession?.active]);
 
   const formatUptime = (startTime: number) => {
     const seconds = Math.floor((Date.now() - startTime) / 1000);
@@ -338,109 +287,29 @@ export function AgentTabsLayout() {
     return `${m}m ${s}s`;
   };
 
-  // Capture server-assigned container name when the Terminal first
-  // reports it via the session message — feeds the stray/running checks.
-  const handleSessionStart = useCallback(
-    (
-      tabId: string,
-      _sessionId: string,
-      _mode: string,
-      containerName?: string,
-    ) => {
-      if (!containerName) return;
-      setTabs((prev) =>
-        prev.map((t) => (t.id === tabId ? { ...t, containerName } : t)),
-      );
-      // Optimistically seed both sets so the just-started session reads as
-      // known-and-running immediately, rather than being briefly mis-flagged
-      // (stray / not-running) in the window between containerName assignment
-      // and the next active-sessions poll. The poll reconciles afterward.
-      // Keeps isStray and isRunning consistent for the just-launched tab.
-      setKnownContainers((prev) => new Set(prev).add(containerName));
-      setRunningContainers((prev) => new Set(prev).add(containerName));
-    },
-    [],
-  );
+  // Map a session's toolId to the tab's brand glyph/accent. Falls back to
+  // Claude metadata for any unexpected tool id so the tab still renders.
+  const metaFor = (toolId: string) =>
+    TOOL_META[
+      (toolId as AIToolId) in TOOL_META ? (toolId as AIToolId) : "claude"
+    ];
 
-  // Drag-to-reorder using native HTML5 drag-and-drop — no new deps. We
-  // don't bother with reorder animations; this is a low-frequency action.
-  const onDragStart = (tabId: string) => (e: React.DragEvent) => {
-    setDraggingTabId(tabId);
-    e.dataTransfer.effectAllowed = "move";
-    // Required for the drag to actually start in Firefox/Safari
-    e.dataTransfer.setData("text/plain", tabId);
-  };
-  const onDragOver = (overTabId: string) => (e: React.DragEvent) => {
-    if (!draggingTabId || draggingTabId === overTabId) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    // Position-aware insert: only move when the pointer is past the target's
-    // horizontal midpoint, on the side it's heading toward. Without this the
-    // tab oscillates — a plain "swap on every dragover" reinserts the dragged
-    // tab on the far side of the target, which the next dragover undoes.
-    const rect = e.currentTarget.getBoundingClientRect();
-    const insertAfter = e.clientX > rect.left + rect.width / 2;
-    setTabs((prev) => {
-      const fromIdx = prev.findIndex((t) => t.id === draggingTabId);
-      const overIdx = prev.findIndex((t) => t.id === overTabId);
-      if (fromIdx < 0 || overIdx < 0) return prev;
-      let toIdx = insertAfter ? overIdx + 1 : overIdx;
-      // Removing the dragged tab first shifts every later index down by one.
-      if (fromIdx < toIdx) toIdx -= 1;
-      if (toIdx === fromIdx) return prev; // already in place — no-op
-      const next = prev.slice();
-      const [moved] = next.splice(fromIdx, 1);
-      next.splice(toIdx, 0, moved);
-      return next;
-    });
-  };
-  const onDragEnd = () => setDraggingTabId(null);
-
-  // Stray = the tab had a container assigned but it no longer exists in any
-  // state. A known-but-stopped container is NOT stray. Suppressed until the
-  // active-sessions list has loaded once, so a freshly-assigned containerName
-  // doesn't flash "stray" against the still-empty initial set.
-  const isStray = (tab: AgentTab) =>
-    hasLoadedContainers &&
-    Boolean(tab.containerName) &&
-    !knownContainers.has(tab.containerName!);
-
-  // Running status reflects the live container state once one is assigned AND
-  // the active-sessions set has loaded at least once. Before the first load
-  // (or before a container name arrives) fall back to the tab's optimistic
-  // initial status — consistent with the isStray guard, so the two never
-  // disagree (e.g. report "not running" while not yet "stray") on a freshly
-  // launched tab whose set hasn't been polled.
-  const isRunning = (tab: AgentTab) =>
-    hasLoadedContainers && tab.containerName
-      ? runningContainers.has(tab.containerName)
-      : tab.status === "running";
-
-  const activeTab = useMemo(
-    () => tabs.find((t) => t.id === activeTabId) ?? null,
-    [tabs, activeTabId],
-  );
-  const activeStray = activeTab ? isStray(activeTab) : false;
-
-  // WAI-ARIA tabs keyboard handler (roving tabindex). Enter/Space activate
-  // the focused tab; Left/Right move selection AND focus to the adjacent tab
-  // (with wraparound). The target guard keeps these keys from hijacking the
-  // rename input and the info/close buttons nested inside the tab.
-  const onTabKeyDown = (tabId: string) => (e: React.KeyboardEvent) => {
+  // WAI-ARIA tabs keyboard handler (roving tabindex).
+  const onTabKeyDown = (sessionId: string) => (e: React.KeyboardEvent) => {
     if (e.target !== e.currentTarget) return;
     if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault(); // suppress page scroll on Space
-      setActiveTabId(tabId);
+      e.preventDefault();
+      setActiveAISessionId(sessionId);
       return;
     }
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-    const idx = tabs.findIndex((t) => t.id === tabId);
+    const idx = tabs.findIndex((t) => t.id === sessionId);
     if (idx < 0) return;
     e.preventDefault();
     const delta = e.key === "ArrowRight" ? 1 : -1;
     const nextIdx = (idx + delta + tabs.length) % tabs.length;
     const nextId = tabs[nextIdx].id;
-    setActiveTabId(nextId);
+    setActiveAISessionId(nextId);
     tabRefs.current.get(nextId)?.focus();
   };
 
@@ -477,11 +346,9 @@ export function AgentTabsLayout() {
           >
             <TooltipProvider delayDuration={400}>
               {tabs.map((tab, idx) => {
-                const isActive = activeTabId === tab.id;
-                const stray = isStray(tab);
-                const { Icon: ToolIcon, accent } = TOOL_META[tab.tool];
-                const { Icon: LocIcon, label: locLabel } =
-                  LOCATION_META[tab.location];
+                const isActive = activeAISessionId === tab.id;
+                const stray = !tab.active;
+                const { Icon: ToolIcon, accent, label } = metaFor(tab.toolId);
                 return (
                   <Tooltip key={tab.id}>
                     <TooltipTrigger asChild>
@@ -490,10 +357,6 @@ export function AgentTabsLayout() {
                           if (el) tabRefs.current.set(tab.id, el);
                           else tabRefs.current.delete(tab.id);
                         }}
-                        draggable={editingTabId !== tab.id}
-                        onDragStart={onDragStart(tab.id)}
-                        onDragOver={onDragOver(tab.id)}
-                        onDragEnd={onDragEnd}
                         role="tab"
                         id={`agent-tab-${tab.id}`}
                         aria-selected={isActive}
@@ -505,28 +368,23 @@ export function AgentTabsLayout() {
                           isActive
                             ? "bg-background border-primary shadow-[0_-1px_0_0_var(--border)_inset,1px_0_0_0_var(--border),_-1px_0_0_0_var(--border)]"
                             : "bg-transparent border-transparent hover:bg-muted",
-                          draggingTabId === tab.id && "opacity-60",
                           stray && "text-warning",
                         )}
-                        onClick={() => setActiveTabId(tab.id)}
+                        onClick={() => setActiveAISessionId(tab.id)}
                       >
                         {/* Status / stray dot */}
                         <span
                           className={cn(
                             "inline-block h-2 w-2 rounded-full shrink-0",
-                            stray
-                              ? "bg-warning"
-                              : isRunning(tab)
-                                ? "bg-success"
-                                : "bg-muted-foreground/50",
+                            stray ? "bg-warning" : "bg-success",
                           )}
                           aria-hidden
                         />
-                        {/* Tool + location icons */}
+                        {/* Tool icon */}
                         <ToolIcon
                           className={cn("h-3.5 w-3.5 shrink-0", accent)}
                         />
-                        <LocIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
+                        <MonitorSmartphone className="h-3 w-3 shrink-0 text-muted-foreground" />
                         {editingTabId === tab.id ? (
                           <input
                             ref={inputRef}
@@ -550,7 +408,7 @@ export function AgentTabsLayout() {
                         {stray && (
                           <AlertTriangle
                             className="h-3 w-3 shrink-0 text-warning"
-                            aria-label="Container missing"
+                            aria-label="Session ended"
                           />
                         )}
                         {/* Tab-number hint shows on hover for tabs 1..9 */}
@@ -582,17 +440,12 @@ export function AgentTabsLayout() {
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="text-xs">
                       <div className="flex flex-col gap-0.5">
-                        <span>
-                          {TOOL_META[tab.tool].label} · {locLabel} (
-                          {tab.locationName})
-                        </span>
+                        <span>{label} · Local</span>
                         {stray ? (
-                          <span className="text-warning">
-                            Container not found — session ended
-                          </span>
+                          <span className="text-warning">Session ended</span>
                         ) : (
                           <span className="text-muted-foreground">
-                            {isRunning(tab) ? "● Running" : "○ Stopped"}
+                            ● Running
                             {tab.containerName ? ` · ${tab.containerName}` : ""}
                           </span>
                         )}
@@ -619,22 +472,6 @@ export function AgentTabsLayout() {
         </div>
       )}
 
-      {/* Stray banner — visible when the active tab's container has
-          disappeared from docker ps. Points users at the Sessions page. */}
-      {activeStray && (
-        <div className="border-b bg-warning/10 text-warning px-4 py-2 text-xs flex items-center gap-2">
-          <AlertTriangle className="h-3.5 w-3.5" />
-          <span>
-            This session&apos;s container is no longer running. Close this tab
-            or visit{" "}
-            <Link className="underline" href="/ai-coding/sessions">
-              Sessions
-            </Link>{" "}
-            to review.
-          </span>
-        </div>
-      )}
-
       {/* Fold-down Info Panel */}
       {expandedTabId && (
         <div className="border-b bg-muted/20 p-4">
@@ -647,35 +484,19 @@ export function AgentTabsLayout() {
               >
                 <div>
                   <span className="text-muted-foreground">Agent:</span>{" "}
-                  <span className="font-medium capitalize">{tab.tool}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Location:</span>{" "}
-                  <span className="font-medium">{tab.locationName}</span>
+                  <span className="font-medium capitalize">{tab.toolId}</span>
                 </div>
                 <div>
                   <span className="text-muted-foreground">Status:</span>{" "}
                   <span
                     className={cn(
                       "font-medium",
-                      isStray(tab)
-                        ? "text-warning"
-                        : isRunning(tab)
-                          ? "text-success"
-                          : "text-muted-foreground",
+                      tab.active ? "text-success" : "text-warning",
                     )}
                   >
-                    {isStray(tab)
-                      ? "● Stray (container missing)"
-                      : isRunning(tab)
-                        ? `● Running (${formatUptime(tab.startTime)})`
-                        : "○ Stopped"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Recording:</span>{" "}
-                  <span className="font-medium">
-                    {tab.recording ? "● Enabled" : "○ Disabled"}
+                    {tab.active
+                      ? `● Running (${formatUptime(tab.createdAt)})`
+                      : "○ Ended"}
                   </span>
                 </div>
                 {tab.containerName && (
@@ -687,10 +508,8 @@ export function AgentTabsLayout() {
                   </div>
                 )}
                 <div className="col-span-2">
-                  <span className="text-muted-foreground">Project:</span>{" "}
-                  <span className="font-medium">
-                    {activeProject || basePath}
-                  </span>
+                  <span className="text-muted-foreground">Mount:</span>{" "}
+                  <span className="font-medium">{tab.mountPath}</span>
                 </div>
                 <div className="col-span-2 flex gap-2 mt-2">
                   <Button
@@ -716,7 +535,9 @@ export function AgentTabsLayout() {
         </div>
       )}
 
-      {/* Terminal Area */}
+      {/* Terminal Area — the active session's persistent terminal (rendered by
+          TerminalManagerProvider) is positioned over this container. This
+          component renders NO <Terminal> of its own. */}
       <div className="flex-1 relative overflow-hidden">
         {tabs.length === 0 ? (
           <div className="flex items-center justify-center h-full">
@@ -730,26 +551,13 @@ export function AgentTabsLayout() {
             </div>
           </div>
         ) : (
-          tabs.map((tab) => (
-            <div
-              key={tab.id}
-              role="tabpanel"
-              id={`agent-tabpanel-${tab.id}`}
-              aria-labelledby={`agent-tab-${tab.id}`}
-              className={cn(
-                "absolute inset-0",
-                activeTabId === tab.id ? "block" : "hidden",
-              )}
-            >
-              <Terminal
-                wsUrl={buildWsUrl(tab)}
-                className="h-full w-full"
-                onSessionStart={(sessionId, mode, containerName) =>
-                  handleSessionStart(tab.id, sessionId, mode, containerName)
-                }
-              />
-            </div>
-          ))
+          <div
+            ref={terminalContainerRef}
+            role="tabpanel"
+            id={`agent-tabpanel-${activeAISessionId ?? "none"}`}
+            aria-labelledby={`agent-tab-${activeAISessionId ?? "none"}`}
+            className="absolute inset-0"
+          />
         )}
       </div>
 
@@ -795,37 +603,6 @@ export function AgentTabsLayout() {
               </div>
             </div>
 
-            <div>
-              <label className="text-sm font-medium mb-3 block">
-                Location:
-              </label>
-              <div className="space-y-2">
-                {[
-                  { name: "muckross", label: "Local (muckross)" },
-                  { name: "kinsale", label: "kinsale" },
-                  { name: "galway", label: "galway" },
-                  { name: "AWS", label: "AWS" },
-                  { name: "Azure", label: "Azure" },
-                  { name: "GCP", label: "GCP" },
-                ].map(({ name, label }) => (
-                  <label
-                    key={name}
-                    className="flex items-center gap-2 cursor-pointer"
-                  >
-                    <input
-                      type="radio"
-                      name="location"
-                      value={name}
-                      checked={selectedLocationName === name}
-                      onChange={(e) => setSelectedLocationName(e.target.value)}
-                      className="text-primary"
-                    />
-                    <span>{label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
             <div className="flex justify-end gap-2">
               <Button
                 variant="outline"
@@ -833,12 +610,7 @@ export function AgentTabsLayout() {
               >
                 Cancel
               </Button>
-              <Button
-                onClick={() => {
-                  const locationType = getLocationType(selectedLocationName);
-                  addTab(selectedTool, locationType, selectedLocationName);
-                }}
-              >
+              <Button onClick={() => launchSession(selectedTool)}>
                 Launch
               </Button>
             </div>
