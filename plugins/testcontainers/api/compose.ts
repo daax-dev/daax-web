@@ -4,14 +4,17 @@
  * Server-side functions for managing Docker Compose projects.
  */
 
-import { getDockerClient } from '../lib/docker-client';
-import { parseComposeYaml, validateComposeProject } from '../lib/compose-parser';
+import { getDockerClient } from "../lib/docker-client";
+import {
+  parseComposeYaml,
+  validateComposeProject,
+} from "../lib/compose-parser";
 import type {
   ComposeProject,
   ComposeCreateRequest,
   ComposeProjectResponse,
   ComposeProjectListResponse,
-} from '../types/compose';
+} from "../types/compose";
 
 // In-memory store for compose projects (in production, use a database)
 const composeProjects = new Map<string, ComposeProject>();
@@ -27,23 +30,26 @@ export async function listComposeProjects(): Promise<ComposeProjectListResponse>
   for (const project of projects) {
     try {
       const containers = await client.getComposeContainers(project.id);
-      const runningCount = containers.filter(c => c.status === 'running').length;
+      const runningCount = containers.filter(
+        (c) => c.status === "running",
+      ).length;
 
       if (runningCount === project.services.length) {
-        project.status = 'running';
+        project.status = "running";
       } else if (runningCount > 0) {
-        project.status = 'partial';
+        project.status = "partial";
       } else if (containers.length > 0) {
-        project.status = 'stopped';
+        project.status = "stopped";
       }
 
       // Update service container IDs
       for (const container of containers) {
-        const serviceName = container.labels['com.docker.compose.service'];
-        const service = project.services.find(s => s.name === serviceName);
+        const serviceName = container.labels["com.docker.compose.service"];
+        const service = project.services.find((s) => s.name === serviceName);
         if (service) {
           service.containerId = container.id;
-          service.status = container.status === 'running' ? 'running' : 'stopped';
+          service.status =
+            container.status === "running" ? "running" : "stopped";
         }
       }
     } catch {
@@ -60,7 +66,9 @@ export async function listComposeProjects(): Promise<ComposeProjectListResponse>
 /**
  * Get a compose project by ID
  */
-export async function getComposeProject(id: string): Promise<ComposeProject | null> {
+export async function getComposeProject(
+  id: string,
+): Promise<ComposeProject | null> {
   const project = composeProjects.get(id);
   if (!project) return null;
 
@@ -68,23 +76,25 @@ export async function getComposeProject(id: string): Promise<ComposeProject | nu
   const client = getDockerClient();
   try {
     const containers = await client.getComposeContainers(id);
-    const runningCount = containers.filter(c => c.status === 'running').length;
+    const runningCount = containers.filter(
+      (c) => c.status === "running",
+    ).length;
 
     if (runningCount === project.services.length) {
-      project.status = 'running';
+      project.status = "running";
     } else if (runningCount > 0) {
-      project.status = 'partial';
+      project.status = "partial";
     } else if (containers.length > 0) {
-      project.status = 'stopped';
+      project.status = "stopped";
     }
 
     // Update service container IDs
     for (const container of containers) {
-      const serviceName = container.labels['com.docker.compose.service'];
-      const service = project.services.find(s => s.name === serviceName);
+      const serviceName = container.labels["com.docker.compose.service"];
+      const service = project.services.find((s) => s.name === serviceName);
       if (service) {
         service.containerId = container.id;
-        service.status = container.status === 'running' ? 'running' : 'stopped';
+        service.status = container.status === "running" ? "running" : "stopped";
       }
     }
   } catch {
@@ -98,7 +108,7 @@ export async function getComposeProject(id: string): Promise<ComposeProject | nu
  * Create a new compose project from YAML
  */
 export async function createComposeProject(
-  request: ComposeCreateRequest
+  request: ComposeCreateRequest,
 ): Promise<ComposeProjectResponse> {
   const { name, yaml, startImmediately = false } = request;
 
@@ -108,7 +118,7 @@ export async function createComposeProject(
   // Validate the project
   const validation = validateComposeProject(project);
   if (!validation.valid) {
-    throw new Error(`Invalid compose project: ${validation.errors.join(', ')}`);
+    throw new Error(`Invalid compose project: ${validation.errors.join(", ")}`);
   }
 
   // Store the project
@@ -135,7 +145,9 @@ export async function createComposeProject(
 /**
  * Start a compose project
  */
-export async function startComposeProject(id: string): Promise<ComposeProjectResponse> {
+export async function startComposeProject(
+  id: string,
+): Promise<ComposeProjectResponse> {
   const project = composeProjects.get(id);
   if (!project) {
     throw new Error(`Project not found: ${id}`);
@@ -154,7 +166,9 @@ export async function startComposeProject(id: string): Promise<ComposeProjectRes
 /**
  * Stop a compose project
  */
-export async function stopComposeProject(id: string): Promise<ComposeProjectResponse> {
+export async function stopComposeProject(
+  id: string,
+): Promise<ComposeProjectResponse> {
   const project = composeProjects.get(id);
   if (!project) {
     throw new Error(`Project not found: ${id}`);
@@ -173,7 +187,9 @@ export async function stopComposeProject(id: string): Promise<ComposeProjectResp
 /**
  * Remove a compose project
  */
-export async function removeComposeProject(id: string): Promise<{ message: string }> {
+export async function removeComposeProject(
+  id: string,
+): Promise<{ message: string }> {
   const project = composeProjects.get(id);
   if (!project) {
     throw new Error(`Project not found: ${id}`);

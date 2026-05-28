@@ -7,7 +7,7 @@
 export async function fetchWithRetry(
   url: string,
   options?: RequestInit,
-  maxRetries = 2
+  maxRetries = 2,
 ): Promise<Response> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const response = await fetch(url, options);

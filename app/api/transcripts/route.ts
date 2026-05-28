@@ -3,6 +3,10 @@ import { readdir, readFile, stat } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import type { TranscriptSession } from "@/lib/transcripts/types";
+import { isPathWithin } from "@/lib/transcripts/types";
+import { listCodexSessions } from "@/lib/transcripts/codex";
+import { listCopilotSessions } from "@/lib/transcripts/copilot";
 
 // Get Claude projects directory
 function getClaudeProjectsDir(): string {
@@ -27,21 +31,6 @@ function getClaudeProjectsDir(): string {
   return hostPath; // Return default even if doesn't exist
 }
 
-export interface TranscriptSession {
-  id: string;
-  sessionId: string;
-  projectPath: string;
-  projectName: string;
-  firstPrompt: string;
-  summary: string;
-  messageCount: number;
-  created: string;
-  modified: string;
-  gitBranch: string | null;
-  fullPath: string;
-  size: number;
-}
-
 interface SessionIndexEntry {
   sessionId: string;
   fullPath: string;
@@ -61,22 +50,38 @@ interface SessionIndex {
   entries: SessionIndexEntry[];
 }
 
+/**
+ * sessions-index.json is untrusted on-disk content. Require an entry to be an
+ * object with the string fields this route reads (sessionId, fullPath) before
+ * using it, so a malformed index (non-array entries, null/number elements,
+ * missing fields) is skipped instead of injecting bad data or throwing.
+ */
+function isValidIndexEntry(e: unknown): e is SessionIndexEntry {
+  return (
+    !!e &&
+    typeof e === "object" &&
+    typeof (e as SessionIndexEntry).sessionId === "string" &&
+    typeof (e as SessionIndexEntry).fullPath === "string"
+  );
+}
+
 export async function GET() {
   const projectsDir = getClaudeProjectsDir();
 
   try {
-    if (!existsSync(projectsDir)) {
-      console.log(`[transcripts API] Claude projects directory not found: ${projectsDir}`);
-      return NextResponse.json({
-        transcripts: [],
-        path: projectsDir,
-        hint: "Claude projects directory not found. In container mode, mount ~/.claude to /host-claude",
-      });
-    }
-
-    console.log(`[transcripts API] Reading from: ${projectsDir}`);
-    const projectDirs = await readdir(projectsDir, { withFileTypes: true });
     const allSessions: TranscriptSession[] = [];
+
+    // Claude is optional: if its store is absent we still list the other tools
+    // (a missing ~/.claude must not hide Codex/Copilot sessions).
+    const claudeAvailable = existsSync(projectsDir);
+    if (!claudeAvailable) {
+      console.log(
+        `[transcripts API] Claude projects directory not found: ${projectsDir} (continuing with other tools)`,
+      );
+    }
+    const projectDirs = claudeAvailable
+      ? await readdir(projectsDir, { withFileTypes: true })
+      : [];
 
     for (const projectDir of projectDirs) {
       if (!projectDir.isDirectory()) continue;
@@ -90,20 +95,35 @@ export async function GET() {
         const indexContent = await readFile(indexPath, "utf-8");
         const index: SessionIndex = JSON.parse(indexContent);
 
+        if (!Array.isArray(index.entries)) continue;
         for (const entry of index.entries) {
+          // Untrusted on-disk content: skip malformed (non-object / missing
+          // string sessionId+fullPath) entries before reading any field.
+          if (!isValidIndexEntry(entry)) continue;
+
           // Skip sidechains
           if (entry.isSidechain) continue;
 
           // Translate fullPath from host path to container path if needed
           // e.g., /home/jpoley/.claude/projects/xxx -> /host-claude/projects/xxx
           let sessionFilePath = entry.fullPath;
-          if (!existsSync(sessionFilePath) && projectsDir.startsWith("/host-claude")) {
+          let containmentBase = projectsDir;
+          if (
+            !existsSync(sessionFilePath) &&
+            projectsDir.startsWith("/host-claude")
+          ) {
             // Extract relative path from the fullPath
             const match = entry.fullPath.match(/\.claude\/projects\/(.+)$/);
             if (match) {
               sessionFilePath = join("/host-claude/projects", match[1]);
+              containmentBase = "/host-claude/projects";
             }
           }
+
+          // entry.fullPath (and the regex-derived translation) are untrusted
+          // on-disk index content: skip any entry that resolves outside the
+          // configured Claude projects dir (path-traversal containment).
+          if (!isPathWithin(containmentBase, sessionFilePath)) continue;
 
           // Get file size
           let size = 0;
@@ -164,8 +184,9 @@ export async function GET() {
           }
 
           allSessions.push({
-            id: entry.sessionId,
+            id: `claude:${entry.sessionId}`,
             sessionId: entry.sessionId,
+            tool: "claude",
             projectPath: entry.projectPath,
             projectName,
             firstPrompt: entry.firstPrompt?.slice(0, 200) || "",
@@ -179,14 +200,32 @@ export async function GET() {
           });
         }
       } catch (err) {
-        console.error(`Error reading sessions-index.json from ${projectPath}:`, err);
+        console.error(
+          `Error reading sessions-index.json from ${projectPath}:`,
+          err,
+        );
+      }
+    }
+
+    // Append other tools' sessions. Each provider is isolated so a failure in
+    // one tool (or a missing/empty store) never breaks the rest of the list.
+    for (const provider of [
+      { name: "codex", fn: listCodexSessions },
+      { name: "copilot", fn: listCopilotSessions },
+    ]) {
+      try {
+        allSessions.push(...(await provider.fn()));
+      } catch (err) {
+        console.error(
+          `[transcripts API] ${provider.name} provider failed:`,
+          err,
+        );
       }
     }
 
     // Sort by modified date, newest first
     allSessions.sort(
-      (a, b) =>
-        new Date(b.modified).getTime() - new Date(a.modified).getTime()
+      (a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime(),
     );
 
     console.log(`[transcripts API] Found ${allSessions.length} sessions`);
@@ -205,7 +244,7 @@ export async function GET() {
         details: errorMessage,
         transcripts: [],
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

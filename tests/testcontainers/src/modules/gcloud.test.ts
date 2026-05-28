@@ -7,5 +7,8 @@ import { smokeTest } from "../helper";
 smokeTest(
   "gcloud",
   "starts PubSubEmulator on cloud-sdk:563.0.0-emulators",
-  () => new PubSubEmulatorContainer("gcr.io/google.com/cloudsdktool/google-cloud-cli:563.0.0-emulators"),
+  () =>
+    new PubSubEmulatorContainer(
+      "gcr.io/google.com/cloudsdktool/google-cloud-cli:563.0.0-emulators",
+    ),
 );

@@ -1645,7 +1645,11 @@ function FlowspecLoopInner() {
 
   // Save workflow configuration
   const saveWorkflow = useCallback(
-    async (saveAs?: string, overwrite = false) => {
+    // Inner function declaration so the 409 "overwrite?" / "rename?" retries can
+    // recurse legally. A self-referencing useCallback const trips React
+    // Compiler's immutability rule (use-before-declaration); a hoisted function
+    // declaration has no TDZ. Behavior is unchanged.
+    async function doSave(saveAs?: string, overwrite = false): Promise<void> {
       try {
         setIsSaving(true);
 
@@ -1713,7 +1717,7 @@ function FlowspecLoopInner() {
                 `File "${filename}" already exists. Do you want to overwrite it?`,
               );
               if (shouldOverwrite) {
-                return saveWorkflow(saveAs, true);
+                return doSave(saveAs, true);
               } else {
                 // Prompt for new filename
                 const newFilename = window.prompt(
@@ -1721,7 +1725,7 @@ function FlowspecLoopInner() {
                   `${filename.replace(".json", "")}-${Date.now()}.json`,
                 );
                 if (newFilename) {
-                  return saveWorkflow(newFilename, false);
+                  return doSave(newFilename, false);
                 }
                 setIsSaving(false);
                 return;

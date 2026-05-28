@@ -6,14 +6,14 @@
  * SECURITY: All operations require authentication via requireAuth()
  */
 
-import { NextRequest, NextResponse } from 'next/server';
-import { getMultiBacklogStore } from '@/server/backlog-multi-store';
-import type { Task, TaskUpdateInput } from '@/types/backlog';
-import { requireAuth } from '@/lib/auth';
+import { NextRequest, NextResponse } from "next/server";
+import { getMultiBacklogStore } from "@/server/backlog-multi-store";
+import type { Task, TaskUpdateInput } from "@/types/backlog";
+import { requireAuth } from "@/lib/auth";
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   // Require authentication for updating tasks
   const auth = await requireAuth();
@@ -22,39 +22,36 @@ export async function PATCH(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { project, updates } = body as { project: string; updates: TaskUpdateInput };
+    const { project, updates } = body as {
+      project: string;
+      updates: TaskUpdateInput;
+    };
 
     // Validate project parameter
-    if (!project || typeof project !== 'string') {
+    if (!project || typeof project !== "string") {
       return NextResponse.json(
-        { error: 'Missing or invalid required parameter: project' },
-        { status: 400 }
+        { error: "Missing or invalid required parameter: project" },
+        { status: 400 },
       );
     }
 
     // Validate updates object
-    if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
+    if (!updates || typeof updates !== "object" || Array.isArray(updates)) {
       return NextResponse.json(
-        { error: 'Invalid updates object' },
-        { status: 400 }
+        { error: "Invalid updates object" },
+        { status: 400 },
       );
     }
 
     // Get existing task to apply TaskUpdateInput operations
     const existingProject = getMultiBacklogStore().getProject(project);
     if (!existingProject) {
-      return NextResponse.json(
-        { error: 'Project not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
-    const existingTask = existingProject.tasks.find(t => t.id === id);
+    const existingTask = existingProject.tasks.find((t) => t.id === id);
     if (!existingTask) {
-      return NextResponse.json(
-        { error: 'Task not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Task not found" }, { status: 404 });
     }
 
     // Apply TaskUpdateInput operations to create final task state
@@ -62,12 +59,11 @@ export async function PATCH(
     // Build updatedFields using a processing function to maintain type safety
     const buildUpdatedFields = (): Partial<Task> => {
       // Track if milestone was explicitly set (even to null) to handle clearing
-      const milestoneExplicitlySet = 'milestone' in updates;
+      const milestoneExplicitlySet = "milestone" in updates;
       // Convert null milestone to undefined (which clears the field in Task type)
       // undefined in TaskUpdateInput means "don't change", null means "clear"
-      const milestoneValue: string | undefined = updates.milestone === null
-        ? undefined
-        : updates.milestone;
+      const milestoneValue: string | undefined =
+        updates.milestone === null ? undefined : updates.milestone;
 
       const fields: Partial<Task> = {
         title: updates.title,
@@ -80,11 +76,13 @@ export async function PATCH(
         dependencies: updates.dependencies,
         implementationPlan: updates.implementationPlan,
         implementationNotes: updates.implementationNotes,
-        acceptanceCriteriaItems: updates.acceptanceCriteria?.map((crit, idx) => ({
-          index: idx + 1,
-          text: crit.text,
-          checked: crit.checked || false,
-        })),
+        acceptanceCriteriaItems: updates.acceptanceCriteria?.map(
+          (crit, idx) => ({
+            index: idx + 1,
+            text: crit.text,
+            checked: crit.checked || false,
+          }),
+        ),
         rawContent: updates.rawContent,
       };
 
@@ -96,9 +94,12 @@ export async function PATCH(
 
       // Remove undefined values to avoid overwriting existing values with undefined
       // But keep milestone if explicitly set (even to undefined to clear it)
-      Object.keys(fields).forEach(key => {
+      Object.keys(fields).forEach((key) => {
         const value = fields[key as keyof Task];
-        if (value === undefined && !(key === 'milestone' && milestoneExplicitlySet)) {
+        if (
+          value === undefined &&
+          !(key === "milestone" && milestoneExplicitlySet)
+        ) {
           delete fields[key as keyof Task];
         }
       });
@@ -114,7 +115,7 @@ export async function PATCH(
         // Type guard: removeLabels is checked in parent condition but TypeScript needs explicit check
         const removeLabels = updates.removeLabels;
         if (removeLabels) {
-          newLabels = newLabels.filter(l => !removeLabels.includes(l));
+          newLabels = newLabels.filter((l) => !removeLabels.includes(l));
         }
 
         fields.labels = newLabels;
@@ -131,7 +132,7 @@ export async function PATCH(
         // Type guard: removeDependencies is checked in parent condition but TypeScript needs explicit check
         const removeDependencies = updates.removeDependencies;
         if (removeDependencies) {
-          newDeps = newDeps.filter(d => !removeDependencies.includes(d));
+          newDeps = newDeps.filter((d) => !removeDependencies.includes(d));
         }
 
         fields.dependencies = newDeps;
@@ -139,34 +140,41 @@ export async function PATCH(
 
       // Handle implementation plan operations
       if (updates.appendImplementationPlan) {
-        const current = existingTask.implementationPlan || '';
-        fields.implementationPlan = current + '\n' + updates.appendImplementationPlan.join('\n');
+        const current = existingTask.implementationPlan || "";
+        fields.implementationPlan =
+          current + "\n" + updates.appendImplementationPlan.join("\n");
       }
       if (updates.clearImplementationPlan) {
-        fields.implementationPlan = '';
+        fields.implementationPlan = "";
       }
 
       // Handle implementation notes operations
       if (updates.appendImplementationNotes) {
-        const current = existingTask.implementationNotes || '';
-        fields.implementationNotes = current + '\n' + updates.appendImplementationNotes.join('\n');
+        const current = existingTask.implementationNotes || "";
+        fields.implementationNotes =
+          current + "\n" + updates.appendImplementationNotes.join("\n");
       }
       if (updates.clearImplementationNotes) {
-        fields.implementationNotes = '';
+        fields.implementationNotes = "";
       }
 
       // Handle acceptance criteria operations
-      if (updates.addAcceptanceCriteria || updates.removeAcceptanceCriteria || updates.checkAcceptanceCriteria || updates.uncheckAcceptanceCriteria) {
+      if (
+        updates.addAcceptanceCriteria ||
+        updates.removeAcceptanceCriteria ||
+        updates.checkAcceptanceCriteria ||
+        updates.uncheckAcceptanceCriteria
+      ) {
         const currentCriteria = existingTask.acceptanceCriteriaItems || [];
         let newCriteria = [...currentCriteria];
 
         if (updates.addAcceptanceCriteria) {
-          const maxIndex = Math.max(0, ...newCriteria.map(c => c.index));
+          const maxIndex = Math.max(0, ...newCriteria.map((c) => c.index));
           updates.addAcceptanceCriteria.forEach((crit, idx) => {
             newCriteria.push({
               index: maxIndex + idx + 1,
-              text: typeof crit === 'string' ? crit : crit.text,
-              checked: typeof crit === 'string' ? false : (crit.checked || false)
+              text: typeof crit === "string" ? crit : crit.text,
+              checked: typeof crit === "string" ? false : crit.checked || false,
             });
           });
         }
@@ -174,20 +182,20 @@ export async function PATCH(
         // Type guards: TypeScript needs explicit checks even though parent condition verifies
         const removeAc = updates.removeAcceptanceCriteria;
         if (removeAc) {
-          newCriteria = newCriteria.filter(c => !removeAc.includes(c.index));
+          newCriteria = newCriteria.filter((c) => !removeAc.includes(c.index));
         }
 
         const checkAc = updates.checkAcceptanceCriteria;
         if (checkAc) {
-          newCriteria = newCriteria.map(c =>
-            checkAc.includes(c.index) ? { ...c, checked: true } : c
+          newCriteria = newCriteria.map((c) =>
+            checkAc.includes(c.index) ? { ...c, checked: true } : c,
           );
         }
 
         const uncheckAc = updates.uncheckAcceptanceCriteria;
         if (uncheckAc) {
-          newCriteria = newCriteria.map(c =>
-            uncheckAc.includes(c.index) ? { ...c, checked: false } : c
+          newCriteria = newCriteria.map((c) =>
+            uncheckAc.includes(c.index) ? { ...c, checked: false } : c,
           );
         }
 
@@ -199,7 +207,11 @@ export async function PATCH(
 
     const updatedFields = buildUpdatedFields();
 
-    const updatedTask = await getMultiBacklogStore().updateTask(project, id, updatedFields);
+    const updatedTask = await getMultiBacklogStore().updateTask(
+      project,
+      id,
+      updatedFields,
+    );
 
     if (!updatedTask) {
       // The project and task were both validated to exist above, so a null
@@ -209,28 +221,27 @@ export async function PATCH(
       // a blanket 404 previously masked write failures as "task not found".
       return NextResponse.json(
         {
-          error: 'Failed to persist task update',
+          error: "Failed to persist task update",
           message:
-            'The task exists in memory but its update could not be written to disk. Check server logs for the underlying error.',
+            "The task exists in memory but its update could not be written to disk. Check server logs for the underlying error.",
         },
-        { status: 500 }
+        { status: 500 },
       );
     }
 
     return NextResponse.json({ task: updatedTask });
-
   } catch (error) {
-    console.error('[API] Error updating task:', error);
+    console.error("[API] Error updating task:", error);
     return NextResponse.json(
-      { error: 'Failed to update task' },
-      { status: 500 }
+      { error: "Failed to update task" },
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   // Require authentication for deleting tasks
   const auth = await requireAuth();
@@ -241,10 +252,10 @@ export async function DELETE(
     const body = await request.json();
     const { project } = body;
 
-    if (!project || typeof project !== 'string') {
+    if (!project || typeof project !== "string") {
       return NextResponse.json(
-        { error: 'Missing or invalid required parameter: project' },
-        { status: 400 }
+        { error: "Missing or invalid required parameter: project" },
+        { status: 400 },
       );
     }
 
@@ -252,18 +263,17 @@ export async function DELETE(
 
     if (!success) {
       return NextResponse.json(
-        { error: 'Task not found or delete failed' },
-        { status: 404 }
+        { error: "Task not found or delete failed" },
+        { status: 404 },
       );
     }
 
     return NextResponse.json({ success: true });
-
   } catch (error) {
-    console.error('[API] Error deleting task:', error);
+    console.error("[API] Error deleting task:", error);
     return NextResponse.json(
-      { error: 'Failed to delete task' },
-      { status: 500 }
+      { error: "Failed to delete task" },
+      { status: 500 },
     );
   }
 }

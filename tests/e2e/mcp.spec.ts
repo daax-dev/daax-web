@@ -29,7 +29,7 @@ test.describe("MCP Management", () => {
 
   test("can search/filter MCP servers", async ({ page }) => {
     const searchInput = page.locator(
-      'input[type="search"], input[placeholder*="Search"], input[placeholder*="Filter"]'
+      'input[type="search"], input[placeholder*="Search"], input[placeholder*="Filter"]',
     );
 
     if ((await searchInput.count()) > 0) {

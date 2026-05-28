@@ -4,9 +4,9 @@
  * Browse and launch container templates.
  */
 
-'use client';
+"use client";
 
-import { useState } from 'react';
+import { useState } from "react";
 import {
   Database,
   MessageSquare,
@@ -16,19 +16,31 @@ import {
   Play,
   ArrowLeft,
   Search,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { toast } from 'sonner';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useTemplates, useContainers } from '@/plugins/testcontainers/hooks';
-import type { ContainerTemplate, TemplateCategory } from '@/plugins/testcontainers/types';
+} from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { toast } from "sonner";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useTemplates, useContainers } from "@/plugins/testcontainers/hooks";
+import type {
+  ContainerTemplate,
+  TemplateCategory,
+} from "@/plugins/testcontainers/types";
 
-const categoryIcons: Record<TemplateCategory, React.ComponentType<{ className?: string }>> = {
+const categoryIcons: Record<
+  TemplateCategory,
+  React.ComponentType<{ className?: string }>
+> = {
   database: Database,
   messaging: MessageSquare,
   cache: Zap,
@@ -37,11 +49,11 @@ const categoryIcons: Record<TemplateCategory, React.ComponentType<{ className?: 
 };
 
 const categoryLabels: Record<TemplateCategory, string> = {
-  database: 'Databases',
-  messaging: 'Message Queues',
-  cache: 'Caching',
-  service: 'Services',
-  custom: 'Custom',
+  database: "Databases",
+  messaging: "Message Queues",
+  cache: "Caching",
+  service: "Services",
+  custom: "Custom",
 };
 
 function TemplateCard({
@@ -86,7 +98,11 @@ function TemplateCard({
         <div className="flex items-center justify-between">
           <div className="flex flex-wrap gap-1">
             {template.ports.slice(0, 3).map((port) => (
-              <Badge key={port.containerPort} variant="outline" className="text-xs">
+              <Badge
+                key={port.containerPort}
+                variant="outline"
+                className="text-xs"
+              >
                 {port.containerPort}/{port.protocol}
               </Badge>
             ))}
@@ -124,8 +140,8 @@ function TemplateCard({
 
 export default function CatalogPage() {
   const router = useRouter();
-  const [search, setSearch] = useState('');
-  const [activeCategory, setActiveCategory] = useState<string>('all');
+  const [search, setSearch] = useState("");
+  const [activeCategory, setActiveCategory] = useState<string>("all");
   const [launching, setLaunching] = useState<string | null>(null);
 
   const { templatesByCategory, loading, error } = useTemplates();
@@ -143,9 +159,11 @@ export default function CatalogPage() {
         volumes: template.volumes,
       });
       toast.success(`${template.name} launched successfully`);
-      router.push('/testcontainers');
+      router.push("/testcontainers");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to launch container');
+      toast.error(
+        err instanceof Error ? err.message : "Failed to launch container",
+      );
     } finally {
       setLaunching(null);
     }
@@ -156,17 +174,17 @@ export default function CatalogPage() {
     (acc, [category, templates]) => {
       const filtered = templates.filter(
         (t) =>
-          (activeCategory === 'all' || category === activeCategory) &&
-          (search === '' ||
+          (activeCategory === "all" || category === activeCategory) &&
+          (search === "" ||
             t.name.toLowerCase().includes(search.toLowerCase()) ||
-            t.description.toLowerCase().includes(search.toLowerCase()))
+            t.description.toLowerCase().includes(search.toLowerCase())),
       );
       if (filtered.length > 0) {
         acc[category as TemplateCategory] = filtered;
       }
       return acc;
     },
-    {} as Record<TemplateCategory, ContainerTemplate[]>
+    {} as Record<TemplateCategory, ContainerTemplate[]>,
   );
 
   const totalFiltered = Object.values(filteredTemplates).flat().length;
@@ -200,12 +218,16 @@ export default function CatalogPage() {
           />
         </div>
         <p className="text-sm text-muted-foreground">
-          {totalFiltered} template{totalFiltered !== 1 ? 's' : ''}
+          {totalFiltered} template{totalFiltered !== 1 ? "s" : ""}
         </p>
       </div>
 
       {/* Category tabs */}
-      <Tabs value={activeCategory} onValueChange={setActiveCategory} className="mb-6">
+      <Tabs
+        value={activeCategory}
+        onValueChange={setActiveCategory}
+        className="mb-6"
+      >
         <TabsList>
           <TabsTrigger value="all">All</TabsTrigger>
           {Object.entries(categoryLabels).map(([key, label]) => (
@@ -260,7 +282,9 @@ export default function CatalogPage() {
 
           {totalFiltered === 0 && !loading && (
             <div className="flex flex-col items-center justify-center py-12 text-center">
-              <p className="text-muted-foreground">No templates match your search.</p>
+              <p className="text-muted-foreground">
+                No templates match your search.
+              </p>
             </div>
           )}
         </div>

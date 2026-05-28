@@ -46,6 +46,20 @@ const eslintConfig = defineConfig([
       "react-hooks/refs": "off",
     },
   },
+  // Plugins/legacy tree only: additionally suppress the stricter React Compiler
+  // diagnostics. These flag use-before-declaration of mutually-recursive
+  // useCallback consts and manual-memoization patterns. They are NOT disabled
+  // for app/components/hooks/lib, where such diagnostics must be fixed in code.
+  {
+    files: ["plugins/**/*.ts", "plugins/**/*.tsx"],
+    rules: {
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/purity": "off",
+      "react-hooks/refs": "off",
+      "react-hooks/immutability": "off",
+      "react-hooks/preserve-manual-memoization": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;

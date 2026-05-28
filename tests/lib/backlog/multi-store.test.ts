@@ -99,7 +99,12 @@ describe("MultiBacklogStore", () => {
         documents: [],
         decisions: [],
         milestones: [],
-        config: { projectName: "Project A", statuses: ["Open", "Done"], labels: [], milestones: [] },
+        config: {
+          projectName: "Project A",
+          statuses: ["Open", "Done"],
+          labels: [],
+          milestones: [],
+        },
         taskCount: 0,
         lastUpdated: new Date().toISOString(),
       };
@@ -111,7 +116,12 @@ describe("MultiBacklogStore", () => {
         documents: [],
         decisions: [],
         milestones: [],
-        config: { projectName: "Project B", statuses: ["Open", "Done"], labels: [], milestones: [] },
+        config: {
+          projectName: "Project B",
+          statuses: ["Open", "Done"],
+          labels: [],
+          milestones: [],
+        },
         taskCount: 0,
         lastUpdated: new Date().toISOString(),
       };
@@ -140,7 +150,12 @@ describe("MultiBacklogStore", () => {
         documents: [],
         decisions: [],
         milestones: [],
-        config: { projectName: "Project A", statuses: [], labels: [], milestones: [] },
+        config: {
+          projectName: "Project A",
+          statuses: [],
+          labels: [],
+          milestones: [],
+        },
         taskCount: 0,
         lastUpdated: new Date().toISOString(),
       });
@@ -153,7 +168,7 @@ describe("MultiBacklogStore", () => {
       expect(spy).toHaveBeenCalledWith(
         expect.objectContaining({
           projectPath: "/workspace/project-a",
-        })
+        }),
       );
     });
 
@@ -174,7 +189,12 @@ describe("MultiBacklogStore", () => {
         documents: [],
         decisions: [],
         milestones: [],
-        config: { projectName: "Project A", statuses: ["Open"], labels: [], milestones: [] },
+        config: {
+          projectName: "Project A",
+          statuses: ["Open"],
+          labels: [],
+          milestones: [],
+        },
         taskCount: 1,
         lastUpdated: new Date().toISOString(),
       });
@@ -185,7 +205,12 @@ describe("MultiBacklogStore", () => {
         documents: [],
         decisions: [],
         milestones: [],
-        config: { projectName: "Project B", statuses: ["Open"], labels: [], milestones: [] },
+        config: {
+          projectName: "Project B",
+          statuses: ["Open"],
+          labels: [],
+          milestones: [],
+        },
         taskCount: 0,
         lastUpdated: new Date().toISOString(),
       });
@@ -294,13 +319,17 @@ describe("MultiBacklogStore", () => {
 
         expect(mockProject.tasks).toHaveLength(2);
         expect(mockProject.taskCount).toBe(2);
-        expect(mockProject.tasks.find((t: Task) => t.id === "task-new")).toBeDefined();
+        expect(
+          mockProject.tasks.find((t: Task) => t.id === "task-new"),
+        ).toBeDefined();
       });
     });
 
     describe("deleteTask (in-memory verification)", () => {
       it("removes task from project", () => {
-        const taskIndex = mockProject.tasks.findIndex((t: Task) => t.id === "task-001");
+        const taskIndex = mockProject.tasks.findIndex(
+          (t: Task) => t.id === "task-001",
+        );
         expect(taskIndex).toBeGreaterThanOrEqual(0);
 
         mockProject.tasks.splice(taskIndex, 1);
@@ -322,7 +351,12 @@ describe("MultiBacklogStore", () => {
         documents: [],
         decisions: [],
         milestones: [],
-        config: { projectName: "Test", statuses: [], labels: [], milestones: [] },
+        config: {
+          projectName: "Test",
+          statuses: [],
+          labels: [],
+          milestones: [],
+        },
         taskCount: 0,
         lastUpdated: new Date().toISOString(),
       });
@@ -369,7 +403,12 @@ describe("MultiBacklogStore", () => {
         documents: [],
         decisions: [],
         milestones: [],
-        config: { projectName: "Test", statuses: [], labels: [], milestones: [] },
+        config: {
+          projectName: "Test",
+          statuses: [],
+          labels: [],
+          milestones: [],
+        },
         taskCount: 0,
         lastUpdated: new Date().toISOString(),
       });
@@ -393,7 +432,12 @@ describe("MultiBacklogStore", () => {
         documents: [],
         decisions: [],
         milestones: [],
-        config: { projectName: "Test", statuses: [], labels: [], milestones: [] },
+        config: {
+          projectName: "Test",
+          statuses: [],
+          labels: [],
+          milestones: [],
+        },
         taskCount: 0,
         lastUpdated: new Date().toISOString(),
       });
@@ -449,7 +493,12 @@ describe("MultiBacklogStore updateTask error handling", () => {
       documents: [],
       decisions: [],
       milestones: [],
-      config: { projectName: "Backup Test", statuses: ["Open", "Done"], labels: [], milestones: [] },
+      config: {
+        projectName: "Backup Test",
+        statuses: ["Open", "Done"],
+        labels: [],
+        milestones: [],
+      },
       taskCount: 1,
       lastUpdated: new Date().toISOString(),
     };
@@ -475,16 +524,22 @@ describe("MultiBacklogStore updateTask error handling", () => {
 
     expect(result).toBeNull();
     expect(errorSpy).toHaveBeenCalled();
-    expect(errorSpy.mock.calls[0][0].error.message).toMatch(/Task file not found/);
+    expect(errorSpy.mock.calls[0][0].error.message).toMatch(
+      /Task file not found/,
+    );
   });
 
   it("handles task not found gracefully", async () => {
     const errorSpy = vi.fn();
     store.on("error", errorSpy);
 
-    const result = await store.updateTask("/test/backup-project", "non-existent-task", {
-      title: "Updated",
-    });
+    const result = await store.updateTask(
+      "/test/backup-project",
+      "non-existent-task",
+      {
+        title: "Updated",
+      },
+    );
 
     expect(result).toBeNull();
     expect(errorSpy).toHaveBeenCalled();
@@ -501,7 +556,9 @@ describe("MultiBacklogStore updateTask error handling", () => {
 
     expect(result).toBeNull();
     expect(errorSpy).toHaveBeenCalled();
-    expect(errorSpy.mock.calls[0][0].error.message).toMatch(/Project not found/);
+    expect(errorSpy.mock.calls[0][0].error.message).toMatch(
+      /Project not found/,
+    );
   });
 });
 
@@ -526,7 +583,12 @@ describe("MultiBacklogStore Edge Cases", () => {
         documents: [],
         decisions: [],
         milestones: [],
-        config: { projectName: "Test", statuses: [], labels: [], milestones: [] },
+        config: {
+          projectName: "Test",
+          statuses: [],
+          labels: [],
+          milestones: [],
+        },
         taskCount: 0,
         lastUpdated: new Date().toISOString(),
       });
@@ -548,7 +610,12 @@ describe("MultiBacklogStore Edge Cases", () => {
         documents: [],
         decisions: [],
         milestones: [],
-        config: { projectName: "Test", statuses: [], labels: [], milestones: [] },
+        config: {
+          projectName: "Test",
+          statuses: [],
+          labels: [],
+          milestones: [],
+        },
         taskCount: 0,
         lastUpdated: new Date().toISOString(),
       });
@@ -562,7 +629,7 @@ describe("MultiBacklogStore Edge Cases", () => {
         expect.objectContaining({
           event: "project-removed",
           projectPath: "/workspace/project",
-        })
+        }),
       );
     });
 
@@ -575,7 +642,12 @@ describe("MultiBacklogStore Edge Cases", () => {
         documents: [],
         decisions: [],
         milestones: [],
-        config: { projectName: "Test", statuses: [], labels: [], milestones: [] },
+        config: {
+          projectName: "Test",
+          statuses: [],
+          labels: [],
+          milestones: [],
+        },
         taskCount: 0,
         lastUpdated: new Date().toISOString(),
       });
@@ -601,7 +673,9 @@ describe("MultiBacklogStore Edge Cases", () => {
       const storeAny = store as any;
 
       // Call private method directly - should not throw
-      await expect(storeAny.reloadTask("/nonexistent", "task.md")).resolves.toBeUndefined();
+      await expect(
+        storeAny.reloadTask("/nonexistent", "task.md"),
+      ).resolves.toBeUndefined();
     });
   });
 });
@@ -644,18 +718,20 @@ describe("MultiBacklogStore Symlink and Worktree Handling", () => {
       const ignorePatterns = globOptions?.ignore || [];
 
       // Verify task worktree patterns are in ignore list
-      expect(ignorePatterns.some((p: string) => p.includes("-task-"))).toBe(true);
+      expect(ignorePatterns.some((p: string) => p.includes("-task-"))).toBe(
+        true,
+      );
     });
 
     it("documents expected worktree directory naming conventions", () => {
       // Document the patterns that should be excluded:
       // These are directories created by flowspec for task-specific worktrees
       const worktreePatterns = [
-        "project-task-1",     // Single digit task ID
-        "project-task-10",    // Double digit task ID
-        "project-task-100",   // Triple digit task ID
-        "flowspec-task-582",  // Actual example from the codebase
-        "daax-task-5",        // Another example
+        "project-task-1", // Single digit task ID
+        "project-task-10", // Double digit task ID
+        "project-task-100", // Triple digit task ID
+        "flowspec-task-582", // Actual example from the codebase
+        "daax-task-5", // Another example
       ];
 
       // These test patterns conceptually verify the intent of the glob patterns:
@@ -690,11 +766,25 @@ describe("MultiBacklogStore Symlink and Worktree Handling", () => {
       const project1 = {
         path: canonicalPath,
         name: "Project via canonical path",
-        tasks: [{ id: "task-1", title: "Task 1", status: "Open", assignee: [], labels: [], dependencies: [] }],
+        tasks: [
+          {
+            id: "task-1",
+            title: "Task 1",
+            status: "Open",
+            assignee: [],
+            labels: [],
+            dependencies: [],
+          },
+        ],
         documents: [],
         decisions: [],
         milestones: [],
-        config: { projectName: "Project", statuses: [], labels: [], milestones: [] },
+        config: {
+          projectName: "Project",
+          statuses: [],
+          labels: [],
+          milestones: [],
+        },
         taskCount: 1,
         lastUpdated: new Date().toISOString(),
       };
@@ -702,11 +792,25 @@ describe("MultiBacklogStore Symlink and Worktree Handling", () => {
       const project2 = {
         path: canonicalPath, // Same canonical path - this simulates symlink resolution
         name: "Project via symlink (resolved)",
-        tasks: [{ id: "task-2", title: "Task 2", status: "Done", assignee: [], labels: [], dependencies: [] }],
+        tasks: [
+          {
+            id: "task-2",
+            title: "Task 2",
+            status: "Done",
+            assignee: [],
+            labels: [],
+            dependencies: [],
+          },
+        ],
         documents: [],
         decisions: [],
         milestones: [],
-        config: { projectName: "Project Updated", statuses: [], labels: [], milestones: [] },
+        config: {
+          projectName: "Project Updated",
+          statuses: [],
+          labels: [],
+          milestones: [],
+        },
         taskCount: 1,
         lastUpdated: new Date().toISOString(),
       };
@@ -735,11 +839,25 @@ describe("MultiBacklogStore Symlink and Worktree Handling", () => {
       const project = {
         path: canonicalPath,
         name: "Real Project",
-        tasks: [{ id: "task-1", title: "Test", status: "Open", assignee: [], labels: [], dependencies: [] }],
+        tasks: [
+          {
+            id: "task-1",
+            title: "Test",
+            status: "Open",
+            assignee: [],
+            labels: [],
+            dependencies: [],
+          },
+        ],
         documents: [],
         decisions: [],
         milestones: [],
-        config: { projectName: "Real Project", statuses: ["Open"], labels: [], milestones: [] },
+        config: {
+          projectName: "Real Project",
+          statuses: ["Open"],
+          labels: [],
+          milestones: [],
+        },
         taskCount: 1,
         lastUpdated: new Date().toISOString(),
       };
@@ -775,7 +893,12 @@ describe("MultiBacklogStore Symlink and Worktree Handling", () => {
         documents: [],
         decisions: [],
         milestones: [],
-        config: { projectName: "Working", statuses: [], labels: [], milestones: [] },
+        config: {
+          projectName: "Working",
+          statuses: [],
+          labels: [],
+          milestones: [],
+        },
         taskCount: 0,
         lastUpdated: new Date().toISOString(),
       });
@@ -795,176 +918,191 @@ describe("MultiBacklogStore Symlink and Worktree Handling", () => {
  * They verify O(1)/O(n) complexity expectations, not strict timing.
  * Skip these tests with SKIP_PERF_TESTS=1 if they cause CI issues.
  */
-describe.skipIf(process.env.SKIP_PERF_TESTS === "1")("MultiBacklogStore Performance", () => {
-  // Helper to create a project with N tasks
-  function createLargeProject(path: string, name: string, taskCount: number) {
-    const tasks: Task[] = [];
-    for (let i = 0; i < taskCount; i++) {
-      tasks.push({
-        id: `task-${String(i).padStart(4, "0")}`,
-        title: `Task ${i}`,
-        status: i % 4 === 0 ? "Done" : i % 3 === 0 ? "In Progress" : "Open",
-        priority: i % 5 === 0 ? "high" : i % 3 === 0 ? "medium" : "low",
-        assignee: [`@user${i % 5}`],
-        createdDate: "2026-01-15",
-        labels: [`label-${i % 10}`],
-        dependencies: [],
-      });
-    }
-
-    return {
-      path,
-      name,
-      tasks,
-      documents: [],
-      decisions: [],
-      milestones: [],
-      config: {
-        projectName: name,
-        statuses: ["Open", "In Progress", "Review", "Done"],
-        labels: [],
-        milestones: [],
-      },
-      taskCount: tasks.length,
-      lastUpdated: new Date().toISOString(),
-    };
-  }
-
-  it("handles large number of tasks in memory efficiently", () => {
-    const store = new MultiBacklogStore();
-    const storeAny = store as any;
-
-    const project = createLargeProject("/workspace/large-project", "Large Project", 1000);
-    storeAny.projects.set(project.path, project);
-
-    const startTime = performance.now();
-
-    // Access operations
-    const retrievedProject = store.getProject("/workspace/large-project");
-    expect(retrievedProject).not.toBeNull();
-    expect(retrievedProject!.tasks).toHaveLength(1000);
-
-    // Filter operations
-    const openTasks = retrievedProject!.tasks.filter((t) => t.status === "Open");
-    const highPriority = retrievedProject!.tasks.filter((t) => t.priority === "high");
-
-    const endTime = performance.now();
-    const operationTime = endTime - startTime;
-
-    // Should complete in <50ms
-    expect(operationTime).toBeLessThan(50);
-    expect(openTasks.length).toBeGreaterThan(0);
-    expect(highPriority.length).toBeGreaterThan(0);
-
-    store.destroy();
-  });
-
-  it("switches between multiple large projects in <50ms", () => {
-    const store = new MultiBacklogStore();
-    const storeAny = store as any;
-
-    // Create 5 projects with 500 tasks each
-    for (let i = 0; i < 5; i++) {
-      const project = createLargeProject(
-        `/workspace/project-${i}`,
-        `Project ${i}`,
-        500
-      );
-      storeAny.projects.set(project.path, project);
-    }
-
-    expect(store.getProjectCount()).toBe(5);
-
-    const startTime = performance.now();
-
-    // Switch between all 5 projects multiple times
-    for (let round = 0; round < 3; round++) {
-      for (let i = 0; i < 5; i++) {
-        store.setActiveProject(`/workspace/project-${i}`);
-        const active = store.getActiveProject();
-        expect(active).not.toBeNull();
-        expect(active!.path).toBe(`/workspace/project-${i}`);
+describe.skipIf(process.env.SKIP_PERF_TESTS === "1")(
+  "MultiBacklogStore Performance",
+  () => {
+    // Helper to create a project with N tasks
+    function createLargeProject(path: string, name: string, taskCount: number) {
+      const tasks: Task[] = [];
+      for (let i = 0; i < taskCount; i++) {
+        tasks.push({
+          id: `task-${String(i).padStart(4, "0")}`,
+          title: `Task ${i}`,
+          status: i % 4 === 0 ? "Done" : i % 3 === 0 ? "In Progress" : "Open",
+          priority: i % 5 === 0 ? "high" : i % 3 === 0 ? "medium" : "low",
+          assignee: [`@user${i % 5}`],
+          createdDate: "2026-01-15",
+          labels: [`label-${i % 10}`],
+          dependencies: [],
+        });
       }
+
+      return {
+        path,
+        name,
+        tasks,
+        documents: [],
+        decisions: [],
+        milestones: [],
+        config: {
+          projectName: name,
+          statuses: ["Open", "In Progress", "Review", "Done"],
+          labels: [],
+          milestones: [],
+        },
+        taskCount: tasks.length,
+        lastUpdated: new Date().toISOString(),
+      };
     }
 
-    const endTime = performance.now();
-    const switchTime = endTime - startTime;
+    it("handles large number of tasks in memory efficiently", () => {
+      const store = new MultiBacklogStore();
+      const storeAny = store as any;
 
-    // 15 switches should complete in <50ms
-    expect(switchTime).toBeLessThan(50);
-
-    store.destroy();
-  });
-
-  it("filters tasks efficiently with complex queries", () => {
-    const store = new MultiBacklogStore();
-    const storeAny = store as any;
-
-    const project = createLargeProject("/workspace/filter-test", "Filter Test", 1000);
-    storeAny.projects.set(project.path, project);
-
-    const startTime = performance.now();
-
-    const tasks = store.getProject("/workspace/filter-test")!.tasks;
-
-    // Multiple filter operations
-    const openHighPriority = tasks.filter(
-      (t) => t.status === "Open" && t.priority === "high"
-    );
-    const inProgressByUser = tasks.filter(
-      (t) => t.status === "In Progress" && t.assignee?.includes("@user1")
-    );
-    const doneWithLabel = tasks.filter(
-      (t) => t.status === "Done" && t.labels?.includes("label-5")
-    );
-    const multiFilter = tasks.filter(
-      (t) =>
-        (t.status === "Open" || t.status === "In Progress") &&
-        (t.priority === "high" || t.priority === "medium") &&
-        t.assignee?.some((a) => a.startsWith("@user"))
-    );
-
-    const endTime = performance.now();
-    const filterTime = endTime - startTime;
-
-    // Complex filtering should complete in <30ms
-    expect(filterTime).toBeLessThan(30);
-    expect(openHighPriority.length).toBeGreaterThanOrEqual(0);
-    expect(inProgressByUser.length).toBeGreaterThanOrEqual(0);
-    expect(doneWithLabel.length).toBeGreaterThanOrEqual(0);
-    expect(multiFilter.length).toBeGreaterThan(0);
-
-    store.destroy();
-  });
-
-  it("getAllProjects returns quickly with many projects", () => {
-    const store = new MultiBacklogStore();
-    const storeAny = store as any;
-
-    // Create 20 projects with 100 tasks each
-    for (let i = 0; i < 20; i++) {
       const project = createLargeProject(
-        `/workspace/project-${i}`,
-        `Project ${i}`,
-        100
+        "/workspace/large-project",
+        "Large Project",
+        1000,
       );
       storeAny.projects.set(project.path, project);
-    }
 
-    const startTime = performance.now();
+      const startTime = performance.now();
 
-    // Get all projects multiple times
-    for (let i = 0; i < 100; i++) {
-      const allProjects = store.getAllProjects();
-      expect(allProjects).toHaveLength(20);
-    }
+      // Access operations
+      const retrievedProject = store.getProject("/workspace/large-project");
+      expect(retrievedProject).not.toBeNull();
+      expect(retrievedProject!.tasks).toHaveLength(1000);
 
-    const endTime = performance.now();
-    const accessTime = endTime - startTime;
+      // Filter operations
+      const openTasks = retrievedProject!.tasks.filter(
+        (t) => t.status === "Open",
+      );
+      const highPriority = retrievedProject!.tasks.filter(
+        (t) => t.priority === "high",
+      );
 
-    // 100 getAllProjects calls should complete in <50ms
-    expect(accessTime).toBeLessThan(50);
+      const endTime = performance.now();
+      const operationTime = endTime - startTime;
 
-    store.destroy();
-  });
-});
+      // Should complete in <50ms
+      expect(operationTime).toBeLessThan(50);
+      expect(openTasks.length).toBeGreaterThan(0);
+      expect(highPriority.length).toBeGreaterThan(0);
+
+      store.destroy();
+    });
+
+    it("switches between multiple large projects in <50ms", () => {
+      const store = new MultiBacklogStore();
+      const storeAny = store as any;
+
+      // Create 5 projects with 500 tasks each
+      for (let i = 0; i < 5; i++) {
+        const project = createLargeProject(
+          `/workspace/project-${i}`,
+          `Project ${i}`,
+          500,
+        );
+        storeAny.projects.set(project.path, project);
+      }
+
+      expect(store.getProjectCount()).toBe(5);
+
+      const startTime = performance.now();
+
+      // Switch between all 5 projects multiple times
+      for (let round = 0; round < 3; round++) {
+        for (let i = 0; i < 5; i++) {
+          store.setActiveProject(`/workspace/project-${i}`);
+          const active = store.getActiveProject();
+          expect(active).not.toBeNull();
+          expect(active!.path).toBe(`/workspace/project-${i}`);
+        }
+      }
+
+      const endTime = performance.now();
+      const switchTime = endTime - startTime;
+
+      // 15 switches should complete in <50ms
+      expect(switchTime).toBeLessThan(50);
+
+      store.destroy();
+    });
+
+    it("filters tasks efficiently with complex queries", () => {
+      const store = new MultiBacklogStore();
+      const storeAny = store as any;
+
+      const project = createLargeProject(
+        "/workspace/filter-test",
+        "Filter Test",
+        1000,
+      );
+      storeAny.projects.set(project.path, project);
+
+      const startTime = performance.now();
+
+      const tasks = store.getProject("/workspace/filter-test")!.tasks;
+
+      // Multiple filter operations
+      const openHighPriority = tasks.filter(
+        (t) => t.status === "Open" && t.priority === "high",
+      );
+      const inProgressByUser = tasks.filter(
+        (t) => t.status === "In Progress" && t.assignee?.includes("@user1"),
+      );
+      const doneWithLabel = tasks.filter(
+        (t) => t.status === "Done" && t.labels?.includes("label-5"),
+      );
+      const multiFilter = tasks.filter(
+        (t) =>
+          (t.status === "Open" || t.status === "In Progress") &&
+          (t.priority === "high" || t.priority === "medium") &&
+          t.assignee?.some((a) => a.startsWith("@user")),
+      );
+
+      const endTime = performance.now();
+      const filterTime = endTime - startTime;
+
+      // Complex filtering should complete in <30ms
+      expect(filterTime).toBeLessThan(30);
+      expect(openHighPriority.length).toBeGreaterThanOrEqual(0);
+      expect(inProgressByUser.length).toBeGreaterThanOrEqual(0);
+      expect(doneWithLabel.length).toBeGreaterThanOrEqual(0);
+      expect(multiFilter.length).toBeGreaterThan(0);
+
+      store.destroy();
+    });
+
+    it("getAllProjects returns quickly with many projects", () => {
+      const store = new MultiBacklogStore();
+      const storeAny = store as any;
+
+      // Create 20 projects with 100 tasks each
+      for (let i = 0; i < 20; i++) {
+        const project = createLargeProject(
+          `/workspace/project-${i}`,
+          `Project ${i}`,
+          100,
+        );
+        storeAny.projects.set(project.path, project);
+      }
+
+      const startTime = performance.now();
+
+      // Get all projects multiple times
+      for (let i = 0; i < 100; i++) {
+        const allProjects = store.getAllProjects();
+        expect(allProjects).toHaveLength(20);
+      }
+
+      const endTime = performance.now();
+      const accessTime = endTime - startTime;
+
+      // 100 getAllProjects calls should complete in <50ms
+      expect(accessTime).toBeLessThan(50);
+
+      store.destroy();
+    });
+  },
+);

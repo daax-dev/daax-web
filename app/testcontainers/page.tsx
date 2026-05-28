@@ -4,9 +4,9 @@
  * Main page for managing test containers.
  */
 
-'use client';
+"use client";
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo } from "react";
 import {
   Container,
   RefreshCw,
@@ -14,31 +14,40 @@ import {
   AlertCircle,
   Search,
   Filter,
-} from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+} from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { toast } from 'sonner';
-import Link from 'next/link';
-import { useContainers } from '@/plugins/testcontainers/hooks';
-import { ContainerCard } from '@/plugins/testcontainers/components';
-import type { ContainerAction, ContainerStatus } from '@/plugins/testcontainers/types';
+} from "@/components/ui/select";
+import { toast } from "sonner";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useContainers } from "@/plugins/testcontainers/hooks";
+import { ContainerCard } from "@/plugins/testcontainers/components";
+import type {
+  ContainerAction,
+  ContainerStatus,
+} from "@/plugins/testcontainers/types";
 
 export default function TestContainersPage() {
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const router = useRouter();
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
 
-  const filter = useMemo(() => ({
-    search: search || undefined,
-    status: statusFilter !== 'all' ? [statusFilter as ContainerStatus] : undefined,
-  }), [search, statusFilter]);
+  const filter = useMemo(
+    () => ({
+      search: search || undefined,
+      status:
+        statusFilter !== "all" ? [statusFilter as ContainerStatus] : undefined,
+    }),
+    [search, statusFilter],
+  );
 
   const {
     containers,
@@ -61,42 +70,42 @@ export default function TestContainersPage() {
     async (action: ContainerAction, id: string) => {
       try {
         switch (action) {
-          case 'start':
+          case "start":
             await startContainer(id);
-            toast.success('Container started');
+            toast.success("Container started");
             break;
-          case 'stop':
+          case "stop":
             await stopContainer(id);
-            toast.success('Container stopped');
+            toast.success("Container stopped");
             break;
-          case 'restart':
+          case "restart":
             await restartContainer(id);
-            toast.success('Container restarted');
+            toast.success("Container restarted");
             break;
-          case 'remove':
+          case "remove":
             await removeContainer(id, true);
-            toast.success('Container removed');
+            toast.success("Container removed");
             break;
-          case 'logs':
+          case "logs":
             // Open logs in a new tab/modal
-            window.open(`/testcontainers/${id}/logs`, '_blank');
+            window.open(`/testcontainers/${id}/logs`, "_blank");
             break;
-          case 'inspect':
+          case "inspect":
             // Navigate to details page
-            window.location.href = `/testcontainers/${id}`;
+            router.push(`/testcontainers/${id}`);
             break;
         }
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Action failed');
+        toast.error(err instanceof Error ? err.message : "Action failed");
       }
     },
-    [startContainer, stopContainer, restartContainer, removeContainer]
+    [router, startContainer, stopContainer, restartContainer, removeContainer],
   );
 
   // Count containers by status
-  const runningCount = containers.filter((c) => c.status === 'running').length;
+  const runningCount = containers.filter((c) => c.status === "running").length;
   const stoppedCount = containers.filter(
-    (c) => c.status === 'exited' || c.status === 'dead'
+    (c) => c.status === "exited" || c.status === "dead",
   ).length;
 
   // Docker not connected state
@@ -119,7 +128,9 @@ export default function TestContainersPage() {
             <p>open -a Docker</p>
           </div>
           <Button onClick={refresh} disabled={loading}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw
+              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+            />
             Retry Connection
           </Button>
         </div>
@@ -142,7 +153,9 @@ export default function TestContainersPage() {
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={refresh} disabled={loading}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw
+              className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
+            />
             Refresh
           </Button>
           <Button asChild>
@@ -233,9 +246,9 @@ export default function TestContainersPage() {
           </div>
           <h2 className="text-lg font-medium mb-2">No containers found</h2>
           <p className="text-muted-foreground max-w-md mb-4">
-            {search || statusFilter !== 'all'
-              ? 'No containers match your filters. Try adjusting your search or filter.'
-              : 'Launch a container from the catalog to get started.'}
+            {search || statusFilter !== "all"
+              ? "No containers match your filters. Try adjusting your search or filter."
+              : "Launch a container from the catalog to get started."}
           </p>
           <Button asChild>
             <Link href="/testcontainers/catalog">

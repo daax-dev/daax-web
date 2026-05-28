@@ -169,7 +169,14 @@ priority: "urgent"
 
   describe("status validation", () => {
     it("accepts valid statuses", () => {
-      const statuses = ["Open", "In Progress", "Review", "Done", "Blocked", "Cancelled"];
+      const statuses = [
+        "Open",
+        "In Progress",
+        "Review",
+        "Done",
+        "Blocked",
+        "Cancelled",
+      ];
       for (const status of statuses) {
         const content = `---
 id: "test"
@@ -478,7 +485,13 @@ projectName: "Minimal Config"
     const config = parseConfig(yaml);
 
     expect(config.projectName).toBe("Minimal Config");
-    expect(config.statuses).toEqual(["Open", "In Progress", "Review", "Done", "Blocked"]);
+    expect(config.statuses).toEqual([
+      "Open",
+      "In Progress",
+      "Review",
+      "Done",
+      "Blocked",
+    ]);
     expect(config.labels).toEqual([]);
     expect(config.milestones).toEqual([]);
     expect(config.dateFormat).toBe("YYYY-MM-DD");

@@ -39,7 +39,7 @@ test.describe("Unauthenticated Page Navigation", () => {
 
       expect(
         isRedirectedToAuth || isBlocked,
-        `Expected redirect to auth or 401, got ${response?.status()} at ${finalUrl}`
+        `Expected redirect to auth or 401, got ${response?.status()} at ${finalUrl}`,
       ).toBe(true);
 
       // If redirected, the redirect URL should contain a reference back to daax

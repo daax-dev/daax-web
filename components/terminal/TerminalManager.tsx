@@ -79,15 +79,24 @@ export function getTerminalServerUrl(): string {
       ? 443
       : 80;
 
-  // Production (HTTPS on port 443): use path-based routing on same domain
-  // This avoids CORS issues and simplifies Traefik configuration
-  // Note: Only port 443 is standard for HTTPS; port 80 is HTTP's standard port
-  if (protocol === "wss:" && currentPort === 443) {
+  // Behind a reverse proxy (Traefik) on a standard port with a non-loopback host:
+  // use same-origin path-based routing (/ws). Traefik forwards PathPrefix(`/ws`)
+  // to the terminal server (:4201). This covers BOTH https://daax.<host>.poley.dev
+  // (wss:443) AND standard-port access via non-loopback IP/hostnames. Only true
+  // local loopback hosts should fall through to the direct host:port+1 mapping.
+  const hostname = window.location.hostname;
+  const isStandardPort =
+    (protocol === "wss:" && currentPort === 443) ||
+    (protocol === "ws:" && currentPort === 80);
+  const isLocalLoopback =
+    hostname === "localhost" || hostname === "127.0.0.1";
+  if (isStandardPort && !isLocalLoopback) {
     return `${protocol}//${window.location.host}/ws`;
   }
 
-  // Development or non-standard: port-based routing (localhost:4200 -> localhost:4201)
-  return `${protocol}//${window.location.hostname}:${currentPort + 1}`;
+  // Direct/dev access or port mapping: WebSocket port = HTTP port + 1
+  // (e.g. localhost:4200 -> ws://localhost:4201)
+  return `${protocol}//${hostname}:${currentPort + 1}`;
 }
 
 // Get container image from settings
@@ -125,6 +134,10 @@ interface AISession {
   projectType?: "git" | "planning";
   // Timestamp when session was created (used for deduplication)
   createdAt: number;
+  // Server-assigned docker container name (`daax-<8>`), captured from the
+  // Terminal's first session message. Lets the Sessions page cross-reference
+  // a docker-ps row back to a client-side session to "return" to it.
+  containerName?: string;
   // Git worktree fields
   isWorktree?: boolean;
   worktreePath?: string;
@@ -164,6 +177,7 @@ interface TerminalManagerContextType {
   restartAISession: (sessionId: string) => void;
   removeAISession: (sessionId: string) => Promise<void>;
   renameAISession: (sessionId: string, name: string) => void;
+  setAISessionContainerName: (sessionId: string, containerName: string) => void;
   getAISessionRef: (sessionId: string) => TerminalRef | null;
   setAISessionRef: (sessionId: string, ref: TerminalRef | null) => void;
 }
@@ -586,6 +600,19 @@ export function TerminalManagerProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  // Capture the server-assigned container name when the Terminal reports its
+  // first session message. Used by the Sessions page to map a docker-ps row
+  // back to this client-side session for "return to session".
+  const setAISessionContainerName = useCallback(
+    (sessionId: string, containerName: string) => {
+      if (!containerName) return;
+      setAISessions((prev) =>
+        prev.map((s) => (s.id === sessionId ? { ...s, containerName } : s)),
+      );
+    },
+    [],
+  );
+
   const getAISessionRef = useCallback(
     (sessionId: string): TerminalRef | null => {
       return aiTerminalRefs.current.get(sessionId) || null;
@@ -659,6 +686,7 @@ export function TerminalManagerProvider({ children }: { children: ReactNode }) {
       restartAISession,
       removeAISession,
       renameAISession,
+      setAISessionContainerName,
       getAISessionRef,
       setAISessionRef,
     }),
@@ -675,6 +703,7 @@ export function TerminalManagerProvider({ children }: { children: ReactNode }) {
       restartAISession,
       removeAISession,
       renameAISession,
+      setAISessionContainerName,
       getAISessionRef,
       setAISessionRef,
     ],
@@ -724,6 +753,11 @@ export function TerminalManagerProvider({ children }: { children: ReactNode }) {
                 <Terminal
                   ref={(ref) => setAISessionRef(session.id, ref)}
                   wsUrl={session.wsUrl}
+                  onSessionStart={(_id, _mode, containerName) => {
+                    if (containerName) {
+                      setAISessionContainerName(session.id, containerName);
+                    }
+                  }}
                   onExit={getAIExitHandler(session.id)}
                   onError={handleError}
                   className="h-full"

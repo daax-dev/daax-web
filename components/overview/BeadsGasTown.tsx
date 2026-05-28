@@ -22,25 +22,29 @@ export function BeadsGasTown({ className }: { className?: string }) {
           <Flame className="w-10 h-10 text-orange-400" />
         </div>
         <p className="text-xl text-muted-foreground max-w-3xl mx-auto leading-relaxed">
-          <span className="text-orange-400 font-semibold">Gas Town</span> is Steve Yegge&apos;s vision
-          of the IDE for 2026: a multi-agent workspace where you tell{" "}
-          <span className="text-foreground font-semibold">The Mayor</span> what you want,
-          and coordinated AI agents make it happen. Built on{" "}
-          <span className="text-orange-400 font-semibold">Beads</span>—a git-backed issue tracker
-          that gives AI agents memory across sessions.
+          <span className="text-orange-400 font-semibold">Gas Town</span> is
+          Steve Yegge&apos;s vision of the IDE for 2026: a multi-agent workspace
+          where you tell{" "}
+          <span className="text-foreground font-semibold">The Mayor</span> what
+          you want, and coordinated AI agents make it happen. Built on{" "}
+          <span className="text-orange-400 font-semibold">Beads</span>—a
+          git-backed issue tracker that gives AI agents memory across sessions.
         </p>
       </div>
 
       {/* Mad Max theme callout */}
       <div className="p-4 rounded-xl bg-orange-500/10 border border-orange-500/20 mb-10 text-center">
         <p className="text-sm text-muted-foreground">
-          <span className="text-orange-400">🔥</span> Named after the oil refinery citadel in Mad Max.
-          The theme continues: Mayors, Rigs, Polecats, and Convoys.
+          <span className="text-orange-400">🔥</span> Named after the oil
+          refinery citadel in Mad Max. The theme continues: Mayors, Rigs,
+          Polecats, and Convoys.
         </p>
       </div>
 
       {/* Key Components */}
-      <h3 className="font-semibold text-foreground mb-6 text-center">The Gas Town Architecture</h3>
+      <h3 className="font-semibold text-foreground mb-6 text-center">
+        The Gas Town Architecture
+      </h3>
       <div className="grid md:grid-cols-2 gap-6 mb-10">
         <div className="p-6 rounded-xl bg-muted/20 border border-border/50">
           <div className="flex items-center gap-3 mb-4">
@@ -50,12 +54,13 @@ export function BeadsGasTown({ className }: { className?: string }) {
             <h4 className="font-semibold text-foreground">The Mayor</h4>
           </div>
           <p className="text-sm text-muted-foreground mb-3">
-            Your primary AI coordinator. The Mayor is a Claude Code instance with full context
-            about your workspace, projects, and agents. Start here—just tell the Mayor what
-            you want to accomplish.
+            Your primary AI coordinator. The Mayor is a Claude Code instance
+            with full context about your workspace, projects, and agents. Start
+            here—just tell the Mayor what you want to accomplish.
           </p>
           <div className="text-xs text-muted-foreground font-mono bg-muted/30 p-2 rounded">
-            &quot;Mayor, I need to refactor the auth module and add OAuth support&quot;
+            &quot;Mayor, I need to refactor the auth module and add OAuth
+            support&quot;
           </div>
         </div>
 
@@ -67,8 +72,9 @@ export function BeadsGasTown({ className }: { className?: string }) {
             <h4 className="font-semibold text-foreground">Rigs</h4>
           </div>
           <p className="text-sm text-muted-foreground mb-3">
-            Project containers. Each rig wraps a git repository and manages its associated agents.
-            The Mayor delegates work to rigs, which coordinate their own teams of workers.
+            Project containers. Each rig wraps a git repository and manages its
+            associated agents. The Mayor delegates work to rigs, which
+            coordinate their own teams of workers.
           </p>
           <div className="text-xs text-muted-foreground font-mono bg-muted/30 p-2 rounded">
             rig:frontend • rig:backend • rig:infrastructure
@@ -99,8 +105,10 @@ export function BeadsGasTown({ className }: { className?: string }) {
             <h4 className="font-semibold text-foreground">Beads</h4>
           </div>
           <p className="text-sm text-muted-foreground mb-3">
-            Work tracking units stored in a <code className="text-xs bg-muted px-1 rounded">.beads</code> directory.
-            Git + SQLite backend gives version control to structured data. Agents finally have memory.
+            Work tracking units stored in a{" "}
+            <code className="text-xs bg-muted px-1 rounded">.beads</code>{" "}
+            directory. Git + SQLite backend gives version control to structured
+            data. Agents finally have memory.
           </p>
           <div className="text-xs text-muted-foreground font-mono bg-muted/30 p-2 rounded">
             bd create &quot;Implement OAuth flow&quot; --assign polecat-auth
@@ -115,18 +123,23 @@ export function BeadsGasTown({ className }: { className?: string }) {
           The &quot;AI Dementia&quot; Problem
         </h3>
         <p className="text-muted-foreground mb-4">
-          AI coding agents have no memory between sessions. Every conversation starts fresh.
-          Beads solves this by storing tasks, context, and decisions in a git-backed format
-          that persists across sessions and can be shared between agents.
+          AI coding agents have no memory between sessions. Every conversation
+          starts fresh. Beads solves this by storing tasks, context, and
+          decisions in a git-backed format that persists across sessions and can
+          be shared between agents.
         </p>
         <div className="grid md:grid-cols-2 gap-4 text-sm">
           <div className="flex items-start gap-2">
             <span className="text-red-400">❌</span>
-            <span className="text-muted-foreground">Without Beads: &quot;What were we working on?&quot;</span>
+            <span className="text-muted-foreground">
+              Without Beads: &quot;What were we working on?&quot;
+            </span>
           </div>
           <div className="flex items-start gap-2">
             <span className="text-green-400">✓</span>
-            <span className="text-muted-foreground">With Beads: Agent reads .beads, knows full context</span>
+            <span className="text-muted-foreground">
+              With Beads: Agent reads .beads, knows full context
+            </span>
           </div>
         </div>
       </div>
@@ -134,11 +147,13 @@ export function BeadsGasTown({ className }: { className?: string }) {
       {/* Current state and getting started */}
       <div className="grid md:grid-cols-2 gap-6">
         <div className="p-5 rounded-xl bg-muted/10 border border-border/40">
-          <h4 className="font-semibold text-foreground mb-3">Current State (2026)</h4>
+          <h4 className="font-semibold text-foreground mb-3">
+            Current State (2026)
+          </h4>
           <p className="text-sm text-muted-foreground">
-            Gas Town is wild and evolving fast. $100/hour burn rates are possible.
-            It&apos;s for a specific ambition level—teams ready to push the boundaries
-            of what multi-agent development can do.
+            Gas Town is wild and evolving fast. $100/hour burn rates are
+            possible. It&apos;s for a specific ambition level—teams ready to
+            push the boundaries of what multi-agent development can do.
           </p>
         </div>
         <div className="p-5 rounded-xl bg-muted/10 border border-border/40">

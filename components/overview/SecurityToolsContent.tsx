@@ -11,8 +11,9 @@ export function DeveloperSecurity({ className }: { className?: string }) {
           <ShieldCheck className="w-8 h-8 text-green-400" />
         </div>
         <p className="text-lg text-muted-foreground max-w-xl">
-          Shift security left. Run SAST, secrets scanning, and dependency checks directly in your workflow—
-          catch vulnerabilities before they reach production.
+          Shift security left. Run SAST, secrets scanning, and dependency checks
+          directly in your workflow—catch vulnerabilities before they reach
+          production.
         </p>
       </div>
 
@@ -46,8 +47,9 @@ export function CyberToolkit({ className }: { className?: string }) {
           <Crosshair className="w-8 h-8 text-red-400" />
         </div>
         <p className="text-lg text-muted-foreground max-w-xl">
-          Professional penetration testing tools in a sandboxed environment. Run vulnerability assessments
-          and security audits without risking your host system.
+          Professional penetration testing tools in a sandboxed environment. Run
+          vulnerability assessments and security audits without risking your
+          host system.
         </p>
       </div>
 
@@ -81,8 +83,9 @@ export function SemgrepIntegration({ className }: { className?: string }) {
           <FileSearch className="w-8 h-8 text-cyan-400" />
         </div>
         <p className="text-lg text-muted-foreground max-w-xl">
-          Pattern-based static analysis with Semgrep. Use community rules or write custom patterns
-          for your codebase—find bugs, enforce standards, and prevent anti-patterns.
+          Pattern-based static analysis with Semgrep. Use community rules or
+          write custom patterns for your codebase—find bugs, enforce standards,
+          and prevent anti-patterns.
         </p>
       </div>
 
@@ -116,8 +119,9 @@ export function TrivyScanning({ className }: { className?: string }) {
           <Bug className="w-8 h-8 text-violet-400" />
         </div>
         <p className="text-lg text-muted-foreground max-w-xl">
-          Comprehensive vulnerability scanning with Trivy. Scan container images, filesystems, and IaC
-          for CVEs, misconfigurations, and license issues in one tool.
+          Comprehensive vulnerability scanning with Trivy. Scan container
+          images, filesystems, and IaC for CVEs, misconfigurations, and license
+          issues in one tool.
         </p>
       </div>
 

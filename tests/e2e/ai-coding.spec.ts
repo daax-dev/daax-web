@@ -17,14 +17,14 @@ test.describe("AI Coding", () => {
   test("AI coding page loads with agent options", async ({ page }) => {
     // Should show agent selection options
     await expect(
-      page.getByText(/Claude|Aider|Gemini|Copilot|OpenCode/i).first()
+      page.getByText(/Claude|Aider|Gemini|Copilot|OpenCode/i).first(),
     ).toBeVisible({ timeout: 10000 });
   });
 
   test("can select a project for AI coding", async ({ page }) => {
     // Look for project selector
     const projectSelector = page.locator(
-      'select, [role="combobox"], [data-testid="project-selector"]'
+      'select, [role="combobox"], [data-testid="project-selector"]',
     );
 
     if ((await projectSelector.count()) > 0) {
@@ -44,7 +44,7 @@ test.describe("AI Coding", () => {
   test("can start an AI coding session", async ({ page }) => {
     // Find and click a start/launch button
     const startButton = page.locator(
-      'button:has-text("Start"), button:has-text("Launch"), button:has-text("New Session")'
+      'button:has-text("Start"), button:has-text("Launch"), button:has-text("New Session")',
     );
 
     if ((await startButton.count()) > 0) {
@@ -55,7 +55,9 @@ test.describe("AI Coding", () => {
       const terminal = page.locator(".xterm");
       // Either shows terminal or shows session info
       const hasTerminal = (await terminal.count()) > 0;
-      const hasSession = await page.getByText(/Session|Running|Active/i).isVisible();
+      const hasSession = await page
+        .getByText(/Session|Running|Active/i)
+        .isVisible();
 
       expect(hasTerminal || hasSession).toBe(true);
     }
@@ -64,7 +66,7 @@ test.describe("AI Coding", () => {
   test("AI session list shows active sessions", async ({ page }) => {
     // Look for sessions list/sidebar
     const sessionsList = page.locator(
-      '[data-testid="sessions-list"], .sessions-sidebar, aside'
+      '[data-testid="sessions-list"], .sessions-sidebar, aside',
     );
 
     if ((await sessionsList.count()) > 0) {

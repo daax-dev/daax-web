@@ -38,8 +38,11 @@ export function FeedbackLoop({ className }: { className?: string }) {
       {/* Central concept */}
       <div className="text-center mb-10">
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-          After each session, recorded events power an <span className="text-primary font-semibold">agentic retrospective</span>—
-          surfacing insights for both the human and the AI to improve.
+          After each session, recorded events power an{" "}
+          <span className="text-primary font-semibold">
+            agentic retrospective
+          </span>
+          —surfacing insights for both the human and the AI to improve.
         </p>
       </div>
 
@@ -58,7 +61,9 @@ export function FeedbackLoop({ className }: { className?: string }) {
           <div className="w-20 h-20 rounded-full bg-muted/30 border-2 border-border flex items-center justify-center">
             <RefreshCw className="w-10 h-10 text-primary animate-spin-slow" />
           </div>
-          <span className="mt-2 text-xs text-muted-foreground">Continuous Learning</span>
+          <span className="mt-2 text-xs text-muted-foreground">
+            Continuous Learning
+          </span>
         </div>
 
         {/* Agent side */}
@@ -79,14 +84,14 @@ export function FeedbackLoop({ className }: { className?: string }) {
               "p-5 rounded-xl border",
               item.role === "human"
                 ? "bg-cyan-500/5 border-cyan-500/30"
-                : "bg-violet-500/5 border-violet-500/30"
+                : "bg-violet-500/5 border-violet-500/30",
             )}
           >
             <div className="flex items-start gap-3">
               <div
                 className={cn(
                   "w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0",
-                  item.role === "human" ? "bg-cyan-500/20" : "bg-violet-500/20"
+                  item.role === "human" ? "bg-cyan-500/20" : "bg-violet-500/20",
                 )}
               >
                 {item.role === "human" ? (
@@ -118,8 +123,9 @@ export function FeedbackLoop({ className }: { className?: string }) {
           <span className="font-semibold text-foreground">Outcome</span>
         </div>
         <p className="text-muted-foreground max-w-2xl mx-auto">
-          Each retrospective generates actionable improvements—better prompts, refined workflows,
-          and calibrated agent behaviors—making every future session more effective.
+          Each retrospective generates actionable improvements—better prompts,
+          refined workflows, and calibrated agent behaviors—making every future
+          session more effective.
         </p>
       </div>
     </div>
