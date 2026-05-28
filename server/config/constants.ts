@@ -67,6 +67,12 @@ export function isAllowedOrigin(origin: string | undefined): boolean {
   // Allow any localhost origin (different ports for container mapping)
   if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
 
+  // Allow Traefik local hostnames (*.localhost, e.g. http://daax.localhost).
+  // The `.localhost` TLD is reserved to loopback (RFC 6761), so any host ending
+  // in `.localhost` resolves to the local machine — safe to allow for local
+  // reverse-proxy access (this is the default `docker compose up` workflow).
+  if (/^https?:\/\/([a-z0-9-]+\.)+localhost(:\d+)?$/.test(origin)) return true;
+
   // Allow Tailscale IPs (100.64.0.0/10 = 100.64.0.0 – 100.127.255.255)
   // This is the CGNAT range used by Tailscale, not the full 100/8 block
   // Octets 3 & 4 are validated to 0-255 range
