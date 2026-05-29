@@ -43,3 +43,9 @@ yarn-error.log*
 # Logs
 logs/
 *.log
+
+# Session / test artifacts (Playwright MCP snapshots, verification screenshots, scratch dumps)
+.playwright-mcp/
+/*.png
+/tr-snap.md
+.claude/scheduled_tasks.lock
