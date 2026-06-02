@@ -220,4 +220,28 @@ describe("SessionTimeline", () => {
       expect(screen.getByText("error")).toBeInTheDocument();
     });
   });
+
+  it("renders error badge when error is an empty string (not null)", async () => {
+    // Regression for Copilot finding: Boolean("") === false, so a truthiness
+    // check would treat "" as success. The nullish check must flag "" as error.
+    stubFetch({
+      tools: [
+        {
+          id: "t0",
+          startedAt: 0,
+          name: "bad_tool",
+          durationMs: 5,
+          parameters: {},
+          result: null,
+          error: "", // empty string — still an error
+        },
+      ],
+    });
+
+    render(<SessionTimeline id="sess-8" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("error")).toBeInTheDocument();
+    });
+  });
 });

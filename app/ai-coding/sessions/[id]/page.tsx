@@ -135,7 +135,9 @@ function ToolRow({ tool }: { tool: ToolCall }) {
     typeof tool.name === "string" ? tool.name : String(tool.name ?? "tool");
   const durationMs =
     typeof tool.durationMs === "number" ? tool.durationMs : null;
-  const hasError = Boolean(tool.error);
+  // Use a nullish check rather than Boolean() so an empty-string error ("")
+  // is still treated as an error state rather than a success.
+  const hasError = tool.error !== null && tool.error !== undefined;
 
   return (
     <div className="flex items-center gap-3 px-3 py-2 text-sm">
