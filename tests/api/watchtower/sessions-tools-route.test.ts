@@ -9,6 +9,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // ─── hoist mock factory before any import ───────────────────────────────────
 const mockFetch = vi.fn();
 
+// Capture the original fetch once so afterEach can restore it and prevent
+// the mock from leaking into other test files running in the same worker.
+const originalFetch = (
+  globalThis as typeof globalThis & { fetch: typeof fetch }
+).fetch;
+
 beforeEach(() => {
   mockFetch.mockReset();
   (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch =
@@ -16,6 +22,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Restore global fetch so subsequent test files are not affected.
+  (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch =
+    originalFetch;
   vi.clearAllMocks();
 });
 
@@ -129,5 +138,48 @@ describe("GET /api/watchtower/sessions/[id]/tools", () => {
     expect(data.tools[1].name).toBe("tool_b");
     expect(data.tools[1].error).toBe("oops");
     expect(data.tools[1].durationMs).toBeNull();
+  });
+
+  it("sorts tools by startedAt ascending even if Watchtower returns them out of order", async () => {
+    // Regression for Copilot finding: clusterByTurn() requires ascending order
+    const raw = [
+      {
+        id: "t2",
+        session_id: "s1",
+        tool_name: "tool_later",
+        parameters: {},
+        result: null,
+        error: null,
+        duration_ms: 5,
+        created_at: "2024-01-01T00:00:01.000Z", // later timestamp, but listed first
+      },
+      {
+        id: "t1",
+        session_id: "s1",
+        tool_name: "tool_earlier",
+        parameters: {},
+        result: null,
+        error: null,
+        duration_ms: 5,
+        created_at: "2024-01-01T00:00:00.000Z", // earlier timestamp, listed second
+      },
+    ];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(raw),
+    });
+
+    const res = await GET(new Request("http://localhost"), ctx("s1"));
+    const data = await res.json();
+
+    expect(data.tools).toHaveLength(2);
+    // After sort, the earlier tool must come first
+    expect(data.tools[0].name).toBe("tool_earlier");
+    expect(data.tools[1].name).toBe("tool_later");
+    // startedAt values must be non-decreasing
+    expect(data.tools[0].startedAt).toBeLessThanOrEqual(
+      data.tools[1].startedAt,
+    );
   });
 });
