@@ -69,13 +69,14 @@ const NO_STORE = { headers: { "Cache-Control": "no-store" } };
 // Returns { servers: string[] } (HTTP 200, Cache-Control: no-store) always.
 export async function GET(): Promise<NextResponse> {
   try {
-    // 1. Project-root .mcp.json — treat as authoritative if the file is present.
-    //    An empty mcpServers key means "no servers configured at project level"
-    //    and must not fall through to global sources (avoids misleading users).
-    const projectConfig = tryReadConfig(join(process.cwd(), ".mcp.json"));
-    if (projectConfig !== null) {
+    // 1. Project-root .mcp.json — treat as authoritative if the file exists.
+    //    An empty or invalid/unparseable config still means "project-root wins":
+    //    do not fall through to home/desktop sources and show their servers.
+    const projectMcpPath = join(process.cwd(), ".mcp.json");
+    if (existsSync(projectMcpPath)) {
+      const projectConfig = tryReadConfig(projectMcpPath);
       return NextResponse.json(
-        { servers: extractServerNames(projectConfig) },
+        { servers: projectConfig ? extractServerNames(projectConfig) : [] },
         NO_STORE,
       );
     }
