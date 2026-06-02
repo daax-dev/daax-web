@@ -223,6 +223,41 @@ describe("GET /api/watchtower/sessions/[id]/tools", () => {
     );
   });
 
+  it("sets Cache-Control: no-store on all response paths", async () => {
+    // Regression for Copilot finding: live session data must not be cached by
+    // intermediaries or browsers.
+
+    // Success path
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve([
+          {
+            id: "t1",
+            session_id: "s1",
+            tool_name: "t",
+            parameters: {},
+            result: null,
+            error: null,
+            duration_ms: 1,
+            created_at: "2024-01-01T00:00:00Z",
+          },
+        ]),
+    });
+    const okRes = await GET(new Request("http://localhost"), ctx("s1"));
+    expect(okRes.headers.get("Cache-Control")).toBe("no-store");
+
+    // Failure path (non-200)
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
+    const errRes = await GET(new Request("http://localhost"), ctx("s1"));
+    expect(errRes.headers.get("Cache-Control")).toBe("no-store");
+
+    // Failure path (fetch throws)
+    mockFetch.mockRejectedValueOnce(new Error("down"));
+    const throwRes = await GET(new Request("http://localhost"), ctx("s1"));
+    expect(throwRes.headers.get("Cache-Control")).toBe("no-store");
+  });
+
   it("returns {tools:[]} when the fetch times out (AbortError)", async () => {
     // Regression for Copilot finding: a slow Watchtower must degrade quickly.
     const abortErr = Object.assign(new Error("The operation was aborted."), {

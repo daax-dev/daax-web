@@ -47,6 +47,9 @@ const WATCHTOWER_API_URL =
 /** Maximum ms to wait for Watchtower before aborting and returning {tools:[]}. */
 const FETCH_TIMEOUT_MS = 5_000;
 
+/** Shared response headers — prevent intermediaries/browsers caching live session data. */
+const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
+
 export async function GET(
   _req: Request,
   context: { params: Promise<{ id: string }> },
@@ -65,7 +68,7 @@ export async function GET(
       console.warn(
         `[watchtower-proxy] /api/sessions/${id}/tools → HTTP ${res.status}`,
       );
-      return NextResponse.json({ tools: [] });
+      return NextResponse.json({ tools: [] }, { headers: NO_STORE_HEADERS });
     }
 
     const raw: unknown = await res.json();
@@ -99,9 +102,9 @@ export async function GET(
       // of upstream ordering.
       .sort((a, b) => a.startedAt - b.startedAt);
 
-    return NextResponse.json({ tools });
+    return NextResponse.json({ tools }, { headers: NO_STORE_HEADERS });
   } catch (err) {
     console.warn("[watchtower-proxy] fetch failed:", err);
-    return NextResponse.json({ tools: [] });
+    return NextResponse.json({ tools: [] }, { headers: NO_STORE_HEADERS });
   }
 }
