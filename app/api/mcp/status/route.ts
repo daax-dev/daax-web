@@ -26,7 +26,9 @@ function tryReadConfig(filePath: string): McpConfig | null {
 /** Extract server names from a parsed config (supports both key variants). */
 function extractServerNames(cfg: McpConfig): string[] {
   const map = cfg.mcpServers ?? cfg.servers;
-  return map ? Object.keys(map) : [];
+  // Guard: only call Object.keys on a plain object (not null, array, or primitive)
+  if (!map || typeof map !== "object" || Array.isArray(map)) return [];
+  return Object.keys(map);
 }
 
 /**
@@ -77,9 +79,15 @@ export async function GET(): Promise<NextResponse> {
     const cfg = primaryConfig ?? fallbackConfig;
     const servers = cfg ? extractServerNames(cfg) : [];
 
-    return NextResponse.json({ servers });
+    return NextResponse.json(
+      { servers },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch {
     // Safety net: always return 200 with empty servers
-    return NextResponse.json({ servers: [] });
+    return NextResponse.json(
+      { servers: [] },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   }
 }

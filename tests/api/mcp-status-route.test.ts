@@ -159,6 +159,33 @@ describe("GET /api/mcp/status", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Type guard: mcpServers is not a plain object (Copilot finding #1)
+  // -------------------------------------------------------------------------
+  it("returns servers:[] when mcpServers is an array (not a plain object)", async () => {
+    mockExistsSync.mockImplementation((p: string) => p.endsWith(".mcp.json"));
+    mockReadFileSync.mockReturnValue(
+      JSON.stringify({ mcpServers: ["server1", "server2"] }),
+    );
+
+    const res = await GET();
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.servers).toEqual([]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Cache-Control header (Copilot finding #2)
+  // -------------------------------------------------------------------------
+  it("sets Cache-Control: no-store header", async () => {
+    mockExistsSync.mockReturnValue(false);
+
+    const res = await GET();
+
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  // -------------------------------------------------------------------------
   // Returns [] when mcpServers key is missing from config
   // -------------------------------------------------------------------------
   it("returns servers:[] when mcpServers key is missing entirely", async () => {
