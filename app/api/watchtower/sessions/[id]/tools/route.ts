@@ -42,8 +42,11 @@ export interface SessionToolCall {
   [key: string]: unknown;
 }
 
+// Default to host.docker.internal so the proxy works in the Docker/compose
+// deployment (where docker-compose.yml adds host.docker.internal:host-gateway).
+// host dev can override with WATCHTOWER_API_URL=http://localhost:4220.
 const WATCHTOWER_API_URL =
-  process.env.WATCHTOWER_API_URL ?? "http://localhost:4220";
+  process.env.WATCHTOWER_API_URL ?? "http://host.docker.internal:4220";
 
 /** Maximum ms to wait for Watchtower before aborting and returning {tools:[]}. */
 const FETCH_TIMEOUT_MS = 5_000;
