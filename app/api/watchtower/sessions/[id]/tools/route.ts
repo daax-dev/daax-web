@@ -59,15 +59,21 @@ export async function GET(
     const raw: unknown = await res.json();
     const list: WatchtowerTool[] = Array.isArray(raw) ? raw : [];
 
-    const tools: SessionToolCall[] = list.map((t) => ({
-      id: t.id,
-      startedAt: Date.parse(t.created_at),
-      name: t.tool_name,
-      durationMs: t.duration_ms ?? null,
-      parameters: t.parameters,
-      result: t.result,
-      error: t.error ?? null,
-    }));
+    const tools: SessionToolCall[] = list
+      .map((t) => ({
+        id: t.id,
+        startedAt: Date.parse(t.created_at),
+        name: t.tool_name,
+        durationMs: t.duration_ms ?? null,
+        parameters: t.parameters,
+        result: t.result,
+        error: t.error ?? null,
+      }))
+      // clusterByTurn() requires tools sorted ascending by startedAt.
+      // Watchtower returns rows ordered by created_at ASC per the contract,
+      // but we sort here defensively to guarantee the precondition regardless
+      // of upstream ordering.
+      .sort((a, b) => a.startedAt - b.startedAt);
 
     return NextResponse.json({ tools });
   } catch (err) {
