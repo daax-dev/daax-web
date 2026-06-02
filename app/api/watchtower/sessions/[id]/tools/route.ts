@@ -10,6 +10,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth";
 
 /** Raw shape returned by GET /api/sessions/:id/tools from Watchtower. */
 interface WatchtowerTool {
@@ -50,10 +51,15 @@ const FETCH_TIMEOUT_MS = 5_000;
 /** Shared response headers — prevent intermediaries/browsers caching live session data. */
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
 
+// SECURITY: GET requires auth — tool-call records can contain prompts, command
+// output, file contents, and other sensitive data.
 export async function GET(
   _req: Request,
   context: { params: Promise<{ id: string }> },
 ) {
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   const { id } = await context.params;
 
   try {

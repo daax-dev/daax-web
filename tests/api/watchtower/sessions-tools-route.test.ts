@@ -1,12 +1,20 @@
 /**
  * Tests for GET /api/watchtower/sessions/[id]/tools
  *
- * Mocks global fetch to simulate Watchtower responses.
+ * Mocks global fetch to simulate Watchtower responses, and mocks requireAuth
+ * to verify the auth gate without requiring a live auth server.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { NextResponse } from "next/server";
 
-// ─── hoist mock factory before any import ───────────────────────────────────
+// ─── hoist mock factories before any imports ────────────────────────────────
+const { mockRequireAuth } = vi.hoisted(() => ({
+  mockRequireAuth: vi.fn(),
+}));
+
+vi.mock("@/lib/auth", () => ({ requireAuth: mockRequireAuth }));
+
 const mockFetch = vi.fn();
 
 // Capture the original fetch once so afterEach can restore it and prevent
@@ -15,8 +23,14 @@ const originalFetch = (
   globalThis as typeof globalThis & { fetch: typeof fetch }
 ).fetch;
 
+/** Helper: set up a successful (authenticated) requireAuth mock. */
+const authed = () => mockRequireAuth.mockResolvedValue({ authenticated: true });
+
 beforeEach(() => {
   mockFetch.mockReset();
+  mockRequireAuth.mockReset();
+  // Default to authenticated for all tests unless overridden.
+  authed();
   (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch =
     mockFetch as unknown as typeof fetch;
 });
@@ -37,6 +51,21 @@ function ctx(id: string) {
 }
 
 describe("GET /api/watchtower/sessions/[id]/tools", () => {
+  it("returns 401 when the request is not authenticated", async () => {
+    // Regression for Codex P1 finding: tool-call data (parameters, results)
+    // can contain sensitive data; the route must auth-gate all reads.
+    mockRequireAuth.mockResolvedValueOnce({
+      authenticated: false,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    });
+
+    const res = await GET(new Request("http://localhost"), ctx("s1"));
+
+    expect(res.status).toBe(401);
+    // Watchtower must NOT be contacted for unauthenticated requests
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it("maps watchtower shape to {startedAt, name} correctly", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
