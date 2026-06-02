@@ -72,7 +72,13 @@ export async function GET(): Promise<NextResponse> {
     // 1. Project-root .mcp.json — treat as authoritative if the file exists.
     //    An empty or invalid/unparseable config still means "project-root wins":
     //    do not fall through to home/desktop sources and show their servers.
-    const projectMcpPath = join(process.cwd(), ".mcp.json");
+    //    In container mode use /workspace (matching app/api/mcp/config/route.ts
+    //    getDefaultProjectPath convention); otherwise use cwd.
+    const projectRoot =
+      process.env.CLAUDE_CODE_CONFIG || existsSync("/workspace")
+        ? "/workspace"
+        : process.cwd();
+    const projectMcpPath = join(projectRoot, ".mcp.json");
     if (existsSync(projectMcpPath)) {
       const projectConfig = tryReadConfig(projectMcpPath);
       return NextResponse.json(

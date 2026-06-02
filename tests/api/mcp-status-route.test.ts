@@ -244,6 +244,25 @@ describe("GET /api/mcp/status", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Container mode: checks /workspace/.mcp.json (Copilot finding PR #81)
+  // -------------------------------------------------------------------------
+  it("uses /workspace/.mcp.json as project root in container mode", async () => {
+    vi.stubEnv("CLAUDE_CODE_CONFIG", "/host-config/.claude.json");
+    mockExistsSync.mockImplementation(
+      (p: string) => p === "/workspace" || p === "/workspace/.mcp.json",
+    );
+    mockReadFileSync.mockReturnValue(
+      JSON.stringify({ mcpServers: { container_mcp: {} } }),
+    );
+
+    const res = await GET();
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.servers).toEqual(["container_mcp"]);
+  });
+
+  // -------------------------------------------------------------------------
   // Type guard: mcpServers is not a plain object
   // -------------------------------------------------------------------------
   it("returns servers:[] when mcpServers is an array (not a plain object)", async () => {

@@ -16,7 +16,9 @@ export function McpStatusBar() {
     fetch("/api/mcp/status", { cache: "no-store" })
       .then((res) => res.json() as Promise<McpStatusResponse>)
       .then((data) => {
-        setServers(data.servers ?? []);
+        // Runtime guard: ensure servers is an array before using it
+        const list = Array.isArray(data.servers) ? data.servers : [];
+        setServers(list);
         setLoaded(true);
       })
       .catch(() => {
