@@ -64,6 +64,9 @@ describe("GET /api/watchtower/sessions/[id]/tools", () => {
     expect(res.status).toBe(401);
     // Watchtower must NOT be contacted for unauthenticated requests
     expect(mockFetch).not.toHaveBeenCalled();
+    // Auth response must also carry no-store so a cached 401 can't persist
+    // across auth-state changes (Copilot PR#90 finding).
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
   });
 
   it("maps watchtower shape to {startedAt, name} correctly", async () => {
