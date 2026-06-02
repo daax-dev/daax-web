@@ -1,7 +1,8 @@
 /**
  * Tests for GET /api/mcp/status
  *
- * Mocks node:fs so tests are deterministic regardless of host filesystem.
+ * Mocks node:fs and lib/mcp-config so tests are deterministic regardless
+ * of host filesystem.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -15,10 +16,18 @@ const { mockExistsSync, mockReadFileSync } = vi.hoisted(() => ({
   mockReadFileSync: vi.fn<(p: string, encoding: string) => string>(),
 }));
 
+const { mockGetHomeMcpJsonPath } = vi.hoisted(() => ({
+  mockGetHomeMcpJsonPath: vi.fn<() => string>(),
+}));
+
 vi.mock("node:fs", () => ({
   default: { existsSync: mockExistsSync, readFileSync: mockReadFileSync },
   existsSync: mockExistsSync,
   readFileSync: mockReadFileSync,
+}));
+
+vi.mock("@/lib/mcp-config", () => ({
+  getHomeMcpJsonPath: mockGetHomeMcpJsonPath,
 }));
 
 // Import after mocks
@@ -27,8 +36,9 @@ import { GET } from "@/app/api/mcp/status/route";
 describe("GET /api/mcp/status", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default: no files exist; no env overrides
+    // Default: no files exist; home path is somewhere unlikely to collide with cwd
     mockExistsSync.mockReturnValue(false);
+    mockGetHomeMcpJsonPath.mockReturnValue("/home/user/.mcp.json");
     vi.unstubAllEnvs();
   });
 
@@ -45,7 +55,8 @@ describe("GET /api/mcp/status", () => {
       (p: string) =>
         p.endsWith(".mcp.json") &&
         !p.includes("Application Support") &&
-        !p.includes("claude_desktop_config"),
+        !p.includes(".config") &&
+        !p.includes("/home/user"),
     );
     mockReadFileSync.mockReturnValue(
       JSON.stringify({ mcpServers: { fs: {}, gh: {} } }),
@@ -70,10 +81,13 @@ describe("GET /api/mcp/status", () => {
   });
 
   // -------------------------------------------------------------------------
-  // DoD: empty mcpServers → {servers:[]}
+  // DoD: empty mcpServers → {servers:[]} — project .mcp.json is authoritative
   // -------------------------------------------------------------------------
-  it("returns servers:[] for empty mcpServers object", async () => {
-    mockExistsSync.mockImplementation((p: string) => p.endsWith(".mcp.json"));
+  it("returns servers:[] for empty mcpServers — project file is authoritative", async () => {
+    // Project-root .mcp.json exists but has no servers
+    mockExistsSync.mockImplementation(
+      (p: string) => p.endsWith(".mcp.json") && !p.includes("/home/user"),
+    );
     mockReadFileSync.mockReturnValue(JSON.stringify({ mcpServers: {} }));
 
     const res = await GET();
@@ -81,13 +95,16 @@ describe("GET /api/mcp/status", () => {
 
     expect(res.status).toBe(200);
     expect(data.servers).toEqual([]);
+    // IMPORTANT: does NOT fall through to home/desktop configs
   });
 
   // -------------------------------------------------------------------------
-  // Supports alternative `servers` key in .mcp.json (Copilot finding #3/#4)
+  // Supports alternative `servers` key in .mcp.json
   // -------------------------------------------------------------------------
   it("supports the `servers` key in .mcp.json (alternative format)", async () => {
-    mockExistsSync.mockImplementation((p: string) => p.endsWith(".mcp.json"));
+    mockExistsSync.mockImplementation(
+      (p: string) => p.endsWith(".mcp.json") && !p.includes("/home/user"),
+    );
     mockReadFileSync.mockReturnValue(
       JSON.stringify({ servers: { toolA: {}, toolB: {} } }),
     );
@@ -100,10 +117,48 @@ describe("GET /api/mcp/status", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Home-level .mcp.json (HOME_MCP_JSON via getHomeMcpJsonPath)
+  // -------------------------------------------------------------------------
+  it("uses home .mcp.json when project .mcp.json is absent", async () => {
+    mockGetHomeMcpJsonPath.mockReturnValue("/home/user/.mcp.json");
+    mockExistsSync.mockImplementation(
+      (p: string) => p === "/home/user/.mcp.json",
+    );
+    mockReadFileSync.mockReturnValue(
+      JSON.stringify({ mcpServers: { home_mcp: {} } }),
+    );
+
+    const res = await GET();
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.servers).toEqual(["home_mcp"]);
+  });
+
+  // -------------------------------------------------------------------------
+  // HOME_MCP_JSON env override (Docker deployments via getHomeMcpJsonPath)
+  // -------------------------------------------------------------------------
+  it("honours HOME_MCP_JSON env var for Docker deployments", async () => {
+    // Simulate lib/mcp-config.ts returning the env-var path
+    mockGetHomeMcpJsonPath.mockReturnValue("/host-config/.mcp.json");
+    mockExistsSync.mockImplementation(
+      (p: string) => p === "/host-config/.mcp.json",
+    );
+    mockReadFileSync.mockReturnValue(
+      JSON.stringify({ mcpServers: { docker_mcp: {} } }),
+    );
+
+    const res = await GET();
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.servers).toEqual(["docker_mcp"]);
+  });
+
+  // -------------------------------------------------------------------------
   // Falls back to Claude Desktop config (macOS path)
   // -------------------------------------------------------------------------
-  it("falls back to Claude Desktop config (macOS path) when .mcp.json is absent", async () => {
-    // Only the Claude Desktop macOS path exists
+  it("falls back to Claude Desktop config (macOS path) when .mcp.json absent", async () => {
     mockExistsSync.mockImplementation(
       (p: string) =>
         p.includes("Application Support") &&
@@ -121,10 +176,9 @@ describe("GET /api/mcp/status", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Falls back to Linux Claude Desktop path (Copilot finding #1 on PR #78)
+  // Linux Claude Desktop path
   // -------------------------------------------------------------------------
   it("uses Linux Claude Desktop path (~/.config/claude/) when macOS path absent", async () => {
-    // Only the Linux path exists, not macOS
     mockExistsSync.mockImplementation(
       (p: string) =>
         p.includes(".config") &&
@@ -143,26 +197,7 @@ describe("GET /api/mcp/status", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Honours HOME_MCP_JSON env var (Copilot finding #1)
-  // -------------------------------------------------------------------------
-  it("honours HOME_MCP_JSON env var for Docker deployments", async () => {
-    vi.stubEnv("HOME_MCP_JSON", "/host-config/.mcp.json");
-    mockExistsSync.mockImplementation(
-      (p: string) => p === "/host-config/.mcp.json",
-    );
-    mockReadFileSync.mockReturnValue(
-      JSON.stringify({ mcpServers: { docker_mcp: {} } }),
-    );
-
-    const res = await GET();
-    const data = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(data.servers).toEqual(["docker_mcp"]);
-  });
-
-  // -------------------------------------------------------------------------
-  // Honours CLAUDE_DESKTOP_CONFIG env var (Copilot finding #2)
+  // CLAUDE_DESKTOP_CONFIG env var override
   // -------------------------------------------------------------------------
   it("honours CLAUDE_DESKTOP_CONFIG env var override", async () => {
     vi.stubEnv("CLAUDE_DESKTOP_CONFIG", "/host-config/desktop.json");
@@ -181,10 +216,12 @@ describe("GET /api/mcp/status", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Type guard: mcpServers is not a plain object (Copilot finding #1)
+  // Type guard: mcpServers is not a plain object
   // -------------------------------------------------------------------------
   it("returns servers:[] when mcpServers is an array (not a plain object)", async () => {
-    mockExistsSync.mockImplementation((p: string) => p.endsWith(".mcp.json"));
+    mockExistsSync.mockImplementation(
+      (p: string) => p.endsWith(".mcp.json") && !p.includes("/home/user"),
+    );
     mockReadFileSync.mockReturnValue(
       JSON.stringify({ mcpServers: ["server1", "server2"] }),
     );
@@ -197,11 +234,9 @@ describe("GET /api/mcp/status", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Cache-Control header (Copilot finding #2)
+  // Cache-Control header
   // -------------------------------------------------------------------------
   it("sets Cache-Control: no-store header", async () => {
-    mockExistsSync.mockReturnValue(false);
-
     const res = await GET();
 
     expect(res.headers.get("Cache-Control")).toBe("no-store");
@@ -211,7 +246,9 @@ describe("GET /api/mcp/status", () => {
   // Returns [] when mcpServers key is missing from config
   // -------------------------------------------------------------------------
   it("returns servers:[] when mcpServers key is missing entirely", async () => {
-    mockExistsSync.mockImplementation((p: string) => p.endsWith(".mcp.json"));
+    mockExistsSync.mockImplementation(
+      (p: string) => p.endsWith(".mcp.json") && !p.includes("/home/user"),
+    );
     mockReadFileSync.mockReturnValue(JSON.stringify({ other: "data" }));
 
     const res = await GET();
