@@ -49,3 +49,7 @@ logs/
 /*.png
 /tr-snap.md
 .claude/scheduled_tasks.lock
+
+# Playwright run output
+/playwright-report/
+/test-results/

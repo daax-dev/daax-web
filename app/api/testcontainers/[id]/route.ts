@@ -35,7 +35,9 @@ export async function GET(_request: Request, { params }: RouteParams) {
       );
     }
 
-    const container = await getContainer(id);
+    // This endpoint intentionally surfaces connection credentials so the UI
+    // can render and copy working connection strings (reveal toggle).
+    const container = await getContainer(id, { includeCredentials: true });
     if (!container) {
       return NextResponse.json(
         { error: "Container not found" },
