@@ -88,6 +88,12 @@ export interface TestContainer {
   labels: Record<string, string>;
   /** Environment variable keys (values redacted for security) */
   environmentKeys: string[];
+  /**
+   * Real values for connection-relevant credential env vars (e.g. DB password).
+   * Populated only on single-container inspect via an explicit allowlist; never
+   * present in bulk listings. Used to render and copy working connection info.
+   */
+  connectionCredentials?: Record<string, string>;
   /** Volume mounts */
   mounts: VolumeMount[];
   /** Network names */

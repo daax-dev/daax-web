@@ -63,9 +63,12 @@ export async function listContainers(
 /**
  * Get a single container by ID
  */
-export async function getContainer(id: string): Promise<TestContainer | null> {
+export async function getContainer(
+  id: string,
+  options?: { includeCredentials?: boolean },
+): Promise<TestContainer | null> {
   const client = getDockerClient();
-  return client.getContainer(id);
+  return client.getContainer(id, options);
 }
 
 /**
