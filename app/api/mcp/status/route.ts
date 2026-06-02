@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { getHomeMcpJsonPath } from "@/lib/mcp-config";
 
 /**
  * Shape accepted by .mcp.json (supports both `mcpServers` and `servers` keys
- * matching the rest of the MCP readers in this repo).
+ * matching the rest of the MCP readers in this repo — see lib/mcp-discovery.ts).
  */
 interface McpConfig {
   mcpServers?: Record<string, unknown>;
@@ -33,17 +34,15 @@ function extractServerNames(cfg: McpConfig): string[] {
 
 /**
  * Resolve the Claude Desktop config path.
- * Honours CLAUDE_DESKTOP_CONFIG env var.
- * Checks macOS path first; falls back to Linux path (`~/.config/claude/...`).
- * Matches the convention in lib/mcp-discovery.ts CONFIG_PATHS.claudeDesktop.
+ * Honours CLAUDE_DESKTOP_CONFIG env var (treats empty string as unset).
+ * Path resolution matches lib/mcp-discovery.ts CONFIG_PATHS.claudeDesktop:
+ * checks macOS path first, falls back to Linux ~/.config/claude/ path.
  */
 function getClaudeDesktopConfigPath(): string {
-  // Env override (treats empty string as unset)
   if (process.env.CLAUDE_DESKTOP_CONFIG) {
     return process.env.CLAUDE_DESKTOP_CONFIG;
   }
   const home = homedir();
-  // macOS path
   const macPath = join(
     home,
     "Library",
@@ -51,7 +50,6 @@ function getClaudeDesktopConfigPath(): string {
     "Claude",
     "claude_desktop_config.json",
   );
-  // Linux fallback — return the first that exists, or macPath as default
   const linuxPath = join(
     home,
     ".config",
@@ -61,44 +59,46 @@ function getClaudeDesktopConfigPath(): string {
   return existsSync(macPath) ? macPath : linuxPath;
 }
 
+const NO_STORE = { headers: { "Cache-Control": "no-store" } };
+
 // GET /api/mcp/status
 // Reads MCP server names from config sources in priority order:
-//  1. process.cwd()/.mcp.json    (project-root)
-//  2. HOME_MCP_JSON path         (home-level .mcp.json, Docker override)
+//  1. process.cwd()/.mcp.json    (project-root; authoritative if file exists)
+//  2. getHomeMcpJsonPath()        (home-level .mcp.json per lib/mcp-config.ts)
 //  3. Claude Desktop config      (CLAUDE_DESKTOP_CONFIG or platform default)
-// Stops at the first source that returns servers.
-// Returns { servers: string[] } (HTTP 200) always — never 404/500.
+// Returns { servers: string[] } (HTTP 200, Cache-Control: no-store) always.
 export async function GET(): Promise<NextResponse> {
-  const noStore = { headers: { "Cache-Control": "no-store" } };
   try {
-    // 1. Project-root .mcp.json
+    // 1. Project-root .mcp.json — treat as authoritative if the file is present.
+    //    An empty mcpServers key means "no servers configured at project level"
+    //    and must not fall through to global sources (avoids misleading users).
     const projectConfig = tryReadConfig(join(process.cwd(), ".mcp.json"));
-    if (projectConfig) {
-      const servers = extractServerNames(projectConfig);
-      if (servers.length > 0) {
-        return NextResponse.json({ servers }, noStore);
-      }
+    if (projectConfig !== null) {
+      return NextResponse.json(
+        { servers: extractServerNames(projectConfig) },
+        NO_STORE,
+      );
     }
 
-    // 2. Home-level .mcp.json (or HOME_MCP_JSON override — semantic as in lib/mcp-config.ts)
-    const homeMcpPath =
-      process.env.HOME_MCP_JSON || join(homedir(), ".mcp.json");
-    if (homeMcpPath !== join(process.cwd(), ".mcp.json")) {
-      const homeConfig = tryReadConfig(homeMcpPath);
-      if (homeConfig) {
-        const servers = extractServerNames(homeConfig);
-        if (servers.length > 0) {
-          return NextResponse.json({ servers }, noStore);
-        }
-      }
+    // 2. Home-level .mcp.json (or HOME_MCP_JSON env override per lib/mcp-config.ts).
+    //    getHomeMcpJsonPath() resolves HOME_MCP_JSON || ~/.mcp.json.
+    const homeMcpPath = getHomeMcpJsonPath();
+    const homeConfig = tryReadConfig(homeMcpPath);
+    if (homeConfig !== null) {
+      return NextResponse.json(
+        { servers: extractServerNames(homeConfig) },
+        NO_STORE,
+      );
     }
 
-    // 3. Claude Desktop config fallback
+    // 3. Claude Desktop config fallback.
     const desktopConfig = tryReadConfig(getClaudeDesktopConfigPath());
-    const servers = desktopConfig ? extractServerNames(desktopConfig) : [];
-    return NextResponse.json({ servers }, noStore);
+    return NextResponse.json(
+      { servers: desktopConfig ? extractServerNames(desktopConfig) : [] },
+      NO_STORE,
+    );
   } catch {
     // Safety net: always return 200 with empty servers
-    return NextResponse.json({ servers: [] }, noStore);
+    return NextResponse.json({ servers: [] }, NO_STORE);
   }
 }

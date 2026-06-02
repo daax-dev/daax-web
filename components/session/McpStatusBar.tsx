@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
@@ -12,7 +12,7 @@ export function McpStatusBar() {
   const [servers, setServers] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
 
-  useEffect(() => {
+  const fetchStatus = useCallback(() => {
     fetch("/api/mcp/status", { cache: "no-store" })
       .then((res) => res.json() as Promise<McpStatusResponse>)
       .then((data) => {
@@ -24,6 +24,23 @@ export function McpStatusBar() {
         setLoaded(true);
       });
   }, []);
+
+  useEffect(() => {
+    // Initial fetch
+    fetchStatus();
+
+    // Re-fetch when the page regains visibility (e.g. user navigates to /mcp,
+    // edits MCP config, then returns via client-side navigation).
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        fetchStatus();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [fetchStatus]);
 
   if (!loaded) return null;
 
