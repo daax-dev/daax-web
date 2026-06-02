@@ -8,9 +8,8 @@
  * shared TurnGroup component.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, use } from "react";
 import Link from "next/link";
-import { use } from "react";
 import {
   ArrowLeft,
   RefreshCw,
@@ -73,9 +72,9 @@ export function SessionTimeline({ id }: SessionTimelineProps) {
   }, [load]);
 
   // Cluster tools into turns.
-  // SessionToolCall now carries the [key: string]: unknown index signature
-  // required by ToolCall, so the cast is safe and structurally correct.
-  const groups = clusterByTurn(tools as ToolCall[]);
+  // SessionToolCall is structurally assignable to ToolCall[] (startedAt +
+  // index signature); no cast needed.
+  const groups = clusterByTurn(tools);
 
   if (loading) {
     return (
@@ -119,7 +118,7 @@ export function SessionTimeline({ id }: SessionTimelineProps) {
         <TurnGroup
           key={group.turnIndex}
           group={group}
-          renderTool={(tool, i) => <ToolRow key={i} tool={tool} />}
+          renderTool={(tool) => <ToolRow tool={tool} />}
         />
       ))}
     </div>
