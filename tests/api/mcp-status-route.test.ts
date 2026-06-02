@@ -99,6 +99,34 @@ describe("GET /api/mcp/status", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Invalid project .mcp.json is still authoritative (Copilot finding PR #80)
+  // -------------------------------------------------------------------------
+  it("returns servers:[] when project .mcp.json exists but is invalid (does not fall through)", async () => {
+    // Project-root .mcp.json exists (existsSync returns true) but is unparseable;
+    // home config is valid — should NOT fall through to home servers
+    mockGetHomeMcpJsonPath.mockReturnValue("/home/user/.mcp.json");
+    mockExistsSync.mockImplementation((p: string) => {
+      // Project .mcp.json exists; home path also "exists" to prove no fallthrough
+      if (p.endsWith(".mcp.json")) return true;
+      return false;
+    });
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p.includes("/home/user/.mcp.json")) {
+        return JSON.stringify({ mcpServers: { home_server: {} } });
+      }
+      // Project .mcp.json is malformed
+      return "INVALID JSON {{{";
+    });
+
+    const res = await GET();
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    // Must NOT show home_server — project .mcp.json is authoritative
+    expect(data.servers).toEqual([]);
+  });
+
+  // -------------------------------------------------------------------------
   // Supports alternative `servers` key in .mcp.json
   // -------------------------------------------------------------------------
   it("supports the `servers` key in .mcp.json (alternative format)", async () => {
