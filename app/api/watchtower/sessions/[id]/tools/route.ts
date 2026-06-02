@@ -4,9 +4,13 @@
  * Fetches tool-call data from the Watchtower REST API and maps it to the
  * ToolCall shape expected by lib/turn-cluster.ts.
  *
- * On any failure (watchtower down, non-200, missing/malformed JSON) this
- * route returns HTTP 200 { tools: [] } — the caller must never receive a
- * 500, so the UI degrades gracefully to an empty timeline.
+ * Auth: requireAuth() is called first; unauthenticated requests receive a 401
+ * from the auth layer before any Watchtower communication occurs.
+ *
+ * Failure semantics: on Watchtower fetch failures (down, timeout, non-200,
+ * missing/malformed JSON) this route returns HTTP 200 { tools: [] } so the UI
+ * degrades gracefully to an empty timeline. A 500 is never returned for
+ * upstream failures — only the 401 from auth can produce a non-200 status.
  */
 
 import { NextResponse } from "next/server";
@@ -66,7 +70,13 @@ export async function GET(
   context: { params: Promise<{ id: string }> },
 ) {
   const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  if (!auth.authenticated) {
+    // Ensure no-store on the auth error so a cached 401 can't persist across
+    // auth-state changes (e.g. after the user logs in again).
+    const authRes = auth.response.clone ? auth.response.clone() : auth.response;
+    authRes.headers.set("Cache-Control", "no-store");
+    return authRes;
+  }
 
   const { id } = await context.params;
 
