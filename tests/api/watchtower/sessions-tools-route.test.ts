@@ -223,6 +223,20 @@ describe("GET /api/watchtower/sessions/[id]/tools", () => {
     );
   });
 
+  it("returns {tools:[]} when the fetch times out (AbortError)", async () => {
+    // Regression for Copilot finding: a slow Watchtower must degrade quickly.
+    const abortErr = Object.assign(new Error("The operation was aborted."), {
+      name: "AbortError",
+    });
+    mockFetch.mockRejectedValueOnce(abortErr);
+
+    const res = await GET(new Request("http://localhost"), ctx("s1"));
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.tools).toEqual([]);
+  });
+
   it("skips non-object array elements (null, primitives) without throwing", async () => {
     // Regression for Copilot finding: array may contain null or primitive values
     // that should be dropped instead of causing .map() to throw and swallow

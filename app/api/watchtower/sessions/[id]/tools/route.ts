@@ -44,6 +44,9 @@ export interface SessionToolCall {
 const WATCHTOWER_API_URL =
   process.env.WATCHTOWER_API_URL ?? "http://localhost:4220";
 
+/** Maximum ms to wait for Watchtower before aborting and returning {tools:[]}. */
+const FETCH_TIMEOUT_MS = 5_000;
+
 export async function GET(
   _req: Request,
   context: { params: Promise<{ id: string }> },
@@ -51,9 +54,11 @@ export async function GET(
   const { id } = await context.params;
 
   try {
+    // Use AbortSignal.timeout so a slow/hung Watchtower degrades quickly to
+    // {tools:[]} instead of holding the request open indefinitely.
     const res = await fetch(
       `${WATCHTOWER_API_URL}/api/sessions/${encodeURIComponent(id)}/tools`,
-      { cache: "no-store" },
+      { cache: "no-store", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
     );
 
     if (!res.ok) {
