@@ -64,7 +64,15 @@ export async function GET(
     }
 
     const raw: unknown = await res.json();
-    const list: WatchtowerTool[] = Array.isArray(raw) ? raw : [];
+    // Filter to plain-object elements before casting to WatchtowerTool so that
+    // null / primitive / array elements in the response don't cause .map() to
+    // throw and swallow the rest of the valid rows.
+    const list: WatchtowerTool[] = Array.isArray(raw)
+      ? (raw.filter(
+          (el): el is WatchtowerTool =>
+            el !== null && typeof el === "object" && !Array.isArray(el),
+        ) as WatchtowerTool[])
+      : [];
 
     const tools: SessionToolCall[] = list
       .map((t) => ({

@@ -222,4 +222,37 @@ describe("GET /api/watchtower/sessions/[id]/tools", () => {
       data.tools[1].startedAt,
     );
   });
+
+  it("skips non-object array elements (null, primitives) without throwing", async () => {
+    // Regression for Copilot finding: array may contain null or primitive values
+    // that should be dropped instead of causing .map() to throw and swallow
+    // all remaining valid rows.
+    const raw = [
+      null,
+      42,
+      "string-element",
+      {
+        id: "t1",
+        session_id: "s1",
+        tool_name: "valid_tool",
+        parameters: {},
+        result: null,
+        error: null,
+        duration_ms: 10,
+        created_at: "2024-01-01T00:00:00.000Z",
+      },
+    ];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(raw),
+    });
+
+    const res = await GET(new Request("http://localhost"), ctx("s1"));
+    const data = await res.json();
+
+    // Only the valid object element should appear
+    expect(data.tools).toHaveLength(1);
+    expect(data.tools[0].name).toBe("valid_tool");
+  });
 });
