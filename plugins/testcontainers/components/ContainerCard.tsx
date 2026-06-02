@@ -6,7 +6,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Play,
   Square,
@@ -17,6 +17,8 @@ import {
   ChevronUp,
   Copy,
   Clock,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -34,6 +36,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { TestContainer, ContainerAction } from "../types";
+import { getConnectionInfo, SECRET_MASK } from "../lib/connection-info";
 import { StatusBadge } from "./StatusBadge";
 
 interface ContainerCardProps {
@@ -61,141 +64,6 @@ function copyToClipboard(text: string) {
   toast.success("Copied to clipboard");
 }
 
-interface ConnectionInfo {
-  type: string;
-  connectionString: string;
-  credentials: { label: string; value: string; sensitive?: boolean }[];
-}
-
-function getConnectionInfo(container: TestContainer): ConnectionInfo | null {
-  const image = container.image.toLowerCase();
-  const hostPort = container.ports[0]?.hostPort;
-
-  if (!hostPort) return null;
-
-  // PostgreSQL
-  if (image.includes("postgres")) {
-    return {
-      type: "PostgreSQL",
-      connectionString: `postgresql://test:[REDACTED]@localhost:${hostPort}/testdb`,
-      credentials: [
-        { label: "Host", value: `localhost:${hostPort}` },
-        { label: "Database", value: "testdb" },
-        { label: "User", value: "test" },
-        { label: "Password", value: "[REDACTED]", sensitive: true },
-      ],
-    };
-  }
-
-  // MySQL
-  if (image.includes("mysql")) {
-    return {
-      type: "MySQL",
-      connectionString: `mysql://test:[REDACTED]@localhost:${hostPort}/testdb`,
-      credentials: [
-        { label: "Host", value: `localhost:${hostPort}` },
-        { label: "Database", value: "testdb" },
-        { label: "User", value: "test" },
-        { label: "Password", value: "[REDACTED]", sensitive: true },
-        { label: "Root Password", value: "[REDACTED]", sensitive: true },
-      ],
-    };
-  }
-
-  // MariaDB
-  if (image.includes("mariadb")) {
-    return {
-      type: "MariaDB",
-      connectionString: `mysql://test:[REDACTED]@localhost:${hostPort}/testdb`,
-      credentials: [
-        { label: "Host", value: `localhost:${hostPort}` },
-        { label: "Database", value: "testdb" },
-        { label: "User", value: "test" },
-        { label: "Password", value: "[REDACTED]", sensitive: true },
-        { label: "Root Password", value: "[REDACTED]", sensitive: true },
-      ],
-    };
-  }
-
-  // MongoDB
-  if (image.includes("mongo")) {
-    return {
-      type: "MongoDB",
-      connectionString: `mongodb://test:[REDACTED]@localhost:${hostPort}`,
-      credentials: [
-        { label: "Host", value: `localhost:${hostPort}` },
-        { label: "User", value: "test" },
-        { label: "Password", value: "[REDACTED]", sensitive: true },
-      ],
-    };
-  }
-
-  // Redis
-  if (image.includes("redis")) {
-    return {
-      type: "Redis",
-      connectionString: `redis://localhost:${hostPort}`,
-      credentials: [{ label: "Host", value: `localhost:${hostPort}` }],
-    };
-  }
-
-  // RabbitMQ
-  if (image.includes("rabbitmq")) {
-    const mgmtPort = container.ports.find(
-      (p) => p.containerPort === 15672,
-    )?.hostPort;
-    return {
-      type: "RabbitMQ",
-      connectionString: `amqp://test:[REDACTED]@localhost:${hostPort}`,
-      credentials: [
-        { label: "AMQP Host", value: `localhost:${hostPort}` },
-        {
-          label: "Management UI",
-          value: mgmtPort ? `http://localhost:${mgmtPort}` : "N/A",
-        },
-        { label: "User", value: "test" },
-        { label: "Password", value: "[REDACTED]", sensitive: true },
-      ],
-    };
-  }
-
-  // Elasticsearch
-  if (image.includes("elasticsearch")) {
-    return {
-      type: "Elasticsearch",
-      connectionString: `http://localhost:${hostPort}`,
-      credentials: [{ label: "URL", value: `http://localhost:${hostPort}` }],
-    };
-  }
-
-  // Keycloak
-  if (image.includes("keycloak")) {
-    return {
-      type: "Keycloak",
-      connectionString: `http://localhost:${hostPort}`,
-      credentials: [
-        { label: "URL", value: `http://localhost:${hostPort}` },
-        { label: "Admin User", value: "admin" },
-        { label: "Admin Password", value: "[REDACTED]", sensitive: true },
-      ],
-    };
-  }
-
-  // LocalStack
-  if (image.includes("localstack")) {
-    return {
-      type: "LocalStack",
-      connectionString: `http://localhost:${hostPort}`,
-      credentials: [
-        { label: "Endpoint", value: `http://localhost:${hostPort}` },
-        { label: "AWS_ENDPOINT_URL", value: `http://localhost:${hostPort}` },
-      ],
-    };
-  }
-
-  return null;
-}
-
 export function ContainerCard({
   container,
   onAction,
@@ -203,6 +71,28 @@ export function ContainerCard({
 }: ContainerCardProps) {
   const [expanded, setExpanded] = useState(initialExpanded);
   const [loading, setLoading] = useState<ContainerAction | null>(null);
+  // Connection credentials (including secrets) are fetched lazily on expand via
+  // the single-container detail endpoint; the bulk list never carries secrets.
+  const [detail, setDetail] = useState<TestContainer | null>(null);
+  const [showSecrets, setShowSecrets] = useState(false);
+
+  useEffect(() => {
+    if (!expanded || detail) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch(`/api/testcontainers/${container.id}`);
+        if (!response.ok) return;
+        const data: TestContainer = await response.json();
+        if (!cancelled) setDetail(data);
+      } catch {
+        // Non-fatal: panel falls back to masked display without secrets.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, detail, container.id]);
 
   const handleAction = async (action: ContainerAction) => {
     setLoading(action);
@@ -403,13 +293,47 @@ export function ContainerCard({
           <div className="mt-4 pt-4 border-t space-y-3">
             {/* Connection Info */}
             {(() => {
-              const connInfo = getConnectionInfo(container);
+              const connInfo = getConnectionInfo(detail ?? container);
               if (!connInfo) return null;
+              const hasSecrets = connInfo.credentials.some((c) => c.sensitive);
+              const reveal = showSecrets && connInfo.secretsAvailable;
+              const connectionString = reveal
+                ? connInfo.connectionString
+                : connInfo.maskedConnectionString;
+              const copyConnectionString = connInfo.secretsAvailable
+                ? connInfo.connectionString
+                : connInfo.maskedConnectionString;
               return (
                 <div className="bg-muted/50 rounded-lg p-3 space-y-2">
-                  <p className="text-xs font-medium text-primary">
-                    {connInfo.type} Connection
-                  </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium text-primary">
+                      {connInfo.type} Connection
+                    </p>
+                    {hasSecrets && (
+                      <button
+                        onClick={() => setShowSecrets((v) => !v)}
+                        disabled={!connInfo.secretsAvailable}
+                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        title={
+                          !connInfo.secretsAvailable
+                            ? "Loading credentials…"
+                            : reveal
+                              ? "Hide credentials"
+                              : "Reveal credentials"
+                        }
+                      >
+                        {reveal ? (
+                          <>
+                            <EyeOff className="h-3 w-3" /> Hide
+                          </>
+                        ) : (
+                          <>
+                            <Eye className="h-3 w-3" /> Reveal
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
 
                   {/* Connection String */}
                   <div>
@@ -417,12 +341,12 @@ export function ContainerCard({
                       Connection String
                     </p>
                     <button
-                      onClick={() => copyToClipboard(connInfo.connectionString)}
+                      onClick={() => copyToClipboard(copyConnectionString)}
                       className="w-full text-left text-xs font-mono bg-background px-2 py-1.5 rounded border hover:border-primary/50 transition-colors flex items-center gap-2"
                       title="Click to copy"
                     >
                       <span className="truncate flex-1">
-                        {connInfo.connectionString}
+                        {connectionString}
                       </span>
                       <Copy className="h-3 w-3 text-muted-foreground shrink-0" />
                     </button>
@@ -430,21 +354,31 @@ export function ContainerCard({
 
                   {/* Credentials Grid */}
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                    {connInfo.credentials.map((cred, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => copyToClipboard(cred.value)}
-                        className="text-left text-xs hover:bg-background/50 px-1 py-0.5 rounded transition-colors flex items-center justify-between gap-1"
-                        title="Click to copy"
-                      >
-                        <span className="text-muted-foreground">
-                          {cred.label}:
-                        </span>
-                        <span className="font-mono font-medium truncate">
-                          {cred.value}
-                        </span>
-                      </button>
-                    ))}
+                    {connInfo.credentials.map((cred, idx) => {
+                      const masked = cred.sensitive && !reveal;
+                      const display = masked ? SECRET_MASK : cred.value;
+                      const copyable =
+                        !cred.sensitive || connInfo.secretsAvailable;
+                      return (
+                        <button
+                          key={idx}
+                          onClick={() =>
+                            copyable
+                              ? copyToClipboard(cred.value)
+                              : toast.info("Credentials still loading…")
+                          }
+                          className="text-left text-xs hover:bg-background/50 px-1 py-0.5 rounded transition-colors flex items-center justify-between gap-1"
+                          title={copyable ? "Click to copy" : "Loading…"}
+                        >
+                          <span className="text-muted-foreground">
+                            {cred.label}:
+                          </span>
+                          <span className="font-mono font-medium truncate">
+                            {display}
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               );

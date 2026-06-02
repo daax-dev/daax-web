@@ -20,6 +20,7 @@ import type {
 import type { ComposeProject } from "../types/compose";
 import { WaitStrategyExecutor } from "./wait-strategies";
 import { getStartupOrder } from "./compose-parser";
+import { extractConnectionCredentials } from "./connection-info";
 import {
   CONTAINER_LABEL,
   CONTAINER_LABEL_VALUE,
@@ -199,7 +200,10 @@ export class DockerClient {
   /**
    * Get container details
    */
-  async getContainer(id: string): Promise<TestContainer | null> {
+  async getContainer(
+    id: string,
+    options?: { includeCredentials?: boolean },
+  ): Promise<TestContainer | null> {
     try {
       const container = this.docker.getContainer(id);
       const data = await container.inspect();
@@ -208,6 +212,13 @@ export class DockerClient {
       const envKeys = (data.Config.Env || [])
         .map((e) => e.split("=")[0])
         .filter((key) => !isSensitiveKey(key));
+
+      // Surface only connection-relevant credential values (explicit allowlist),
+      // and only when the caller explicitly opts in (the single-container detail
+      // endpoint). Action responses (create/start/stop/restart) omit them.
+      const connectionCredentials = options?.includeCredentials
+        ? extractConnectionCredentials(data.Config.Env || [])
+        : undefined;
 
       return {
         id: data.Id.substring(0, 12),
@@ -218,6 +229,7 @@ export class DockerClient {
         ports: parsePortBindings(data.NetworkSettings.Ports),
         labels: data.Config.Labels,
         environmentKeys: envKeys,
+        connectionCredentials,
         mounts: parseContainerMounts(data.Mounts as ContainerMount[]),
         networks: Object.keys(data.NetworkSettings?.Networks || {}),
         createdAt: data.Created,
