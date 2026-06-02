@@ -44,6 +44,7 @@ import { TailscaleIcon } from "@/components/icons/TailscaleIcon";
 import { CloudProviderIcon } from "@/components/icons/CloudProviderIcons";
 import { TerminalRecordingsPanel } from "@/plugins/terminal-recorder";
 import { AgentTabsLayout } from "./AgentTabsLayout";
+import { McpStatusBar } from "@/components/session/McpStatusBar";
 
 // AI Tools available in the container
 // Ordered: Claude, OpenCode, Copilot, Codex, Gemini
@@ -1259,6 +1260,9 @@ function AgentTreeLayout() {
                       Sessions persist across page navigation!
                     </span>
                   </p>
+                  <div className="mb-4">
+                    <McpStatusBar />
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     {AI_TOOLS.map((tool) => {
                       const Icon = tool.icon;
