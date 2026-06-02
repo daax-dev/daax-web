@@ -13,7 +13,7 @@ export function McpStatusBar() {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    fetch("/api/mcp/status")
+    fetch("/api/mcp/status", { cache: "no-store" })
       .then((res) => res.json() as Promise<McpStatusResponse>)
       .then((data) => {
         setServers(data.servers ?? []);
