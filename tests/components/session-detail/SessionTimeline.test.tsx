@@ -81,12 +81,12 @@ describe("SessionTimeline", () => {
     });
   });
 
-  it("renders empty state when fetch fails", async () => {
+  it("renders an error card with the error message when fetch fails", async () => {
     stubFetch(new Error("network error"), { reject: true });
 
     render(<SessionTimeline id="sess-1" />);
 
-    // On fetch failure an error card appears, not the empty-state div.
+    // On fetch failure an error card appears (not the empty-state div).
     // The error message comes from the caught Error's .message property.
     await waitFor(() => {
       expect(screen.getByText(/network error/i)).toBeInTheDocument();

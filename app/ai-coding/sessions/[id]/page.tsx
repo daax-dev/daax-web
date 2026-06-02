@@ -73,10 +73,9 @@ export function SessionTimeline({ id }: SessionTimelineProps) {
   }, [load]);
 
   // Cluster tools into turns.
-  // SessionToolCall satisfies the ToolCall index signature at runtime; the
-  // double-cast through unknown is required because TypeScript's structural
-  // check doesn't see the [key: string]: unknown catch-all on SessionToolCall.
-  const groups = clusterByTurn(tools as unknown as ToolCall[]);
+  // SessionToolCall now carries the [key: string]: unknown index signature
+  // required by ToolCall, so the cast is safe and structurally correct.
+  const groups = clusterByTurn(tools as ToolCall[]);
 
   if (loading) {
     return (

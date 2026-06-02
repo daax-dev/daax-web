@@ -23,7 +23,13 @@ interface WatchtowerTool {
   created_at: string; // RFC 3339
 }
 
-/** Mapped ToolCall shape consumed by clusterByTurn (lib/turn-cluster). */
+/**
+ * Mapped ToolCall shape consumed by clusterByTurn (lib/turn-cluster).
+ *
+ * The index signature `[key: string]: unknown` makes this structurally
+ * compatible with the `ToolCall` interface in lib/turn-cluster.ts, avoiding
+ * the need for unsafe casts at call sites.
+ */
 export interface SessionToolCall {
   id: string;
   startedAt: number;
@@ -32,6 +38,7 @@ export interface SessionToolCall {
   parameters: unknown;
   result: unknown;
   error: string | null;
+  [key: string]: unknown;
 }
 
 const WATCHTOWER_API_URL =
@@ -69,6 +76,10 @@ export async function GET(
         result: t.result,
         error: t.error ?? null,
       }))
+      // Drop any tool whose created_at failed to parse (Date.parse returns NaN
+      // for empty or malformed timestamps). NaN comparators in Array.sort()
+      // produce undefined ordering, so we must remove them before sorting.
+      .filter((t) => Number.isFinite(t.startedAt))
       // clusterByTurn() requires tools sorted ascending by startedAt.
       // Watchtower returns rows ordered by created_at ASC per the contract,
       // but we sort here defensively to guarantee the precondition regardless

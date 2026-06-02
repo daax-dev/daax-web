@@ -140,6 +140,46 @@ describe("GET /api/watchtower/sessions/[id]/tools", () => {
     expect(data.tools[1].durationMs).toBeNull();
   });
 
+  it("filters out tools with unparseable created_at (NaN startedAt)", async () => {
+    // Regression for Copilot finding: Date.parse("") === NaN; NaN comparators
+    // in Array.sort() produce undefined order so malformed rows must be dropped.
+    const raw = [
+      {
+        id: "t1",
+        session_id: "s1",
+        tool_name: "good_tool",
+        parameters: {},
+        result: null,
+        error: null,
+        duration_ms: 10,
+        created_at: "2024-01-01T00:00:00.000Z",
+      },
+      {
+        id: "t2",
+        session_id: "s1",
+        tool_name: "bad_tool",
+        parameters: {},
+        result: null,
+        error: null,
+        duration_ms: 5,
+        created_at: "", // malformed → Date.parse returns NaN
+      },
+    ];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(raw),
+    });
+
+    const res = await GET(new Request("http://localhost"), ctx("s1"));
+    const data = await res.json();
+
+    // Only the valid tool should appear
+    expect(data.tools).toHaveLength(1);
+    expect(data.tools[0].name).toBe("good_tool");
+    expect(Number.isFinite(data.tools[0].startedAt)).toBe(true);
+  });
+
   it("sorts tools by startedAt ascending even if Watchtower returns them out of order", async () => {
     // Regression for Copilot finding: clusterByTurn() requires ascending order
     const raw = [
