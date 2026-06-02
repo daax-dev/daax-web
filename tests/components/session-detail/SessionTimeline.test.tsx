@@ -37,7 +37,13 @@ type FetchStub = ReturnType<typeof vi.fn>;
 function stubFetch(body: unknown, opts: { reject?: boolean } = {}): FetchStub {
   const mock: FetchStub = opts.reject
     ? vi.fn().mockRejectedValue(body)
-    : vi.fn().mockResolvedValue({ json: () => Promise.resolve(body) });
+    : vi.fn().mockResolvedValue({
+        // Include ok:true so the page's res.ok guard passes for success stubs.
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: () => Promise.resolve(body),
+      });
   (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch =
     mock as unknown as typeof fetch;
   return mock;
@@ -90,6 +96,27 @@ describe("SessionTimeline", () => {
     // The error message comes from the caught Error's .message property.
     await waitFor(() => {
       expect(screen.getByText(/network error/i)).toBeInTheDocument();
+    });
+  });
+
+  it("renders an error card (not empty state) when proxy returns non-OK status", async () => {
+    // Regression for Codex P3 finding: a 401/403 from requireAuth() must not
+    // silently collapse to "No tool calls recorded".
+    (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch = vi
+      .fn()
+      .mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        json: () => Promise.resolve({ error: "Unauthorized" }),
+      }) as unknown as typeof fetch;
+
+    render(<SessionTimeline id="sess-1" />);
+
+    await waitFor(() => {
+      // Should show error text, not the empty-state div
+      expect(screen.getByText(/401/i)).toBeInTheDocument();
+      expect(screen.queryByTestId("empty-state")).not.toBeInTheDocument();
     });
   });
 

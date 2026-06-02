@@ -50,6 +50,11 @@ export function SessionTimeline({ id }: SessionTimelineProps) {
           cache: "no-store",
         },
       );
+      // Surface non-OK responses as errors so e.g. a 401 (auth expired) shows
+      // the error state rather than silently collapsing to an empty timeline.
+      if (!res.ok) {
+        throw new Error(`${res.status} ${res.statusText}`);
+      }
       const data: unknown = await res.json();
       const list =
         data !== null &&
