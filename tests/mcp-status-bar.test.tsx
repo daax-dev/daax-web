@@ -34,13 +34,14 @@ function stubFetch(
   const mock = opts.reject
     ? vi.fn().mockRejectedValue(body)
     : vi.fn().mockResolvedValue({ json: () => Promise.resolve(body) });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (global as any).fetch = mock;
+  // Cast through globalThis (typed) instead of `any` per Copilot lint finding
+  (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch =
+    mock as unknown as typeof fetch;
   return mock;
 }
 
 describe("McpStatusBar", () => {
-  const originalFetch = global.fetch;
+  const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -48,8 +49,8 @@ describe("McpStatusBar", () => {
 
   afterEach(() => {
     // Restore original fetch so other tests are unaffected
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (global as any).fetch = originalFetch;
+    (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch =
+      originalFetch;
     vi.restoreAllMocks();
   });
 
