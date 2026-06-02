@@ -100,10 +100,10 @@ describe("GET /api/mcp/status", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Falls back to Claude Desktop config (Copilot finding #2)
+  // Falls back to Claude Desktop config (macOS path)
   // -------------------------------------------------------------------------
-  it("falls back to Claude Desktop config when .mcp.json is absent", async () => {
-    // Only the Claude Desktop path (macOS Library path) exists
+  it("falls back to Claude Desktop config (macOS path) when .mcp.json is absent", async () => {
+    // Only the Claude Desktop macOS path exists
     mockExistsSync.mockImplementation(
       (p: string) =>
         p.includes("Application Support") &&
@@ -118,6 +118,28 @@ describe("GET /api/mcp/status", () => {
 
     expect(res.status).toBe(200);
     expect(data.servers).toEqual(["playwright"]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Falls back to Linux Claude Desktop path (Copilot finding #1 on PR #78)
+  // -------------------------------------------------------------------------
+  it("uses Linux Claude Desktop path (~/.config/claude/) when macOS path absent", async () => {
+    // Only the Linux path exists, not macOS
+    mockExistsSync.mockImplementation(
+      (p: string) =>
+        p.includes(".config") &&
+        p.includes("claude") &&
+        p.includes("claude_desktop_config.json"),
+    );
+    mockReadFileSync.mockReturnValue(
+      JSON.stringify({ mcpServers: { linux_mcp: {} } }),
+    );
+
+    const res = await GET();
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.servers).toEqual(["linux_mcp"]);
   });
 
   // -------------------------------------------------------------------------

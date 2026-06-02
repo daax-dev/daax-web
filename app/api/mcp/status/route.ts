@@ -32,62 +32,73 @@ function extractServerNames(cfg: McpConfig): string[] {
 }
 
 /**
- * Resolve the path to the primary .mcp.json.
- * Honours HOME_MCP_JSON env var used in Docker/container deployments
- * (matches lib/mcp-config.ts getHomeMcpJsonPath convention).
- * Treats empty string as unset.
- */
-function getPrimaryMcpJsonPath(): string {
-  return process.env.HOME_MCP_JSON || join(process.cwd(), ".mcp.json");
-}
-
-/**
  * Resolve the Claude Desktop config path.
- * Honours CLAUDE_DESKTOP_CONFIG env var (matches lib/mcp-config.ts convention).
- * Treats empty string as unset.
- * Default: macOS path (~/Library/Application Support/Claude/claude_desktop_config.json).
+ * Honours CLAUDE_DESKTOP_CONFIG env var.
+ * Checks macOS path first; falls back to Linux path (`~/.config/claude/...`).
+ * Matches the convention in lib/mcp-discovery.ts CONFIG_PATHS.claudeDesktop.
  */
 function getClaudeDesktopConfigPath(): string {
-  return (
-    process.env.CLAUDE_DESKTOP_CONFIG ||
-    join(
-      homedir(),
-      "Library",
-      "Application Support",
-      "Claude",
-      "claude_desktop_config.json",
-    )
+  // Env override (treats empty string as unset)
+  if (process.env.CLAUDE_DESKTOP_CONFIG) {
+    return process.env.CLAUDE_DESKTOP_CONFIG;
+  }
+  const home = homedir();
+  // macOS path
+  const macPath = join(
+    home,
+    "Library",
+    "Application Support",
+    "Claude",
+    "claude_desktop_config.json",
   );
+  // Linux fallback — return the first that exists, or macPath as default
+  const linuxPath = join(
+    home,
+    ".config",
+    "claude",
+    "claude_desktop_config.json",
+  );
+  return existsSync(macPath) ? macPath : linuxPath;
 }
 
 // GET /api/mcp/status
-// Reads the primary .mcp.json (or HOME_MCP_JSON override); falls back to the
-// Claude Desktop config (or CLAUDE_DESKTOP_CONFIG override) when .mcp.json is absent.
-// Supports both `mcpServers` and `servers` keys.
+// Reads MCP server names from config sources in priority order:
+//  1. process.cwd()/.mcp.json    (project-root)
+//  2. HOME_MCP_JSON path         (home-level .mcp.json, Docker override)
+//  3. Claude Desktop config      (CLAUDE_DESKTOP_CONFIG or platform default)
+// Stops at the first source that returns servers.
 // Returns { servers: string[] } (HTTP 200) always — never 404/500.
 export async function GET(): Promise<NextResponse> {
+  const noStore = { headers: { "Cache-Control": "no-store" } };
   try {
-    // Primary: project-root .mcp.json (or HOME_MCP_JSON env override)
-    const primaryConfig = tryReadConfig(getPrimaryMcpJsonPath());
+    // 1. Project-root .mcp.json
+    const projectConfig = tryReadConfig(join(process.cwd(), ".mcp.json"));
+    if (projectConfig) {
+      const servers = extractServerNames(projectConfig);
+      if (servers.length > 0) {
+        return NextResponse.json({ servers }, noStore);
+      }
+    }
 
-    // Fallback: Claude Desktop config (or CLAUDE_DESKTOP_CONFIG env override)
-    const fallbackConfig =
-      primaryConfig === null
-        ? tryReadConfig(getClaudeDesktopConfigPath())
-        : null;
+    // 2. Home-level .mcp.json (or HOME_MCP_JSON override — semantic as in lib/mcp-config.ts)
+    const homeMcpPath =
+      process.env.HOME_MCP_JSON || join(homedir(), ".mcp.json");
+    if (homeMcpPath !== join(process.cwd(), ".mcp.json")) {
+      const homeConfig = tryReadConfig(homeMcpPath);
+      if (homeConfig) {
+        const servers = extractServerNames(homeConfig);
+        if (servers.length > 0) {
+          return NextResponse.json({ servers }, noStore);
+        }
+      }
+    }
 
-    const cfg = primaryConfig ?? fallbackConfig;
-    const servers = cfg ? extractServerNames(cfg) : [];
-
-    return NextResponse.json(
-      { servers },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    // 3. Claude Desktop config fallback
+    const desktopConfig = tryReadConfig(getClaudeDesktopConfigPath());
+    const servers = desktopConfig ? extractServerNames(desktopConfig) : [];
+    return NextResponse.json({ servers }, noStore);
   } catch {
     // Safety net: always return 200 with empty servers
-    return NextResponse.json(
-      { servers: [] },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json({ servers: [] }, noStore);
   }
 }
