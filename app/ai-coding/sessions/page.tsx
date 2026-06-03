@@ -21,7 +21,9 @@ import {
   Clock,
   AlertTriangle,
   ExternalLink,
+  Activity,
 } from "lucide-react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -293,7 +295,13 @@ export default function SessionsPage() {
                         }`}
                         aria-hidden
                       />
-                      <span title={s.containerId}>{s.containerName}</span>
+                      <Link
+                        href={`/ai-coding/sessions/${encodeURIComponent(s.containerName)}`}
+                        className="hover:underline"
+                        title={s.containerId}
+                      >
+                        {s.containerName}
+                      </Link>
                     </div>
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
@@ -323,6 +331,24 @@ export default function SessionsPage() {
                   <TableCell className="text-right">
                     <TooltipProvider delayDuration={200}>
                       <div className="flex items-center justify-end gap-1">
+                        {/* Timeline link — always visible */}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              asChild
+                              aria-label={`View timeline for ${s.containerName}`}
+                            >
+                              <Link
+                                href={`/ai-coding/sessions/${encodeURIComponent(s.containerName)}`}
+                              >
+                                <Activity className="h-4 w-4" />
+                              </Link>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>View tool timeline</TooltipContent>
+                        </Tooltip>
                         {s.state === "running" && (
                           <Tooltip>
                             <TooltipTrigger asChild>

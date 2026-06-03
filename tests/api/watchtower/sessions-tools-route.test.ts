@@ -1,0 +1,339 @@
+/**
+ * Tests for GET /api/watchtower/sessions/[id]/tools
+ *
+ * Mocks global fetch to simulate Watchtower responses, and mocks requireAuth
+ * to verify the auth gate without requiring a live auth server.
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { NextResponse } from "next/server";
+
+// ─── hoist mock factories before any imports ────────────────────────────────
+const { mockRequireAuth } = vi.hoisted(() => ({
+  mockRequireAuth: vi.fn(),
+}));
+
+vi.mock("@/lib/auth", () => ({ requireAuth: mockRequireAuth }));
+
+const mockFetch = vi.fn();
+
+// Capture the original fetch once so afterEach can restore it and prevent
+// the mock from leaking into other test files running in the same worker.
+const originalFetch = (
+  globalThis as typeof globalThis & { fetch: typeof fetch }
+).fetch;
+
+/** Helper: set up a successful (authenticated) requireAuth mock. */
+const authed = () => mockRequireAuth.mockResolvedValue({ authenticated: true });
+
+beforeEach(() => {
+  mockFetch.mockReset();
+  mockRequireAuth.mockReset();
+  // Default to authenticated for all tests unless overridden.
+  authed();
+  (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch =
+    mockFetch as unknown as typeof fetch;
+});
+
+afterEach(() => {
+  // Restore global fetch so subsequent test files are not affected.
+  (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch =
+    originalFetch;
+  vi.clearAllMocks();
+});
+
+// Import after mock is registered
+import { GET } from "@/app/api/watchtower/sessions/[id]/tools/route";
+
+/** Helper: build the route context expected by Next.js dynamic routes. */
+function ctx(id: string) {
+  return { params: Promise.resolve({ id }) };
+}
+
+describe("GET /api/watchtower/sessions/[id]/tools", () => {
+  it("returns 401 when the request is not authenticated", async () => {
+    // Regression for Codex P1 finding: tool-call data (parameters, results)
+    // can contain sensitive data; the route must auth-gate all reads.
+    mockRequireAuth.mockResolvedValueOnce({
+      authenticated: false,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    });
+
+    const res = await GET(new Request("http://localhost"), ctx("s1"));
+
+    expect(res.status).toBe(401);
+    // Watchtower must NOT be contacted for unauthenticated requests
+    expect(mockFetch).not.toHaveBeenCalled();
+    // Auth response must also carry no-store so a cached 401 can't persist
+    // across auth-state changes (Copilot PR#90 finding).
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("maps watchtower shape to {startedAt, name} correctly", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve([
+          {
+            id: "t1",
+            session_id: "s1",
+            tool_name: "read_file",
+            parameters: { path: "/foo" },
+            result: "file content",
+            error: null,
+            duration_ms: 42,
+            created_at: "2024-01-01T00:00:00Z",
+          },
+        ]),
+    });
+
+    const res = await GET(new Request("http://localhost"), ctx("s1"));
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.tools).toHaveLength(1);
+
+    const tool = data.tools[0];
+    expect(tool.name).toBe("read_file");
+    expect(tool.startedAt).toBe(Date.parse("2024-01-01T00:00:00Z"));
+    expect(tool.durationMs).toBe(42);
+    expect(tool.error).toBeNull();
+  });
+
+  it("returns {tools:[]} with HTTP 200 when fetch throws (watchtower down)", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+
+    const res = await GET(new Request("http://localhost"), ctx("s1"));
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.tools).toEqual([]);
+  });
+
+  it("returns {tools:[]} with HTTP 200 when watchtower returns non-200", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
+
+    const res = await GET(new Request("http://localhost"), ctx("s1"));
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.tools).toEqual([]);
+  });
+
+  it("returns {tools:[]} when watchtower returns non-array JSON", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ unexpected: "shape" }),
+    });
+
+    const res = await GET(new Request("http://localhost"), ctx("s1"));
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.tools).toEqual([]);
+  });
+
+  it("maps multiple tools and preserves order", async () => {
+    const raw = [
+      {
+        id: "t1",
+        session_id: "s1",
+        tool_name: "tool_a",
+        parameters: {},
+        result: null,
+        error: null,
+        duration_ms: 10,
+        created_at: "2024-01-01T00:00:00.000Z",
+      },
+      {
+        id: "t2",
+        session_id: "s1",
+        tool_name: "tool_b",
+        parameters: {},
+        result: null,
+        error: "oops",
+        duration_ms: null,
+        created_at: "2024-01-01T00:00:01.000Z",
+      },
+    ];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(raw),
+    });
+
+    const res = await GET(new Request("http://localhost"), ctx("s1"));
+    const data = await res.json();
+
+    expect(data.tools).toHaveLength(2);
+    expect(data.tools[0].name).toBe("tool_a");
+    expect(data.tools[1].name).toBe("tool_b");
+    expect(data.tools[1].error).toBe("oops");
+    expect(data.tools[1].durationMs).toBeNull();
+  });
+
+  it("filters out tools with unparseable created_at (NaN startedAt)", async () => {
+    // Regression for Copilot finding: Date.parse("") === NaN; NaN comparators
+    // in Array.sort() produce undefined order so malformed rows must be dropped.
+    const raw = [
+      {
+        id: "t1",
+        session_id: "s1",
+        tool_name: "good_tool",
+        parameters: {},
+        result: null,
+        error: null,
+        duration_ms: 10,
+        created_at: "2024-01-01T00:00:00.000Z",
+      },
+      {
+        id: "t2",
+        session_id: "s1",
+        tool_name: "bad_tool",
+        parameters: {},
+        result: null,
+        error: null,
+        duration_ms: 5,
+        created_at: "", // malformed → Date.parse returns NaN
+      },
+    ];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(raw),
+    });
+
+    const res = await GET(new Request("http://localhost"), ctx("s1"));
+    const data = await res.json();
+
+    // Only the valid tool should appear
+    expect(data.tools).toHaveLength(1);
+    expect(data.tools[0].name).toBe("good_tool");
+    expect(Number.isFinite(data.tools[0].startedAt)).toBe(true);
+  });
+
+  it("sorts tools by startedAt ascending even if Watchtower returns them out of order", async () => {
+    // Regression for Copilot finding: clusterByTurn() requires ascending order
+    const raw = [
+      {
+        id: "t2",
+        session_id: "s1",
+        tool_name: "tool_later",
+        parameters: {},
+        result: null,
+        error: null,
+        duration_ms: 5,
+        created_at: "2024-01-01T00:00:01.000Z", // later timestamp, but listed first
+      },
+      {
+        id: "t1",
+        session_id: "s1",
+        tool_name: "tool_earlier",
+        parameters: {},
+        result: null,
+        error: null,
+        duration_ms: 5,
+        created_at: "2024-01-01T00:00:00.000Z", // earlier timestamp, listed second
+      },
+    ];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(raw),
+    });
+
+    const res = await GET(new Request("http://localhost"), ctx("s1"));
+    const data = await res.json();
+
+    expect(data.tools).toHaveLength(2);
+    // After sort, the earlier tool must come first
+    expect(data.tools[0].name).toBe("tool_earlier");
+    expect(data.tools[1].name).toBe("tool_later");
+    // startedAt values must be non-decreasing
+    expect(data.tools[0].startedAt).toBeLessThanOrEqual(
+      data.tools[1].startedAt,
+    );
+  });
+
+  it("sets Cache-Control: no-store on all response paths", async () => {
+    // Regression for Copilot finding: live session data must not be cached by
+    // intermediaries or browsers.
+
+    // Success path
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () =>
+        Promise.resolve([
+          {
+            id: "t1",
+            session_id: "s1",
+            tool_name: "t",
+            parameters: {},
+            result: null,
+            error: null,
+            duration_ms: 1,
+            created_at: "2024-01-01T00:00:00Z",
+          },
+        ]),
+    });
+    const okRes = await GET(new Request("http://localhost"), ctx("s1"));
+    expect(okRes.headers.get("Cache-Control")).toBe("no-store");
+
+    // Failure path (non-200)
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
+    const errRes = await GET(new Request("http://localhost"), ctx("s1"));
+    expect(errRes.headers.get("Cache-Control")).toBe("no-store");
+
+    // Failure path (fetch throws)
+    mockFetch.mockRejectedValueOnce(new Error("down"));
+    const throwRes = await GET(new Request("http://localhost"), ctx("s1"));
+    expect(throwRes.headers.get("Cache-Control")).toBe("no-store");
+  });
+
+  it("returns {tools:[]} when the fetch times out (AbortError)", async () => {
+    // Regression for Copilot finding: a slow Watchtower must degrade quickly.
+    const abortErr = Object.assign(new Error("The operation was aborted."), {
+      name: "AbortError",
+    });
+    mockFetch.mockRejectedValueOnce(abortErr);
+
+    const res = await GET(new Request("http://localhost"), ctx("s1"));
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.tools).toEqual([]);
+  });
+
+  it("skips non-object array elements (null, primitives) without throwing", async () => {
+    // Regression for Copilot finding: array may contain null or primitive values
+    // that should be dropped instead of causing .map() to throw and swallow
+    // all remaining valid rows.
+    const raw = [
+      null,
+      42,
+      "string-element",
+      {
+        id: "t1",
+        session_id: "s1",
+        tool_name: "valid_tool",
+        parameters: {},
+        result: null,
+        error: null,
+        duration_ms: 10,
+        created_at: "2024-01-01T00:00:00.000Z",
+      },
+    ];
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(raw),
+    });
+
+    const res = await GET(new Request("http://localhost"), ctx("s1"));
+    const data = await res.json();
+
+    // Only the valid object element should appear
+    expect(data.tools).toHaveLength(1);
+    expect(data.tools[0].name).toBe("valid_tool");
+  });
+});
