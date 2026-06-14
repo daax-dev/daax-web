@@ -78,9 +78,11 @@ export async function scanRoutes(): Promise<RouteInfo[]> {
       methods.push(match[1]);
     }
 
-    // Check if requireAuth is imported and called (not just mentioned in comments)
+    // Check if requireAuth is imported and called (not just mentioned in
+    // comments). Match BOTH requireAuth( and requireAuthOrThrow( so the
+    // file-level signal stays consistent with the per-method scan below.
     const hasRequireAuthImport = /import\s+.*requireAuth.*from/.test(content);
-    const hasRequireAuthCall = /requireAuth\s*\(/.test(content);
+    const hasRequireAuthCall = /requireAuth(?:OrThrow)?\s*\(/.test(content);
     const hasRequireAuth = hasRequireAuthImport && hasRequireAuthCall;
 
     // Determine which specific methods are guarded. Require a real CALL site
