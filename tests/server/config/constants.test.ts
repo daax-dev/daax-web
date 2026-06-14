@@ -2,14 +2,16 @@ import { describe, it, expect } from "vitest";
 import { isAllowedOrigin } from "@/server/config/constants";
 
 describe("isAllowedOrigin", () => {
-  describe("undefined/null origin (direct connections)", () => {
-    it("should return true for undefined origin", () => {
-      expect(isAllowedOrigin(undefined)).toBe(true);
+  describe("undefined/null origin (raw / non-browser clients)", () => {
+    it("should return false for undefined origin (F1b #95: missing Origin rejected)", () => {
+      // Browsers always send Origin on a WS upgrade; an absent Origin means a
+      // raw (non-browser) client and is rejected outright by authenticateConnection
+      // — before any credential/ticket check.
+      expect(isAllowedOrigin(undefined)).toBe(false);
     });
 
-    it("should return true for empty string origin", () => {
-      // Empty string is falsy, so it should be treated as no origin
-      expect(isAllowedOrigin("")).toBe(true);
+    it("should return false for empty string origin", () => {
+      expect(isAllowedOrigin("")).toBe(false);
     });
   });
 

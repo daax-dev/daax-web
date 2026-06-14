@@ -94,6 +94,13 @@ services:
       - CLAUDE_PROJECTS_DIR=/host-claude/projects
       - NEXT_PUBLIC_DEPLOYMENT_MODE=container
       - TERMINAL_HOST=0.0.0.0
+      # Terminal WS auth (F1b, #95). REQUIRED in container mode: connections
+      # arrive from the Docker bridge gateway (not loopback), so the terminal
+      # uses the bearer-ticket path, which needs this secret on both the app
+      # (mint) and terminal server (verify) — same container = one value.
+      # Generate: `openssl rand -hex 32`. Never commit it.
+      - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
+      - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
       - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:-daax}@postgres:5432/${DAAX_PG_DB:-daax}
       - HOME_MCP_JSON=${HOME_MCP_PATH:+/host-config/.mcp.json}
 

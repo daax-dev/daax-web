@@ -6,6 +6,7 @@ Only document what is confirmed and deployable today.
 ---
 
 ## Runtime
+
 - Node 22 — production container base `node:22-bookworm-slim` (`Dockerfile`).
 - Bun `1.3.9` — package manager and dev/prod process runner (declared via `"packageManager"` in `package.json`; not version-pinned in the Dockerfile, which installs Bun from `bun.sh`, so the container runtime version can drift).
 - Two supported deployment modes (keep BOTH working):
@@ -13,6 +14,7 @@ Only document what is confirmed and deployable today.
   - **Container mode (prod / Tailscale):** `docker build -t daax .` then run with the Docker socket mounted. Default run paths (`docker-compose.yml`, `rebuild.sh`, `deploy-local.sh`) publish 4200 (web) and 4201 (terminal WS); 18080 (code-server proxy) is an internal default that is only published when run via the `docker:run` script (`-p 18080:18080`). Supports Docker-in-Docker for spawning AI coding containers.
 
 ## Frameworks
+
 - Frontend / app: Next.js `16.1.6` (App Router) + React `19.2.x` + TypeScript. UI via shadcn/ui on Radix UI primitives (`components.json`, `components/ui/`), Tailwind CSS v4. Charts: Recharts. Flow graphs: `@xyflow/react`. Diagrams: Mermaid. Animations: `motion`.
 - Terminal: xterm.js (`@xterm/xterm` + addons), `node-pty` (optional dep; required and compiled in the container), `ghostty-web`.
 - Server: custom WebSocket terminal server `server/terminal-server.ts` (port 4201, run via `tsx`). Container management via `dockerode`.
@@ -20,6 +22,7 @@ Only document what is confirmed and deployable today.
 - CLI: none in this repo. Integrates with the external `backlog` CLI (task management) and `daax-cli` (session registration).
 
 ## Persistence
+
 - Target engine: **Postgres** (brain2daax Phase 0, issue #92; decision D1, `docs/brain2daax.md` §2). Connection via the `pg` pool (`lib/db/pg.ts`); schema managed by **`node-pg-migrate`** with ordered, reversible up/down migrations in `migrations/`. Both the pool and the migration runner (`scripts/db-migrate.ts`) resolve their connection from one env-sourced config (`lib/db/config.ts`): `DATABASE_URL`, or discrete libpq vars (`PGHOST`/`PGDATABASE`/`PGUSER`/`PGPORT`/`PGPASSWORD`); fails closed if neither is set. Both deploy modes run a `postgres` service (persistent named volume `daax-pg-data`, `pg_isready` healthcheck) plus a one-shot `migrate` service the app waits on (`service_completed_successfully`). Migration tool chosen over Drizzle (schema-first ORM — heavier than an empty Phase-0 baseline needs) and Atlas (Go binary — not a Node tool); see `.logs/decisions/brain2daax.jsonl`.
 - Catalog + releases: ported to Postgres (#93). `lib/catalog/db.ts` and `lib/releases-db.ts` are rewritten against the `pg` pool (async); their tables are created by `migrations/` and a one-time exporter (`scripts/export-sqlite-to-postgres.ts`, `bun run db:export`) copies legacy SQLite data into Postgres with parity tests (row counts + content checksums). `better-sqlite3` is now a **dev-only** dependency, used solely by the exporter; no runtime code imports it.
 - Runtime feature config: `config.toml` (boot defaults) overridable at runtime via Settings UI persisted to `localStorage`.
@@ -28,28 +31,36 @@ Only document what is confirmed and deployable today.
 - Object storage: local filesystem; a `/workspace` host volume is mounted in container mode.
 
 ## Messaging / Eventing
+
 - WebSockets for terminal I/O (port 4201). No external broker.
 
 ## Auth
+
 - Identity: Pocket ID (OIDC) fronted by Traefik in deployed environments — referenced by the auth-gated Playwright projects (`playwright.config.ts`, `DAAX_AUTH_BASE_URL` / `POCKET_ID_OAT_COMMAND`). The Traefik config is provisioned at deploy time by `utils/update-traefik-config.sh`, which pushes a `deploy/traefik.yml` to each host; that file is not tracked in this repo. JWT handling via `jose`. Local dev runs without auth.
 - Auth gate (`lib/auth.ts`): API route guards (`requireAuth` / `requireAuthOrThrow`) read the forward-auth `X-Forwarded-*` headers injected by the Pocket ID proxy. When the `X-Forwarded-User` header is truly absent (host dev mode, or a proxy-less Tailscale container), requests are treated as a trusted local operator so the app is usable without a proxy. A header that is present but empty is treated as a malformed credential and returns 401 even with `DAAX_REQUIRE_AUTH` unset. Set `DAAX_REQUIRE_AUTH=1` to restore strict enforcement (returns 401 without a valid header) — set this in any deployment that fronts daax with the Pocket ID proxy for defense in depth. The bypass warning is not logged at process startup; `warnAuthBypassedOnce()` logs it once per process instance, triggered by the first request that actually exercises the bypass.
-- Trust boundary: identity is derived entirely from the `X-Forwarded-*` headers; the app does not verify a token, so these headers are trusted as-is. `DAAX_REQUIRE_AUTH=1` only blocks the *absence* of a valid header (an empty or whitespace-only `X-Forwarded-User` is rejected too) — a client that can reach the app directly and set a non-empty `X-Forwarded-User` is treated as that user. Therefore daax must be reachable **only** through the proxy, and the deployment proxy **must** strip/overwrite any client-supplied `X-Forwarded-*` headers before forwarding. This repo does not ship that proxy configuration; it is a requirement on the deployment (Traefik forward-auth can enforce it, but the config is provisioned externally — see `utils/update-traefik-config.sh`). Do not expose the app port directly on an untrusted network. Hardening the header trust (signed headers / proxy-IP allowlist) is tracked separately (`backlog/tasks/task-007`).
+- Trust boundary: identity is derived entirely from the `X-Forwarded-*` headers; the app does not verify a token, so these headers are trusted as-is. `DAAX_REQUIRE_AUTH=1` only blocks the _absence_ of a valid header (an empty or whitespace-only `X-Forwarded-User` is rejected too) — a client that can reach the app directly and set a non-empty `X-Forwarded-User` is treated as that user. Therefore daax must be reachable **only** through the proxy, and the deployment proxy **must** strip/overwrite any client-supplied `X-Forwarded-*` headers before forwarding. This repo does not ship that proxy configuration; it is a requirement on the deployment (Traefik forward-auth can enforce it, but the config is provisioned externally — see `utils/update-traefik-config.sh`). Do not expose the app port directly on an untrusted network. Hardening the header trust (signed headers / proxy-IP allowlist) is tracked separately (`backlog/tasks/task-007`).
+- Terminal WS plane (F1b, issue #95): the terminal WebSocket upgrade (`server/terminal-server.ts`, port 4201) is authenticated **before** any PTY/container spawn (`server/handlers/ws-auth.ts` `authenticateConnection`). `isAllowedOrigin` now **rejects a missing Origin** (raw non-browser clients are refused). Two credential paths, selected by the unspoofable TCP peer (`req.socket.remoteAddress`): (1) **Traefik path** — `X-Forwarded-User` is trusted only from a loopback peer (Traefik → `127.0.0.1:4201`), so a direct non-loopback client cannot forge it; (2) **tailnet-direct / `docker:run` path** — a single-use HMAC bearer ticket (`lib/ws-ticket.ts`) minted at `POST /api/terminal/ticket` (authed) and presented via the `Sec-WebSocket-Protocol` subprotocol (never a URL query, which would leak to logs); the server verifies signature + short TTL + single-use `jti`. A loopback peer with no credentials is the trusted `LOCAL_OPERATOR` (host-dev `bun dev`, where the terminal server is a host process) unless `DAAX_REQUIRE_AUTH=1`. **Container reality:** a connection through a Docker-published port arrives from the bridge gateway (e.g. `172.17.0.1`), not loopback — so in _any_ containerized mode (`docker compose up`, `docker:run`, deploy compose) the loopback bypass and forwarded-identity paths do **not** apply and the terminal uses the bearer-ticket path. Therefore **`DAAX_WS_TOKEN_SECRET` is required in container mode** (both compose files declare it required via `:?`); generate with `openssl rand -hex 32`. It must be identical on the app (mint) and terminal server (verify) — the same container today, so one value. With it unset, ticketing returns 503 and host-dev falls back to the loopback path; strict mode logs a ship-blocking warning and refuses non-loopback upgrades. The terminal server also warns at startup when bound to `0.0.0.0` with a secret set but `DAAX_REQUIRE_AUTH` unset (tickets mintable by the non-strict LOCAL_OPERATOR — safe only behind a trusted tailnet ACL). All terminal UIs connect via the single ticket-aware builder `openTerminalWebSocket` (`lib/websocket-utils.ts`); `BtopTerminal` no longer hardcodes `:4201`. Secrets are never committed.
 - Service-to-service: `[FILL IN — not documented in repo]`.
 
 ## Observability
+
 - Instrumentation hook present (`instrumentation.ts`). Specific tracing/metrics backend: `[FILL IN — confirm whether OpenTelemetry/Prometheus are wired]`.
 - Logs: stdout (container health check hits `http://localhost:4200/`).
 
 ## Build / Package
+
 - TypeScript: Bun + `bun.lock` (committed). No npm/yarn lockfiles. Build: `bun run build` (Next.js). `prebuild` optionally parses SAFE-MCP if `3rd-party/safe-mcp` exists.
 - CI: GitHub Actions — `.github/workflows/publish-images.yml`. On push to `main` and `v*` tags (and manual dispatch) it builds and pushes container images. No separate lint/test CI workflow is present (`[FILL IN — add a test/lint CI job if gating on green is desired]`).
 - Artifact registry: GitHub Container Registry (GHCR). CI publishes `ghcr.io/daax-dev/daax-web` (linux/amd64 only — arm64 dropped due to slow emulated `node-pty` native compile) and `ghcr.io/daax-dev/code-server` (multi-arch). The local `release:*` scripts in `package.json` also publish to `ghcr.io/daax-dev/daax-web`, matching CI (`daax-dev` org is canonical).
 
 ## Deployment Target
+
 - Self-hosted: SSH + systemd + `docker compose` on hosts (e.g. `kinsale`, `muckross`) via `bun run deploy:kinsale` / `deploy:muckross`. Traefik reverse proxy (`deploy/traefik-daax.yml.tpl`). Designed for Tailscale-network access. Not a managed cloud PaaS.
 
 ## Explicitly Not in Stack
+
 List rejected tools and the reason. Prevents re-proposal.
+
 - npm / yarn as the application package manager — Bun is the standard; do not add competing lockfiles.
 - linux/arm64 container builds for `daax-web` — dropped in CI; emulated `node-pty` compilation is too slow/fragile.
 - `[FILL IN — add other explicitly banned tools if the operator names any]`

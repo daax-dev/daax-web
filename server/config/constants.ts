@@ -57,7 +57,10 @@ function isValidPort(portStr: string | undefined): boolean {
  * When running in container, the external port may differ from internal port
  */
 export function isAllowedOrigin(origin: string | undefined): boolean {
-  if (!origin) return true; // Allow no origin (direct connections)
+  // Reject a missing/empty Origin (F1b, issue #95). Browsers always send Origin
+  // on a WS upgrade, so an absent Origin means a non-browser/raw client, which
+  // must not be admitted on origin alone.
+  if (!origin) return false;
 
   // Extract port from origin for validation
   const portMatch = origin.match(/:(\d+)$/);

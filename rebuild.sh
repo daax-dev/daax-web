@@ -91,6 +91,10 @@ DOCKER_ARGS=(
   -e CLAUDE_PROJECTS_DIR="/host-claude/projects"
   -e NEXT_PUBLIC_DEPLOYMENT_MODE="container"
   -e TERMINAL_HOST=0.0.0.0
+  # Terminal WS auth (F1b, #95): forward the ticket secret + strict-auth flag so
+  # the bearer-token path works in this exposed (-p 4201) run. Empty if unset.
+  -e DAAX_REQUIRE_AUTH="${DAAX_REQUIRE_AUTH:-}"
+  -e DAAX_WS_TOKEN_SECRET="${DAAX_WS_TOKEN_SECRET:-}"
 )
 
 # Only mount HOME_MCP if it exists as a file (not a directory)
