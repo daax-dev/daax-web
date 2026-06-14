@@ -68,7 +68,15 @@ export function checkSbom(
   if (looksSpdx && Array.isArray(packages) && packages.length > 0) {
     return { real: true, format: "spdx" };
   }
-  return { real: false, reason: "no-components" };
+  // Distinguish "has an inventory but no recognizable format marker" from
+  // "no inventory at all" so logs/callers see the real reason.
+  const hasInventory =
+    (Array.isArray(components) && components.length > 0) ||
+    (Array.isArray(packages) && packages.length > 0);
+  return {
+    real: false,
+    reason: hasInventory ? "missing-marker" : "no-components",
+  };
 }
 
 /** Convenience boolean wrapper around {@link checkSbom}. */

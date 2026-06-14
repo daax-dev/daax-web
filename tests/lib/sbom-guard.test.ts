@@ -83,15 +83,15 @@ describe("sbom-guard placeholder-vs-real (F2, #97)", () => {
   });
 
   it("rejects a large doc with a components array but NO format marker (padded blob)", () => {
-    // Big enough + has a components array, but lacks bomFormat/specVersion —
-    // not a real CycloneDX document.
+    // Big enough + has a components array, but lacks the CycloneDX bomFormat
+    // marker — not a real SBOM. Distinct reason from the empty-inventory case.
     const blob = {
       note: "x".repeat(SBOM_MIN_BYTES),
       components: [{ name: "a" }, { name: "b" }],
     };
     expect(checkSbom(blob)).toMatchObject({
       real: false,
-      reason: "no-components",
+      reason: "missing-marker",
     });
   });
 });

@@ -28,6 +28,15 @@ export function generateRealSbom(
   spawnFn: SpawnFn = nodeSpawn,
 ): Promise<string | null> {
   return new Promise((resolve) => {
+    // Only the first terminal event (error or close) wins — a child can emit
+    // both, and Promise resolve is idempotent but the guard keeps logs honest.
+    let settled = false;
+    const settle = (value: string | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
     const syft = spawnFn("docker", [
       "run",
       "--rm",
@@ -45,7 +54,7 @@ export function generateRealSbom(
     syft.stderr?.on("data", (d: Buffer) => (err += d.toString()));
     syft.on("error", (e: Error) => {
       console.error("[SBOM] syft spawn failed:", e.message);
-      resolve(null);
+      settle(null);
     });
     syft.on("close", (code: number | null) => {
       if (code !== 0) {
@@ -53,14 +62,14 @@ export function generateRealSbom(
           `[SBOM] syft exited ${code} for ${image}:`,
           err.slice(-500),
         );
-        return resolve(null);
+        return settle(null);
       }
       const check = checkSbom(out);
       if (!check.real) {
         console.warn(`[SBOM] rejected for ${image}: ${check.reason}`);
-        return resolve(null);
+        return settle(null);
       }
-      resolve(out);
+      settle(out);
     });
   });
 }

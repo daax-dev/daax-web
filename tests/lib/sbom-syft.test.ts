@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "events";
-import type { spawn as Spawn } from "child_process";
 import { generateRealSbom } from "@/lib/sbom-syft";
 
 // A realistic CycloneDX SBOM string that clears the guard's size + marker checks.
@@ -42,7 +41,7 @@ function fakeSpawn(opts: {
       child.emit("close", opts.code ?? 0);
     });
     return child;
-  }) as unknown as typeof Spawn;
+  }) as unknown as typeof import("child_process").spawn;
 }
 
 describe("generateRealSbom (F2, #97)", () => {
