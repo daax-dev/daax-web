@@ -11,6 +11,7 @@ import {
 } from "react";
 import dynamic from "next/dynamic";
 import { getSettings } from "@/lib/settings";
+import { buildTerminalWsUrl } from "@/lib/websocket-utils";
 import type { TerminalRef } from "./Terminal";
 import { getProjectInfo } from "@/lib/project-utils";
 import {
@@ -60,44 +61,10 @@ const Terminal = dynamic(
   },
 );
 
-// Auto-detect WebSocket URL based on current page host
-// Production: Uses path-based routing (/ws endpoint on same domain via Traefik)
-// Development: Uses port-based routing (HTTP port + 1)
-export function getTerminalServerUrl(): string {
-  if (typeof window === "undefined") return "ws://localhost:4201";
-
-  // Backward compatibility: allow explicit override via environment variable
-  if (process.env.NEXT_PUBLIC_TERMINAL_WS_URL) {
-    return process.env.NEXT_PUBLIC_TERMINAL_WS_URL;
-  }
-
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  // Explicit port detection: empty port string means standard port for the protocol
-  const currentPort = window.location.port
-    ? parseInt(window.location.port, 10)
-    : protocol === "wss:"
-      ? 443
-      : 80;
-
-  // Behind a reverse proxy (Traefik) on a standard port with a non-loopback host:
-  // use same-origin path-based routing (/ws). Traefik forwards PathPrefix(`/ws`)
-  // to the terminal server (:4201). This covers BOTH https://daax.<host>.poley.dev
-  // (wss:443) AND standard-port access via non-loopback IP/hostnames. Only true
-  // local loopback hosts should fall through to the direct host:port+1 mapping.
-  const hostname = window.location.hostname;
-  const isStandardPort =
-    (protocol === "wss:" && currentPort === 443) ||
-    (protocol === "ws:" && currentPort === 80);
-  const isLocalLoopback =
-    hostname === "localhost" || hostname === "127.0.0.1";
-  if (isStandardPort && !isLocalLoopback) {
-    return `${protocol}//${window.location.host}/ws`;
-  }
-
-  // Direct/dev access or port mapping: WebSocket port = HTTP port + 1
-  // (e.g. localhost:4200 -> ws://localhost:4201)
-  return `${protocol}//${hostname}:${currentPort + 1}`;
-}
+// WebSocket URL building is consolidated in lib/websocket-utils.ts
+// (buildTerminalWsUrl / getTerminalWebSocketUrl) — the single ticket-aware
+// builder shared by all terminal UIs (F1b, issue #95). The NEXT_PUBLIC_TERMINAL_WS_URL
+// override and reverse-proxy detection live there now.
 
 // Get container image from settings
 // Prefers aiCoding.defaultContainerImage, falls back to legacy containerImage
@@ -257,7 +224,7 @@ export function TerminalManagerProvider({ children }: { children: ReactNode }) {
         // No command - just plain shell
       }
 
-      return `${getTerminalServerUrl()}?${params.toString()}`;
+      return buildTerminalWsUrl(params);
     },
     [],
   );
@@ -322,7 +289,7 @@ export function TerminalManagerProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      return `${getTerminalServerUrl()}?${params.toString()}`;
+      return buildTerminalWsUrl(params);
     },
     [],
   );

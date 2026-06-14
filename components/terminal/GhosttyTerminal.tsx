@@ -8,6 +8,7 @@ import {
   forwardRef,
   useImperativeHandle,
 } from "react";
+import { openTerminalWebSocket } from "@/lib/websocket-utils";
 
 export interface GhosttyTerminalProps {
   wsUrl: string;
@@ -71,11 +72,13 @@ export const GhosttyTerminal = forwardRef<
   useEffect(() => {
     if (!terminalRef.current) return;
 
+    // Tracks unmount so a ticket fetch resolving after teardown closes its
+    // orphaned socket rather than wiring handlers to a dead component (F1b #95).
+    let disposed = false;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let term: any = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let fitAddon: any = null;
-    let ws: WebSocket | null = null;
     let dataDisposer: { dispose: () => void } | null = null;
     let resizeObserver: ResizeObserver | null = null;
 
@@ -155,8 +158,29 @@ export const GhosttyTerminal = forwardRef<
         setIsLoading(false);
 
         // Function to setup WebSocket with all handlers (reusable for reconnections)
-        const setupWebSocket = (isReconnect = false): WebSocket => {
-          const newWs = new WebSocket(wsUrl);
+        const setupWebSocket = async (isReconnect = false): Promise<void> => {
+          let newWs: WebSocket;
+          try {
+            newWs = await openTerminalWebSocket(wsUrl);
+          } catch (err) {
+            // Ticket fetch / WebSocket construction failed — surface instead of
+            // an unhandled rejection (which would break reconnection).
+            if (disposed) return;
+            const message = err instanceof Error ? err.message : String(err);
+            term?.writeln(
+              `\x1b[31mFailed to open terminal connection: ${message}\x1b[0m`,
+            );
+            onErrorRef.current?.(`WebSocket open failed: ${message}`);
+            return;
+          }
+          if (disposed) {
+            try {
+              newWs.close();
+            } catch {
+              /* already closing */
+            }
+            return;
+          }
           wsRef.current = newWs;
 
           newWs.onopen = () => {
@@ -241,8 +265,18 @@ export const GhosttyTerminal = forwardRef<
           newWs.onclose = (event: CloseEvent) => {
             setConnected(false);
 
-            // Only show error and attempt reconnect if it wasn't a clean close
-            if (event.code !== 1000 && shouldReconnectRef.current) {
+            // 1008 (policy violation) is an auth/origin/ticket rejection (F1b
+            // #95): retrying cannot succeed and would hammer the ticket-mint
+            // endpoint, so treat it as non-recoverable — surface and stop.
+            if (event.code === 1008) {
+              const reasonText = event.reason ? ` (${event.reason})` : "";
+              term?.writeln(
+                `\x1b[31mConnection refused${reasonText}. Authentication/authorization failed — not retrying.\x1b[0m`,
+              );
+              onErrorRef.current?.(
+                `WebSocket refused: ${event.reason || "policy violation"}`,
+              );
+            } else if (event.code !== 1000 && shouldReconnectRef.current) {
               term?.writeln(
                 "\x1b[31mConnection lost. Attempting to reconnect...\x1b[0m",
               );
@@ -257,8 +291,8 @@ export const GhosttyTerminal = forwardRef<
                   `\x1b[33mReconnecting (attempt ${reconnectAttemptRef.current})...\x1b[0m`,
                 );
 
-                // Create new WebSocket with fresh handlers
-                setupWebSocket(true);
+                // Create new WebSocket with fresh handlers (fresh ticket).
+                void setupWebSocket(true);
               }, delay);
             } else if (event.code === 1000) {
               term?.writeln("\x1b[33mConnection closed\x1b[0m");
@@ -267,17 +301,16 @@ export const GhosttyTerminal = forwardRef<
               onErrorRef.current?.("WebSocket connection closed unexpectedly");
             }
           };
-
-          return newWs;
         };
 
-        // Connect WebSocket
-        ws = setupWebSocket();
+        // Connect WebSocket (async: mints a fresh single-use ticket).
+        void setupWebSocket();
 
-        // Handle terminal input
+        // Handle terminal input — read the live socket from the ref since the
+        // socket is created asynchronously (after the ticket fetch).
         dataDisposer = term.onData((data: string) => {
-          if (ws?.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({ type: "input", data }));
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: "input", data }));
           }
         });
 
@@ -314,6 +347,7 @@ export const GhosttyTerminal = forwardRef<
 
     // Cleanup
     return () => {
+      disposed = true;
       shouldReconnectRef.current = false;
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
@@ -321,7 +355,7 @@ export const GhosttyTerminal = forwardRef<
       window.removeEventListener("resize", handleResize);
       resizeObserver?.disconnect();
       dataDisposer?.dispose();
-      ws?.close(1000, "Component unmounting"); // Clean close
+      wsRef.current?.close(1000, "Component unmounting"); // Clean close
       term?.dispose();
     };
   }, [wsUrl, handleResize]);
