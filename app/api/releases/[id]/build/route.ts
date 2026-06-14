@@ -6,6 +6,7 @@ import {
   saveFeatureSnapshot,
 } from "@/lib/releases-db";
 import { DEFAULT_PLUGINS } from "@/lib/settings";
+import { generateRealSbom } from "@/lib/sbom-syft";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -100,11 +101,23 @@ export async function POST(request: NextRequest, context: RouteContext) {
           build_status: "success",
           built_at: builtAt,
           build_log: buildLog,
-          // Generate basic SBOM
-          sbom: JSON.stringify(
-            generateSbom(release.name, release.version, imageFull),
-          ),
         });
+        // Generate a REAL SBOM with syft (F2, #97), replacing the old synthetic
+        // object. Appended to the same write chain so the sbom write lands after
+        // the status/log writes (it persists only the `sbom` column, so it does
+        // not touch the log). generateRealSbom applies the placeholder guard and
+        // returns null on any failure, leaving the sbom column unset
+        // (= unavailable) rather than storing a fake. The build itself already
+        // succeeded (exit 0); a transient status-write failure does not make the
+        // image's SBOM invalid.
+        writeChain = writeChain
+          .then(async () => {
+            const sbom = await generateRealSbom(imageFull);
+            if (sbom) await updateRelease(id, { sbom });
+          })
+          .catch((e) =>
+            console.error("[Releases API] SBOM generation failed:", e),
+          );
       } else {
         enqueueUpdate({
           build_status: "failed",
@@ -132,42 +145,4 @@ export async function POST(request: NextRequest, context: RouteContext) {
       { status: 500 },
     );
   }
-}
-
-// Generate a basic SBOM (Software Bill of Materials)
-function generateSbom(name: string, version: string, image: string) {
-  return {
-    bomFormat: "CycloneDX",
-    specVersion: "1.4",
-    version: 1,
-    metadata: {
-      timestamp: new Date().toISOString(),
-      component: {
-        type: "container",
-        name,
-        version,
-        purl: `pkg:docker/${image.replace(":", "@")}`,
-      },
-    },
-    components: [
-      {
-        type: "framework",
-        name: "next",
-        version: "16.0.10",
-        purl: "pkg:npm/next@16.0.10",
-      },
-      {
-        type: "framework",
-        name: "react",
-        version: "19.0.0",
-        purl: "pkg:npm/react@19.0.0",
-      },
-      {
-        type: "library",
-        name: "tailwindcss",
-        version: "4.0.0",
-        purl: "pkg:npm/tailwindcss@4.0.0",
-      },
-    ],
-  };
 }

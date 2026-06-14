@@ -472,6 +472,12 @@ export interface BuiltImage {
 
   // Security data (optional)
   sboms?: SBOMReference[]; // Multiple formats available
+  // Real (syft-generated) SBOM stored against this image, keyed by digest
+  // (built_images.sbom_json, F2 #97). Undefined = unavailable. The
+  // placeholder-vs-real guard (lib/sbom-guard.ts) is applied at GENERATION time
+  // (lib/sbom-syft.ts / CI) before a caller passes a value here; the data layer
+  // stores what it is given (it does not re-run the guard).
+  sbomJson?: unknown;
   vulnReportId?: string;
   vulnerabilities?: VulnerabilitySummary;
   attestations?: Attestation[];

@@ -16,6 +16,9 @@ jobs:
   daax-web:
     name: Publish daax-web
     runs-on: ubuntu-latest
+    outputs:
+      # Digest-pinned ref for the SBOM job (F2, #97) — never a mutable tag.
+      image: ghcr.io/daax-dev/daax-web@${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,6 +48,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -66,6 +70,8 @@ jobs:
   code-server:
     name: Publish code-server
     runs-on: ubuntu-latest
+    outputs:
+      image: ghcr.io/daax-dev/code-server@${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -95,6 +101,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: deploy/code-server
@@ -104,3 +111,87 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # F2 (#97): generate a real SBOM (CycloneDX + SPDX) for each published image,
+  # keyed by the pushed digest, and upload as workflow artifacts (4 total:
+  # {daax-web, code-server} × {cyclonedx-json, spdx-json}). A placeholder-vs-real
+  # guard rejects an empty/undersized SBOM so a fake-present SBOM is never shipped.
+  # Runtime catalog builds populate built_images.sbom_json separately (the DB is
+  # not reachable from CI); these artifacts feed the F8 build-provenance page (#99).
+  sbom:
+    name: SBOM (${{ matrix.name }}, ${{ matrix.format }})
+    needs: [daax-web, code-server]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: daax-web, format: cyclonedx-json }
+          - { name: daax-web, format: spdx-json }
+          - { name: code-server, format: cyclonedx-json }
+          - { name: code-server, format: spdx-json }
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Resolve the digest-pinned image ref explicitly (matrix can't reference
+      # `needs`; avoids the &&/|| truthiness edge case).
+      - name: Resolve image ref
+        id: img
+        run: |
+          if [ "${{ matrix.name }}" = "daax-web" ]; then
+            echo "ref=${{ needs.daax-web.outputs.image }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${{ needs.code-server.outputs.image }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate SBOM with syft
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.img.outputs.ref }}
+          format: ${{ matrix.format }}
+          output-file: sbom-${{ matrix.name }}-${{ matrix.format }}.json
+          upload-artifact: false
+
+      # Placeholder-vs-real guard, mirroring lib/sbom-guard.ts (size floor +
+      # format marker + non-empty inventory). A placeholder is REPORTED as a
+      # warning and simply not uploaded (real=false) — it does NOT fail the
+      # publish, so a temporarily-unavailable SBOM never blocks shipping images.
+      - name: Guard placeholder-vs-real
+        id: guard
+        run: |
+          file="sbom-${{ matrix.name }}-${{ matrix.format }}.json"
+          node -e '
+            const fs = require("fs");
+            const f = process.argv[1];
+            let real = true, reason = "";
+            try {
+              const raw = fs.readFileSync(f, "utf8");
+              const bytes = Buffer.byteLength(raw, "utf8");
+              if (bytes < 512) { real = false; reason = `undersized (${bytes}B)`; }
+              else {
+                const o = JSON.parse(raw);
+                const cdx = o.bomFormat === "CycloneDX" && Array.isArray(o.components) && o.components.length > 0;
+                const spdx = typeof o.spdxVersion === "string" && Array.isArray(o.packages) && o.packages.length > 0;
+                if (!cdx && !spdx) { real = false; reason = "no format marker / components"; }
+              }
+            } catch { real = false; reason = "unparseable"; }
+            if (!real) console.log(`::warning::SBOM ${f} unavailable (${reason}) — not uploading`);
+            else console.log(`SBOM ${f} OK`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `real=${real}\n`);
+          ' "$file"
+
+      - name: Upload SBOM artifact
+        if: steps.guard.outputs.real == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.name }}-${{ matrix.format }}
+          path: sbom-${{ matrix.name }}-${{ matrix.format }}.json
+          if-no-files-found: error

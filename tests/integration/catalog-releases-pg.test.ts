@@ -127,6 +127,7 @@ describe.skipIf(!configured)(
       expect((await getJobsForSpec(specA.id)).length).toBe(1);
 
       const digest = `sha256:${"a".repeat(64)}`;
+      const sbomDoc = { bomFormat: "CycloneDX", components: [{ name: "pkg" }] };
       await createBuiltImage({
         digest,
         specId: specA.id,
@@ -134,10 +135,16 @@ describe.skipIf(!configured)(
         tags: ["x/y:v1"],
         size: 123,
         layers: 4,
+        // F2 #97: minimal doc to verify jsonb round-trip (the data layer stores
+        // as-given; the placeholder-vs-real guard runs at generation, not here).
+        sbomJson: sbomDoc,
       });
-      expect((await getAllBuiltImages()).some((i) => i.digest === digest)).toBe(
-        true,
+      const stored = (await getAllBuiltImages()).find(
+        (i) => i.digest === digest,
       );
+      expect(stored).toBeDefined();
+      // sbom_json round-trips as the stored document (jsonb).
+      expect(stored?.sbomJson).toEqual(sbomDoc);
 
       // specB: deleting a spec cascades to its jobs (build_jobs.spec_id ON DELETE CASCADE).
       const specB = await createBuildSpec({ ...SPEC, name: "spec-b" });
@@ -355,9 +362,23 @@ describe.skipIf(!configured)(
       it("content checksums match between SQLite and Postgres", async () => {
         for (const table of COUNT_TABLES) {
           const orderBy = ORDER_COL[table] ?? "id";
-          const pgRows = (
+          const rawPgRows = (
             await query(`SELECT * FROM ${table} ORDER BY ${orderBy}`)
           ).rows as Record<string, unknown>[];
+          // Compare only the PORTED columns (those present in the SQLite source).
+          // New PG-only columns added by later migrations (e.g.
+          // built_images.sbom_json, F2 #97) are not part of the export and must
+          // be ignored — otherwise every schema addition would falsely fail
+          // export parity.
+          const sourceCols =
+            sourceRows[table].length > 0
+              ? Object.keys(sourceRows[table][0])
+              : [];
+          const pgRows = rawPgRows.map((r) => {
+            const projected: Record<string, unknown> = {};
+            for (const c of sourceCols) projected[c] = r[c];
+            return projected;
+          });
           expect(rowsHash(table, pgRows), `checksum for ${table}`).toBe(
             rowsHash(table, sourceRows[table]),
           );
