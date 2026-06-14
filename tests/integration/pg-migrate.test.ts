@@ -20,6 +20,7 @@ import { Client } from "pg";
 import { runner, type RunnerOption } from "node-pg-migrate";
 import { resolveDbConfig, isDbConfigured } from "@/lib/db/config";
 import { ping, query, closePool } from "@/lib/db/pg";
+import { resetSchema } from "./helpers";
 
 const MIGRATIONS_DIR = path.resolve(process.cwd(), "migrations");
 const MIGRATIONS_TABLE = "pgmigrations";
@@ -62,9 +63,9 @@ async function tableExists(name: string): Promise<boolean> {
 
 describe.skipIf(!configured)("Postgres migration round-trip", () => {
   beforeAll(async () => {
-    // Start from a truly empty schema regardless of test-file order (one shared PG).
-    await query("DROP SCHEMA IF EXISTS public CASCADE");
-    await query("CREATE SCHEMA public");
+    // Start from a truly empty schema regardless of test-file order (one shared
+    // PG). Guarded to the dedicated test DB so it can never wipe a real database.
+    await resetSchema();
   });
 
   afterAll(async () => {

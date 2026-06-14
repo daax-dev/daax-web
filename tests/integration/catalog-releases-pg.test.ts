@@ -22,6 +22,7 @@ import { Client } from "pg";
 import { runner } from "node-pg-migrate";
 import { resolveDbConfig, isDbConfigured } from "@/lib/db/config";
 import { query, closePool } from "@/lib/db/pg";
+import { resetSchema } from "./helpers";
 import {
   getAllBases,
   getAllFeatures,
@@ -85,8 +86,7 @@ describe.skipIf(!configured)(
   "catalog + releases data layers (Postgres)",
   () => {
     beforeAll(async () => {
-      await query("DROP SCHEMA IF EXISTS public CASCADE");
-      await query("CREATE SCHEMA public");
+      await resetSchema();
       await migrateUp();
     });
 
@@ -297,8 +297,7 @@ describe.skipIf(!configured)(
 
       beforeAll(async () => {
         // Clean migrated schema (drop the seeded/CRUD data) for exact-count parity.
-        await query("DROP SCHEMA IF EXISTS public CASCADE");
-        await query("CREATE SCHEMA public");
+        await resetSchema();
         await migrateUp();
 
         tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "daax-parity-"));
