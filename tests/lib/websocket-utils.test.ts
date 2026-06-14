@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   getTerminalWebSocketUrl,
+  buildTerminalWsUrl,
   openTerminalWebSocket,
   _resetTicketingCache,
 } from "@/lib/websocket-utils";
@@ -37,6 +38,12 @@ describe("websocket-utils consolidated builder", () => {
   it("honors the NEXT_PUBLIC_TERMINAL_WS_URL override", () => {
     process.env.NEXT_PUBLIC_TERMINAL_WS_URL = "wss://override.example/ws";
     expect(getTerminalWebSocketUrl()).toBe("wss://override.example/ws");
+  });
+
+  it("buildTerminalWsUrl uses & when the base already has a query string", () => {
+    process.env.NEXT_PUBLIC_TERMINAL_WS_URL = "wss://override.example/ws?a=1";
+    const url = buildTerminalWsUrl(new URLSearchParams({ b: "2" }));
+    expect(url).toBe("wss://override.example/ws?a=1&b=2");
   });
 
   it("presents the ticket via subprotocol when minting succeeds", async () => {

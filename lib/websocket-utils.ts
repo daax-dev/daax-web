@@ -2,7 +2,7 @@
  * WebSocket URL utilities for handling different deployment scenarios
  * Supports:
  * - Direct access (localhost:4200 -> ws://localhost:4201)
- * - Reverse proxy like Traefik (https://domain -> wss://domain/ws/terminal)
+ * - Reverse proxy like Traefik (https://domain -> wss://domain/ws)
  * - Port-mapped containers (4300:4200 -> 4301:4201)
  *
  * This is the single, ticket-aware terminal-WebSocket helper (F1b, issue #95):
@@ -55,10 +55,12 @@ export function getTerminalWebSocketUrl(): string {
 
   const { protocol, hostname, port } = window.location;
 
-  // Behind reverse proxy: use same protocol/host/port with /ws/terminal path
+  // Behind reverse proxy: use same protocol/host with the /ws path. This matches
+  // the Traefik router (PathPrefix `/ws`, traefik-daax.yml.tpl) and the deploy
+  // default NEXT_PUBLIC_TERMINAL_WS_URL (`.../ws`).
   if (isBehindReverseProxy()) {
     const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
-    return `${wsProtocol}//${hostname}/ws/terminal`;
+    return `${wsProtocol}//${hostname}/ws`;
   }
 
   // Direct access or port mapping: use port arithmetic
@@ -80,7 +82,10 @@ export function getTerminalWebSocketUrl(): string {
  */
 export function buildTerminalWsUrl(params: URLSearchParams): string {
   const baseUrl = getTerminalWebSocketUrl();
-  return `${baseUrl}?${params.toString()}`;
+  // Use the correct separator so an override URL that already carries a query
+  // string (or a future base with one) doesn't produce a double `?`.
+  const separator = baseUrl.includes("?") ? "&" : "?";
+  return `${baseUrl}${separator}${params.toString()}`;
 }
 
 // When the mint endpoint reports ticketing is disabled (503 — e.g. host-dev

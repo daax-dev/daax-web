@@ -78,8 +78,16 @@ function connect(opts: {
       resolve(outcome);
     };
     // Single settle path: resolve on close, on error (which may arrive without a
-    // subsequent close), or after a timeout so the suite can never hang.
-    const timer = setTimeout(settle, 4000);
+    // subsequent close), or after a timeout so the suite can never hang. On
+    // timeout, terminate the socket first so it can't leak a handle.
+    const timer = setTimeout(() => {
+      try {
+        ws.terminate();
+      } catch {
+        /* already closed */
+      }
+      settle();
+    }, 4000);
     const finish = () => {
       clearTimeout(timer);
       settle();
