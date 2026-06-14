@@ -18,7 +18,7 @@ export async function GET(request: Request) {
     const category = searchParams.get("category");
     const baseId = searchParams.get("baseId");
 
-    let features = getAllFeatures();
+    let features = await getAllFeatures();
 
     // Filter by category if specified
     if (category) {

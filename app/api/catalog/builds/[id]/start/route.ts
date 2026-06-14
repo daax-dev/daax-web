@@ -15,7 +15,7 @@ export async function POST(
     const { id } = await params;
 
     // Verify the spec exists
-    const spec = getBuildSpecById(id);
+    const spec = await getBuildSpecById(id);
     if (!spec) {
       return NextResponse.json(
         { error: "Build spec not found" },
@@ -24,7 +24,7 @@ export async function POST(
     }
 
     // Create a new build job
-    const job = createBuildJob(id);
+    const job = await createBuildJob(id);
 
     // In a real implementation, we would trigger the actual build process here
     // For now, we just return the queued job

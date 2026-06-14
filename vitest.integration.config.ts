@@ -17,7 +17,14 @@ export default defineConfig({
     // Container start + migrate round-trips need headroom beyond the 5s default.
     testTimeout: 60_000,
     hookTimeout: 120_000,
+    // One shared Postgres → run files serially; each file resets its own schema.
+    fileParallelism: false,
+    sequence: { concurrent: false },
+    // better-sqlite3 is a native addon; let Node require it directly rather than
+    // having Vite transform/bundle it (which breaks the .node binding lookup).
+    server: { deps: { external: ["better-sqlite3"] } },
   },
+  ssr: { external: ["better-sqlite3"] },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./"),

@@ -10,7 +10,7 @@ import type { ListBuildsResponse, BuildSpec } from "@/types/catalog";
 
 export async function GET() {
   try {
-    const builds = getAllBuildSpecs();
+    const builds = await getAllBuildSpecs();
 
     const response: ListBuildsResponse = {
       builds,
@@ -49,7 +49,7 @@ export async function POST(request: Request) {
       createdBy: body.createdBy || "anonymous",
     };
 
-    const created = createBuildSpec(spec);
+    const created = await createBuildSpec(spec);
 
     return NextResponse.json(created, { status: 201 });
   } catch (error) {

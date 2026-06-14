@@ -15,7 +15,7 @@ interface RouteContext {
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params;
-    const release = getRelease(id);
+    const release = await getRelease(id);
 
     if (!release) {
       return NextResponse.json({ error: "Release not found" }, { status: 404 });
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     for (const plugin of DEFAULT_PLUGINS) {
       const pluginConfig = featureConfig.plugins?.[plugin.id];
       if (pluginConfig) {
-        saveFeatureSnapshot(
+        await saveFeatureSnapshot(
           id,
           plugin.id,
           plugin.name,
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     // Update status to building
-    updateRelease(id, { build_status: "building", build_log: "" });
+    await updateRelease(id, { build_status: "building", build_log: "" });
 
     // Build environment variables from feature config
     const envVars: Record<string, string> = {
@@ -73,7 +73,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
       buildLog += data.toString();
       // Update log periodically (not every line to avoid too many DB writes)
       if (buildLog.length % 1000 < 100) {
-        updateRelease(id, { build_log: buildLog });
+        void updateRelease(id, { build_log: buildLog }).catch((e) =>
+          console.error("[Releases API] build log update failed:", e),
+        );
       }
     });
 
@@ -83,28 +85,33 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     dockerProcess.on("close", (code) => {
       const builtAt = new Date().toISOString();
-      if (code === 0) {
-        // Generate basic SBOM
-        const sbom = generateSbom(release.name, release.version, imageFull);
-        updateRelease(id, {
-          build_status: "success",
-          built_at: builtAt,
-          build_log: buildLog,
-          sbom: JSON.stringify(sbom),
-        });
-      } else {
-        updateRelease(id, {
-          build_status: "failed",
-          build_log: buildLog + `\n\nBuild failed with exit code ${code}`,
-        });
-      }
+      const update =
+        code === 0
+          ? updateRelease(id, {
+              build_status: "success",
+              built_at: builtAt,
+              build_log: buildLog,
+              // Generate basic SBOM
+              sbom: JSON.stringify(
+                generateSbom(release.name, release.version, imageFull),
+              ),
+            })
+          : updateRelease(id, {
+              build_status: "failed",
+              build_log: buildLog + `\n\nBuild failed with exit code ${code}`,
+            });
+      void update.catch((e) =>
+        console.error("[Releases API] build status update failed:", e),
+      );
     });
 
     dockerProcess.on("error", (err) => {
-      updateRelease(id, {
+      void updateRelease(id, {
         build_status: "failed",
         build_log: buildLog + `\n\nBuild error: ${err.message}`,
-      });
+      }).catch((e) =>
+        console.error("[Releases API] build status update failed:", e),
+      );
     });
 
     return NextResponse.json({
