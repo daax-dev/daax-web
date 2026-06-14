@@ -99,8 +99,8 @@ describe.skipIf(!configured)(
       const features = await getAllFeatures();
       expect(bases.length).toBeGreaterThan(0);
       expect(features.length).toBeGreaterThan(0);
-      // jsonb round-trips to a structured object, not a string.
-      expect(typeof bases[0].architecture).toBe("object");
+      // jsonb round-trips to structured values (arrays here), not strings.
+      expect(Array.isArray(bases[0].architecture)).toBe(true);
       expect(Array.isArray(features[0].tags)).toBe(true);
     });
 

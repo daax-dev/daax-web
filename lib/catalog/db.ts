@@ -20,11 +20,35 @@ import {
   BuildSpec,
   BuildJob,
   BuiltImage,
+  SecurityProfile,
   DEFAULT_BASE_IMAGES,
   DEFAULT_FEATURES,
 } from "@/types/catalog";
 
 type Row = Record<string, unknown>;
+
+/** Complete default so a missing/partial security_profile_json (e.g. exported legacy
+ *  data normalised to {}) never yields an incomplete SecurityProfile that crashes
+ *  consumers reading `securityProfile.provenance.*`. */
+const DEFAULT_SECURITY_PROFILE: SecurityProfile = {
+  hardeningLevel: "standard",
+  signatureVerified: false,
+  sbomAvailable: false,
+  attestationsAvailable: false,
+  provenance: { source: "", buildPlatform: "", reproducible: false },
+};
+
+function normalizeSecurityProfile(v: unknown): SecurityProfile {
+  const p = (v ?? {}) as Partial<SecurityProfile>;
+  return {
+    ...DEFAULT_SECURITY_PROFILE,
+    ...p,
+    provenance: {
+      ...DEFAULT_SECURITY_PROFILE.provenance,
+      ...(p.provenance ?? {}),
+    },
+  };
+}
 
 /**
  * Normalise a timestamptz value to an ISO-8601 string. pg returns timestamptz
@@ -193,8 +217,8 @@ function mapBase(row: Row, versions: Row[]): BaseImage {
     registry: row.registry as string,
     repository: row.repository as string,
     category: row.category as "os" | "runtime",
-    architecture: row.architecture_json as BaseImage["architecture"],
-    securityProfile: row.security_profile_json as BaseImage["securityProfile"],
+    architecture: (row.architecture_json as BaseImage["architecture"]) ?? [],
+    securityProfile: normalizeSecurityProfile(row.security_profile_json),
     icon: (row.icon as string) ?? "",
     color: (row.color as string) ?? "",
     versions: versions.map((v) => ({
