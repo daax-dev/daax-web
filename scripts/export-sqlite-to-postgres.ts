@@ -1,0 +1,161 @@
+/**
+ * One-shot SQLite→Postgres exporter (brain2daax Phase 0 — issue #93).
+ *
+ * Reads the legacy SQLite stores (catalog.db, releases.db) and inserts every
+ * row into the corresponding Postgres tables (created by the §93 migration),
+ * via the shared `pg` pool. Idempotent (`ON CONFLICT (pk) DO NOTHING`) so a
+ * re-run is safe; resets bigserial sequences afterwards.
+ *
+ * Usage:
+ *   tsx scripts/export-sqlite-to-postgres.ts [--catalog <path>] [--releases <path>]
+ * Defaults: data/catalog.db, data/releases.db (or $CATALOG_DB_PATH / $RELEASES_DB_PATH).
+ *
+ * Column names match 1:1 between SQLite and Postgres by design, so the copy is
+ * column-agnostic. JSON-as-TEXT columns insert straight into jsonb (Postgres
+ * assignment-casts text→jsonb); timestamptz parses the SQLite datetime text.
+ */
+
+import path from "node:path";
+import fs from "node:fs";
+import Database from "better-sqlite3";
+import { Client } from "pg";
+import { resolveDbConfig, DbConfigError } from "../lib/db/config";
+
+/** Tables in FK-safe insert order, with their primary-key column and source DB. */
+const TABLES: { name: string; pk: string; source: "catalog" | "releases" }[] = [
+  { name: "bases", pk: "id", source: "catalog" },
+  { name: "base_versions", pk: "id", source: "catalog" },
+  { name: "features", pk: "id", source: "catalog" },
+  { name: "feature_versions", pk: "id", source: "catalog" },
+  { name: "build_specs", pk: "id", source: "catalog" },
+  { name: "build_jobs", pk: "id", source: "catalog" },
+  { name: "built_images", pk: "digest", source: "catalog" },
+  { name: "releases", pk: "id", source: "releases" },
+  { name: "release_shares", pk: "id", source: "releases" },
+  { name: "feature_snapshots", pk: "id", source: "releases" },
+];
+
+/** Tables whose integer PK is a bigserial we must re-sync after explicit inserts. */
+const SERIAL_PK_TABLES = [
+  "base_versions",
+  "feature_versions",
+  "release_shares",
+  "feature_snapshots",
+];
+
+function arg(flag: string): string | undefined {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 ? process.argv[i + 1] : undefined;
+}
+
+function openSqlite(file: string): Database.Database | null {
+  if (!fs.existsSync(file)) {
+    console.warn(`[export] SQLite file not found, skipping: ${file}`);
+    return null;
+  }
+  return new Database(file, { readonly: true });
+}
+
+function tableExists(db: Database.Database, name: string): boolean {
+  return (
+    db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?")
+      .get(name) !== undefined
+  );
+}
+
+async function copyTable(
+  pg: Client,
+  sqlite: Database.Database,
+  table: string,
+  pk: string,
+): Promise<number> {
+  if (!tableExists(sqlite, table)) {
+    console.warn(`[export]   ${table}: not present in source, skipping`);
+    return 0;
+  }
+  const rows = sqlite.prepare(`SELECT * FROM ${table}`).all() as Record<
+    string,
+    unknown
+  >[];
+  if (rows.length === 0) return 0;
+
+  const columns = Object.keys(rows[0]);
+  const colList = columns.map((c) => `"${c}"`).join(", ");
+
+  let inserted = 0;
+  for (const row of rows) {
+    const placeholders = columns.map((_, idx) => `$${idx + 1}`).join(", ");
+    const values = columns.map((c) => row[c]);
+    const res = await pg.query(
+      `INSERT INTO ${table} (${colList}) VALUES (${placeholders})
+       ON CONFLICT ("${pk}") DO NOTHING`,
+      values,
+    );
+    inserted += res.rowCount ?? 0;
+  }
+  return inserted;
+}
+
+async function resyncSequence(pg: Client, table: string): Promise<void> {
+  // setval to MAX(id) so subsequent inserts don't collide with copied ids.
+  await pg.query(
+    `SELECT setval(
+       pg_get_serial_sequence($1, 'id'),
+       COALESCE((SELECT MAX(id) FROM ${table}), 1),
+       (SELECT COUNT(*) FROM ${table}) > 0
+     )`,
+    [table],
+  );
+}
+
+async function main(): Promise<void> {
+  let config;
+  try {
+    config = resolveDbConfig();
+  } catch (err) {
+    if (err instanceof DbConfigError) {
+      console.error(`[export] ${err.message}`);
+      process.exit(1);
+    }
+    throw err;
+  }
+
+  const catalogPath =
+    arg("--catalog") ||
+    process.env.CATALOG_DB_PATH ||
+    path.join(process.cwd(), "data", "catalog.db");
+  const releasesPath =
+    arg("--releases") ||
+    process.env.RELEASES_DB_PATH ||
+    path.join(process.cwd(), "data", "releases.db");
+
+  const catalog = openSqlite(catalogPath);
+  const releases = openSqlite(releasesPath);
+
+  const pg = new Client(config.poolConfig);
+  await pg.connect();
+  try {
+    const totals: Record<string, number> = {};
+    for (const { name, pk, source } of TABLES) {
+      const sqlite = source === "catalog" ? catalog : releases;
+      if (!sqlite) continue;
+      totals[name] = await copyTable(pg, sqlite, name, pk);
+      console.log(`[export]   ${name}: ${totals[name]} row(s) inserted`);
+    }
+    for (const table of SERIAL_PK_TABLES) {
+      await resyncSequence(pg, table);
+    }
+    const grand = Object.values(totals).reduce((a, b) => a + b, 0);
+    console.log(`[export] done: ${grand} row(s) inserted across all tables.`);
+  } finally {
+    await pg.end();
+    catalog?.close();
+    releases?.close();
+  }
+}
+
+main().catch((err) => {
+  console.error("[export] failed:", err instanceof Error ? err.message : err);
+  process.exit(1);
+});

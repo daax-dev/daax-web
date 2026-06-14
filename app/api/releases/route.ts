@@ -10,7 +10,7 @@ import { requireAuth } from "@/lib/auth";
 // GET /api/releases - List all releases
 export async function GET() {
   try {
-    const releases = listReleases();
+    const releases = await listReleases();
     return NextResponse.json({ releases });
   } catch (error) {
     console.error("[Releases API] Error listing releases:", error);
@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
       notes: body.notes,
     };
 
-    const release = createRelease(input);
+    const release = await createRelease(input);
 
     return NextResponse.json({ release }, { status: 201 });
   } catch (error) {
@@ -73,7 +73,7 @@ export async function PUT() {
   if (!auth.authenticated) return auth.response;
 
   try {
-    const backupPath = backupDatabase();
+    const backupPath = await backupDatabase();
     return NextResponse.json({ success: true, backupPath });
   } catch (error) {
     console.error("[Releases API] Error backing up database:", error);

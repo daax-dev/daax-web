@@ -13,7 +13,7 @@ export async function GET(
 ) {
   try {
     const { jobId } = await params;
-    const job = getJobById(jobId);
+    const job = await getJobById(jobId);
 
     if (!job) {
       return NextResponse.json(

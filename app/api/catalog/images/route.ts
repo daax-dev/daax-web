@@ -9,7 +9,7 @@ import { getAllBuiltImages } from "@/lib/catalog";
 
 export async function GET() {
   try {
-    const images = getAllBuiltImages();
+    const images = await getAllBuiltImages();
 
     return NextResponse.json({
       images,

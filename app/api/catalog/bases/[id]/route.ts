@@ -13,7 +13,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const base = getBaseById(id);
+    const base = await getBaseById(id);
 
     if (!base) {
       return NextResponse.json(

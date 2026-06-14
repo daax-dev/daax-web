@@ -14,7 +14,7 @@
  * configured (e.g. Docker unavailable) so it never hard-fails CI.
  */
 
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import path from "node:path";
 import { Client } from "pg";
 import { runner, type RunnerOption } from "node-pg-migrate";
@@ -61,6 +61,12 @@ async function tableExists(name: string): Promise<boolean> {
 }
 
 describe.skipIf(!configured)("Postgres migration round-trip", () => {
+  beforeAll(async () => {
+    // Start from a truly empty schema regardless of test-file order (one shared PG).
+    await query("DROP SCHEMA IF EXISTS public CASCADE");
+    await query("CREATE SCHEMA public");
+  });
+
   afterAll(async () => {
     await closePool();
   });
@@ -92,8 +98,9 @@ describe.skipIf(!configured)("Postgres migration round-trip", () => {
     expect(await tableExists("schema_meta")).toBe(true);
   });
 
-  it("migrate down removes the baseline table", async () => {
-    const reverted = await migrate("down", 1);
+  it("migrate down reverts every migration (incl. the baseline table)", async () => {
+    // Revert all applied migrations (count > number of migrations reverts all).
+    const reverted = await migrate("down", 100);
     expect(reverted.some((n) => n.includes("baseline"))).toBe(true);
     expect(await tableExists("schema_meta")).toBe(false);
   });
