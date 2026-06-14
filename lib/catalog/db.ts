@@ -317,6 +317,7 @@ function mapBuiltImage(row: Row): BuiltImage {
     layers: Number(row.layers ?? 0),
     vulnerabilities:
       (row.vulnerabilities_json as BuiltImage["vulnerabilities"]) ?? undefined,
+    sbomJson: (row.sbom_json as unknown) ?? undefined,
     createdAt: iso(row.created_at) as string,
     lastScannedAt: iso(row.last_scanned_at),
   };
@@ -546,8 +547,8 @@ export async function createBuiltImage(
 ): Promise<BuiltImage> {
   const now = new Date().toISOString();
   await query(
-    `INSERT INTO built_images (digest, spec_id, job_id, tags_json, size, layers, vulnerabilities_json, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    `INSERT INTO built_images (digest, spec_id, job_id, tags_json, size, layers, vulnerabilities_json, sbom_json, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
     [
       image.digest,
       image.specId || null,
@@ -556,6 +557,8 @@ export async function createBuiltImage(
       image.size,
       image.layers,
       image.vulnerabilities ? JSON.stringify(image.vulnerabilities) : null,
+      // Store the real SBOM only when present; never a synthetic stand-in (F2 #97).
+      image.sbomJson !== undefined ? JSON.stringify(image.sbomJson) : null,
       now,
     ],
   );

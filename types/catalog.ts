@@ -472,6 +472,10 @@ export interface BuiltImage {
 
   // Security data (optional)
   sboms?: SBOMReference[]; // Multiple formats available
+  // Real (syft-generated) SBOM document stored against this image, keyed by
+  // digest (built_images.sbom_json, F2 #97). Undefined = unavailable; the
+  // placeholder-vs-real guard ensures a synthetic/empty SBOM is never stored.
+  sbomJson?: unknown;
   vulnReportId?: string;
   vulnerabilities?: VulnerabilitySummary;
   attestations?: Attestation[];
