@@ -58,7 +58,7 @@ jobs:
       # (exit-code 0) so unavoidable upstream CVEs don't wedge every PR; tighten
       # to a blocking threshold once the baseline is triaged.
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
