@@ -43,9 +43,20 @@ const SERIAL_PK_TABLES = [
   "feature_snapshots",
 ];
 
+/**
+ * Read a `--flag <value>` option. Returns undefined when the flag is absent;
+ * THROWS when the flag is present but its value is missing (next token absent or
+ * another flag) — so a typo like `--catalog --releases x` fails loudly rather
+ * than silently falling back to the default path.
+ */
 function arg(flag: string): string | undefined {
   const i = process.argv.indexOf(flag);
-  return i >= 0 ? process.argv[i + 1] : undefined;
+  if (i < 0) return undefined;
+  const value = process.argv[i + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return value;
 }
 
 function openSqlite(file: string, explicit: boolean): Database.Database | null {
@@ -92,12 +103,20 @@ async function copyTable(
   const columns = Object.keys(rows[0]);
   const colList = columns.map((c) => `"${c}"`).join(", ");
 
+  // Batch into multi-row INSERTs (chunked to stay well under Postgres' 65535
+  // bound parameter limit) instead of one round-trip per row.
+  const chunkSize = Math.max(1, Math.floor(60000 / columns.length));
   let inserted = 0;
-  for (const row of rows) {
-    const placeholders = columns.map((_, idx) => `$${idx + 1}`).join(", ");
-    const values = columns.map((c) => row[c]);
+  for (let offset = 0; offset < rows.length; offset += chunkSize) {
+    const chunk = rows.slice(offset, offset + chunkSize);
+    const values: unknown[] = [];
+    const tuples = chunk.map((row, r) => {
+      const ph = columns.map((_, c) => `$${r * columns.length + c + 1}`);
+      for (const col of columns) values.push(row[col]);
+      return `(${ph.join(", ")})`;
+    });
     const res = await pg.query(
-      `INSERT INTO ${table} (${colList}) VALUES (${placeholders})
+      `INSERT INTO ${table} (${colList}) VALUES ${tuples.join(", ")}
        ON CONFLICT ("${pk}") DO NOTHING`,
       values,
     );

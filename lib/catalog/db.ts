@@ -8,7 +8,8 @@
  * jsonb columns: write with `JSON.stringify(value)` (node-pg renders a bare JS
  * array as a Postgres array literal, which is wrong for jsonb), read straight
  * back as parsed JS values (no `JSON.parse`). timestamptz columns come back as
- * JS `Date`; the public types are strings, so reads normalise via `iso()`.
+ * strings (pg's default, no custom parsers); the public types are strings, so
+ * reads normalise to ISO-8601 via `iso()` (which also accepts `Date`).
  */
 
 import { randomUUID } from "node:crypto";
@@ -25,11 +26,15 @@ import {
 
 type Row = Record<string, unknown>;
 
-/** Normalise a timestamptz value (pg returns `Date`) to an ISO string. */
+/**
+ * Normalise a timestamptz value to an ISO-8601 string. pg returns timestamptz
+ * as a string by default (e.g. "2026-06-01 00:00:00+00"); convert it (and a
+ * `Date`, should a parser ever be installed) to a consistent ISO string.
+ */
 function iso(v: unknown): string | undefined {
   if (v == null) return undefined;
   if (v instanceof Date) return v.toISOString();
-  return String(v);
+  return new Date(v as string).toISOString();
 }
 
 /** Group rows by a foreign-key column (used to avoid N+1 version queries). */
