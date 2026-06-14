@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   getTerminalWebSocketUrl,
   openTerminalWebSocket,
+  _resetTicketingCache,
 } from "@/lib/websocket-utils";
 import { WS_TICKET_SUBPROTOCOL } from "@/lib/ws-ticket-protocol";
 
@@ -15,6 +16,7 @@ describe("websocket-utils consolidated builder", () => {
 
   beforeEach(() => {
     wsArgs = [];
+    _resetTicketingCache();
     vi.stubGlobal(
       "WebSocket",
       class {

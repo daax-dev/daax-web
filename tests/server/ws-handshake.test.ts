@@ -44,10 +44,11 @@ beforeAll(async () => {
   port = (wss.address() as AddressInfo).port;
 });
 
-afterAll(() => {
+afterAll(async () => {
   delete process.env.DAAX_WS_TOKEN_SECRET;
   delete process.env.DAAX_REQUIRE_AUTH;
-  wss?.close();
+  // Await the async close so Vitest doesn't see leaked handles.
+  await new Promise<void>((resolve) => wss.close(() => resolve()));
 });
 
 beforeEach(() => _resetSeenJti());
@@ -70,6 +71,19 @@ function connect(opts: {
       headers: opts.headers,
     });
     const outcome: Outcome = {};
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      resolve(outcome);
+    };
+    // Single settle path: resolve on close, on error (which may arrive without a
+    // subsequent close), or after a timeout so the suite can never hang.
+    const timer = setTimeout(settle, 4000);
+    const finish = () => {
+      clearTimeout(timer);
+      settle();
+    };
     ws.on("message", (data) => {
       const text = data.toString();
       if (text.startsWith("authed:")) {
@@ -79,10 +93,10 @@ function connect(opts: {
     });
     ws.on("close", (code) => {
       outcome.closeCode ??= code;
-      resolve(outcome);
+      finish();
     });
     ws.on("error", () => {
-      /* close follows */
+      finish();
     });
   });
 }

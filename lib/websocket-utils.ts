@@ -83,16 +83,34 @@ export function buildTerminalWsUrl(params: URLSearchParams): string {
   return `${baseUrl}?${params.toString()}`;
 }
 
+// When the mint endpoint reports ticketing is disabled (503 — e.g. host-dev
+// with no DAAX_WS_TOKEN_SECRET), suppress further mint attempts for a short
+// window so reconnects don't hammer the API / spam devtools. Tokens themselves
+// are NEVER cached (single-use); only the "unavailable" signal is.
+const TICKETING_DISABLED_TTL_MS = 30_000;
+let ticketingDisabledUntil = 0;
+
+/** Test-only: clear the "ticketing unavailable" suppression window. */
+export function _resetTicketingCache(): void {
+  ticketingDisabledUntil = 0;
+}
+
 /**
  * Fetch a fresh single-use bearer ticket from the authed app (F1b, issue #95).
  * Returns the token, or undefined when ticketing is unavailable (401/503/network
  * error) — e.g. host-dev with no DAAX_WS_TOKEN_SECRET, where the terminal server
- * admits a loopback peer without a ticket. Never memoized: each connect mints a
- * new ticket because tickets are single-use.
+ * admits a loopback peer without a ticket. A token is never memoized (each
+ * connect mints a new single-use ticket); only a 503 "disabled" result is
+ * briefly cached.
  */
 async function fetchTerminalTicket(): Promise<string | undefined> {
+  if (Date.now() < ticketingDisabledUntil) return undefined;
   try {
     const res = await fetch("/api/terminal/ticket", { method: "POST" });
+    if (res.status === 503) {
+      ticketingDisabledUntil = Date.now() + TICKETING_DISABLED_TTL_MS;
+      return undefined;
+    }
     if (!res.ok) return undefined;
     const data = await res.json();
     return typeof data?.token === "string" ? data.token : undefined;
