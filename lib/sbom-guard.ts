@@ -59,7 +59,10 @@ export function checkSbom(
       return { real: false, reason: "unserializable" };
     }
   }
-  if (serialized.length < SBOM_MIN_BYTES) {
+  // Compare actual UTF-8 byte length (not .length, which counts UTF-16 code
+  // units) so the threshold matches its "bytes" name for non-ASCII JSON.
+  const byteLength = new TextEncoder().encode(serialized).length;
+  if (byteLength < SBOM_MIN_BYTES) {
     return { real: false, reason: "undersized" };
   }
 

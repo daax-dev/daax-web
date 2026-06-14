@@ -163,7 +163,8 @@ jobs:
             let real = true, reason = "";
             try {
               const raw = fs.readFileSync(f, "utf8");
-              if (raw.length < 512) { real = false; reason = `undersized (${raw.length}B)`; }
+              const bytes = Buffer.byteLength(raw, "utf8");
+              if (bytes < 512) { real = false; reason = `undersized (${bytes}B)`; }
               else {
                 const o = JSON.parse(raw);
                 const cdx = o.bomFormat === "CycloneDX" && Array.isArray(o.components) && o.components.length > 0;
