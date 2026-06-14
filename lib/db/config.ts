@@ -118,7 +118,8 @@ export function isDbConfigured(env: NodeJS.ProcessEnv = process.env): boolean {
   try {
     resolveDbConfig(env);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    if (err instanceof DbConfigError) return false;
+    throw err;
   }
 }
