@@ -14,6 +14,7 @@
 
 import path from "path";
 import fs from "fs";
+import { randomUUID } from "node:crypto";
 import { query } from "@/lib/db/pg";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -80,9 +81,11 @@ export interface CreateReleaseInput {
   notes?: string;
 }
 
-// Generate unique ID
+// Generate a unique, unpredictable release ID. Uses a UUID rather than
+// Date.now()+Math.random() (collision-prone and guessable; release IDs are
+// exposed via the unauthenticated GET /api/releases/[id]).
 function generateId(): string {
-  return `rel_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  return `rel_${randomUUID()}`;
 }
 
 function mapRelease(row: Row): Release {
