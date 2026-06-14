@@ -13,7 +13,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const feature = getFeatureById(id);
+    const feature = await getFeatureById(id);
 
     if (!feature) {
       return NextResponse.json({ error: "Feature not found" }, { status: 404 });
