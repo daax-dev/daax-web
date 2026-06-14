@@ -97,7 +97,9 @@ function mapRelease(row: Row): Release {
     built_at: iso(row.built_at),
     build_status: row.build_status as Release["build_status"],
     build_log: (row.build_log as string) ?? undefined,
-    feature_config: jsonStr(row.feature_config) as string,
+    // feature_config is NOT NULL and required; fall back to "{}" so a stray
+    // jsonb `null` (which pg returns as JS null) never yields an invalid Release.
+    feature_config: jsonStr(row.feature_config) ?? "{}",
     sbom: jsonStr(row.sbom),
     notes: (row.notes as string) ?? undefined,
   };
