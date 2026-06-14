@@ -11,6 +11,7 @@
  * JS `Date`; the public types are strings, so reads normalise via `iso()`.
  */
 
+import { randomUUID } from "node:crypto";
 import { query } from "@/lib/db/pg";
 import {
   BaseImage,
@@ -31,6 +32,18 @@ function iso(v: unknown): string | undefined {
   return String(v);
 }
 
+/** Group rows by a foreign-key column (used to avoid N+1 version queries). */
+function groupByKey(rows: Row[], key: string): Map<unknown, Row[]> {
+  const map = new Map<unknown, Row[]>();
+  for (const row of rows) {
+    const k = row[key];
+    const arr = map.get(k);
+    if (arr) arr.push(row);
+    else map.set(k, [row]);
+  }
+  return map;
+}
+
 // ============================================================================
 // Default-data seeding (idempotent; replaces the old seed-on-first-open path)
 // ============================================================================
@@ -46,9 +59,16 @@ let seedingPromise: Promise<void> | null = null;
 async function ensureSeeded(): Promise<void> {
   if (seeded) return;
   if (!seedingPromise) {
-    seedingPromise = seedDefaultData().then(() => {
-      seeded = true;
-    });
+    seedingPromise = seedDefaultData()
+      .then(() => {
+        seeded = true;
+      })
+      .catch((err) => {
+        // Don't cache a failed attempt — clear it so a later call can retry
+        // (e.g. a transient PG hiccup on first read).
+        seedingPromise = null;
+        throw err;
+      });
   }
   return seedingPromise;
 }
@@ -272,16 +292,11 @@ function mapBuiltImage(row: Row): BuiltImage {
 
 export async function getAllBases(): Promise<BaseImage[]> {
   await ensureSeeded();
+  // Two queries (not N+1): fetch all bases + all versions, group in-memory.
   const bases = await query("SELECT * FROM bases ORDER BY category, name");
-  const result: BaseImage[] = [];
-  for (const row of bases.rows) {
-    const versions = await query(
-      "SELECT * FROM base_versions WHERE base_id = $1 ORDER BY tag",
-      [row.id],
-    );
-    result.push(mapBase(row, versions.rows));
-  }
-  return result;
+  const versions = await query("SELECT * FROM base_versions ORDER BY tag");
+  const byBase = groupByKey(versions.rows, "base_id");
+  return bases.rows.map((row) => mapBase(row, byBase.get(row.id) ?? []));
 }
 
 export async function getBaseById(id: string): Promise<BaseImage | null> {
@@ -301,18 +316,15 @@ export async function getBaseById(id: string): Promise<BaseImage | null> {
 
 export async function getAllFeatures(): Promise<Feature[]> {
   await ensureSeeded();
+  // Two queries (not N+1): fetch all features + all versions, group in-memory.
   const features = await query(
     "SELECT * FROM features ORDER BY category, name",
   );
-  const result: Feature[] = [];
-  for (const row of features.rows) {
-    const versions = await query(
-      "SELECT * FROM feature_versions WHERE feature_id = $1 ORDER BY tag",
-      [row.id],
-    );
-    result.push(mapFeature(row, versions.rows));
-  }
-  return result;
+  const versions = await query("SELECT * FROM feature_versions ORDER BY tag");
+  const byFeature = groupByKey(versions.rows, "feature_id");
+  return features.rows.map((row) =>
+    mapFeature(row, byFeature.get(row.id) ?? []),
+  );
 }
 
 export async function getFeatureById(id: string): Promise<Feature | null> {
@@ -373,7 +385,7 @@ export async function getBuildSpecById(id: string): Promise<BuildSpec | null> {
 export async function createBuildSpec(
   spec: Omit<BuildSpec, "id" | "createdAt" | "updatedAt">,
 ): Promise<BuildSpec> {
-  const id = crypto.randomUUID();
+  const id = randomUUID();
   const now = new Date().toISOString();
   await query(
     `INSERT INTO build_specs (id, name, description, base_json, features_json, customizations_json, output_json, created_by, created_at, updated_at)
@@ -444,7 +456,7 @@ export async function getJobById(jobId: string): Promise<BuildJob | null> {
 }
 
 export async function createBuildJob(specId: string): Promise<BuildJob> {
-  const id = crypto.randomUUID();
+  const id = randomUUID();
   const now = new Date().toISOString();
   const progress = {
     stage: "Queued",

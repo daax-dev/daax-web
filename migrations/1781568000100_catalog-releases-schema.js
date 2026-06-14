@@ -155,8 +155,19 @@ exports.up = (pgm) => {
 
   pgm.createTable("built_images", {
     digest: { type: "text", primaryKey: true },
-    spec_id: { type: "text", references: "build_specs(id)" },
-    job_id: { type: "text", references: "build_jobs(id)" },
+    // Retain built images when their spec/job is deleted (null the linkage).
+    // Without this, deleting a spec — which cascades to its build_jobs — would
+    // fail the cascade because a built image still references the job.
+    spec_id: {
+      type: "text",
+      references: "build_specs(id)",
+      onDelete: "SET NULL",
+    },
+    job_id: {
+      type: "text",
+      references: "build_jobs(id)",
+      onDelete: "SET NULL",
+    },
     tags_json: { type: "jsonb", notNull: true },
     size: { type: "bigint" },
     layers: { type: "integer" },
