@@ -44,6 +44,16 @@ const SERIAL_PK_TABLES = [
 ];
 
 /**
+ * Columns that are NOT NULL in Postgres but were nullable in the legacy SQLite
+ * schema: a NULL in the source would fail the insert, so coalesce it to a safe
+ * default before copying. (`bases.security_profile_json` is NOT NULL to match
+ * the required BaseImage.securityProfile type.)
+ */
+const NOT_NULL_JSON_DEFAULTS: Record<string, Record<string, string>> = {
+  bases: { security_profile_json: "{}" },
+};
+
+/**
  * Read a `--flag <value>` option. Returns undefined when the flag is absent;
  * THROWS when the flag is present but its value is missing (next token absent or
  * another flag) — so a typo like `--catalog --releases x` fails loudly rather
@@ -102,6 +112,7 @@ async function copyTable(
 
   const columns = Object.keys(rows[0]);
   const colList = columns.map((c) => `"${c}"`).join(", ");
+  const defaults = NOT_NULL_JSON_DEFAULTS[table] ?? {};
 
   // Batch into multi-row INSERTs (chunked to stay well under Postgres' 65535
   // bound parameter limit) instead of one round-trip per row.
@@ -112,7 +123,10 @@ async function copyTable(
     const values: unknown[] = [];
     const tuples = chunk.map((row, r) => {
       const ph = columns.map((_, c) => `$${r * columns.length + c + 1}`);
-      for (const col of columns) values.push(row[col]);
+      for (const col of columns)
+        values.push(
+          row[col] == null && col in defaults ? defaults[col] : row[col],
+        );
       return `(${ph.join(", ")})`;
     });
     const res = await pg.query(
