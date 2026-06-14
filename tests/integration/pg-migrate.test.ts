@@ -99,8 +99,8 @@ describe.skipIf(!configured)("Postgres migration round-trip", () => {
   });
 
   it("migrate down reverts every migration (incl. the baseline table)", async () => {
-    // Revert all applied migrations (count > number of migrations reverts all).
-    const reverted = await migrate("down", 100);
+    // Infinity reverts all applied migrations regardless of how many exist.
+    const reverted = await migrate("down", Infinity);
     expect(reverted.some((n) => n.includes("baseline"))).toBe(true);
     expect(await tableExists("schema_meta")).toBe(false);
   });

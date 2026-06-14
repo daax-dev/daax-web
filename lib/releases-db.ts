@@ -230,8 +230,13 @@ export async function addReleaseShare(
       [releaseId, shareType, shareValue],
     );
     return res.rows[0] ? mapShare(res.rows[0]) : null;
-  } catch {
-    return null; // Duplicate (unique) or foreign-key violation
+  } catch (err) {
+    // Only swallow the EXPECTED constraint violations (duplicate share /
+    // missing release): unique_violation (23505), foreign_key_violation (23503).
+    // Rethrow anything else (connectivity, permissions, …) so it isn't hidden.
+    const code = (err as { code?: string })?.code;
+    if (code === "23505" || code === "23503") return null;
+    throw err;
   }
 }
 
