@@ -143,18 +143,28 @@ async function main(): Promise<void> {
   const pg = new Client(config.poolConfig);
   await pg.connect();
   try {
-    const totals: Record<string, number> = {};
-    for (const { name, pk, source } of TABLES) {
-      const sqlite = source === "catalog" ? catalog : releases;
-      if (!sqlite) continue;
-      totals[name] = await copyTable(pg, sqlite, name, pk);
-      console.log(`[export]   ${name}: ${totals[name]} row(s) inserted`);
+    // One transaction for the whole copy + sequence resync: a failure rolls the
+    // entire export back (atomic, no partial dataset) and avoids per-row commit
+    // overhead.
+    await pg.query("BEGIN");
+    try {
+      const totals: Record<string, number> = {};
+      for (const { name, pk, source } of TABLES) {
+        const sqlite = source === "catalog" ? catalog : releases;
+        if (!sqlite) continue;
+        totals[name] = await copyTable(pg, sqlite, name, pk);
+        console.log(`[export]   ${name}: ${totals[name]} row(s) inserted`);
+      }
+      for (const table of SERIAL_PK_TABLES) {
+        await resyncSequence(pg, table);
+      }
+      await pg.query("COMMIT");
+      const grand = Object.values(totals).reduce((a, b) => a + b, 0);
+      console.log(`[export] done: ${grand} row(s) inserted across all tables.`);
+    } catch (err) {
+      await pg.query("ROLLBACK");
+      throw err;
     }
-    for (const table of SERIAL_PK_TABLES) {
-      await resyncSequence(pg, table);
-    }
-    const grand = Object.values(totals).reduce((a, b) => a + b, 0);
-    console.log(`[export] done: ${grand} row(s) inserted across all tables.`);
   } finally {
     await pg.end();
     catalog?.close();
