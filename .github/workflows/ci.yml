@@ -69,7 +69,9 @@ jobs:
 
   e2e:
     name: E2E (Playwright)
-    if: contains(github.event.pull_request.labels.*.name, 'e2e')
+    # Only on a labeled PR. Guard event_name so a workflow_dispatch run (no
+    # pull_request payload) cleanly skips instead of erroring on the expression.
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e')
     runs-on: ubuntu-latest
     services:
       postgres:

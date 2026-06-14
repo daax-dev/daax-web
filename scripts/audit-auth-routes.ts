@@ -20,12 +20,30 @@ const ALLOWLIST_PATH = join(__dirname, "auth-audit-allowlist.json");
 
 function loadAllowlist(): string[] {
   if (!existsSync(ALLOWLIST_PATH)) return [];
+  // Fail fast and loud on a malformed allowlist: silently treating it as empty
+  // would make every baselined route explode into a "new offender" and produce
+  // a confusing CI failure. main() catches the throw and exits non-zero.
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(readFileSync(ALLOWLIST_PATH, "utf-8"));
-    return Array.isArray(parsed?.routes) ? parsed.routes : [];
-  } catch {
-    return [];
+    parsed = JSON.parse(readFileSync(ALLOWLIST_PATH, "utf-8"));
+  } catch (err) {
+    throw new Error(
+      `Failed to parse ${ALLOWLIST_PATH}: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
+  const routes = (parsed as { routes?: unknown })?.routes;
+  if (!Array.isArray(routes)) {
+    throw new Error(`${ALLOWLIST_PATH} must contain a "routes" array.`);
+  }
+  const normalized = routes.map((r) => {
+    if (typeof r !== "string") {
+      throw new Error(
+        `${ALLOWLIST_PATH}: every entry in "routes" must be a string (got ${typeof r}).`,
+      );
+    }
+    return r.trim();
+  });
+  return [...new Set(normalized)];
 }
 
 export async function scanRoutes(): Promise<RouteInfo[]> {
