@@ -18,6 +18,7 @@ export function assertTestDatabase(): void {
     url
       .replace(/[?#].*$/, "")
       .split("/")
+      .filter(Boolean) // tolerate a trailing slash (…/daax_test/)
       .pop() ?? "";
   const isTestDb = pgDatabase === "daax_test" || urlDb === "daax_test";
   if (!isTestDb) {
