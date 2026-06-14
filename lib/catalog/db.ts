@@ -188,26 +188,27 @@ function mapBase(row: Row, versions: Row[]): BaseImage {
   return {
     id: row.id as string,
     name: row.name as string,
-    description: row.description as string,
+    // Fallbacks: these columns are nullable in the DB but the type is required.
+    description: (row.description as string) ?? "",
     registry: row.registry as string,
     repository: row.repository as string,
     category: row.category as "os" | "runtime",
     architecture: row.architecture_json as BaseImage["architecture"],
     securityProfile: row.security_profile_json as BaseImage["securityProfile"],
-    icon: row.icon as string,
-    color: row.color as string,
+    icon: (row.icon as string) ?? "",
+    color: (row.color as string) ?? "",
     versions: versions.map((v) => ({
       tag: v.tag as string,
       digest: v.digest as string,
-      size: Number(v.size),
-      created: v.created as string,
+      size: Number(v.size ?? 0),
+      created: (v.created as string) ?? "",
       vulnerabilities:
         (v.vulnerabilities_json as BaseImage["versions"][number]["vulnerabilities"]) ??
         undefined,
     })),
     createdAt: iso(row.created_at) as string,
     updatedAt: iso(row.updated_at) as string,
-    lastSyncedAt: iso(row.last_synced_at) as string,
+    lastSyncedAt: iso(row.last_synced_at) ?? "",
   };
 }
 
@@ -215,7 +216,8 @@ function mapFeature(row: Row, versions: Row[]): Feature {
   return {
     id: row.id as string,
     name: row.name as string,
-    description: row.description as string,
+    // Fallbacks: these columns are nullable in the DB but the type is required.
+    description: (row.description as string) ?? "",
     documentationUrl: (row.documentation_url as string) ?? undefined,
     registry: row.registry as string,
     repository: row.repository as string,
@@ -226,12 +228,12 @@ function mapFeature(row: Row, versions: Row[]): Feature {
     conflicts: (row.conflicts_json as string[]) ?? [],
     compatibleBases: (row.compatible_bases_json as string[]) ?? [],
     incompatibleBases: (row.incompatible_bases_json as string[]) ?? [],
-    icon: row.icon as string,
-    installTime: row.install_time as "fast" | "medium" | "slow",
+    icon: (row.icon as string) ?? "",
+    installTime: (row.install_time as "fast" | "medium" | "slow") ?? "fast",
     versions: versions.map((v) => ({
       tag: v.tag as string,
       digest: v.digest as string,
-      releaseDate: v.release_date as string,
+      releaseDate: (v.release_date as string) ?? "",
       changelog: (v.changelog as string) ?? undefined,
     })),
     createdAt: iso(row.created_at) as string,
@@ -249,7 +251,7 @@ function mapBuildSpec(row: Row): BuildSpec {
     customizations:
       (row.customizations_json as BuildSpec["customizations"]) ?? undefined,
     output: row.output_json as BuildSpec["output"],
-    createdBy: row.created_by as string,
+    createdBy: (row.created_by as string) ?? "anonymous",
     createdAt: iso(row.created_at) as string,
     updatedAt: iso(row.updated_at) as string,
   };
@@ -282,8 +284,8 @@ function mapBuiltImage(row: Row): BuiltImage {
     specId: (row.spec_id as string) ?? undefined,
     jobId: (row.job_id as string) ?? undefined,
     tags: row.tags_json as string[],
-    size: Number(row.size),
-    layers: Number(row.layers),
+    size: Number(row.size ?? 0),
+    layers: Number(row.layers ?? 0),
     vulnerabilities:
       (row.vulnerabilities_json as BuiltImage["vulnerabilities"]) ?? undefined,
     createdAt: iso(row.created_at) as string,
