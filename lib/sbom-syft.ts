@@ -10,8 +10,11 @@ import { spawn as nodeSpawn } from "child_process";
 
 import { checkSbom } from "./sbom-guard";
 
-/** syft image used to scan a freshly built local image. */
-export const SYFT_IMAGE = process.env.DAAX_SYFT_IMAGE || "anchore/syft:latest";
+/**
+ * syft image used to scan a freshly built local image. Pinned (not `latest`) for
+ * reproducible SBOMs; override via DAAX_SYFT_IMAGE (e.g. to bump or pin a digest).
+ */
+export const SYFT_IMAGE = process.env.DAAX_SYFT_IMAGE || "anchore/syft:v1.18.1";
 
 type SpawnFn = typeof nodeSpawn;
 

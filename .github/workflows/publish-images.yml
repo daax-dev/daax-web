@@ -149,21 +149,35 @@ jobs:
           output-file: sbom-${{ matrix.name }}-${{ matrix.format }}.json
           upload-artifact: false
 
+      # Placeholder-vs-real guard, mirroring lib/sbom-guard.ts (size floor +
+      # format marker + non-empty inventory). A placeholder is REPORTED as a
+      # warning and simply not uploaded (real=false) — it does NOT fail the
+      # publish, so a temporarily-unavailable SBOM never blocks shipping images.
       - name: Guard placeholder-vs-real
+        id: guard
         run: |
           file="sbom-${{ matrix.name }}-${{ matrix.format }}.json"
           node -e '
             const fs = require("fs");
             const f = process.argv[1];
-            const raw = fs.readFileSync(f, "utf8");
-            if (raw.length < 512) { console.error(`::error::SBOM ${f} undersized (${raw.length} bytes) — unavailable, not shipping`); process.exit(1); }
-            let o; try { o = JSON.parse(raw); } catch { console.error(`::error::SBOM ${f} unparseable`); process.exit(1); }
-            const ok = (Array.isArray(o.components) && o.components.length) || (Array.isArray(o.packages) && o.packages.length);
-            if (!ok) { console.error(`::error::SBOM ${f} has no components/packages — unavailable`); process.exit(1); }
-            console.log(`SBOM ${f} OK (${raw.length} bytes)`);
+            let real = true, reason = "";
+            try {
+              const raw = fs.readFileSync(f, "utf8");
+              if (raw.length < 512) { real = false; reason = `undersized (${raw.length}B)`; }
+              else {
+                const o = JSON.parse(raw);
+                const cdx = o.bomFormat === "CycloneDX" && Array.isArray(o.components) && o.components.length > 0;
+                const spdx = typeof o.spdxVersion === "string" && Array.isArray(o.packages) && o.packages.length > 0;
+                if (!cdx && !spdx) { real = false; reason = "no format marker / components"; }
+              }
+            } catch { real = false; reason = "unparseable"; }
+            if (!real) console.log(`::warning::SBOM ${f} unavailable (${reason}) — not uploading`);
+            else console.log(`SBOM ${f} OK`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `real=${real}\n`);
           ' "$file"
 
       - name: Upload SBOM artifact
+        if: steps.guard.outputs.real == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: sbom-${{ matrix.name }}-${{ matrix.format }}

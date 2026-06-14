@@ -557,8 +557,14 @@ export async function createBuiltImage(
       image.size,
       image.layers,
       image.vulnerabilities ? JSON.stringify(image.vulnerabilities) : null,
-      // Store the real SBOM only when present; never a synthetic stand-in (F2 #97).
-      image.sbomJson !== undefined ? JSON.stringify(image.sbomJson) : null,
+      // Store the SBOM as jsonb (F2 #97). Accept a pre-serialized JSON string
+      // (syft output) as-is — PG parses it to jsonb — and stringify an object;
+      // do NOT stringify a string (that would double-encode to a jsonb string).
+      image.sbomJson === undefined || image.sbomJson === null
+        ? null
+        : typeof image.sbomJson === "string"
+          ? image.sbomJson
+          : JSON.stringify(image.sbomJson),
       now,
     ],
   );

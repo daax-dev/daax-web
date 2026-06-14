@@ -54,13 +54,12 @@ export function checkSbom(
 
   // Require BOTH the format marker AND a non-empty inventory, so a padded blob
   // that merely carries a `components`/`packages` array (but isn't a real SBOM
-  // document) is rejected. CycloneDX → bomFormat/specVersion + components;
-  // SPDX → spdxVersion + packages.
+  // document) is rejected. CycloneDX → bomFormat === "CycloneDX" + components;
+  // SPDX → spdxVersion + packages. (syft always emits these markers.)
   const rec = obj as Record<string, unknown>;
   const components = rec.components;
   const packages = rec.packages;
-  const looksCyclonedx =
-    rec.bomFormat === "CycloneDX" || typeof rec.specVersion === "string";
+  const looksCyclonedx = rec.bomFormat === "CycloneDX";
   const looksSpdx = typeof rec.spdxVersion === "string";
 
   if (looksCyclonedx && Array.isArray(components) && components.length > 0) {
