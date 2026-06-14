@@ -18,7 +18,7 @@
 export const SBOM_MIN_BYTES = 512;
 
 export type SbomCheck =
-  | { real: true; format: "cyclonedx" | "spdx" | "unknown" }
+  | { real: true; format: "cyclonedx" | "spdx" }
   | { real: false; reason: string };
 
 function parse(input: string | object): object | null {

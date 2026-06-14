@@ -141,10 +141,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Resolve the digest-pinned image ref explicitly (matrix can't reference
+      # `needs`; avoids the &&/|| truthiness edge case).
+      - name: Resolve image ref
+        id: img
+        run: |
+          if [ "${{ matrix.name }}" = "daax-web" ]; then
+            echo "ref=${{ needs.daax-web.outputs.image }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${{ needs.code-server.outputs.image }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Generate SBOM with syft
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ matrix.name == 'daax-web' && needs.daax-web.outputs.image || needs.code-server.outputs.image }}
+          image: ${{ steps.img.outputs.ref }}
           format: ${{ matrix.format }}
           output-file: sbom-${{ matrix.name }}-${{ matrix.format }}.json
           upload-artifact: false
