@@ -31,7 +31,9 @@ exports.up = (pgm) => {
     architecture_json: { type: "jsonb", notNull: true },
     icon: { type: "text" },
     color: { type: "text" },
-    security_profile_json: { type: "jsonb" },
+    // Required to match BaseImage.securityProfile (the seed always populates it);
+    // NOT NULL prevents a null flowing into the required type and crashing the UI.
+    security_profile_json: { type: "jsonb", notNull: true },
     created_at: {
       type: "timestamptz",
       notNull: true,
