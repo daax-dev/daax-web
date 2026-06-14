@@ -64,6 +64,16 @@ describe("sbom-guard placeholder-vs-real (F2, #97)", () => {
     });
   });
 
+  it("rejects a non-serializable object (circular ref) without throwing", () => {
+    const circular: Record<string, unknown> = { components: [{ name: "a" }] };
+    circular.self = circular;
+    expect(() => checkSbom(circular)).not.toThrow();
+    expect(checkSbom(circular)).toMatchObject({
+      real: false,
+      reason: "unserializable",
+    });
+  });
+
   it("rejects an undersized document below the size floor", () => {
     // Has a (tiny) components array but is well under SBOM_MIN_BYTES.
     const tiny = JSON.stringify({ components: [{ name: "x" }] });

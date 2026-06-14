@@ -47,7 +47,18 @@ export function checkSbom(
   const keys = Object.keys(obj);
   if (keys.length === 0) return { real: false, reason: "empty-object" };
 
-  const serialized = typeof input === "string" ? input : JSON.stringify(obj);
+  let serialized: string;
+  if (typeof input === "string") {
+    serialized = input;
+  } else {
+    // Guard against a non-serializable object (e.g. circular refs) so a
+    // malformed caller input yields { real: false } rather than throwing.
+    try {
+      serialized = JSON.stringify(obj);
+    } catch {
+      return { real: false, reason: "unserializable" };
+    }
+  }
   if (serialized.length < SBOM_MIN_BYTES) {
     return { real: false, reason: "undersized" };
   }
