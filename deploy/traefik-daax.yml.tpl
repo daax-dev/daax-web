@@ -18,7 +18,9 @@ http:
 
   middlewares:
     # Defense-in-depth: strip auth identity headers from incoming requests
-    # so only Pocket ID ForwardAuth can populate them (prevents client spoofing)
+    # so only Pocket ID ForwardAuth can populate them (prevents client spoofing).
+    # X-Daax-Proxy-Secret is stripped here too so a client cannot forge it; the
+    # real value is injected by inject-proxy-secret below (F1a, issue #94).
     strip-forwarded-headers:
       headers:
         customRequestHeaders:
@@ -28,6 +30,17 @@ http:
           X-Forwarded-Name: ""
           X-Forwarded-Groups: ""
           X-Forwarded-Admin: ""
+          X-Daax-Proxy-Secret: ""
+
+    # Proxy-secret trust boundary (F1a, issue #94): inject the shared secret so
+    # the app can prove a forwarded identity traversed this proxy. The value is
+    # substituted at render time from $DAAX_PROXY_SECRET (deploy-local.sh) — it
+    # is NEVER committed. Applied to the HTTP main router only; the WS route
+    # forwards identity and is authenticated separately (F1b).
+    inject-proxy-secret:
+      headers:
+        customRequestHeaders:
+          X-Daax-Proxy-Secret: "DAAX_PROXY_SECRET_PLACEHOLDER"
 
     # Pocket ID ForwardAuth middleware
     pocket-id-auth:
@@ -63,6 +76,7 @@ http:
       middlewares:
         - strip-forwarded-headers
         - pocket-id-auth
+        - inject-proxy-secret
       tls:
         certResolver: cloudflare
       entryPoints:
