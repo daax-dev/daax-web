@@ -12,7 +12,10 @@
 import { test, expect, type APIRequestContext } from "@playwright/test";
 
 async function pgBacked(request: APIRequestContext): Promise<boolean> {
-  const res = await request.get("/api/catalog/bases");
+  // Probe /api/releases (reads straight from Postgres, no provenance fallback)
+  // rather than /api/catalog/bases, which can 200 via the provenance server even
+  // when Postgres isn't configured.
+  const res = await request.get("/api/releases");
   return res.ok();
 }
 

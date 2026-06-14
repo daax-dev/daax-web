@@ -191,6 +191,9 @@ export async function updateRelease(
 
   for (const [key, value] of Object.entries(updates)) {
     if (!UPDATABLE_COLUMNS.has(key)) continue;
+    // Skip keys explicitly set to `undefined` so they don't bind as SQL NULL and
+    // accidentally clear a column (or violate NOT NULL). `null` still clears.
+    if (value === undefined) continue;
     fields.push(`${key} = $${i++}`);
     if (JSONB_COLUMNS.has(key)) {
       // feature_config/sbom are exposed as JSON *strings* (and callers — e.g. the

@@ -208,7 +208,12 @@ function mapBase(row: Row, versions: Row[]): BaseImage {
     })),
     createdAt: iso(row.created_at) as string,
     updatedAt: iso(row.updated_at) as string,
-    lastSyncedAt: iso(row.last_synced_at) ?? "",
+    // last_synced_at is nullable; fall back to a real timestamp (not "") so
+    // downstream date handling and the route's lastSynced never see an empty string.
+    lastSyncedAt:
+      iso(row.last_synced_at) ??
+      iso(row.updated_at) ??
+      (iso(row.created_at) as string),
   };
 }
 
