@@ -29,6 +29,7 @@ beforeAll(async () => {
 
   wss = new WebSocketServer({
     port: 0,
+    host: "127.0.0.1", // explicit loopback for cross-platform test determinism
     handleProtocols: (protocols: Set<string>) =>
       protocols.has(WS_TICKET_SUBPROTOCOL) ? WS_TICKET_SUBPROTOCOL : false,
   });

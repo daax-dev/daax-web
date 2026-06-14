@@ -19,20 +19,29 @@ test.describe("terminal WS auth (F1b #95)", () => {
   test("a raw ws client with no Origin is refused (not a live PTY)", async () => {
     const closeCode = await new Promise<number | undefined>((resolve) => {
       const ws = new WebSocket(WS_URL); // browser-less client: sends no Origin
+      let settled = false;
+      const settle = (code?: number) => {
+        if (settled) return;
+        settled = true;
+        resolve(code);
+      };
+      // Single settle path: an error may arrive without a subsequent close
+      // (e.g. ECONNREFUSED), so resolve on error too; terminate on timeout.
       const timer = setTimeout(() => {
         try {
-          ws.close();
+          ws.terminate();
         } catch {
-          /* noop */
+          /* already closed */
         }
-        resolve(undefined);
+        settle(undefined);
       }, 5000);
       ws.on("close", (code) => {
         clearTimeout(timer);
-        resolve(code);
+        settle(code);
       });
       ws.on("error", () => {
-        /* close event follows */
+        clearTimeout(timer);
+        settle(undefined);
       });
     });
 

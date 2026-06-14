@@ -5,7 +5,8 @@ describe("isAllowedOrigin", () => {
   describe("undefined/null origin (raw / non-browser clients)", () => {
     it("should return false for undefined origin (F1b #95: missing Origin rejected)", () => {
       // Browsers always send Origin on a WS upgrade; an absent Origin means a
-      // raw client that must present a bearer ticket, not be admitted on origin.
+      // raw (non-browser) client and is rejected outright by authenticateConnection
+      // — before any credential/ticket check.
       expect(isAllowedOrigin(undefined)).toBe(false);
     });
 
