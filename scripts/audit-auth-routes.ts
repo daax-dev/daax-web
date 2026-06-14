@@ -35,14 +35,16 @@ function loadAllowlist(): string[] {
   if (!Array.isArray(routes)) {
     throw new Error(`${ALLOWLIST_PATH} must contain a "routes" array.`);
   }
-  const normalized = routes.map((r) => {
-    if (typeof r !== "string") {
-      throw new Error(
-        `${ALLOWLIST_PATH}: every entry in "routes" must be a string (got ${typeof r}).`,
-      );
-    }
-    return r.trim();
-  });
+  const normalized = routes
+    .map((r) => {
+      if (typeof r !== "string") {
+        throw new Error(
+          `${ALLOWLIST_PATH}: every entry in "routes" must be a string (got ${typeof r}).`,
+        );
+      }
+      return r.trim();
+    })
+    .filter((r) => r.length > 0); // drop blank/whitespace entries
   return [...new Set(normalized)];
 }
 
@@ -177,7 +179,7 @@ async function main() {
 
   if (stale.length > 0) {
     console.log(
-      `\n[WARN] ${plural(stale.length, "allowlist entry is", "allowlist entries are")} no longer unprotected write routes (fixed/removed) — prune from auth-audit-allowlist.json:`,
+      `\n[WARN] ${plural(stale.length, "allowlist entry is", "allowlist entries are")} no longer unprotected write routes (fixed/removed) — prune from scripts/auth-audit-allowlist.json:`,
     );
     for (const p of stale) console.log(`  /api/${p}`);
   }
