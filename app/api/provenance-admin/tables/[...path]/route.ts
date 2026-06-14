@@ -79,9 +79,11 @@ async function proxyRequest(
   }
 }
 
-// Each handler is gated by requireAuth (F4, #96): this is an admin proxy to the
-// provenance backend and must not be reachable unauthenticated. RBAC
-// (requireRole) lands in F5 (#101).
+// Each handler is gated by requireAuth (F4, #96): this admin proxy to the
+// provenance backend is now authenticated. requireAuth bypasses to a trusted
+// LOCAL_OPERATOR when no forwarded identity is present and DAAX_REQUIRE_AUTH!=1
+// (host-dev/proxy-less); set DAAX_REQUIRE_AUTH=1 for strict auth in production.
+// RBAC (requireRole) lands in F5 (#101).
 export async function GET(request: NextRequest, context: RouteContext) {
   const auth = await requireAuth();
   if (!auth.authenticated) return auth.response;

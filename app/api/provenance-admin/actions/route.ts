@@ -9,9 +9,11 @@ const PROVENANCE_API_URL =
  * GET /api/provenance-admin/actions
  * List available admin actions
  *
- * Gated by requireAuth (F4, #96): this is an admin proxy to the provenance
- * backend and must not be reachable unauthenticated. RBAC (requireRole) lands
- * in F5 (#101).
+ * Gated by requireAuth (F4, #96): this admin proxy to the provenance backend
+ * now requires authentication. Per the auth gate, requireAuth bypasses to a
+ * trusted LOCAL_OPERATOR when no forwarded identity is present and
+ * DAAX_REQUIRE_AUTH!=1 (host-dev / proxy-less); set DAAX_REQUIRE_AUTH=1 to
+ * enforce strict auth in production. RBAC (requireRole) lands in F5 (#101).
  */
 export async function GET() {
   const auth = await requireAuth();

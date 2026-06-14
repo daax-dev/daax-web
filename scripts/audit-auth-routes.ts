@@ -83,8 +83,10 @@ export async function scanRoutes(): Promise<RouteInfo[]> {
     const hasRequireAuthCall = /requireAuth\s*\(/.test(content);
     const hasRequireAuth = hasRequireAuthImport && hasRequireAuthCall;
 
-    // Try to determine which specific methods use requireAuth
-    // (rough heuristic: look at function bodies)
+    // Determine which specific methods are guarded. Require a real CALL site
+    // (`requireAuth(` / `requireAuthOrThrow(`) inside the handler body — a mere
+    // mention (comment/string) does NOT count, so a route that only references
+    // requireAuth in a doc comment is still flagged as unprotected.
     const protectedMethods: string[] = [];
     if (hasRequireAuth) {
       for (const method of methods) {
@@ -93,7 +95,7 @@ export async function scanRoutes(): Promise<RouteInfo[]> {
           `export\\s+(?:async\\s+)?function\\s+${method}\\b[\\s\\S]*?(?=export\\s+(?:async\\s+)?function|$)`,
         );
         const funcMatch = content.match(funcPattern);
-        if (funcMatch && funcMatch[0].includes("requireAuth")) {
+        if (funcMatch && /requireAuth(?:OrThrow)?\s*\(/.test(funcMatch[0])) {
           protectedMethods.push(method);
         }
       }
