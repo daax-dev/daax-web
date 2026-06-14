@@ -48,9 +48,18 @@ function arg(flag: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
-function openSqlite(file: string): Database.Database | null {
+function openSqlite(file: string, explicit: boolean): Database.Database | null {
   if (!fs.existsSync(file)) {
-    console.warn(`[export] SQLite file not found, skipping: ${file}`);
+    if (explicit) {
+      // A path was explicitly supplied (flag/env) but doesn't exist — almost
+      // certainly a typo. Fail loudly rather than silently export a partial set.
+      throw new Error(
+        `SQLite source not found at explicitly provided path: ${file}`,
+      );
+    }
+    console.warn(
+      `[export] no SQLite file at default path, skipping: ${file} (fresh install with no legacy data?)`,
+    );
     return null;
   }
   return new Database(file, { readonly: true });
@@ -121,17 +130,15 @@ async function main(): Promise<void> {
     throw err;
   }
 
+  const catalogArg = arg("--catalog") || process.env.CATALOG_DB_PATH;
+  const releasesArg = arg("--releases") || process.env.RELEASES_DB_PATH;
   const catalogPath =
-    arg("--catalog") ||
-    process.env.CATALOG_DB_PATH ||
-    path.join(process.cwd(), "data", "catalog.db");
+    catalogArg || path.join(process.cwd(), "data", "catalog.db");
   const releasesPath =
-    arg("--releases") ||
-    process.env.RELEASES_DB_PATH ||
-    path.join(process.cwd(), "data", "releases.db");
+    releasesArg || path.join(process.cwd(), "data", "releases.db");
 
-  const catalog = openSqlite(catalogPath);
-  const releases = openSqlite(releasesPath);
+  const catalog = openSqlite(catalogPath, Boolean(catalogArg));
+  const releases = openSqlite(releasesPath, Boolean(releasesArg));
 
   const pg = new Client(config.poolConfig);
   await pg.connect();

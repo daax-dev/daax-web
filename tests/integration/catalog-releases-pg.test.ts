@@ -170,6 +170,18 @@ describe.skipIf(!configured)(
       });
       expect(updated?.build_status).toBe("success");
 
+      // updateRelease with a pre-stringified JSON value (as the build route does
+      // for sbom) must store a real jsonb OBJECT, not a double-encoded string.
+      await updateRelease(release.id, {
+        sbom: JSON.stringify({ bomFormat: "CycloneDX", v: 1 }),
+      });
+      const sbomCheck = await query<{ fmt: string; typ: string }>(
+        "SELECT sbom->>'bomFormat' AS fmt, jsonb_typeof(sbom) AS typ FROM releases WHERE id = $1",
+        [release.id],
+      );
+      expect(sbomCheck.rows[0]?.typ).toBe("object"); // not "string"
+      expect(sbomCheck.rows[0]?.fmt).toBe("CycloneDX");
+
       const share = await addReleaseShare(release.id, "github", "octocat");
       expect(share?.share_value).toBe("octocat");
       // Unique constraint → duplicate returns null, not a throw.
@@ -194,22 +206,52 @@ describe.skipIf(!configured)(
       const JSON_COLS: Record<string, Set<string>> = {
         bases: new Set(["architecture_json", "security_profile_json"]),
         base_versions: new Set(["vulnerabilities_json"]),
+        features: new Set([
+          "tags_json",
+          "options_json",
+          "dependencies_json",
+          "conflicts_json",
+          "compatible_bases_json",
+          "incompatible_bases_json",
+        ]),
+        build_specs: new Set([
+          "base_json",
+          "features_json",
+          "customizations_json",
+          "output_json",
+        ]),
+        build_jobs: new Set(["progress_json", "result_json", "error_json"]),
+        built_images: new Set(["tags_json", "vulnerabilities_json"]),
         releases: new Set(["feature_config", "sbom"]),
         feature_snapshots: new Set(["sub_features"]),
       };
-      // Timestamp columns per table (normalised to epoch ms).
+      // Timestamp (timestamptz) columns per table (normalised to epoch ms).
+      // NB: base_versions.created and feature_versions.release_date are plain
+      // text in the Postgres schema, so they are NOT listed here.
       const TS_COLS: Record<string, Set<string>> = {
         bases: new Set(["created_at", "updated_at", "last_synced_at"]),
+        features: new Set(["created_at", "updated_at"]),
+        build_specs: new Set(["created_at", "updated_at"]),
+        build_jobs: new Set(["created_at", "started_at", "completed_at"]),
+        built_images: new Set(["created_at", "last_scanned_at"]),
         releases: new Set(["created_at", "built_at"]),
         release_shares: new Set(["shared_at"]),
       };
+      // All tables the exporter copies — full parity coverage.
       const COUNT_TABLES = [
         "bases",
         "base_versions",
+        "features",
+        "feature_versions",
+        "build_specs",
+        "build_jobs",
+        "built_images",
         "releases",
         "release_shares",
         "feature_snapshots",
       ];
+      // Primary-key column to order by (built_images keys on digest, not id).
+      const ORDER_COL: Record<string, string> = { built_images: "digest" };
 
       function canon(v: unknown): unknown {
         if (v === null || typeof v !== "object") return v;
@@ -312,8 +354,10 @@ describe.skipIf(!configured)(
 
       it("content checksums match between SQLite and Postgres", async () => {
         for (const table of COUNT_TABLES) {
-          const pgRows = (await query(`SELECT * FROM ${table} ORDER BY id`))
-            .rows as Record<string, unknown>[];
+          const orderBy = ORDER_COL[table] ?? "id";
+          const pgRows = (
+            await query(`SELECT * FROM ${table} ORDER BY ${orderBy}`)
+          ).rows as Record<string, unknown>[];
           expect(rowsHash(table, pgRows), `checksum for ${table}`).toBe(
             rowsHash(table, sourceRows[table]),
           );
