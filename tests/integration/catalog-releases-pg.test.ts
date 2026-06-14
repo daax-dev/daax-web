@@ -135,7 +135,9 @@ describe.skipIf(!configured)(
         tags: ["x/y:v1"],
         size: 123,
         layers: 4,
-        sbomJson: sbomDoc, // F2 #97: real SBOM stored against the digest
+        // F2 #97: minimal doc to verify jsonb round-trip (the data layer stores
+        // as-given; the placeholder-vs-real guard runs at generation, not here).
+        sbomJson: sbomDoc,
       });
       const stored = (await getAllBuiltImages()).find(
         (i) => i.digest === digest,

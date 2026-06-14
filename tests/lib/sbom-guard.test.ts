@@ -75,9 +75,10 @@ describe("sbom-guard placeholder-vs-real (F2, #97)", () => {
   });
 
   it("rejects an undersized document below the size floor", () => {
-    // Has a (tiny) components array but is well under SBOM_MIN_BYTES.
+    // Has a (tiny) components array but is well under SBOM_MIN_BYTES (measured
+    // in UTF-8 bytes, matching the guard).
     const tiny = JSON.stringify({ components: [{ name: "x" }] });
-    expect(tiny.length).toBeLessThan(SBOM_MIN_BYTES);
+    expect(new TextEncoder().encode(tiny).length).toBeLessThan(SBOM_MIN_BYTES);
     expect(checkSbom(tiny)).toMatchObject({
       real: false,
       reason: "undersized",
