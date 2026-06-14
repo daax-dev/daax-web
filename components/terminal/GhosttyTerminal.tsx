@@ -252,8 +252,18 @@ export const GhosttyTerminal = forwardRef<
           newWs.onclose = (event: CloseEvent) => {
             setConnected(false);
 
-            // Only show error and attempt reconnect if it wasn't a clean close
-            if (event.code !== 1000 && shouldReconnectRef.current) {
+            // 1008 (policy violation) is an auth/origin/ticket rejection (F1b
+            // #95): retrying cannot succeed and would hammer the ticket-mint
+            // endpoint, so treat it as non-recoverable — surface and stop.
+            if (event.code === 1008) {
+              const reasonText = event.reason ? ` (${event.reason})` : "";
+              term?.writeln(
+                `\x1b[31mConnection refused${reasonText}. Authentication/authorization failed — not retrying.\x1b[0m`,
+              );
+              onErrorRef.current?.(
+                `WebSocket refused: ${event.reason || "policy violation"}`,
+              );
+            } else if (event.code !== 1000 && shouldReconnectRef.current) {
               term?.writeln(
                 "\x1b[31mConnection lost. Attempting to reconnect...\x1b[0m",
               );
