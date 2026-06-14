@@ -6,9 +6,10 @@
  * handshake before any PTY/container spawn. Both processes read the SAME
  * `DAAX_WS_TOKEN_SECRET`.
  *
- * Token format: `base64url(payloadJson).base64url(hmacSha256(payloadJson))`.
- * The HMAC is computed over the exact encoded payload string (not a
- * re-serialized object) so verification never depends on JSON key ordering.
+ * Let `encoded = base64url(payloadJson)`. Token format:
+ * `encoded.base64url(hmacSha256(encoded))` — i.e. the HMAC is computed over the
+ * exact `encoded` string (the base64url payload), NOT the raw JSON or a
+ * re-serialized object, so verification never depends on JSON key ordering.
  *
  * NOTE: no `server-only` import — the terminal server imports this outside the
  * Next.js runtime. Single-use enforcement (the jti seen-set) lives in the

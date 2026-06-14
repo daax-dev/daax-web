@@ -159,7 +159,20 @@ export const GhosttyTerminal = forwardRef<
 
         // Function to setup WebSocket with all handlers (reusable for reconnections)
         const setupWebSocket = async (isReconnect = false): Promise<void> => {
-          const newWs = await openTerminalWebSocket(wsUrl);
+          let newWs: WebSocket;
+          try {
+            newWs = await openTerminalWebSocket(wsUrl);
+          } catch (err) {
+            // Ticket fetch / WebSocket construction failed — surface instead of
+            // an unhandled rejection (which would break reconnection).
+            if (disposed) return;
+            const message = err instanceof Error ? err.message : String(err);
+            term?.writeln(
+              `\x1b[31mFailed to open terminal connection: ${message}\x1b[0m`,
+            );
+            onErrorRef.current?.(`WebSocket open failed: ${message}`);
+            return;
+          }
           if (disposed) {
             try {
               newWs.close();

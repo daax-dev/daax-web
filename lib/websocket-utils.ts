@@ -43,11 +43,10 @@ function isBehindReverseProxy(): boolean {
  */
 export function getTerminalWebSocketUrl(): string {
   // Explicit override wins (carried over from TerminalManager's builder so the
-  // consolidation does not drop a deployment knob).
-  const override =
-    typeof process !== "undefined"
-      ? process.env.NEXT_PUBLIC_TERMINAL_WS_URL
-      : undefined;
+  // consolidation does not drop a deployment knob). Read NEXT_PUBLIC_* directly:
+  // Next.js replaces it at compile time in the client bundle (no `process`
+  // polyfill needed), matching how the rest of the app reads these vars.
+  const override = process.env.NEXT_PUBLIC_TERMINAL_WS_URL;
   if (override) return override;
 
   if (typeof window === "undefined") {

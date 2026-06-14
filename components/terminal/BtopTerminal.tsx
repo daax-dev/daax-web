@@ -79,7 +79,20 @@ export function BtopTerminal({ onConnectionChange }: BtopTerminalProps) {
     // openTerminalWebSocket() attaches a single-use bearer ticket.
     let disposed = false;
     void (async () => {
-      const ws = await openTerminalWebSocket(getTerminalWebSocketUrl());
+      let ws: WebSocket;
+      try {
+        ws = await openTerminalWebSocket(getTerminalWebSocketUrl());
+      } catch (err) {
+        // Ticket fetch / WebSocket construction failed — clear the loading
+        // state and surface, instead of an unhandled rejection.
+        if (disposed) return;
+        setIsLoading(false);
+        const message = err instanceof Error ? err.message : String(err);
+        xterm.write(
+          `\r\n\x1b[31mFailed to connect to terminal server: ${message}\x1b[0m\r\n`,
+        );
+        return;
+      }
       if (disposed) {
         try {
           ws.close();

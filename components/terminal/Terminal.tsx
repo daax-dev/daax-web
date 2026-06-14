@@ -153,7 +153,20 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       // reconnections). Async because each (re)connect mints a fresh single-use
       // bearer ticket via openTerminalWebSocket (F1b, #95).
       const setupWebSocket = async (isReconnect = false): Promise<void> => {
-        const ws = await openTerminalWebSocket(wsUrl);
+        let ws: WebSocket;
+        try {
+          ws = await openTerminalWebSocket(wsUrl);
+        } catch (err) {
+          // Ticket fetch / WebSocket construction failed (invalid URL,
+          // mixed-content, etc.). Surface instead of an unhandled rejection.
+          if (disposed) return;
+          const message = err instanceof Error ? err.message : String(err);
+          term.writeln(
+            `\x1b[31mFailed to open terminal connection: ${message}\x1b[0m`,
+          );
+          onErrorRef.current?.(`WebSocket open failed: ${message}`);
+          return;
+        }
         if (disposed) {
           try {
             ws.close();
