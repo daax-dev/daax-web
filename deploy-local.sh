@@ -121,15 +121,17 @@ self_elevate() {
   # CODE_SERVER_URL, TERMINAL_WS_URL, GITHUB_DAAX, CLAWD_GATEWAY_*) — without
   # these, a user-set override would be silently dropped on the sudo re-exec
   # and the elevated `docker compose` would fall back to defaults. Note: this
-  # carries user-set values (incl. the CLAWD_GATEWAY_TOKEN, GITHUB_DAAX, and
-  # DAAX_WS_TOKEN_SECRET secrets) across the sudo boundary, where they are
-  # visible in the elevated process's environment. DAAX_WS_TOKEN_SECRET +
-  # DAAX_REQUIRE_AUTH MUST be preserved so the compose stack receives the same
-  # WS-ticket secret on both the app and terminal server (F1b, #95). DOCKER_GID
-  # is deliberately NOT preserved: compose() recomputes it from the host's
-  # docker group, so a passed-in value would be overwritten anyway.
+  # carries user-set values (incl. the CLAWD_GATEWAY_TOKEN, GITHUB_DAAX,
+  # DAAX_PROXY_SECRET, and DAAX_WS_TOKEN_SECRET secrets) across the sudo
+  # boundary, where they are visible in the elevated process's environment.
+  # DAAX_PROXY_SECRET[_PREVIOUS] MUST be preserved so install-traefik-config
+  # renders the real X-Daax-Proxy-Secret rather than an empty one (F1a, #94);
+  # DAAX_WS_TOKEN_SECRET + DAAX_REQUIRE_AUTH MUST be preserved so the compose
+  # stack receives the same WS-ticket secret on both the app and terminal server
+  # (F1b, #95). DOCKER_GID is deliberately NOT preserved: compose() recomputes
+  # it from the host's docker group, so a passed-in value would be overwritten.
   if [[ $EUID -ne 0 ]]; then
-    exec sudo --preserve-env=DAAX_HOSTNAME,DAAX_WORKSPACE,CLAUDE_CONFIG_PATH,HOME_MCP_JSON_PATH,DAAX_ENV_FILE,DAAX_NETWORK,TRAEFIK_DYNAMIC_DIR,DOCKER_SOCKET,SNAP_DOCKERD_UNIT,CLAUDE_CONTAINER_IMAGE,CODE_SERVER_URL,TERMINAL_WS_URL,GITHUB_DAAX,CLAWD_GATEWAY_URL,CLAWD_GATEWAY_TOKEN,DAAX_WS_TOKEN_SECRET,DAAX_REQUIRE_AUTH \
+    exec sudo --preserve-env=DAAX_HOSTNAME,DAAX_WORKSPACE,CLAUDE_CONFIG_PATH,HOME_MCP_JSON_PATH,DAAX_ENV_FILE,DAAX_NETWORK,TRAEFIK_DYNAMIC_DIR,DOCKER_SOCKET,SNAP_DOCKERD_UNIT,CLAUDE_CONTAINER_IMAGE,CODE_SERVER_URL,TERMINAL_WS_URL,GITHUB_DAAX,CLAWD_GATEWAY_URL,CLAWD_GATEWAY_TOKEN,DAAX_PROXY_SECRET,DAAX_PROXY_SECRET_PREVIOUS,DAAX_WS_TOKEN_SECRET,DAAX_REQUIRE_AUTH \
       -- "$SCRIPT_PATH" "$@"
   fi
 }
@@ -495,15 +497,45 @@ cmd_install_traefik_config() {
   local tmp="$target.tmp.$$"
   log "rendering Traefik config (host=$DAAX_HOSTNAME) -> $target"
 
-  # DAAX_HOSTNAME is validated alphanumeric+hyphens; safe for sed.
-  sed "s|HOSTNAME_PLACEHOLDER|$DAAX_HOSTNAME|g" "$TRAEFIK_TEMPLATE" > "$tmp"
+  # Proxy-secret trust boundary (F1a, issue #94): substitute the shared secret
+  # from the environment. The secret is NEVER committed. If unset, the boundary
+  # is disabled (opt-in) and an empty value is rendered — set DAAX_PROXY_SECRET
+  # (and DAAX_REQUIRE_AUTH=1 in the app) to enforce it.
+  local proxy_secret="${DAAX_PROXY_SECRET:-}"
+  if [[ -z "$proxy_secret" ]]; then
+    warn "DAAX_PROXY_SECRET unset — rendering an empty X-Daax-Proxy-Secret; the HTTP proxy-secret trust boundary will be DISABLED. Set DAAX_PROXY_SECRET to enable it (F1a)."
+  elif [[ "$proxy_secret" == *$'\n'* ]]; then
+    die "DAAX_PROXY_SECRET contains a newline; use a single-line secret so it renders into the Traefik header safely."
+  fi
+  # The placeholder sits inside a YAML double-quoted scalar
+  # ("DAAX_PROXY_SECRET_PLACEHOLDER"), so the value must be YAML-escaped first
+  # (backslash, then double-quote) or a secret containing " or \ would produce
+  # invalid YAML / a wrong parsed value. THEN escape sed-special chars (\ & |)
+  # in the replacement so the (already YAML-escaped) value substitutes literally.
+  # Newlines are rejected above.
+  local proxy_secret_yaml="${proxy_secret//\\/\\\\}" # \ -> \\
+  proxy_secret_yaml="${proxy_secret_yaml//\"/\\\"}"  # " -> \"
+  local proxy_secret_escaped
+  proxy_secret_escaped="$(printf '%s' "$proxy_secret_yaml" | sed -e 's/[\\&|]/\\&/g')"
+
+  # Create the secret-bearing temp file with restrictive perms from the start
+  # (umask 077 → 0600) so it is never briefly world/group-readable during the
+  # write. DAAX_HOSTNAME is validated alphanumeric+hyphens; safe for sed.
+  (
+    umask 077
+    sed -e "s|HOSTNAME_PLACEHOLDER|$DAAX_HOSTNAME|g" \
+        -e "s|DAAX_PROXY_SECRET_PLACEHOLDER|$proxy_secret_escaped|g" \
+        "$TRAEFIK_TEMPLATE" > "$tmp"
+  )
 
   # Preserve previous copy for one rollback step.
   if [[ -f "$target" ]]; then
     cp -a "$target" "$target.prev"
   fi
   mv "$tmp" "$target"
-  chmod 0644 "$target"
+  # 0640 (not 0644): the rendered file now carries DAAX_PROXY_SECRET, so it must
+  # not be world-readable. Traefik reads its dynamic config as root.
+  chmod 0640 "$target"
 
   # Traefik's file provider has watch:true in traefik-static.yml; reload isn't
   # strictly needed. Send USR1 as a belt-and-suspenders nudge if it's running.

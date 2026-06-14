@@ -48,11 +48,17 @@ describe("auth module", () => {
     delete process.env.DAAX_AUTH_GROUPS_HEADER;
     delete process.env.DAAX_AUTH_PROVIDER_URL;
     delete process.env.DAAX_REQUIRE_AUTH;
+    delete process.env.DAAX_PROXY_SECRET;
+    delete process.env.DAAX_PROXY_SECRET_PREVIOUS;
+    delete process.env.DAAX_AUTH_PROXY_SECRET_HEADER;
   });
 
   afterEach(() => {
     vi.resetModules();
     delete process.env.DAAX_REQUIRE_AUTH;
+    delete process.env.DAAX_PROXY_SECRET;
+    delete process.env.DAAX_PROXY_SECRET_PREVIOUS;
+    delete process.env.DAAX_AUTH_PROXY_SECRET_HEADER;
   });
 
   describe("getAuthUser", () => {
@@ -430,6 +436,186 @@ describe("auth module", () => {
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-user": "   ",
+        }),
+      );
+
+      await expect(requireAuthOrThrow()).rejects.toThrow(
+        "Authentication required",
+      );
+    });
+  });
+
+  describe("proxy-secret trust boundary (F1a, #94)", () => {
+    const SECRET = "s3cr3t-proxy-value";
+
+    it("rejects a forged X-Forwarded-User when the secret is configured but absent from the request", async () => {
+      process.env.DAAX_PROXY_SECRET = SECRET;
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "attacker-uuid",
+          "x-forwarded-name": "Mallory",
+        }),
+      );
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(false);
+      if (!result.authenticated) {
+        expect(result.response.status).toBe(401);
+      }
+    });
+
+    it("rejects a forwarded identity when the proxy secret is incorrect", async () => {
+      process.env.DAAX_PROXY_SECRET = SECRET;
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "user-uuid",
+          "x-daax-proxy-secret": "wrong-secret",
+        }),
+      );
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(false);
+    });
+
+    it("surfaces NO identity-derived fields when a present identity is rejected (anti-spoofing)", async () => {
+      process.env.DAAX_PROXY_SECRET = SECRET;
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "attacker-uuid",
+          "x-forwarded-name": "Mallory",
+          "x-forwarded-email": "mallory@evil.test",
+          "x-forwarded-groups": "admin,superuser",
+          // no / wrong proxy secret
+        }),
+      );
+
+      const user = await getAuthUser();
+
+      expect(user).toEqual({
+        username: null,
+        email: null,
+        groups: [],
+        authenticated: false,
+        pictureUrl: null,
+      });
+    });
+
+    it("authenticates a forwarded identity when the proxy secret matches", async () => {
+      process.env.DAAX_PROXY_SECRET = SECRET;
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "user-uuid",
+          "x-forwarded-name": "Trusted User",
+          "x-daax-proxy-secret": SECRET,
+        }),
+      );
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(true);
+      if (result.authenticated) {
+        expect(result.user.username).toBe("Trusted User");
+      }
+    });
+
+    it("accepts the DAAX_PROXY_SECRET_PREVIOUS value during rotation", async () => {
+      process.env.DAAX_PROXY_SECRET = "new-secret";
+      process.env.DAAX_PROXY_SECRET_PREVIOUS = "old-secret";
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "user-uuid",
+          "x-daax-proxy-secret": "old-secret",
+        }),
+      );
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(true);
+    });
+
+    it("bypasses to LOCAL_OPERATOR when no header is present (non-strict), even with a secret configured", async () => {
+      process.env.DAAX_PROXY_SECRET = SECRET;
+      mockHeaders.mockResolvedValue(createMockHeaders({}));
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(true);
+      if (result.authenticated) {
+        expect(result.user.username).toBe("local");
+      }
+    });
+
+    it("trusts a forwarded identity when the secret is unset and strict mode is off (boundary disabled)", async () => {
+      // Backward-compatible: opt-in. With no DAAX_PROXY_SECRET and non-strict
+      // mode, legacy behavior (trust the forwarded identity) is preserved.
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "user-uuid",
+          "x-forwarded-name": "Legacy User",
+        }),
+      );
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(true);
+    });
+
+    it("refuses a forwarded identity in strict mode when the secret is unset (fail-closed) and logs a ship-blocking warning", async () => {
+      process.env.DAAX_REQUIRE_AUTH = "1";
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      // Fresh module import so the once-per-process warning flag is reset and we
+      // can assert the ship-blocking warning is actually emitted on this path.
+      vi.resetModules();
+      vi.doMock("next/headers", () => ({
+        headers: () =>
+          Promise.resolve(
+            createMockHeaders({
+              "x-forwarded-user": "user-uuid",
+              "x-forwarded-name": "User",
+            }),
+          ),
+      }));
+      const { requireAuth: requireAuthFresh } = await import("@/lib/auth");
+
+      const result = await requireAuthFresh();
+
+      expect(result.authenticated).toBe(false);
+      if (!result.authenticated) {
+        expect(result.response.status).toBe(401);
+      }
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("SHIP-BLOCKING"),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("honors a custom proxy-secret header name via DAAX_AUTH_PROXY_SECRET_HEADER", async () => {
+      process.env.DAAX_PROXY_SECRET = SECRET;
+      process.env.DAAX_AUTH_PROXY_SECRET_HEADER = "x-custom-secret";
+      vi.resetModules();
+      vi.doMock("next/headers", () => ({
+        headers: () =>
+          Promise.resolve(
+            createMockHeaders({
+              "x-forwarded-user": "user-uuid",
+              "x-custom-secret": SECRET,
+            }),
+          ),
+      }));
+
+      const { requireAuth: requireAuthCustom } = await import("@/lib/auth");
+      const result = await requireAuthCustom();
+
+      expect(result.authenticated).toBe(true);
+    });
+
+    it("requireAuthOrThrow throws when secret configured but request lacks it", async () => {
+      process.env.DAAX_PROXY_SECRET = SECRET;
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "user-uuid",
         }),
       );
 

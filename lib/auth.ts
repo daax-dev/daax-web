@@ -1,12 +1,15 @@
 import "server-only";
+import { timingSafeEqual } from "node:crypto";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 
-// Re-export types and constants from auth-types (client-safe module)
-export type { AuthUser } from "./auth-types";
-export { UNAUTHENTICATED_USER } from "./auth-types";
-
+// Import the client-safe types/constants once, then re-export the same bindings
+// so the public surface and internal use share a single source.
 import type { AuthUser } from "./auth-types";
+import { UNAUTHENTICATED_USER } from "./auth-types";
+
+export type { AuthUser };
+export { UNAUTHENTICATED_USER };
 
 /**
  * Result type for requireAuth() - either authenticated user or error response
@@ -32,6 +35,47 @@ const GROUPS_HEADER =
   process.env.DAAX_AUTH_GROUPS_HEADER || "x-forwarded-groups";
 const OIDC_PROVIDER_URL =
   process.env.DAAX_AUTH_PROVIDER_URL || "https://auth.poley.dev";
+
+// Proxy-secret trust boundary (F1a, issue #94).
+//
+// The forward-auth headers above carry no proof they traversed the trusted
+// reverse proxy (Traefik) — any client that can reach the app directly can set
+// X-Forwarded-User and be treated as that user (task-007). As defense-in-depth,
+// Traefik injects a shared secret header (X-Daax-Proxy-Secret) on the HTTP main
+// router and the app trusts forwarded identity ONLY when that secret matches
+// DAAX_PROXY_SECRET (DAAX_PROXY_SECRET_PREVIOUS is also accepted so the secret
+// can be rotated without an auth outage). The proxy MUST also strip any
+// client-supplied X-Daax-Proxy-Secret before injecting the real one.
+//
+// This is opt-in: when DAAX_PROXY_SECRET is unset the boundary is disabled and
+// legacy behavior is preserved — EXCEPT in strict mode (DAAX_REQUIRE_AUTH=1),
+// where an unset secret fails closed (forwarded identity is refused and a
+// ship-blocking warning is logged), mirroring reference-platform `validate()`.
+const PROXY_SECRET_HEADER =
+  process.env.DAAX_AUTH_PROXY_SECRET_HEADER || "x-daax-proxy-secret";
+
+function proxySecretConfigured(): boolean {
+  return !!process.env.DAAX_PROXY_SECRET;
+}
+
+// Constant-time string comparison. A length mismatch returns false without a
+// timing-safe compare (length is not the secret); equal lengths are compared
+// with crypto.timingSafeEqual to avoid leaking the secret byte-by-byte.
+function secretsEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
+}
+
+function proxySecretMatches(provided: string | null): boolean {
+  if (!provided) return false;
+  const current = process.env.DAAX_PROXY_SECRET;
+  const previous = process.env.DAAX_PROXY_SECRET_PREVIOUS;
+  if (current && secretsEqual(provided, current)) return true;
+  if (previous && secretsEqual(provided, previous)) return true;
+  return false;
+}
 
 // Auth enforcement gate.
 //
@@ -80,6 +124,18 @@ function warnAuthBypassedOnce(): void {
   );
 }
 
+let proxySecretMissingWarned = false;
+function warnProxySecretMissingOnce(): void {
+  if (proxySecretMissingWarned) return;
+  proxySecretMissingWarned = true;
+  console.warn(
+    "[auth] SHIP-BLOCKING: DAAX_REQUIRE_AUTH=1 but DAAX_PROXY_SECRET is unset — " +
+      "the HTTP proxy-secret trust boundary is NOT enforced. Forwarded identity " +
+      "(X-Forwarded-User) is being REFUSED (fail-closed). Set DAAX_PROXY_SECRET " +
+      "and inject X-Daax-Proxy-Secret at the proxy to authenticate forwarded identity.",
+  );
+}
+
 /**
  * Resolved auth context for a single request.
  *
@@ -119,6 +175,35 @@ async function getAuthContext(): Promise<AuthContext> {
         .filter(Boolean)
     : [];
 
+  // Proxy-secret trust boundary (F1a): a present forwarded identity is only
+  // honored when it provably traversed the trusted proxy. The decision applies
+  // solely when an identity is present; an absent header (userId === null) is
+  // left to the guards' LOCAL_OPERATOR bypass and is unaffected here.
+  let identityTrusted = userId !== null;
+  if (userId !== null) {
+    if (proxySecretConfigured()) {
+      // Secret configured → enforce in every mode.
+      identityTrusted = proxySecretMatches(h.get(PROXY_SECRET_HEADER));
+    } else if (authRequired()) {
+      // Strict mode + secret unset → fail closed (refuse forwarded identity).
+      warnProxySecretMissingOnce();
+      identityTrusted = false;
+    }
+    // else: non-strict + secret unset → boundary disabled, legacy behavior.
+  }
+
+  const authenticated = userId !== null && identityTrusted;
+
+  // If a forwarded identity was PRESENT but the proxy-secret boundary rejected
+  // it, surface NO identity-derived fields: the headers are untrusted, so
+  // exposing username/email/groups invites UI/log spoofing and tempts callers
+  // to treat them as meaningful. Return the canonical unauthenticated user. An
+  // absent identity (userId === null) is left to the existing shape below so the
+  // local-operator bypass and non-identity handling are unchanged.
+  if (userId !== null && !identityTrusted) {
+    return { rawUserHeader, user: { ...UNAUTHENTICATED_USER } };
+  }
+
   // Prefer displayName > username > "User" (avoid showing raw UUID)
   // UUID pattern: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx or similar
   const isUuid = userId && /^[0-9a-f-]{8,}$/i.test(userId);
@@ -130,9 +215,9 @@ async function getAuthContext(): Promise<AuthContext> {
       username: displayUsername,
       email,
       groups,
-      authenticated: !!userId,
-      pictureUrl: userId
-        ? `${OIDC_PROVIDER_URL}/api/users/${encodeURIComponent(userId)}/avatar`
+      authenticated,
+      pictureUrl: authenticated
+        ? `${OIDC_PROVIDER_URL}/api/users/${encodeURIComponent(userId!)}/avatar`
         : null,
     },
   };
