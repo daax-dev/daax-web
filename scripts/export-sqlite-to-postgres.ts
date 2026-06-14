@@ -2,9 +2,9 @@
  * One-shot SQLite→Postgres exporter (brain2daax Phase 0 — issue #93).
  *
  * Reads the legacy SQLite stores (catalog.db, releases.db) and inserts every
- * row into the corresponding Postgres tables (created by the §93 migration),
- * via the shared `pg` pool. Idempotent (`ON CONFLICT (pk) DO NOTHING`) so a
- * re-run is safe; resets bigserial sequences afterwards.
+ * row into the corresponding Postgres tables (created by the §93 migration)
+ * using a dedicated `pg.Client` connection. Idempotent (`ON CONFLICT (pk) DO NOTHING`)
+ * so a re-run is safe; resets bigserial sequences afterwards.
  *
  * Usage:
  *   tsx scripts/export-sqlite-to-postgres.ts [--catalog <path>] [--releases <path>]
