@@ -20,7 +20,8 @@ Only document what is confirmed and deployable today.
 - CLI: none in this repo. Integrates with the external `backlog` CLI (task management) and `daax-cli` (session registration).
 
 ## Persistence
-- Primary: SQLite via `better-sqlite3` (e.g. `lib/releases-db.ts`, `lib/catalog/db.ts`). Local file-backed; no external DB server.
+- Target engine: **Postgres** (brain2daax Phase 0, issue #92; decision D1, `docs/brain2daax.md` §2). Connection via the `pg` pool (`lib/db/pg.ts`); schema managed by **`node-pg-migrate`** with ordered, reversible up/down migrations in `migrations/`. Both the pool and the migration runner (`scripts/db-migrate.ts`) resolve their connection from one env-sourced config (`lib/db/config.ts`): `DATABASE_URL`, or discrete libpq vars (`PGHOST`/`PGDATABASE`/`PGUSER`/`PGPORT`/`PGPASSWORD`); fails closed if neither is set. Both deploy modes run a `postgres` service (persistent named volume `daax-pg-data`, `pg_isready` healthcheck) plus a one-shot `migrate` service the app waits on (`service_completed_successfully`). Migration tool chosen over Drizzle (schema-first ORM — heavier than an empty Phase-0 baseline needs) and Atlas (Go binary — not a Node tool); see `.logs/decisions/brain2daax.jsonl`.
+- Legacy (being migrated): SQLite via `better-sqlite3` (`lib/releases-db.ts`, `lib/catalog/db.ts`), local file-backed. The one-time SQLite→Postgres data migration and data-layer rewrite are tracked separately (#migrate); until then these still back the catalog/releases features and nothing in the app boot path requires Postgres.
 - Runtime feature config: `config.toml` (boot defaults) overridable at runtime via Settings UI persisted to `localStorage`.
 - Cache: none.
 - Search: none.

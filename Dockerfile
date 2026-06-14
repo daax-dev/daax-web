@@ -123,6 +123,11 @@ COPY --from=builder /app/lib ./lib
 COPY --from=builder /app/hooks ./hooks
 COPY --from=builder /app/types ./types
 COPY --from=builder /app/plugins ./plugins
+# Postgres migration assets (brain2daax Phase 0 #92): the migrations dir and the
+# runner script are needed by the compose `migrate` one-shot service
+# (`bun run db:migrate`). node-pg-migrate + pg ship in node_modules (runtime deps).
+COPY --from=builder /app/migrations ./migrations
+COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
 COPY --from=builder /app/postcss.config.mjs ./postcss.config.mjs
 COPY --from=builder /app/instrumentation.ts ./instrumentation.ts

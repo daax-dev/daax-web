@@ -67,6 +67,28 @@ DAAX_WORKSPACE=/abs/path bun run docker:run   # run with workspace mount + HOST_
 ```
 Set `DAAX_WORKSPACE` to an absolute path before running `bun run docker:run`. The script's `~/prj` fallback does not expand `~` in shell parameter expansion, so without an explicit absolute path the mount target is a literal `~/prj` and the run fails. `bun run docker:run` mounts the Docker socket and a workspace into `/workspace` and sets `HOST_WORKSPACE_PATH` (without these the terminal server falls back to host mode and container path/auth mounts break). The `/code-server` proxy requires the local `daax-code-server:latest` image built by `./scripts/build-code-server.sh` (enforced by `rebuild.sh` / `deploy-local.sh` and the API preflight). `./rebuild.sh` or `docker compose up` perform both steps. Access at `http://localhost:4200` or `http://<tailscale-ip>:4200`. Supports Docker-in-Docker for spawning AI coding containers.
 
+---
+
+## Database (Postgres)
+
+Postgres is daax-web's single data engine (brain2daax Phase 0, issue #92; decision D1, `docs/brain2daax.md` §2). Schema is managed by **`node-pg-migrate`** with ordered, reversible up/down migrations in `migrations/`. The app connects through a pooled client (`lib/db/pg.ts`); both the pool and the migration runner resolve their connection from the same env-sourced config (`lib/db/config.ts`).
+
+> Phase 0 is foundational plumbing only. The existing SQLite stores (`catalog.db`, `releases.db`) are **not** ported here — that one-time data migration and the data-layer rewrite are tracked separately (#migrate). Until then nothing in the app boot path requires Postgres, so a deployment without it configured still starts.
+
+**Connection config** — set `DATABASE_URL` (preferred, e.g. `postgres://user:pw@host:5432/daax?sslmode=require`) **or** discrete libpq vars (`PGHOST`, `PGDATABASE`, `PGUSER`, optional `PGPORT`/`PGPASSWORD`). Resolution fails closed if neither is present. Never commit a connection string with a live password.
+
+### Host Mode (Development)
+```bash
+docker compose up -d postgres          # throwaway local Postgres (named volume daax-pg-data)
+export DATABASE_URL="postgres://daax:daax@127.0.0.1:5432/daax"
+bun run db:migrate                     # apply pending migrations (idempotent; re-run = no-op)
+bun run db:migrate:down                # roll back the last migration
+bun run db:migrate:create <name>       # scaffold a new migration in migrations/
+```
+
+### Container Mode (Production / Tailscale)
+Both compose files (`docker-compose.yml`, `deploy/docker-compose.yml`) include a `postgres` service (persistent named volume; `pg_isready` healthcheck) and a one-shot `migrate` service that runs `bun run db:migrate` after Postgres is healthy. The `daax` service waits on the migration completing successfully (`condition: service_completed_successfully`), so a failed migration blocks the rollout (fail-closed). Set `DAAX_PG_PASSWORD` (required in the deploy compose; never committed) before `docker compose up`; data survives `docker compose restart`/`down` via the `daax-pg-data` volume.
+
 ## Commands
 ```bash
 # Development
@@ -82,8 +104,14 @@ bun run typecheck    # tsc --noEmit
 bun run format:write # Prettier write
 bun run format:check # Prettier check
 
+# Database (Postgres / node-pg-migrate)
+bun run db:migrate        # Apply pending migrations (up)
+bun run db:migrate:down   # Roll back the last migration
+bun run db:migrate:create # Scaffold a new migration in migrations/
+
 # Tests
 bun run test         # Vitest (unit/component, headless)
+bun run test:integration # Postgres migration round-trip (spins up throwaway PG via Docker; skips if absent)
 bun run test:e2e     # Playwright (tests/e2e)
 bun run test:all     # Vitest + Playwright + agent quick-verify
 
@@ -100,7 +128,7 @@ bunx shadcn@latest add <component-name>   # installs to components/ui/
 | Styling | Tailwind CSS v4 with semantic CSS variables |
 | UI Components | shadcn/ui (Radix UI primitives) |
 | Terminal | xterm.js + node-pty + ghostty-web |
-| Persistence | SQLite (better-sqlite3) |
+| Persistence | Postgres (`pg` pool + `node-pg-migrate`) — target engine (Phase 0). SQLite (better-sqlite3) still backs `catalog.db`/`releases.db` until #migrate ports them. |
 | Recording | asciinema v2 / rrweb |
 | Package Manager | Bun (preferred) |
 | CI / Registry | GitHub Actions → GHCR (`ghcr.io/daax-dev/daax-web`) |
