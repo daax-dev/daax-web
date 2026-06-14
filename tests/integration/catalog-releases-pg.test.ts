@@ -105,8 +105,9 @@ describe.skipIf(!configured)(
     });
 
     it("build spec + job + image CRUD round-trip", async () => {
-      // specA: exercise read/update + a built image (kept; built_images.spec_id
-      // has no ON DELETE, matching the original schema).
+      // specA: exercise read/update + a built image. Kept (not deleted) here;
+      // built_images.spec_id/job_id are ON DELETE SET NULL, so the image would
+      // survive a spec delete with its linkage nulled — see the specB case below.
       const specA = await createBuildSpec(SPEC);
       expect(specA.id).toBeTruthy();
 
