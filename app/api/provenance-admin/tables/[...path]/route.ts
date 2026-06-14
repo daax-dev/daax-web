@@ -14,6 +14,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
+import { requireAuth } from "@/lib/auth";
+
 const PROVENANCE_API_URL =
   process.env.PROVENANCE_API_URL || "http://host.docker.internal:8080";
 
@@ -77,22 +79,35 @@ async function proxyRequest(
   }
 }
 
+// Each handler is gated by requireAuth (F4, #96): this is an admin proxy to the
+// provenance backend and must not be reachable unauthenticated. RBAC
+// (requireRole) lands in F5 (#101).
 export async function GET(request: NextRequest, context: RouteContext) {
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
   return proxyRequest(request, context, "GET");
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
   return proxyRequest(request, context, "POST");
 }
 
 export async function PUT(request: NextRequest, context: RouteContext) {
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
   return proxyRequest(request, context, "PUT");
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
   return proxyRequest(request, context, "PATCH");
 }
 
 export async function DELETE(request: NextRequest, context: RouteContext) {
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
   return proxyRequest(request, context, "DELETE");
 }

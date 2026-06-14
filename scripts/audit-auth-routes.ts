@@ -8,22 +8,32 @@
  * Catches drift when new API routes are added without auth protection.
  */
 
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
-import { Glob } from "bun";
+
+import { computeAuthDrift, type RouteInfo } from "./auth-audit-lib";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const API_DIR = join(__dirname, "..", "app", "api");
+const ALLOWLIST_PATH = join(__dirname, "auth-audit-allowlist.json");
 
-interface RouteInfo {
-  path: string;
-  methods: string[];
-  hasRequireAuth: boolean;
-  protectedMethods: string[];
+function loadAllowlist(): string[] {
+  if (!existsSync(ALLOWLIST_PATH)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(ALLOWLIST_PATH, "utf-8"));
+    return Array.isArray(parsed?.routes) ? parsed.routes : [];
+  } catch {
+    return [];
+  }
 }
 
-async function scanRoutes(): Promise<RouteInfo[]> {
+export async function scanRoutes(): Promise<RouteInfo[]> {
+  // Dynamic import with an opaque specifier so this module's pure helpers
+  // (computeAuthDrift, etc.) can be imported by Vitest without Vite trying to
+  // resolve the Bun-only `bun` module. Only the CLI path reaches this.
+  const bunModule = "bun";
+  const { Glob } = await import(/* @vite-ignore */ bunModule);
   const glob = new Glob("**/route.ts");
   const routes: RouteInfo[] = [];
 
@@ -134,19 +144,41 @@ async function main() {
     console.log(`  /api/${route.path}  [${route.methods.join(", ")}]`);
   }
 
-  // Exit with error if there are unprotected write routes (useful in CI)
-  if (unprotectedWithWrites.length > 0) {
+  // Auth-drift gate (F4, #96): fail CI only on NEW unprotected write routes
+  // (those not in the accepted baseline allowlist), so the existing backlog
+  // doesn't wedge every PR. Stale allowlist entries are reported as a warning.
+  const allowlist = loadAllowlist();
+  const { offenders, stale } = computeAuthDrift(routes, allowlist);
+
+  console.log(
+    `\nAuth-drift gate: ${allowlist.length} allowlisted, ${offenders.length} new offender(s), ${stale.length} stale entr(y/ies).`,
+  );
+
+  if (stale.length > 0) {
     console.log(
-      `\n[ERROR] ${unprotectedWithWrites.length} route(s) have write methods without requireAuth.`,
+      `\n[WARN] ${stale.length} allowlist entr(y/ies) are no longer unprotected write routes (fixed/removed) — prune them from auth-audit-allowlist.json:`,
     );
+    for (const p of stale) console.log(`  /api/${p}`);
+  }
+
+  if (offenders.length > 0) {
     console.log(
-      "Review these routes and add auth protection or add to the allowlist.",
+      `\n[ERROR] ${offenders.length} NEW route(s) have write methods without requireAuth and are not in the baseline allowlist:`,
+    );
+    for (const p of offenders) console.log(`  /api/${p}  *** NO AUTH ***`);
+    console.log(
+      "\nAdd requireAuth to these routes. Do NOT add new entries to " +
+        "scripts/auth-audit-allowlist.json without security review.",
     );
     process.exit(1);
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only run the CLI when executed directly (`bun run scripts/audit-auth-routes.ts`),
+// not when imported by tests for the pure helpers above.
+if (import.meta.main) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
