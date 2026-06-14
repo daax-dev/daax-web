@@ -3,12 +3,13 @@ import { timingSafeEqual } from "node:crypto";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 
-// Re-export types and constants from auth-types (client-safe module)
-export type { AuthUser } from "./auth-types";
-export { UNAUTHENTICATED_USER } from "./auth-types";
-
+// Import the client-safe types/constants once, then re-export the same bindings
+// so the public surface and internal use share a single source.
 import type { AuthUser } from "./auth-types";
 import { UNAUTHENTICATED_USER } from "./auth-types";
+
+export type { AuthUser };
+export { UNAUTHENTICATED_USER };
 
 /**
  * Result type for requireAuth() - either authenticated user or error response
