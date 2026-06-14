@@ -62,4 +62,12 @@ describe("traefik-daax.yml.tpl proxy-secret trust boundary", () => {
   it("leaves no unrendered secret placeholder in the template output", () => {
     expect(rendered).not.toContain("DAAX_PROXY_SECRET_PLACEHOLDER");
   });
+
+  it("keeps the placeholder inside a double-quoted YAML scalar (deploy-local.sh must YAML-escape the secret)", () => {
+    // The renderer substitutes a raw secret here; because it lands in a YAML
+    // double-quoted scalar, deploy-local.sh escapes \ and " before sed. This
+    // guards that contract: if the quoting style changes, the shell escaping
+    // must change with it.
+    expect(raw).toContain('"DAAX_PROXY_SECRET_PLACEHOLDER"');
+  });
 });

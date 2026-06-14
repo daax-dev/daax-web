@@ -505,10 +505,16 @@ cmd_install_traefik_config() {
   elif [[ "$proxy_secret" == *$'\n'* ]]; then
     die "DAAX_PROXY_SECRET contains a newline; use a single-line secret so it renders into the Traefik header safely."
   fi
-  # Escape sed-special chars (\ & |) in the replacement so an arbitrary secret
-  # value is substituted literally. Newlines are rejected above.
+  # The placeholder sits inside a YAML double-quoted scalar
+  # ("DAAX_PROXY_SECRET_PLACEHOLDER"), so the value must be YAML-escaped first
+  # (backslash, then double-quote) or a secret containing " or \ would produce
+  # invalid YAML / a wrong parsed value. THEN escape sed-special chars (\ & |)
+  # in the replacement so the (already YAML-escaped) value substitutes literally.
+  # Newlines are rejected above.
+  local proxy_secret_yaml="${proxy_secret//\\/\\\\}" # \ -> \\
+  proxy_secret_yaml="${proxy_secret_yaml//\"/\\\"}"  # " -> \"
   local proxy_secret_escaped
-  proxy_secret_escaped="$(printf '%s' "$proxy_secret" | sed -e 's/[\\&|]/\\&/g')"
+  proxy_secret_escaped="$(printf '%s' "$proxy_secret_yaml" | sed -e 's/[\\&|]/\\&/g')"
 
   # Create the secret-bearing temp file with restrictive perms from the start
   # (umask 077 → 0600) so it is never briefly world/group-readable during the
