@@ -1,89 +1,40 @@
-// SQLite database for release management
-import Database from "better-sqlite3";
+/**
+ * Release management - Database Operations (Postgres)
+ *
+ * brain2daax Phase 0 (#93): ported from SQLite (better-sqlite3) to the shared
+ * `pg` pool (`lib/db/pg.ts`). Schema lives in `migrations/` (node-pg-migrate).
+ * All operations are async.
+ *
+ * JSON columns (`feature_config`, `sbom`, `sub_features`) are `jsonb`. The
+ * public `Release`/`FeatureSnapshot` types expose these as JSON *strings*
+ * (callers `JSON.parse` them), so writes `JSON.stringify` into jsonb and reads
+ * `JSON.stringify` the parsed jsonb back to a string. timestamptz comes back as
+ * a string (pg's default); reads normalise to ISO-8601 via `iso()`.
+ */
+
 import path from "path";
 import fs from "fs";
+import { randomUUID } from "node:crypto";
+import { query } from "@/lib/db/pg";
 
-// Database location
 const DATA_DIR = path.join(process.cwd(), "data");
-const DB_PATH = path.join(DATA_DIR, "releases.db");
 
-// Ensure data directory exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+type Row = Record<string, unknown>;
+
+/**
+ * Normalise a timestamptz value to an ISO-8601 string. pg returns timestamptz
+ * as a string by default; convert it (or a `Date`) to a consistent ISO string.
+ */
+function iso(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  if (v instanceof Date) return v.toISOString();
+  return new Date(v as string).toISOString();
 }
 
-// Initialize database connection
-let db: Database.Database | null = null;
-
-function getDb(): Database.Database {
-  if (!db) {
-    db = new Database(DB_PATH);
-    db.pragma("journal_mode = WAL");
-    initSchema();
-  }
-  return db;
-}
-
-// Initialize database schema
-function initSchema() {
-  const database = getDb();
-
-  // Releases table
-  database
-    .prepare(
-      `
-    CREATE TABLE IF NOT EXISTS releases (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      description TEXT,
-      version TEXT NOT NULL,
-      image_name TEXT NOT NULL,
-      image_tag TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      built_at TEXT,
-      build_status TEXT DEFAULT 'pending',
-      build_log TEXT,
-      feature_config TEXT NOT NULL,
-      sbom TEXT,
-      notes TEXT
-    )
-  `,
-    )
-    .run();
-
-  // Shared users table
-  database
-    .prepare(
-      `
-    CREATE TABLE IF NOT EXISTS release_shares (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      release_id TEXT NOT NULL,
-      share_type TEXT NOT NULL,
-      share_value TEXT NOT NULL,
-      shared_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (release_id) REFERENCES releases(id) ON DELETE CASCADE,
-      UNIQUE(release_id, share_type, share_value)
-    )
-  `,
-    )
-    .run();
-
-  // Feature snapshots for audit
-  database
-    .prepare(
-      `
-    CREATE TABLE IF NOT EXISTS feature_snapshots (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      release_id TEXT NOT NULL,
-      plugin_id TEXT NOT NULL,
-      plugin_name TEXT NOT NULL,
-      maturity TEXT NOT NULL,
-      sub_features TEXT,
-      FOREIGN KEY (release_id) REFERENCES releases(id) ON DELETE CASCADE
-    )
-  `,
-    )
-    .run();
+/** Render a jsonb value (parsed by pg) back to a JSON string for the public type. */
+function jsonStr(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  return typeof v === "string" ? v : JSON.stringify(v);
 }
 
 // Types
@@ -130,173 +81,256 @@ export interface CreateReleaseInput {
   notes?: string;
 }
 
-// Generate unique ID
+// Generate a unique, unpredictable release ID. Uses a UUID rather than
+// Date.now()+Math.random() (collision-prone and guessable; release IDs are
+// exposed via the unauthenticated GET /api/releases/[id]).
 function generateId(): string {
-  return `rel_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  return `rel_${randomUUID()}`;
 }
+
+function mapRelease(row: Row): Release {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    description: (row.description as string) ?? undefined,
+    version: row.version as string,
+    image_name: row.image_name as string,
+    image_tag: row.image_tag as string,
+    created_at: iso(row.created_at) as string,
+    built_at: iso(row.built_at),
+    build_status: (row.build_status as Release["build_status"]) ?? "pending",
+    build_log: (row.build_log as string) ?? undefined,
+    // feature_config is NOT NULL and required; fall back to "{}" so a stray
+    // jsonb `null` (which pg returns as JS null) never yields an invalid Release.
+    feature_config: jsonStr(row.feature_config) ?? "{}",
+    sbom: jsonStr(row.sbom),
+    notes: (row.notes as string) ?? undefined,
+  };
+}
+
+function mapShare(row: Row): ReleaseShare {
+  return {
+    id: Number(row.id),
+    release_id: row.release_id as string,
+    share_type: row.share_type as ReleaseShare["share_type"],
+    share_value: row.share_value as string,
+    shared_at: iso(row.shared_at) as string,
+  };
+}
+
+function mapSnapshot(row: Row): FeatureSnapshot {
+  return {
+    id: Number(row.id),
+    release_id: row.release_id as string,
+    plugin_id: row.plugin_id as string,
+    plugin_name: row.plugin_name as string,
+    maturity: row.maturity as string,
+    sub_features: jsonStr(row.sub_features),
+  };
+}
+
+// Columns updateRelease is allowed to set (whitelist; excludes id/created_at).
+const UPDATABLE_COLUMNS = new Set([
+  "name",
+  "description",
+  "version",
+  "image_name",
+  "image_tag",
+  "built_at",
+  "build_status",
+  "build_log",
+  "feature_config",
+  "sbom",
+  "notes",
+]);
+const JSONB_COLUMNS = new Set(["feature_config", "sbom"]);
 
 // CRUD Operations
-export function createRelease(input: CreateReleaseInput): Release {
-  const database = getDb();
+export async function createRelease(
+  input: CreateReleaseInput,
+): Promise<Release> {
   const id = generateId();
-
-  const stmt = database.prepare(`
-    INSERT INTO releases (id, name, description, version, image_name, image_tag, feature_config, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  stmt.run(
-    id,
-    input.name,
-    input.description || null,
-    input.version,
-    input.image_name,
-    input.image_tag,
-    JSON.stringify(input.feature_config),
-    input.notes || null,
+  await query(
+    `INSERT INTO releases (id, name, description, version, image_name, image_tag, feature_config, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [
+      id,
+      input.name,
+      input.description || null,
+      input.version,
+      input.image_name,
+      input.image_tag,
+      JSON.stringify(input.feature_config),
+      input.notes || null,
+    ],
   );
-
-  return getRelease(id)!;
+  return (await getRelease(id))!;
 }
 
-export function getRelease(id: string): Release | null {
-  const database = getDb();
-  const stmt = database.prepare("SELECT * FROM releases WHERE id = ?");
-  const row = stmt.get(id) as Release | undefined;
-  return row || null;
+export async function getRelease(id: string): Promise<Release | null> {
+  const row = (await query("SELECT * FROM releases WHERE id = $1", [id]))
+    .rows[0];
+  return row ? mapRelease(row) : null;
 }
 
-export function listReleases(): Release[] {
-  const database = getDb();
-  const stmt = database.prepare(
-    "SELECT * FROM releases ORDER BY created_at DESC",
-  );
-  return stmt.all() as Release[];
+export async function listReleases(): Promise<Release[]> {
+  const res = await query("SELECT * FROM releases ORDER BY created_at DESC");
+  return res.rows.map(mapRelease);
 }
 
-export function updateRelease(
+export async function updateRelease(
   id: string,
   updates: Partial<Release>,
-): Release | null {
-  const database = getDb();
-  const current = getRelease(id);
+): Promise<Release | null> {
+  const current = await getRelease(id);
   if (!current) return null;
 
   const fields: string[] = [];
   const values: unknown[] = [];
+  let i = 1;
 
   for (const [key, value] of Object.entries(updates)) {
-    if (key !== "id" && key !== "created_at") {
-      fields.push(`${key} = ?`);
-      values.push(typeof value === "object" ? JSON.stringify(value) : value);
+    if (!UPDATABLE_COLUMNS.has(key)) continue;
+    // Skip keys explicitly set to `undefined` so they don't bind as SQL NULL and
+    // accidentally clear a column (or violate NOT NULL). `null` still clears.
+    if (value === undefined) continue;
+    fields.push(`${key} = $${i++}`);
+    if (JSONB_COLUMNS.has(key)) {
+      // feature_config/sbom are exposed as JSON *strings* (and callers — e.g. the
+      // build route — pass pre-stringified JSON). A string is already JSON, which
+      // Postgres assignment-casts text→jsonb; only stringify a non-string. (Double
+      // stringifying a string would store a JSON-string-wrapping-JSON in jsonb.)
+      // A null value becomes jsonb `null` ("null"), NOT SQL NULL — matching the
+      // legacy SQLite behavior and keeping the NOT NULL `feature_config` valid.
+      values.push(typeof value === "string" ? value : JSON.stringify(value));
+    } else {
+      values.push(value);
     }
   }
 
   if (fields.length > 0) {
     values.push(id);
-    const stmt = database.prepare(
-      `UPDATE releases SET ${fields.join(", ")} WHERE id = ?`,
+    await query(
+      `UPDATE releases SET ${fields.join(", ")} WHERE id = $${i}`,
+      values,
     );
-    stmt.run(...values);
   }
 
   return getRelease(id);
 }
 
-export function deleteRelease(id: string): boolean {
-  const database = getDb();
-  const stmt = database.prepare("DELETE FROM releases WHERE id = ?");
-  const result = stmt.run(id);
-  return result.changes > 0;
+export async function deleteRelease(id: string): Promise<boolean> {
+  const result = await query("DELETE FROM releases WHERE id = $1", [id]);
+  return (result.rowCount ?? 0) > 0;
 }
 
 // Share management
-export function addReleaseShare(
+export async function addReleaseShare(
   releaseId: string,
   shareType: "github" | "email" | "phone",
   shareValue: string,
-): ReleaseShare | null {
-  const database = getDb();
+): Promise<ReleaseShare | null> {
   try {
-    const stmt = database.prepare(`
-      INSERT INTO release_shares (release_id, share_type, share_value)
-      VALUES (?, ?, ?)
-    `);
-    const result = stmt.run(releaseId, shareType, shareValue);
-
-    const selectStmt = database.prepare(
-      "SELECT * FROM release_shares WHERE id = ?",
+    const res = await query(
+      `INSERT INTO release_shares (release_id, share_type, share_value)
+       VALUES ($1,$2,$3) RETURNING *`,
+      [releaseId, shareType, shareValue],
     );
-    return selectStmt.get(result.lastInsertRowid) as ReleaseShare;
-  } catch {
-    return null; // Duplicate or foreign key error
+    return res.rows[0] ? mapShare(res.rows[0]) : null;
+  } catch (err) {
+    // Only swallow the EXPECTED constraint violations (duplicate share /
+    // missing release): unique_violation (23505), foreign_key_violation (23503).
+    // Rethrow anything else (connectivity, permissions, …) so it isn't hidden.
+    const code = (err as { code?: string })?.code;
+    if (code === "23505" || code === "23503") return null;
+    throw err;
   }
 }
 
-export function getReleaseShares(releaseId: string): ReleaseShare[] {
-  const database = getDb();
-  const stmt = database.prepare(
-    "SELECT * FROM release_shares WHERE release_id = ? ORDER BY shared_at DESC",
+export async function getReleaseShares(
+  releaseId: string,
+): Promise<ReleaseShare[]> {
+  const res = await query(
+    "SELECT * FROM release_shares WHERE release_id = $1 ORDER BY shared_at DESC",
+    [releaseId],
   );
-  return stmt.all(releaseId) as ReleaseShare[];
+  return res.rows.map(mapShare);
 }
 
-export function removeReleaseShare(id: number): boolean {
-  const database = getDb();
-  const stmt = database.prepare("DELETE FROM release_shares WHERE id = ?");
-  const result = stmt.run(id);
-  return result.changes > 0;
+export async function removeReleaseShare(id: number): Promise<boolean> {
+  const result = await query("DELETE FROM release_shares WHERE id = $1", [id]);
+  return (result.rowCount ?? 0) > 0;
 }
 
 // Feature snapshots for audit
-export function saveFeatureSnapshot(
+export async function saveFeatureSnapshot(
   releaseId: string,
   pluginId: string,
   pluginName: string,
   maturity: string,
   subFeatures?: object,
-): void {
-  const database = getDb();
-  const stmt = database.prepare(`
-    INSERT INTO feature_snapshots (release_id, plugin_id, plugin_name, maturity, sub_features)
-    VALUES (?, ?, ?, ?, ?)
-  `);
-  stmt.run(
-    releaseId,
-    pluginId,
-    pluginName,
-    maturity,
-    subFeatures ? JSON.stringify(subFeatures) : null,
+): Promise<void> {
+  await query(
+    `INSERT INTO feature_snapshots (release_id, plugin_id, plugin_name, maturity, sub_features)
+     VALUES ($1,$2,$3,$4,$5)`,
+    [
+      releaseId,
+      pluginId,
+      pluginName,
+      maturity,
+      subFeatures ? JSON.stringify(subFeatures) : null,
+    ],
   );
 }
 
-export function getFeatureSnapshots(releaseId: string): FeatureSnapshot[] {
-  const database = getDb();
-  const stmt = database.prepare(
-    "SELECT * FROM feature_snapshots WHERE release_id = ? ORDER BY plugin_id",
+export async function getFeatureSnapshots(
+  releaseId: string,
+): Promise<FeatureSnapshot[]> {
+  const res = await query(
+    "SELECT * FROM feature_snapshots WHERE release_id = $1 ORDER BY plugin_id",
+    [releaseId],
   );
-  return stmt.all(releaseId) as FeatureSnapshot[];
+  return res.rows.map(mapSnapshot);
 }
 
-// Backup database
-export function backupDatabase(): string {
-  const database = getDb();
+/**
+ * Logical backup of the releases data (Postgres analog of the old SQLite file
+ * copy): exports the releases tables to a timestamped JSON file under
+ * data/backups and returns its path. Engine-level pg_dump/snapshot policy is
+ * tracked separately (brain2daax §4, #103).
+ */
+export async function backupDatabase(): Promise<string> {
   const backupDir = path.join(DATA_DIR, "backups");
   if (!fs.existsSync(backupDir)) {
     fs.mkdirSync(backupDir, { recursive: true });
   }
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const backupPath = path.join(backupDir, `releases-${timestamp}.db`);
+  const [releases, shares, snapshots] = await Promise.all([
+    query("SELECT * FROM releases ORDER BY created_at"),
+    query("SELECT * FROM release_shares ORDER BY id"),
+    query("SELECT * FROM feature_snapshots ORDER BY id"),
+  ]);
 
-  database.backup(backupPath);
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupPath = path.join(backupDir, `releases-${timestamp}.json`);
+  fs.writeFileSync(
+    backupPath,
+    JSON.stringify(
+      {
+        exportedAt: new Date().toISOString(),
+        engine: "postgres",
+        tables: {
+          releases: releases.rows,
+          release_shares: shares.rows,
+          feature_snapshots: snapshots.rows,
+        },
+      },
+      null,
+      2,
+    ),
+  );
   return backupPath;
 }
 
-// Close database (for graceful shutdown)
-export function closeDatabase(): void {
-  if (db) {
-    db.close();
-    db = null;
-  }
-}
+// Close the shared pool (for graceful shutdown).
+export { closePool as closeDatabase } from "@/lib/db/pg";

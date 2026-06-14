@@ -15,14 +15,14 @@ interface RouteContext {
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params;
-    const release = getRelease(id);
+    const release = await getRelease(id);
 
     if (!release) {
       return NextResponse.json({ error: "Release not found" }, { status: 404 });
     }
 
-    const shares = getReleaseShares(id);
-    const featureSnapshots = getFeatureSnapshots(id);
+    const shares = await getReleaseShares(id);
+    const featureSnapshots = await getFeatureSnapshots(id);
 
     return NextResponse.json({
       release,
@@ -44,7 +44,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     const { id } = await context.params;
     const body = await request.json();
 
-    const release = updateRelease(id, body);
+    const release = await updateRelease(id, body);
 
     if (!release) {
       return NextResponse.json({ error: "Release not found" }, { status: 404 });
@@ -64,7 +64,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 export async function DELETE(request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params;
-    const deleted = deleteRelease(id);
+    const deleted = await deleteRelease(id);
 
     if (!deleted) {
       return NextResponse.json({ error: "Release not found" }, { status: 404 });

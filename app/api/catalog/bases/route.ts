@@ -32,7 +32,7 @@ export async function GET() {
 
     // Fallback to local catalog data
     console.log("[API] Provenance unavailable, using local catalog");
-    const bases = getAllBases();
+    const bases = await getAllBases();
     const lastSynced =
       bases.length > 0 ? bases[0].lastSyncedAt : new Date().toISOString();
 

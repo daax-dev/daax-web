@@ -32,15 +32,16 @@ export class DashboardStatsService {
       if (isAvailable) {
         bases = await provenanceClient.getBasesForUI();
       } else {
-        bases = getAllBases();
+        bases = await getAllBases();
       }
     } catch {
-      bases = getAllBases();
+      bases = await getAllBases();
     }
 
-    // Features and builds stay local for now
-    const features = getAllFeatures();
-    const builds = getAllBuilds();
+    // Features and builds come from the local catalog (Postgres-backed), not
+    // the provenance server.
+    const features = await getAllFeatures();
+    const builds = await getAllBuilds();
 
     return {
       catalog: this.computeCatalogStats(bases, features),

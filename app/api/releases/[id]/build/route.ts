@@ -15,7 +15,7 @@ interface RouteContext {
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const { id } = await context.params;
-    const release = getRelease(id);
+    const release = await getRelease(id);
 
     if (!release) {
       return NextResponse.json({ error: "Release not found" }, { status: 404 });
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     for (const plugin of DEFAULT_PLUGINS) {
       const pluginConfig = featureConfig.plugins?.[plugin.id];
       if (pluginConfig) {
-        saveFeatureSnapshot(
+        await saveFeatureSnapshot(
           id,
           plugin.id,
           plugin.name,
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     // Update status to building
-    updateRelease(id, { build_status: "building", build_log: "" });
+    await updateRelease(id, { build_status: "building", build_log: "" });
 
     // Build environment variables from feature config
     const envVars: Record<string, string> = {
@@ -69,11 +69,23 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     let buildLog = "";
 
+    // Serialize all release writes onto one chain so concurrent async updates
+    // apply in order — otherwise an out-of-order completion could overwrite the
+    // log/status with an earlier (shorter) value.
+    let writeChain: Promise<unknown> = Promise.resolve();
+    const enqueueUpdate = (updates: Parameters<typeof updateRelease>[1]) => {
+      writeChain = writeChain
+        .then(() => updateRelease(id, updates))
+        .catch((e) =>
+          console.error("[Releases API] release update failed:", e),
+        );
+    };
+
     dockerProcess.stdout.on("data", (data) => {
       buildLog += data.toString();
       // Update log periodically (not every line to avoid too many DB writes)
       if (buildLog.length % 1000 < 100) {
-        updateRelease(id, { build_log: buildLog });
+        enqueueUpdate({ build_log: buildLog });
       }
     });
 
@@ -84,16 +96,17 @@ export async function POST(request: NextRequest, context: RouteContext) {
     dockerProcess.on("close", (code) => {
       const builtAt = new Date().toISOString();
       if (code === 0) {
-        // Generate basic SBOM
-        const sbom = generateSbom(release.name, release.version, imageFull);
-        updateRelease(id, {
+        enqueueUpdate({
           build_status: "success",
           built_at: builtAt,
           build_log: buildLog,
-          sbom: JSON.stringify(sbom),
+          // Generate basic SBOM
+          sbom: JSON.stringify(
+            generateSbom(release.name, release.version, imageFull),
+          ),
         });
       } else {
-        updateRelease(id, {
+        enqueueUpdate({
           build_status: "failed",
           build_log: buildLog + `\n\nBuild failed with exit code ${code}`,
         });
@@ -101,7 +114,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     });
 
     dockerProcess.on("error", (err) => {
-      updateRelease(id, {
+      enqueueUpdate({
         build_status: "failed",
         build_log: buildLog + `\n\nBuild error: ${err.message}`,
       });

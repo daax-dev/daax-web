@@ -73,7 +73,7 @@ Set `DAAX_WORKSPACE` to an absolute path before running `bun run docker:run`. Th
 
 Postgres is daax-web's single data engine (brain2daax Phase 0, issue #92; decision D1, `docs/brain2daax.md` §2). Schema is managed by **`node-pg-migrate`** with ordered, reversible up/down migrations in `migrations/`. The app connects through a pooled client (`lib/db/pg.ts`); both the pool and the migration runner resolve their connection from the same env-sourced config (`lib/db/config.ts`).
 
-> Phase 0 is foundational plumbing only. The existing SQLite stores (`catalog.db`, `releases.db`) are **not** ported here — that one-time data migration and the data-layer rewrite are tracked separately (#migrate). Until then nothing in the app boot path requires Postgres, so a deployment without it configured still starts.
+> The catalog + releases stores (`catalog.db`, `releases.db`) have been ported to Postgres (#93): `lib/catalog/db.ts` and `lib/releases-db.ts` now run on the `pg` pool, and a one-time exporter (`bun run db:export`) copies legacy SQLite data into Postgres with parity tests. `better-sqlite3` is now a dev-only dependency (used by the exporter). RBAC/identity tables land in Phase 3.
 
 **Connection config** — set `DATABASE_URL` (preferred, e.g. `postgres://user:pw@host:5432/daax?sslmode=require`) **or** discrete libpq vars (`PGHOST`, `PGDATABASE`, `PGUSER`, optional `PGPORT`/`PGPASSWORD`). Resolution fails closed if neither is present. Never commit a connection string with a live password.
 
@@ -108,6 +108,7 @@ bun run format:check # Prettier check
 bun run db:migrate        # Apply pending migrations (up)
 bun run db:migrate:down   # Roll back the last migration
 bun run db:migrate:create # Scaffold a new migration in migrations/
+bun run db:export         # One-time SQLite→Postgres data export (catalog.db + releases.db)
 
 # Tests
 bun run test         # Vitest (unit/component, headless)
@@ -128,7 +129,7 @@ bunx shadcn@latest add <component-name>   # installs to components/ui/
 | Styling | Tailwind CSS v4 with semantic CSS variables |
 | UI Components | shadcn/ui (Radix UI primitives) |
 | Terminal | xterm.js + node-pty + ghostty-web |
-| Persistence | Postgres (`pg` pool + `node-pg-migrate`) — target engine (Phase 0). SQLite (better-sqlite3) still backs `catalog.db`/`releases.db` until #migrate ports them. |
+| Persistence | Postgres (`pg` pool + `node-pg-migrate`). Catalog + releases ported from SQLite (#93); `better-sqlite3` is dev-only (one-time exporter). |
 | Recording | asciinema v2 / rrweb |
 | Package Manager | Bun (preferred) |
 | CI / Registry | GitHub Actions → GHCR (`ghcr.io/daax-dev/daax-web`) |

@@ -15,7 +15,7 @@ export async function GET(
     const { id } = await params;
 
     // Verify the spec exists
-    const spec = getBuildSpecById(id);
+    const spec = await getBuildSpecById(id);
     if (!spec) {
       return NextResponse.json(
         { error: "Build spec not found" },
@@ -23,7 +23,7 @@ export async function GET(
       );
     }
 
-    const jobs = getJobsForSpec(id);
+    const jobs = await getJobsForSpec(id);
 
     return NextResponse.json({ jobs, total: jobs.length });
   } catch (error) {

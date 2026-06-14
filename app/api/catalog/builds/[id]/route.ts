@@ -17,7 +17,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const spec = getBuildSpecById(id);
+    const spec = await getBuildSpecById(id);
 
     if (!spec) {
       return NextResponse.json(
@@ -44,7 +44,7 @@ export async function PUT(
     const { id } = await params;
     const body = await request.json();
 
-    const updated = updateBuildSpec(id, body);
+    const updated = await updateBuildSpec(id, body);
 
     if (!updated) {
       return NextResponse.json(
@@ -69,7 +69,7 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const deleted = deleteBuildSpec(id);
+    const deleted = await deleteBuildSpec(id);
 
     if (!deleted) {
       return NextResponse.json(

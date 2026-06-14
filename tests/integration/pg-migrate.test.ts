@@ -14,12 +14,13 @@
  * configured (e.g. Docker unavailable) so it never hard-fails CI.
  */
 
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import path from "node:path";
 import { Client } from "pg";
 import { runner, type RunnerOption } from "node-pg-migrate";
 import { resolveDbConfig, isDbConfigured } from "@/lib/db/config";
 import { ping, query, closePool } from "@/lib/db/pg";
+import { resetSchema } from "./helpers";
 
 const MIGRATIONS_DIR = path.resolve(process.cwd(), "migrations");
 const MIGRATIONS_TABLE = "pgmigrations";
@@ -61,6 +62,12 @@ async function tableExists(name: string): Promise<boolean> {
 }
 
 describe.skipIf(!configured)("Postgres migration round-trip", () => {
+  beforeAll(async () => {
+    // Start from a truly empty schema regardless of test-file order (one shared
+    // PG). Guarded to the dedicated test DB so it can never wipe a real database.
+    await resetSchema();
+  });
+
   afterAll(async () => {
     await closePool();
   });
@@ -92,8 +99,9 @@ describe.skipIf(!configured)("Postgres migration round-trip", () => {
     expect(await tableExists("schema_meta")).toBe(true);
   });
 
-  it("migrate down removes the baseline table", async () => {
-    const reverted = await migrate("down", 1);
+  it("migrate down reverts every migration (incl. the baseline table)", async () => {
+    // Infinity reverts all applied migrations regardless of how many exist.
+    const reverted = await migrate("down", Infinity);
     expect(reverted.some((n) => n.includes("baseline"))).toBe(true);
     expect(await tableExists("schema_meta")).toBe(false);
   });
