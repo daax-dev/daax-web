@@ -111,7 +111,10 @@ async function copyTable(
   if (rows.length === 0) return 0;
 
   const columns = Object.keys(rows[0]);
-  const colList = columns.map((c) => `"${c}"`).join(", ");
+  // Escape identifiers (double any embedded quote) so an unexpected/hand-edited
+  // SQLite column name can't break the generated SQL or inject.
+  const quoteIdent = (c: string) => `"${c.replace(/"/g, '""')}"`;
+  const colList = columns.map(quoteIdent).join(", ");
   const defaults = NOT_NULL_JSON_DEFAULTS[table] ?? {};
 
   // Batch into multi-row INSERTs (chunked to stay well under Postgres' 65535
