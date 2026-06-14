@@ -479,6 +479,29 @@ describe("auth module", () => {
       expect(result.authenticated).toBe(false);
     });
 
+    it("surfaces NO identity-derived fields when a present identity is rejected (anti-spoofing)", async () => {
+      process.env.DAAX_PROXY_SECRET = SECRET;
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "attacker-uuid",
+          "x-forwarded-name": "Mallory",
+          "x-forwarded-email": "mallory@evil.test",
+          "x-forwarded-groups": "admin,superuser",
+          // no / wrong proxy secret
+        }),
+      );
+
+      const user = await getAuthUser();
+
+      expect(user).toEqual({
+        username: null,
+        email: null,
+        groups: [],
+        authenticated: false,
+        pictureUrl: null,
+      });
+    });
+
     it("authenticates a forwarded identity when the proxy secret matches", async () => {
       process.env.DAAX_PROXY_SECRET = SECRET;
       mockHeaders.mockResolvedValue(

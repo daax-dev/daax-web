@@ -8,6 +8,7 @@ export type { AuthUser } from "./auth-types";
 export { UNAUTHENTICATED_USER } from "./auth-types";
 
 import type { AuthUser } from "./auth-types";
+import { UNAUTHENTICATED_USER } from "./auth-types";
 
 /**
  * Result type for requireAuth() - either authenticated user or error response
@@ -191,6 +192,16 @@ async function getAuthContext(): Promise<AuthContext> {
   }
 
   const authenticated = userId !== null && identityTrusted;
+
+  // If a forwarded identity was PRESENT but the proxy-secret boundary rejected
+  // it, surface NO identity-derived fields: the headers are untrusted, so
+  // exposing username/email/groups invites UI/log spoofing and tempts callers
+  // to treat them as meaningful. Return the canonical unauthenticated user. An
+  // absent identity (userId === null) is left to the existing shape below so the
+  // local-operator bypass and non-identity handling are unchanged.
+  if (userId !== null && !identityTrusted) {
+    return { rawUserHeader, user: { ...UNAUTHENTICATED_USER } };
+  }
 
   // Prefer displayName > username > "User" (avoid showing raw UUID)
   // UUID pattern: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx or similar
