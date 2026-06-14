@@ -185,7 +185,17 @@ export async function updateRelease(
     if (!UPDATABLE_COLUMNS.has(key)) continue;
     fields.push(`${key} = $${i++}`);
     if (JSONB_COLUMNS.has(key)) {
-      values.push(value == null ? null : JSON.stringify(value));
+      // feature_config/sbom are exposed as JSON *strings* (and callers — e.g. the
+      // build route — pass pre-stringified JSON). A string is already JSON, which
+      // Postgres assignment-casts text→jsonb; only stringify a raw object. (Double
+      // stringifying a string would store a JSON-string-wrapping-JSON in jsonb.)
+      values.push(
+        value == null
+          ? null
+          : typeof value === "string"
+            ? value
+            : JSON.stringify(value),
+      );
     } else {
       values.push(value);
     }
