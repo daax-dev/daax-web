@@ -86,6 +86,15 @@ function openSqlite(file: string, explicit: boolean): Database.Database | null {
   return new Database(file, { readonly: true });
 }
 
+/**
+ * Escape a SQL identifier (double any embedded quote, wrap in quotes) so an
+ * unexpected/hand-edited name can't break the generated SQL or inject. Table/PK
+ * names come from the fixed TABLES constant, but quoting keeps it future-safe.
+ */
+function quoteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
 function tableExists(db: Database.Database, name: string): boolean {
   return (
     db
@@ -111,9 +120,6 @@ async function copyTable(
   if (rows.length === 0) return 0;
 
   const columns = Object.keys(rows[0]);
-  // Escape identifiers (double any embedded quote) so an unexpected/hand-edited
-  // SQLite column name can't break the generated SQL or inject.
-  const quoteIdent = (c: string) => `"${c.replace(/"/g, '""')}"`;
   const colList = columns.map(quoteIdent).join(", ");
   const defaults = NOT_NULL_JSON_DEFAULTS[table] ?? {};
 
@@ -133,8 +139,8 @@ async function copyTable(
       return `(${ph.join(", ")})`;
     });
     const res = await pg.query(
-      `INSERT INTO ${table} (${colList}) VALUES ${tuples.join(", ")}
-       ON CONFLICT ("${pk}") DO NOTHING`,
+      `INSERT INTO ${quoteIdent(table)} (${colList}) VALUES ${tuples.join(", ")}
+       ON CONFLICT (${quoteIdent(pk)}) DO NOTHING`,
       values,
     );
     inserted += res.rowCount ?? 0;
@@ -147,8 +153,8 @@ async function resyncSequence(pg: Client, table: string): Promise<void> {
   await pg.query(
     `SELECT setval(
        pg_get_serial_sequence($1, 'id'),
-       COALESCE((SELECT MAX(id) FROM ${table}), 1),
-       (SELECT COUNT(*) FROM ${table}) > 0
+       COALESCE((SELECT MAX(id) FROM ${quoteIdent(table)}), 1),
+       (SELECT COUNT(*) FROM ${quoteIdent(table)}) > 0
      )`,
     [table],
   );

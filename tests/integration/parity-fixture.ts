@@ -73,7 +73,7 @@ cat
     "docker.io",
     "library/alpine",
     "os",
-    JSON.stringify({ platforms: ["amd64", "arm64"] }),
+    JSON.stringify(["amd64", "arm64"]), // BaseImage.architecture is string[]
     "icon",
     "#fff",
     JSON.stringify({ rootless: true }),
