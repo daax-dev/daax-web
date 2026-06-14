@@ -19,10 +19,18 @@ const API_DIR = join(__dirname, "..", "app", "api");
 const ALLOWLIST_PATH = join(__dirname, "auth-audit-allowlist.json");
 
 function loadAllowlist(): string[] {
-  if (!existsSync(ALLOWLIST_PATH)) return [];
-  // Fail fast and loud on a malformed allowlist: silently treating it as empty
-  // would make every baselined route explode into a "new offender" and produce
-  // a confusing CI failure. main() catches the throw and exits non-zero.
+  // The allowlist is a committed baseline; a missing file is a setup error, not
+  // an empty baseline. Fail fast (rather than silently returning [], which would
+  // make every baselined route look like a "new offender"). For a truly empty
+  // baseline, commit a file with `{ "routes": [] }`.
+  if (!existsSync(ALLOWLIST_PATH)) {
+    throw new Error(
+      `Auth-audit allowlist not found at ${ALLOWLIST_PATH}. Commit it (use {"routes": []} for an empty baseline).`,
+    );
+  }
+  // Fail fast and loud on a malformed allowlist too: silently treating it as
+  // empty would make every baselined route explode into a "new offender" and
+  // produce a confusing CI failure. main() catches the throw and exits non-zero.
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(ALLOWLIST_PATH, "utf-8"));
