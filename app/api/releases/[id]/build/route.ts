@@ -69,13 +69,23 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     let buildLog = "";
 
+    // Serialize all release writes onto one chain so concurrent async updates
+    // apply in order — otherwise an out-of-order completion could overwrite the
+    // log/status with an earlier (shorter) value.
+    let writeChain: Promise<unknown> = Promise.resolve();
+    const enqueueUpdate = (updates: Parameters<typeof updateRelease>[1]) => {
+      writeChain = writeChain
+        .then(() => updateRelease(id, updates))
+        .catch((e) =>
+          console.error("[Releases API] release update failed:", e),
+        );
+    };
+
     dockerProcess.stdout.on("data", (data) => {
       buildLog += data.toString();
       // Update log periodically (not every line to avoid too many DB writes)
       if (buildLog.length % 1000 < 100) {
-        void updateRelease(id, { build_log: buildLog }).catch((e) =>
-          console.error("[Releases API] build log update failed:", e),
-        );
+        enqueueUpdate({ build_log: buildLog });
       }
     });
 
@@ -85,33 +95,29 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     dockerProcess.on("close", (code) => {
       const builtAt = new Date().toISOString();
-      const update =
-        code === 0
-          ? updateRelease(id, {
-              build_status: "success",
-              built_at: builtAt,
-              build_log: buildLog,
-              // Generate basic SBOM
-              sbom: JSON.stringify(
-                generateSbom(release.name, release.version, imageFull),
-              ),
-            })
-          : updateRelease(id, {
-              build_status: "failed",
-              build_log: buildLog + `\n\nBuild failed with exit code ${code}`,
-            });
-      void update.catch((e) =>
-        console.error("[Releases API] build status update failed:", e),
-      );
+      if (code === 0) {
+        enqueueUpdate({
+          build_status: "success",
+          built_at: builtAt,
+          build_log: buildLog,
+          // Generate basic SBOM
+          sbom: JSON.stringify(
+            generateSbom(release.name, release.version, imageFull),
+          ),
+        });
+      } else {
+        enqueueUpdate({
+          build_status: "failed",
+          build_log: buildLog + `\n\nBuild failed with exit code ${code}`,
+        });
+      }
     });
 
     dockerProcess.on("error", (err) => {
-      void updateRelease(id, {
+      enqueueUpdate({
         build_status: "failed",
         build_log: buildLog + `\n\nBuild error: ${err.message}`,
-      }).catch((e) =>
-        console.error("[Releases API] build status update failed:", e),
-      );
+      });
     });
 
     return NextResponse.json({

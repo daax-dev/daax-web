@@ -9,7 +9,7 @@
  * public `Release`/`FeatureSnapshot` types expose these as JSON *strings*
  * (callers `JSON.parse` them), so writes `JSON.stringify` into jsonb and reads
  * `JSON.stringify` the parsed jsonb back to a string. timestamptz comes back as
- * `Date`; reads normalise to ISO strings via `iso()`.
+ * a string (pg's default); reads normalise to ISO-8601 via `iso()`.
  */
 
 import path from "path";
@@ -20,11 +20,14 @@ const DATA_DIR = path.join(process.cwd(), "data");
 
 type Row = Record<string, unknown>;
 
-/** Normalise a timestamptz value (pg returns `Date`) to an ISO string. */
+/**
+ * Normalise a timestamptz value to an ISO-8601 string. pg returns timestamptz
+ * as a string by default; convert it (or a `Date`) to a consistent ISO string.
+ */
 function iso(v: unknown): string | undefined {
   if (v == null) return undefined;
   if (v instanceof Date) return v.toISOString();
-  return String(v);
+  return new Date(v as string).toISOString();
 }
 
 /** Render a jsonb value (parsed by pg) back to a JSON string for the public type. */
@@ -187,15 +190,11 @@ export async function updateRelease(
     if (JSONB_COLUMNS.has(key)) {
       // feature_config/sbom are exposed as JSON *strings* (and callers — e.g. the
       // build route — pass pre-stringified JSON). A string is already JSON, which
-      // Postgres assignment-casts text→jsonb; only stringify a raw object. (Double
+      // Postgres assignment-casts text→jsonb; only stringify a non-string. (Double
       // stringifying a string would store a JSON-string-wrapping-JSON in jsonb.)
-      values.push(
-        value == null
-          ? null
-          : typeof value === "string"
-            ? value
-            : JSON.stringify(value),
-      );
+      // A null value becomes jsonb `null` ("null"), NOT SQL NULL — matching the
+      // legacy SQLite behavior and keeping the NOT NULL `feature_config` valid.
+      values.push(typeof value === "string" ? value : JSON.stringify(value));
     } else {
       values.push(value);
     }

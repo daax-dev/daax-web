@@ -38,7 +38,8 @@ export class DashboardStatsService {
       bases = await getAllBases();
     }
 
-    // Features and builds stay local for now
+    // Features and builds come from the local catalog (Postgres-backed), not
+    // the provenance server.
     const features = await getAllFeatures();
     const builds = await getAllBuilds();
 
