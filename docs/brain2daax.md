@@ -1,16 +1,16 @@
-# brain2daax — Porting NovaBrain's platform-maturity features into daax-web
+# brain2daax — Porting the reference platform's platform-maturity features into daax-web
 
 **Status:** Specification (design only — no implementation)
-**Source repos evaluated:** `~/prj/n/novabrain` (Next.js 15 + Go + Postgres + Azure Container Apps + Entra) and `~/prj/dx/src/daax-web` (Next.js 16 + Bun + SQLite + Docker/Traefik/Tailscale)
-**Goal:** Raise daax-web's operational maturity — auth integrity across *both* its request planes, supply-chain transparency, identity & RBAC, admin DB inspection, container hygiene, and a clean, cloud-agnostic deployment model — by adapting the *patterns* NovaBrain has proven in code, right-sized to daax-web's stack and single-/few-operator deployment reality.
+**Source repos evaluated:** `~/prj/n/reference-platform` (Next.js 15 + Go + Postgres + Azure Container Apps + Entra) and `~/prj/dx/src/daax-web` (Next.js 16 + Bun + SQLite + Docker/Traefik/Tailscale)
+**Goal:** Raise daax-web's operational maturity — auth integrity across *both* its request planes, supply-chain transparency, identity & RBAC, admin DB inspection, container hygiene, and a clean, cloud-agnostic deployment model — by adapting the *patterns* the reference platform has proven in code, right-sized to daax-web's stack and single-/few-operator deployment reality.
 
 ---
 
 ## 0. Framing: adaptation, not transplant
 
-NovaBrain and daax-web solve different problems on different stacks. NovaBrain is a multi-tenant, governed-content publisher on Go + Postgres + Azure Container Apps + Entra EasyAuth. daax-web is a browser-based development workbench on TypeScript + Bun + SQLite, deployed as Docker Compose behind Traefik on a Tailscale network, for one or a few trusted operators.
+the reference platform and daax-web solve different problems on different stacks. the reference platform is a multi-tenant, governed-content publisher on Go + Postgres + Azure Container Apps + Entra EasyAuth. daax-web is a browser-based development workbench on TypeScript + Bun + SQLite, deployed as Docker Compose behind Traefik on a Tailscale network, for one or a few trusted operators.
 
-This spec **ports patterns, not code**. NovaBrain's value is in *how* it draws trust boundaries, generates and serves SBOMs, models RBAC, and gates deploys — not in its Azure resources or Entra specifics. Each feature is evaluated against daax-web's actual deployment reality and assigned **leverage**, **cost**, **fit** (into `config.toml` maturity-gating), and a **maturity gate** (`disabled | alpha | beta | ga`).
+This spec **ports patterns, not code**. the reference platform's value is in *how* it draws trust boundaries, generates and serves SBOMs, models RBAC, and gates deploys — not in its Azure resources or Entra specifics. Each feature is evaluated against daax-web's actual deployment reality and assigned **leverage**, **cost**, **fit** (into `config.toml` maturity-gating), and a **maturity gate** (`disabled | alpha | beta | ga`).
 
 Two judgments matter most and are easy to get wrong:
 1. **§7 (What NOT to port).** Importing enterprise-Azure weight into a personal workbench makes daax-web *heavier*, not *more mature*. Restraint is part of the deliverable.
@@ -20,13 +20,13 @@ Two judgments matter most and are easy to get wrong:
 
 ## 1. Evaluation summary
 
-### 1.1 NovaBrain — verified, code-backed strengths
+### 1.1 the reference platform — verified, code-backed strengths
 
 Confirmed by reading source (not inferred from docs):
 
 | Capability | Where | Reality |
 |---|---|---|
-| Multi-stage Dockerfiles, separated web + api | `app/web/Dockerfile`, `app/api/Dockerfile`, `app/docker-compose.yml` | Real. API image hardened: non-root `novabrain` UID 10001, `CGO_ENABLED=0`, `-trimpath`, version/SHA/build-time `-ldflags`. Web image runs as root (a gap — do not repeat). |
+| Multi-stage Dockerfiles, separated web + api | `app/web/Dockerfile`, `app/api/Dockerfile`, `app/docker-compose.yml` | Real. API image hardened: non-root `reference-platform` UID 10001, `CGO_ENABLED=0`, `-trimpath`, version/SHA/build-time `-ldflags`. Web image runs as root (a gap — do not repeat). |
 | SBOM, both formats, per image | `infra/deploy.sh` `gen_sbom()`, `app/api/version.go`, `app/web/app/admin/page.tsx` | Real, end-to-end: syft generates `{api,web}×{cyclonedx,spdx}` → baked into image → API serves → admin UI renders. Placeholder-vs-real guard at both generation and serving. |
 | Internal proxy-secret trust boundary | `app/api/auth.go` | Real. The internal API trusts injected principal headers **only** when the request also carries `INTERNAL_PROXY_SECRET`; production boot aborts (`validate()`) if the secret is unset. |
 | JIT user provisioning + boot RBAC reconcile | `app/api/auth.go` (`jitUpsert`, `reconcileRoles`) | Real. Default role granted **only on true INSERT** (revocation-safe via Postgres `xmax=0`); email-keyed, so an OID-change detector guards recycled addresses. |
@@ -62,9 +62,9 @@ RBAC, the audit log, JIT provisioning, and the DB console all need persistence. 
 | Option | Cost | Risk | Reversibility |
 |---|---|---|---|
 | A. Stay SQLite | Low. No new runtime dependency. Matches local-first. | Single-writer concurrency ceiling; no managed backups; no cross-host replication. | High. |
-| **B. Postgres (CHOSEN)** — Postgres container locally + managed instance in cloud; port NovaBrain's schema near-verbatim; migrate `catalog.db`/`releases.db` into it. | Higher upfront: a stateful service in every deploy mode, connection mgmt, migrations, backups, secret wiring, a one-time SQLite→PG data migration. | Adds a database service to the workbench. Mitigated by it being the maturity goal and matching NovaBrain. | Low — but accepted; one engine beats a SQLite/PG hybrid. |
+| **B. Postgres (CHOSEN)** — Postgres container locally + managed instance in cloud; port the reference platform's schema near-verbatim; migrate `catalog.db`/`releases.db` into it. | Higher upfront: a stateful service in every deploy mode, connection mgmt, migrations, backups, secret wiring, a one-time SQLite→PG data migration. | Adds a database service to the workbench. Mitigated by it being the maturity goal and matching the reference platform. | Low — but accepted; one engine beats a SQLite/PG hybrid. |
 
-**Why consolidate (not hybrid):** running two engines is the worst of both — duplicate backup/migration tooling and a DB console (F6) that must span heterogeneous catalogs. With Postgres chosen, NovaBrain's mechanisms port **directly** rather than being re-implemented: `RETURNING (xmax=0)` insert-detection, `pg_advisory_xact_lock`, and `information_schema`-validated identifiers all become available as written in `auth.go`/`dbadmin.go`.
+**Why consolidate (not hybrid):** running two engines is the worst of both — duplicate backup/migration tooling and a DB console (F6) that must span heterogeneous catalogs. With Postgres chosen, the reference platform's mechanisms port **directly** rather than being re-implemented: `RETURNING (xmax=0)` insert-detection, `pg_advisory_xact_lock`, and `information_schema`-validated identifiers all become available as written in `auth.go`/`dbadmin.go`.
 
 **Migration tooling (Phase-0 foundation).** Adopt a real Node Postgres migration tool (e.g. `node-pg-migrate`, Drizzle, or Atlas) with ordered, version-controlled up/down migrations run at deploy time — not the ad-hoc inline `CREATE TABLE IF NOT EXISTS` daax uses today. All schema (RBAC tables, the F2 `built_images.sbom_json` column, and the ported catalog/releases tables) lives in this migration history.
 
@@ -82,7 +82,7 @@ Ordered by `leverage ÷ cost`. F1 (both planes) and F2/F4 are the high-leverage,
 
 F1 has two parts, scoped to where the real residual risk is (the Traefik-fronted path is already gated — §0.2):
 
-**Part A — HTTP plane proxy-secret (defense-in-depth; closes task-007 for proxy-less ingress).** In Compose+Traefik, `strip-forwarded-headers` + `pocket-id-auth` already prevent header forgery and 4200 is loopback-bound, so this is belt-and-suspenders *there*. Its independent value is for any mode that exposes 4200 without that chain (`docker:run`, future direct ingress): Traefik injects a shared secret header (`X-Daax-Proxy-Secret`) and `requireAuth()` trusts forwarded identity **only** when it matches `process.env.DAAX_PROXY_SECRET`. Treat it as defense-in-depth, not the primary control — and verify no deploy exposes 4200 beyond loopback before relying on it. Mirrors NovaBrain `auth.go`.
+**Part A — HTTP plane proxy-secret (defense-in-depth; closes task-007 for proxy-less ingress).** In Compose+Traefik, `strip-forwarded-headers` + `pocket-id-auth` already prevent header forgery and 4200 is loopback-bound, so this is belt-and-suspenders *there*. Its independent value is for any mode that exposes 4200 without that chain (`docker:run`, future direct ingress): Traefik injects a shared secret header (`X-Daax-Proxy-Secret`) and `requireAuth()` trusts forwarded identity **only** when it matches `process.env.DAAX_PROXY_SECRET`. Treat it as defense-in-depth, not the primary control — and verify no deploy exposes 4200 beyond loopback before relying on it. Mirrors the reference platform `auth.go`.
 
 **Part B — WS/terminal plane authentication (the real prize).** The terminal server must authenticate the *upgrade handshake* before any PTY/container spawns. The credential differs by path and Traefik does **not** put the proxy-secret on the WS route — it forwards identity headers there. So:
 - **Traefik path:** the `/ws` handshake **consumes the `X-Forwarded-User` Traefik already strips-and-injects** (`traefik-daax.yml.tpl:51-53`) for authorization — read it, don't invent a secret. The read happens at upgrade time off `req.headers['x-forwarded-user']` inside `handleConnection(ws, req)` — **before** `crypto.randomUUID()`/PTY/container spawn — not from a later WS message.
@@ -91,7 +91,7 @@ F1 has two parts, scoped to where the real residual risk is (the Traefik-fronted
 
 **Client + server work this requires (do not under-specify):** a mint endpoint on the authed HTTP app (`/api/terminal/ticket`); the three divergent WS URL builders (`lib/websocket-utils.ts`, `components/terminal/TerminalManager.tsx`, and `BtopTerminal.tsx` which **hardcodes `:4201`**) consolidated to one that fetches a ticket and sets the subprotocol; and a server-side verifier in `connection-handler.ts`. `BtopTerminal`'s hardcoded `:4201` already breaks the Compose path (loopback-bound, reachable only via Traefik `/ws`) and must be reconciled here.
 
-**Fail-closed, mirroring NovaBrain `validate()`.** Strict mode (`DAAX_REQUIRE_AUTH=1`) with the relevant secret unset logs a ship-blocking warning and refuses forwarded identity / unauthenticated WS upgrades. The proxy-less `LOCAL_OPERATOR` bypass (`auth-gate-001/003`) is unchanged for host-dev loopback; tailnet-direct requires the bearer token rather than loopback so the mode stays usable.
+**Fail-closed, mirroring the reference platform `validate()`.** Strict mode (`DAAX_REQUIRE_AUTH=1`) with the relevant secret unset logs a ship-blocking warning and refuses forwarded identity / unauthenticated WS upgrades. The proxy-less `LOCAL_OPERATOR` bypass (`auth-gate-001/003`) is unchanged for host-dev loopback; tailnet-direct requires the bearer token rather than loopback so the mode stays usable.
 
 **Acceptance tests (negative-path, required):** forged `X-Forwarded-User` without secret (proxy-less mode) → 401; WS connect to 4201 with no/expired/reused ticket → closed; missing `Origin` → closed; valid proxied request and valid-ticket WS → accepted; strict mode + missing secret → startup refuses. Tests in `tests/lib/auth.test.ts` + a terminal-server handshake test.
 
@@ -110,7 +110,7 @@ F1 has two parts, scoped to where the real residual risk is (the Traefik-fronted
 
 daax has the *consumption* half (the `sbom` column + catalog UI); F2 adds *production* of a real SBOM for the `daax-web` and `code-server` images.
 
-**Design (adapted from `deploy.sh gen_sbom()` + `version.go`).** Generate with **syft** in `publish-images.yml`, matrix `{daax-web, code-server} × {cyclonedx-json, spdx-json}` via `anchore/sbom-action@v0`. **Default delivery: workflow artifacts** (already-supported, zero new permissions) plus persisting the CycloneDX doc into `releases.db.sbom` on release so the existing viewer renders it. **OCI-attach is opt-in (D3),** and if chosen requires explicit CI plumbing the spec must not hand-wave: `permissions: id-token: write`, a cosign install step, and attestation against the pushed image **digest** (not tag). Carry NovaBrain's **placeholder-vs-real guard verbatim in spirit**: a generated SBOM must exceed the placeholder size bound and not be `{}`, else the slot is reported unavailable — never ship an SBOM that looks present but isn't. This replaces daax's current synthetic-SBOM path (`app/api/releases/[id]/build/route.ts`, which hand-writes an object).
+**Design (adapted from `deploy.sh gen_sbom()` + `version.go`).** Generate with **syft** in `publish-images.yml`, matrix `{daax-web, code-server} × {cyclonedx-json, spdx-json}` via `anchore/sbom-action@v0`. **Default delivery: workflow artifacts** (already-supported, zero new permissions) plus persisting the CycloneDX doc into `releases.db.sbom` on release so the existing viewer renders it. **OCI-attach is opt-in (D3),** and if chosen requires explicit CI plumbing the spec must not hand-wave: `permissions: id-token: write`, a cosign install step, and attestation against the pushed image **digest** (not tag). Carry the reference platform's **placeholder-vs-real guard verbatim in spirit**: a generated SBOM must exceed the placeholder size bound and not be `{}`, else the slot is reported unavailable — never ship an SBOM that looks present but isn't. This replaces daax's current synthetic-SBOM path (`app/api/releases/[id]/build/route.ts`, which hand-writes an object).
 
 **Ingestion path (must be explicit, not assumed).** CI/syft runs in GitHub Actions, disconnected from the runtime DB; today the only code that writes the `sbom` field is the user-triggered build route. Specify the link: the CI job uploads the SBOM artifact and a job step (or a release API) ingests it keyed by image **digest**. Image tracking lives in the `built_images` table (ported to Postgres in Phase 0), which has `vulnerabilities_json` but **no sbom column** today — add an `sbom_json jsonb` column via the §2 migration tool so the SBOM is stored against the actual built image the viewer reads, rather than only a free-text `releases.sbom` blob.
 
@@ -124,7 +124,7 @@ Split `server/terminal-server.ts` into its own `daax-terminal` image, leaving `d
 
 **Internal service contract to specify before splitting:** which service holds `docker.sock`; how the workspace volume and `HOST_WORKSPACE_PATH` are shared; `server/docker/auth-paths.ts` mount assumptions; and the WS auth credential flow between `daax-web` and `daax-terminal`.
 
-**Hardening + the non-root caveat.** Adopt non-root users and build metadata for both images (don't repeat NovaBrain's root web image). But non-root conflicts with Docker-socket access: the runner currently has no `USER` and the terminal service needs socket group membership. Resolution must reconcile a non-root UID with `docker` group / socket-GID access (or a socket-proxy) — verify the daax runner UID and socket group before claiming the hardening is free. **Both deployment modes must keep working** (hard guardrail): host dev (`bun dev`) is unaffected; only container topology changes. Update `CLAUDE.md`'s deployment section.
+**Hardening + the non-root caveat.** Adopt non-root users and build metadata for both images (don't repeat the reference platform's root web image). But non-root conflicts with Docker-socket access: the runner currently has no `USER` and the terminal service needs socket group membership. Resolution must reconcile a non-root UID with `docker` group / socket-GID access (or a socket-proxy) — verify the daax runner UID and socket group before claiming the hardening is free. **Both deployment modes must keep working** (hard guardrail): host dev (`bun dev`) is unaffected; only container topology changes. Update `CLAUDE.md`'s deployment section.
 
 ### F4 — CI quality gates + vulnerability scan + auth-drift gate
 
@@ -136,9 +136,9 @@ Add a PR-triggered workflow running `bun run lint`, `bun run typecheck`, `bun ru
 
 **Leverage: high. Cost: medium-high. Maturity gate: `alpha` → `beta`. Depends on Phase 0 (Postgres + migration tooling) and F1.**
 
-Introduces a persistent identity store and role enforcement (daax forwards groups but enforces nothing). On Postgres, NovaBrain's `auth.go` ports almost directly.
+Introduces a persistent identity store and role enforcement (daax forwards groups but enforces nothing). On Postgres, the reference platform's `auth.go` ports almost directly.
 
-**Identity key — decided, not cargo-culted.** Key on `X-Forwarded-User`, which Pocket ID populates with the **stable OIDC subject (UUID)** — immutable across username/email changes. `X-Forwarded-Username` (human name) and `X-Forwarded-Email` are mutable display attributes stored on the row but not used as the key. Because the key is already the immutable subject, NovaBrain's email-recycle/OID-change detector has **no purpose here and is deliberately dropped** (it existed only because NovaBrain keyed on mutable email).
+**Identity key — decided, not cargo-culted.** Key on `X-Forwarded-User`, which Pocket ID populates with the **stable OIDC subject (UUID)** — immutable across username/email changes. `X-Forwarded-Username` (human name) and `X-Forwarded-Email` are mutable display attributes stored on the row but not used as the key. Because the key is already the immutable subject, the reference platform's email-recycle/OID-change detector has **no purpose here and is deliberately dropped** (it existed only because the reference platform keyed on mutable email).
 
 **Schema (Postgres; via the §2 migration tool):**
 - `users(subject text PK, username text, email text, name text, idp text, first_seen timestamptz, last_seen timestamptz)` — JIT shadow keyed on the stable subject.
@@ -146,7 +146,7 @@ Introduces a persistent identity store and role enforcement (daax forwards group
 - `user_roles(subject text, role text, granted_by text, granted_at timestamptz, PRIMARY KEY(subject, role))` with `ON DELETE CASCADE` FKs.
 - `auth_audit(id bigserial PK, ts timestamptz, event text, subject text, ip text, ua text, outcome text, detail text)` — append-only, `ts DESC` index.
 
-**JIT provisioning — port NovaBrain's mechanism directly.** `INSERT ... ON CONFLICT (subject) DO UPDATE SET ... RETURNING (xmax = 0)`: `xmax=0` is `true` only on a genuine INSERT, `false` on the ON-CONFLICT update. Grant the default role **only when `xmax=0` is true**. This is race-safe and does **not** re-grant the default role to a user whose roles were revoked (a "zero roles" check would let a deauthorized user re-self-grant on their next request — the bug NovaBrain's comment warns about). Required test: a user with all roles revoked is **not** re-granted on next request.
+**JIT provisioning — port the reference platform's mechanism directly.** `INSERT ... ON CONFLICT (subject) DO UPDATE SET ... RETURNING (xmax = 0)`: `xmax=0` is `true` only on a genuine INSERT, `false` on the ON-CONFLICT update. Grant the default role **only when `xmax=0` is true**. This is race-safe and does **not** re-grant the default role to a user whose roles were revoked (a "zero roles" check would let a deauthorized user re-self-grant on their next request — the bug the reference platform's comment warns about). Required test: a user with all roles revoked is **not** re-granted on next request.
 
 **Boot reconcile + first-admin bootstrap (resolves the keying/allow-list tension).** Identity keys on the stable subject, but an operator naturally writes `DAAX_ADMIN_USERS` with **emails/usernames**, and a `users` row only exists after first login (JIT) — so a fresh database would lock the operator out until an admin happens to authenticate. Resolution: the allow-list accepts **either** a subject **or** an email/username, with documented matching (subject exact-match preferred; email/username matched case-insensitively against the mutable display attributes *for grant purposes only*, never as the identity key). Reconcile pre-creates a pending grant keyed to the expected identifier so the admin is authorized on first login. Reconcile runs on every boot under a `pg_advisory_xact_lock` and prunes only `granted_by='reconcile'` grants so UI grants survive. Map Pocket ID groups (`X-Forwarded-Groups`, already forwarded) to roles at reconcile time — finally wiring the authorization daax forwards but ignores.
 
@@ -160,7 +160,7 @@ A narrowly-scoped console over the (now single) Postgres database — **not** a 
 
 **Ported near-verbatim from `dbadmin.go` (now feasible on Postgres):** table/column identifiers validated against `information_schema` before use, never interpolated from input, then quoted (the TS equivalent of `pgx.Identifier.Sanitize`); values always bound as parameters cast to the column's catalog type (`$N::type`). **Gate by an env-driven super-admin allow-list** (`requireSuperAdmin`), strictly disjoint from the editable RBAC tables, so DB access cannot be escalated through the tables it can read.
 
-**Write access is opt-in and audited (D4).** Any write path is off by default behind a separate flag; when enabled, a raw write to the RBAC tables MUST force an `auth_audit` row (the raw-CRUD path bypasses app-code auditing otherwise — NovaBrain audits via app code, not its generic CRUD).
+**Write access is opt-in and audited (D4).** Any write path is off by default behind a separate flag; when enabled, a raw write to the RBAC tables MUST force an `auth_audit` row (the raw-CRUD path bypasses app-code auditing otherwise — the reference platform audits via app code, not its generic CRUD).
 
 ### F7 — Deep health checks wired to probes
 
@@ -172,17 +172,17 @@ daax's current `Dockerfile` HEALTHCHECK hits `/` (shallow) and there is no `/api
 
 **Leverage: medium. Cost: low. Maturity gate: `beta`.**
 
-daax images already bake `BUILD_DATE`/`BUILD_HOST`/`BUILD_BRANCH`. Surface them + git SHA, image tag/digest, deployer identity (`DAAX_DEPLOYED_BY`/`DAAX_DEPLOYED_VIA` stamped at deploy), and the F2 SBOM links on an admin "Build" page mirroring NovaBrain's Build tab. One place that answers "what exactly is running and who shipped it."
+daax images already bake `BUILD_DATE`/`BUILD_HOST`/`BUILD_BRANCH`. Surface them + git SHA, image tag/digest, deployer identity (`DAAX_DEPLOYED_BY`/`DAAX_DEPLOYED_VIA` stamped at deploy), and the F2 SBOM links on an admin "Build" page mirroring the reference platform's Build tab. One place that answers "what exactly is running and who shipped it."
 
 ### F9 — Clean, cloud-agnostic deployment model
 
 **Leverage: medium-high. Cost: medium. Maturity gate: `alpha`.**
 
-Port NovaBrain's deploy **discipline**, not its Azure resources:
+Port the reference platform's deploy **discipline**, not its Azure resources:
 - **Env-based selection** — `deploy/env/<env>.env` per target (`kinsale`, `muckross`, future `cloud`) replacing hard-coded `deploy:kinsale`/`deploy:muckross`, so a new target is config, not code.
 - **Phased, idempotent deploy script with fail-closed gates + rollback** — preflight (e.g. the `code-server` image preflight already enforced by `rebuild.sh`; required-secret presence for cloud), ordered phases, and a rollback path so a mid-flight failure leaves a known state, not a partial one. Mirror `deploy.sh`'s structure and its `.logs/*.jsonl` deploy log.
 - **Provenance stamping** (feeds F8).
-- **IP / tailnet allowlisting** as an explicit capability (NovaBrain gates ingress + DB firewall on `allowed_ips`; daax's equivalent is Tailscale ACLs + optional Traefik IP allow-list).
+- **IP / tailnet allowlisting** as an explicit capability (the reference platform gates ingress + DB firewall on `allowed_ips`; daax's equivalent is Tailscale ACLs + optional Traefik IP allow-list).
 - **Optional thin IaC for the cloud target only** (§8) — local stays Compose; no IaC imposed on the local path.
 
 ---
@@ -235,11 +235,11 @@ The proof this was a judgment, not a copy. Deliberately **excluded** or **deferr
 - **Entra / Azure EasyAuth specifics** — daax uses Pocket ID OIDC forward-auth. Port the trust-boundary *pattern* (F1), not Entra's `X-MS-CLIENT-PRINCIPAL` handling, `/.auth/*`, or `azapi authConfig`.
 - **Azure Terraform resource graph** (Container Apps, Postgres Flexible, ACR, VNet, Log Analytics) — daax deploys via Compose. The cloud path (§8) is provider-agnostic and thin.
 - **The 2ndBrain seed / stage-seed pipeline** — domain content baking; irrelevant to a workbench.
-- **SCIM provisioning, Entra group→role auto-mapping, session-revocation deny-list** — *design-doc-only* even in NovaBrain (explicitly deferred there). daax should not adopt aspirational features the source itself hasn't built. Pocket-ID-group→role mapping (F5) covers the realistic need.
-- **Role impersonation ("test as role")** — real in NovaBrain, but a multi-tenant convenience with low value for a single-/few-operator tool. Defer until a real multi-user need appears.
+- **SCIM provisioning, Entra group→role auto-mapping, session-revocation deny-list** — *design-doc-only* even in the reference platform (explicitly deferred there). daax should not adopt aspirational features the source itself hasn't built. Pocket-ID-group→role mapping (F5) covers the realistic need.
+- **Role impersonation ("test as role")** — real in the reference platform, but a multi-tenant convenience with low value for a single-/few-operator tool. Defer until a real multi-user need appears.
 - **Generic multi-file write-CRUD DB console** — narrowed to read-first inspection (F6). A write-capable raw-SQL editor over the RBAC tables that gate it is high blast-radius, low value here.
-- **The OID-recycle / email-change detector** — dropped because daax keys on the immutable Pocket ID subject, not mutable email (F5). (Postgres machinery NovaBrain relies on — advisory locks, `information_schema`, `RETURNING xmax` — is now *adopted*, since D1 chose Postgres.)
-- **Per-segment dynamic roles (`seg:<uuid>`)** — NovaBrain's content-segmentation model has no daax analogue.
+- **The OID-recycle / email-change detector** — dropped because daax keys on the immutable Pocket ID subject, not mutable email (F5). (Postgres machinery the reference platform relies on — advisory locks, `information_schema`, `RETURNING xmax` — is now *adopted*, since D1 chose Postgres.)
+- **Per-segment dynamic roles (`seg:<uuid>`)** — the reference platform's content-segmentation model has no daax analogue.
 
 ---
 
@@ -275,7 +275,7 @@ Gains concentrate where they cost least (Phase 1, including the previously-misse
 
 ## 10. Open decisions for the operator
 
-- **D1 — Database engine (§2). ✅ DECIDED (2026-06-13): Postgres, consolidate all stores.** Migrate `catalog.db`/`releases.db` into Postgres and build RBAC on it (Phase 0). NovaBrain's mechanisms port directly.
+- **D1 — Database engine (§2). ✅ DECIDED (2026-06-13): Postgres, consolidate all stores.** Migrate `catalog.db`/`releases.db` into Postgres and build RBAC on it (Phase 0). the reference platform's mechanisms port directly.
 - **D2 — RBAC enforcement scope.** All mutating routes at once, or admin/destructive first (terminal exec, container lifecycle, MCP, settings) then widen? Rec: destructive-first, then widen.
 - **D3 — SBOM delivery.** Workflow-artifact (default, no new perms) vs OCI-attached (cosign attest, needs `id-token: write` + digest) vs both. Rec: artifact + DB-persist now; OCI-attach as an opt-in follow-up.
 - **D4 — DB console write access.** Read-only default with a separate audited write flag, or full CRUD from the start? Rec: read-first; audited writes behind a flag.

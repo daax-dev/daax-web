@@ -88,7 +88,6 @@ const NOUNS = [
   "meadow",
   "mountain",
   "nebula",
-  "nova",
   "oasis",
   "ocean",
   "orchid",
