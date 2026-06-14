@@ -66,10 +66,16 @@ function connect(opts: {
   headers?: Record<string, string>;
 }): Promise<Outcome> {
   return new Promise((resolve) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}`, opts.protocols ?? [], {
-      origin: opts.origin,
-      headers: opts.headers,
-    });
+    // Build options conditionally so an omitted Origin/protocols are truly
+    // absent on the wire (not sent as empty), keeping the negative cases honest.
+    const wsOptions: { origin?: string; headers?: Record<string, string> } = {};
+    if (opts.origin !== undefined) wsOptions.origin = opts.origin;
+    if (opts.headers) wsOptions.headers = opts.headers;
+    const ws = new WebSocket(
+      `ws://127.0.0.1:${port}`,
+      opts.protocols,
+      wsOptions,
+    );
     const outcome: Outcome = {};
     let settled = false;
     const settle = () => {

@@ -105,7 +105,11 @@ function extractTicket(
  * testable with a minimal `req` shape.
  */
 export function authenticateConnection(req: IncomingMessage): AuthDecision {
-  const origin = req.headers.origin;
+  // Normalize the Origin header: a malformed request can present it as an array
+  // (multiple Origin headers); pass a single string to isAllowedOrigin so it
+  // never throws on `.match` (which would turn a bad request into a 500/DoS).
+  const rawOrigin = req.headers.origin as string | string[] | undefined;
+  const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
   // isAllowedOrigin now rejects a missing Origin, so a raw (non-browser) client
   // is refused before any credential check.
   if (!isAllowedOrigin(origin)) {
