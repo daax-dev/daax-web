@@ -163,12 +163,16 @@ services:
     networks:
       - daax-net
 
+    # Deep probe (brain2daax F7, #98): /api/health checks Postgres + terminal
+    # reachability and returns 503 when a dependency is down. Longer start-period
+    # than the old shallow `/` check — the app must also reach DB + terminal at
+    # boot. (daax-terminal gets its own probe when F3 splits the services.)
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4200/"]
+      test: ["CMD", "curl", "-f", "http://localhost:4200/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 15s
+      start_period: 40s
 
     logging:
       driver: "json-file"
