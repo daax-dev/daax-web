@@ -107,6 +107,16 @@ services:
       # Bind to all interfaces inside container
       - TERMINAL_HOST=0.0.0.0
 
+      # Terminal WS auth (F1b, #95). REQUIRED in container mode: a connection
+      # through Docker's published port arrives from the bridge gateway (not
+      # loopback), so the loopback bypass/forwarded path do not apply and the
+      # terminal uses the bearer-ticket path — which needs this secret on both
+      # the app (mint) and terminal server (verify), same container = one value.
+      # Generate: `openssl rand -hex 32`. Never commit it. Set DAAX_REQUIRE_AUTH=1
+      # to enforce identity (with Traefik/Pocket ID) on any untrusted exposure.
+      - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
+      - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
+
       # Postgres connection (brain2daax Phase 0 #92). Reaches the postgres
       # service over daax-net; password sourced from env/secret, never committed.
       - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required}@postgres:5432/${DAAX_PG_DB:-daax}

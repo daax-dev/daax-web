@@ -4,7 +4,13 @@
  * - Direct access (localhost:4200 -> ws://localhost:4201)
  * - Reverse proxy like Traefik (https://domain -> wss://domain/ws/terminal)
  * - Port-mapped containers (4300:4200 -> 4301:4201)
+ *
+ * This is the single, ticket-aware terminal-WebSocket helper (F1b, issue #95):
+ * openTerminalWebSocket() mints a short-TTL single-use bearer ticket and
+ * presents it via the Sec-WebSocket-Protocol subprotocol. All terminal UIs
+ * (Terminal, Ghostty, Btop, AI sessions, shell) connect through it.
  */
+import { WS_TICKET_SUBPROTOCOL } from "./ws-ticket-protocol";
 
 /**
  * Detect if we're behind a reverse proxy like Traefik
@@ -36,6 +42,14 @@ function isBehindReverseProxy(): boolean {
  * Auto-detects deployment mode and returns appropriate URL
  */
 export function getTerminalWebSocketUrl(): string {
+  // Explicit override wins (carried over from TerminalManager's builder so the
+  // consolidation does not drop a deployment knob).
+  const override =
+    typeof process !== "undefined"
+      ? process.env.NEXT_PUBLIC_TERMINAL_WS_URL
+      : undefined;
+  if (override) return override;
+
   if (typeof window === "undefined") {
     return "ws://localhost:4201";
   }
@@ -68,4 +82,36 @@ export function getTerminalWebSocketUrl(): string {
 export function buildTerminalWsUrl(params: URLSearchParams): string {
   const baseUrl = getTerminalWebSocketUrl();
   return `${baseUrl}?${params.toString()}`;
+}
+
+/**
+ * Fetch a fresh single-use bearer ticket from the authed app (F1b, issue #95).
+ * Returns the token, or undefined when ticketing is unavailable (401/503/network
+ * error) — e.g. host-dev with no DAAX_WS_TOKEN_SECRET, where the terminal server
+ * admits a loopback peer without a ticket. Never memoized: each connect mints a
+ * new ticket because tickets are single-use.
+ */
+async function fetchTerminalTicket(): Promise<string | undefined> {
+  try {
+    const res = await fetch("/api/terminal/ticket", { method: "POST" });
+    if (!res.ok) return undefined;
+    const data = await res.json();
+    return typeof data?.token === "string" ? data.token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Open the terminal WebSocket with bearer-ticket auth (F1b, issue #95). The
+ * single ticket-aware connector used by every terminal UI. When a ticket is
+ * obtained it is presented via the Sec-WebSocket-Protocol subprotocol (never the
+ * URL query, which would leak into proxy logs); otherwise the socket connects
+ * without one and relies on the server's loopback/forwarded-identity paths.
+ */
+export async function openTerminalWebSocket(wsUrl: string): Promise<WebSocket> {
+  const token = await fetchTerminalTicket();
+  return token
+    ? new WebSocket(wsUrl, [WS_TICKET_SUBPROTOCOL, token])
+    : new WebSocket(wsUrl);
 }

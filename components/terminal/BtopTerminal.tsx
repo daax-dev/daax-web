@@ -4,6 +4,10 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import {
+  getTerminalWebSocketUrl,
+  openTerminalWebSocket,
+} from "@/lib/websocket-utils";
 
 interface BtopTerminalProps {
   onConnectionChange?: (connected: boolean) => void;
@@ -70,44 +74,55 @@ export function BtopTerminal({ onConnectionChange }: BtopTerminalProps) {
     xtermRef.current = xterm;
     fitAddonRef.current = fitAddon;
 
-    // Connect WebSocket for btop
-    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${wsProtocol}//${window.location.hostname}:4201`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      onConnectionChange?.(true);
-      setIsLoading(false);
-      // Send btop command
-      const cols = xterm.cols;
-      const rows = xterm.rows;
-      ws.send(JSON.stringify({ type: "start", command: "btop", cols, rows }));
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === "output" && data.data) {
-          xterm.write(data.data);
+    // Connect WebSocket for btop via the shared ticket-aware opener (F1b #95).
+    // No more hardcoded :4201 — getTerminalWebSocketUrl() is proxy-aware and
+    // openTerminalWebSocket() attaches a single-use bearer ticket.
+    let disposed = false;
+    void (async () => {
+      const ws = await openTerminalWebSocket(getTerminalWebSocketUrl());
+      if (disposed) {
+        try {
+          ws.close();
+        } catch {
+          /* already closing */
         }
-      } catch {
-        // Raw data
-        xterm.write(event.data);
+        return;
       }
-    };
+      wsRef.current = ws;
 
-    ws.onerror = () => {
-      setIsLoading(false);
-      xterm.write(
-        "\r\n\x1b[31mFailed to connect to terminal server\x1b[0m\r\n",
-      );
-    };
+      ws.onopen = () => {
+        onConnectionChange?.(true);
+        setIsLoading(false);
+        // Send btop command
+        const cols = xterm.cols;
+        const rows = xterm.rows;
+        ws.send(JSON.stringify({ type: "start", command: "btop", cols, rows }));
+      };
 
-    ws.onclose = () => {
-      onConnectionChange?.(false);
-      xterm.write("\r\n\x1b[33mConnection closed\x1b[0m\r\n");
-    };
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "output" && data.data) {
+            xterm.write(data.data);
+          }
+        } catch {
+          // Raw data
+          xterm.write(event.data);
+        }
+      };
+
+      ws.onerror = () => {
+        setIsLoading(false);
+        xterm.write(
+          "\r\n\x1b[31mFailed to connect to terminal server\x1b[0m\r\n",
+        );
+      };
+
+      ws.onclose = () => {
+        onConnectionChange?.(false);
+        xterm.write("\r\n\x1b[33mConnection closed\x1b[0m\r\n");
+      };
+    })();
 
     // Handle window resize
     const handleResize = () => {
@@ -128,8 +143,9 @@ export function BtopTerminal({ onConnectionChange }: BtopTerminalProps) {
     window.addEventListener("resize", handleResize);
 
     return () => {
+      disposed = true;
       window.removeEventListener("resize", handleResize);
-      ws.close();
+      wsRef.current?.close();
       xterm.dispose();
     };
   }, [onConnectionChange]);

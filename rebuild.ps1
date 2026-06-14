@@ -152,6 +152,9 @@ try {
         "-e", "CLAUDE_PROJECTS_DIR=/host-claude/projects"
         "-e", "NEXT_PUBLIC_DEPLOYMENT_MODE=container"
         "-e", "TERMINAL_HOST=0.0.0.0"
+        # Terminal WS auth (F1b, #95): forward the ticket secret + strict flag.
+        "-e", "DAAX_REQUIRE_AUTH=$($env:DAAX_REQUIRE_AUTH)"
+        "-e", "DAAX_WS_TOKEN_SECRET=$($env:DAAX_WS_TOKEN_SECRET)"
     )
 
     # Only mount HOME_MCP if it exists as a file

@@ -12,6 +12,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
+import { openTerminalWebSocket } from "@/lib/websocket-utils";
 
 export interface TerminalProps {
   wsUrl: string;
@@ -144,9 +145,23 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
         }
       }, 0);
 
-      // Function to setup WebSocket with all handlers (reusable for reconnections)
-      const setupWebSocket = (isReconnect = false): WebSocket => {
-        const ws = new WebSocket(wsUrl);
+      // Tracks unmount so a ticket fetch that resolves after teardown closes
+      // its orphaned socket instead of wiring handlers to a dead component.
+      let disposed = false;
+
+      // Function to setup WebSocket with all handlers (reusable for
+      // reconnections). Async because each (re)connect mints a fresh single-use
+      // bearer ticket via openTerminalWebSocket (F1b, #95).
+      const setupWebSocket = async (isReconnect = false): Promise<void> => {
+        const ws = await openTerminalWebSocket(wsUrl);
+        if (disposed) {
+          try {
+            ws.close();
+          } catch {
+            /* already closing */
+          }
+          return;
+        }
         wsRef.current = ws;
 
         ws.onopen = () => {
@@ -280,8 +295,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
                 `\x1b[33mReconnecting (attempt ${reconnectAttemptRef.current})...\x1b[0m`,
               );
 
-              // Create new WebSocket with fresh handlers
-              setupWebSocket(true);
+              // Create new WebSocket with fresh handlers (fresh ticket).
+              void setupWebSocket(true);
             }, delay);
           } else if (event.code === 1000) {
             term.writeln("\x1b[33mConnection closed cleanly\x1b[0m");
@@ -298,18 +313,17 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
             }
           }
         };
-
-        return ws;
       };
 
       // Connect WebSocket
       console.log(`[Terminal] Connecting to WebSocket: ${wsUrl}`);
-      const ws = setupWebSocket();
+      void setupWebSocket();
 
-      // Handle terminal input
+      // Handle terminal input — read the live socket from the ref since the
+      // socket is created asynchronously (after the ticket fetch).
       term.onData((data) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "input", data }));
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: "input", data }));
         }
       });
 
@@ -333,13 +347,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
 
       // Cleanup
       return () => {
+        disposed = true;
         shouldReconnectRef.current = false;
         if (reconnectTimerRef.current) {
           clearTimeout(reconnectTimerRef.current);
         }
         window.removeEventListener("resize", handleResize);
         resizeObserver.disconnect();
-        ws.close(1000, "Component unmounting"); // Clean close
+        wsRef.current?.close(1000, "Component unmounting"); // Clean close
         term.dispose();
       };
     }, [wsUrl, handleResize]);

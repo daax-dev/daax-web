@@ -14,8 +14,8 @@ import {
   DEFAULT_TERMINAL_COLS,
   DEFAULT_TERMINAL_ROWS,
   expandPath,
-  isAllowedOrigin,
 } from "../config/constants";
+import { authenticateConnection } from "./ws-auth";
 import {
   resolveContainerImage,
   DEFAULT_CONTAINER_IMAGE,
@@ -54,12 +54,15 @@ export function setAuthPaths(claudePath: string, openCodePath: string): void {
  * Handle a new WebSocket connection
  */
 export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
-  const origin = req.headers.origin;
-
-  // Basic origin check
-  if (!isAllowedOrigin(origin)) {
-    console.log(`Rejected connection from origin: ${origin}`);
-    ws.close(1008, "Origin not allowed");
+  // Authenticate the upgrade BEFORE any session id / PTY / container spawn
+  // (F1b, issue #95). Covers origin, the Traefik forwarded-identity path, the
+  // single-use bearer-ticket path, and the loopback LOCAL_OPERATOR bypass.
+  const auth = authenticateConnection(req);
+  if (!auth.ok) {
+    console.log(
+      `Rejected terminal WS upgrade (${auth.reason}) from ${req.socket?.remoteAddress ?? "unknown"}`,
+    );
+    ws.close(auth.code, auth.reason);
     return;
   }
 
