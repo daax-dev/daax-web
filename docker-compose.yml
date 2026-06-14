@@ -20,7 +20,11 @@ services:
       # Loopback-only: app reaches it via the daax-net hostname `postgres`.
       - "127.0.0.1:5432:5432"
     volumes:
-      - daax-pg-data:/var/lib/postgresql/data
+      # postgres:18 stores data under a version subdir; mount the PARENT so
+      # PGDATA (/var/lib/postgresql/<ver>/docker) lands on the volume and
+      # persists. Mounting /var/lib/postgresql/data instead silently moves
+      # PGDATA off-volume and the image refuses to start.
+      - daax-pg-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DAAX_PG_USER:-daax} -d ${DAAX_PG_DB:-daax}"]
       interval: 10s
