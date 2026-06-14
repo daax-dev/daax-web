@@ -168,13 +168,16 @@ async function main() {
   const allowlist = loadAllowlist();
   const { offenders, stale } = computeAuthDrift(routes, allowlist);
 
+  const plural = (n: number, one: string, many: string) =>
+    `${n} ${n === 1 ? one : many}`;
+
   console.log(
-    `\nAuth-drift gate: ${allowlist.length} allowlisted, ${offenders.length} new offender(s), ${stale.length} stale entr(y/ies).`,
+    `\nAuth-drift gate: ${allowlist.length} allowlisted, ${plural(offenders.length, "new offender", "new offenders")}, ${plural(stale.length, "stale entry", "stale entries")}.`,
   );
 
   if (stale.length > 0) {
     console.log(
-      `\n[WARN] ${stale.length} allowlist entr(y/ies) are no longer unprotected write routes (fixed/removed) — prune them from auth-audit-allowlist.json:`,
+      `\n[WARN] ${plural(stale.length, "allowlist entry is", "allowlist entries are")} no longer unprotected write routes (fixed/removed) — prune from auth-audit-allowlist.json:`,
     );
     for (const p of stale) console.log(`  /api/${p}`);
   }
