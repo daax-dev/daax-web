@@ -14,6 +14,7 @@
     "start:prod": "concurrently --kill-others-on-fail -n next,terminal -c cyan,magenta \"next start -p 4200 -H 0.0.0.0\" \"TERMINAL_HOST=0.0.0.0 tsx server/terminal-server.ts\"",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
+    "audit:auth": "bun run scripts/audit-auth-routes.ts",
     "typecheck": "tsc --noEmit",
     "format:write": "prettier --write \"**/*.{ts,tsx,js,jsx,mdx}\" --cache",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,mdx}\" --cache",

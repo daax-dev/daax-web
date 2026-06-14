@@ -3,7 +3,24 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+
+// These routes are now gated by requireAuth (F4, #96). Mock it as authenticated
+// so these tests exercise the proxy behavior (auth is covered separately).
+vi.mock("@/lib/auth", () => ({
+  requireAuth: vi.fn(async () => ({
+    authenticated: true,
+    user: {
+      username: "test",
+      email: null,
+      groups: [],
+      authenticated: true,
+      pictureUrl: null,
+    },
+  })),
+}));
+
+import { requireAuth } from "@/lib/auth";
 import { GET as listTables } from "@/app/api/provenance-admin/tables/route";
 import {
   GET as getTableData,
@@ -16,6 +33,24 @@ import {
 // Mock fetch globally to simulate provenance backend responses
 const mockFetch = vi.fn();
 global.fetch = mockFetch as unknown as typeof fetch;
+
+describe("provenance-admin auth gate (F4, #96)", () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it("returns the requireAuth 401 response when unauthenticated", async () => {
+    vi.mocked(requireAuth).mockResolvedValueOnce({
+      authenticated: false,
+      response: NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      ),
+    });
+    const response = await listTables();
+    expect(response.status).toBe(401);
+    // The proxy fetch must never run for an unauthenticated request.
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
 
 describe("GET /api/provenance-admin/tables", () => {
   beforeEach(() => {
