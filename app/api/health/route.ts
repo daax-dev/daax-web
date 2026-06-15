@@ -26,16 +26,19 @@ export const dynamic = "force-dynamic";
 // connect target — loopback is correct for same-container/same-host probing.
 const TERMINAL_PROBE_HOST = "127.0.0.1";
 const TERMINAL_PROBE_TIMEOUT_MS = 1500;
-// Bound the DB probe: the pool has no connectionTimeoutMillis, so a black-hole
-// Postgres host (vs. a fast ECONNREFUSED) would otherwise hang the endpoint.
+// Bound the DB probe response: shorter than the pool's connectionTimeoutMillis
+// (lib/db/pg.ts) so the endpoint answers fast on a black-hole Postgres host
+// (vs. a fast ECONNREFUSED); the pool timeout then reaps the connect attempt.
 const DB_PROBE_TIMEOUT_MS = 2000;
 
 const DEFAULT_TERMINAL_PORT = 4201;
 
 /**
- * Resolve the terminal server port the same way the server itself does. Falls
- * back to the default on a missing/invalid TERMINAL_PORT so a misconfiguration
- * yields a clean 503 (terminal unreachable) rather than a thrown 500.
+ * Resolve the terminal server port from TERMINAL_PORT — the same env var the
+ * terminal server reads (server/config/constants.ts). Unlike the server's plain
+ * `parseInt`, this probe also validates the range and falls back to the default
+ * on a missing/invalid value, so a misconfiguration yields a clean 503
+ * (terminal unreachable) rather than a thrown 500.
  */
 function terminalPort(): number {
   const parsed = parseInt(process.env.TERMINAL_PORT || "", 10);
