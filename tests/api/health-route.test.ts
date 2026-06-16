@@ -37,7 +37,7 @@ describe("GET /api/health (F7 #98)", () => {
     upServer = net.createServer();
     upPort = await listen(upServer);
 
-    // Reserve, then release, a second port so it is reliably closed (refused).
+    // Reserve, then release, a second port so it is very likely to be closed (ECONNREFUSED).
     const tmp = net.createServer();
     downPort = await listen(tmp);
     await new Promise<void>((res) => tmp.close(() => res()));

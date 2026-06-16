@@ -24,9 +24,9 @@ function listen(server: net.Server): Promise<number> {
 }
 
 /**
- * Reserve an ephemeral port and immediately release it, returning a port that
- * is provably closed (the kernel just handed it out, so nothing is bound).
- * Deterministic substitute for hard-coding a "probably free" port like TCP/1.
+ * Reserve an ephemeral port and immediately release it, returning a port that is
+ * very likely to be closed. This reduces (but cannot eliminate) the chance that
+ * another process binds the port before the test uses it.
  */
 async function reserveClosedPort(): Promise<number> {
   const probe = net.createServer();
@@ -95,7 +95,7 @@ d("GET /api/health (integration, real Postgres) — F7 #98", () => {
     const savedPgPort = process.env.PGPORT;
     const savedUrl = process.env.DATABASE_URL;
     delete process.env.DATABASE_URL; // discrete vars take effect
-    // Provably-closed ephemeral port → deterministic ECONNREFUSED (vs. a
+    // Recently released ephemeral port → very likely ECONNREFUSED (vs. a
     // hard-coded "probably free" port that something could rarely be bound to).
     process.env.PGPORT = String(await reserveClosedPort());
 
