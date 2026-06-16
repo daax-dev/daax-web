@@ -94,10 +94,12 @@ d("GET /api/health (integration, real Postgres) — F7 #98", () => {
 
     const savedPgPort = process.env.PGPORT;
     const savedUrl = process.env.DATABASE_URL;
-    delete process.env.DATABASE_URL; // discrete vars take effect
-    // Recently released ephemeral port → very likely ECONNREFUSED (vs. a
-    // hard-coded "probably free" port that something could rarely be bound to).
-    process.env.PGPORT = String(await reserveClosedPort());
+
+    // Force an unreachable Postgres regardless of whether the suite is configured
+    // via DATABASE_URL or discrete PG* env vars.
+    const closedPort = await reserveClosedPort();
+    process.env.DATABASE_URL = `postgres://127.0.0.1:${closedPort}/daax_test`;
+    process.env.PGPORT = String(closedPort);
 
     try {
       const { GET } = await import("@/app/api/health/route");
@@ -110,7 +112,8 @@ d("GET /api/health (integration, real Postgres) — F7 #98", () => {
     } finally {
       if (savedPgPort === undefined) delete process.env.PGPORT;
       else process.env.PGPORT = savedPgPort;
-      if (savedUrl !== undefined) process.env.DATABASE_URL = savedUrl;
+      if (savedUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = savedUrl;
       await new Promise<void>((res) => term.close(() => res()));
     }
   });
