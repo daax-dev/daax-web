@@ -22,11 +22,40 @@ import { resolveDbConfig } from "./config";
 
 let pool: Pool | null = null;
 
+/** Connect-establishment timeout (ms) applied to the runtime pool when unset. */
+const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
+
+/**
+ * Resolve the pool's connection-establishment timeout (ms).
+ *
+ * Bounds how long a single connect attempt may run before `pg` aborts it.
+ * Without it (`pg` default is 0 = wait forever) a black-hole Postgres host —
+ * one that accepts the TCP SYN but never completes auth — leaves connect
+ * attempts running indefinitely, so repeated callers (e.g. the `/api/health`
+ * probe) accumulate pending work. This bounds the runtime pool only; the
+ * migration runner keeps `pg`'s default so a DB-startup race can't fail it.
+ *
+ * Override with `DAAX_DB_CONNECT_TIMEOUT_MS`; a missing/invalid/non-positive
+ * value falls back to the default. Keep it well under the healthcheck interval
+ * so attempts can't accumulate between probes.
+ */
+export function resolveConnectTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env.DAAX_DB_CONNECT_TIMEOUT_MS?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return DEFAULT_CONNECT_TIMEOUT_MS;
+  const parsed = Number.parseInt(raw, 10);
+  return parsed > 0 ? parsed : DEFAULT_CONNECT_TIMEOUT_MS;
+}
+
 /** Get (or lazily create) the shared connection pool. Throws `DbConfigError` if unconfigured. */
 export function getPool(): Pool {
   if (!pool) {
     const { poolConfig, source } = resolveDbConfig();
-    pool = new Pool(poolConfig);
+    pool = new Pool({
+      ...poolConfig,
+      connectionTimeoutMillis: resolveConnectTimeoutMs(),
+    });
     pool.on("error", (err) => {
       // An idle client emitted an error (e.g. backend terminated). Log; the
       // pool will discard the client. Never let this crash the process.

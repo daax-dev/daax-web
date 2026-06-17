@@ -145,9 +145,12 @@ EXPOSE 4200 4201 18080
 ENV TERMINAL_HOST=0.0.0.0
 ENV PORT=4200
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:4200/ || exit 1
+# Health check — deep probe (brain2daax F7, #98): /api/health checks Postgres +
+# terminal reachability and returns 503 when a dependency is down, so an
+# unhealthy dependency marks the container unhealthy. Longer start-period than
+# the old shallow `/` check: the app must also reach the DB + terminal at boot.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:4200/api/health || exit 1
 
 # Start both Next.js and terminal server in production mode
 CMD ["bun", "run", "start:prod"]
