@@ -166,7 +166,7 @@ export default function TranscriptsPage() {
               <p className="text-sm mt-1">
                 {transcripts.length > 0
                   ? "Try adjusting your search"
-                  : "No agent session data found (Claude ~/.claude, Codex ~/.codex, Copilot ~/.copilot)"}
+                  : "No agent session data found (Claude ~/.claude, Codex ~/.codex, Copilot ~/.copilot, OpenCode ~/.local/share/opencode)"}
               </p>
             </div>
           ) : (

@@ -8,6 +8,10 @@ import {
   findCopilotSessionFile,
   parseCopilotJsonl,
 } from "@/lib/transcripts/copilot";
+import {
+  findOpenCodeSessionFile,
+  parseOpenCodeSession,
+} from "@/lib/transcripts/opencode";
 import type { ParseResult, TranscriptMessage } from "@/lib/transcripts/types";
 import { isPathWithin } from "@/lib/transcripts/types";
 
@@ -248,23 +252,26 @@ export async function GET(
   const sep = id.indexOf(":");
   if (sep !== -1) {
     const prefix = id.slice(0, sep);
-    if (prefix === "claude" || prefix === "codex" || prefix === "copilot") {
+    if (
+      prefix === "claude" ||
+      prefix === "codex" ||
+      prefix === "copilot" ||
+      prefix === "opencode"
+    ) {
       tool = prefix;
       nativeId = id.slice(sep + 1);
     }
   }
 
   let sessionFile: string | null;
-  let parse: (content: string) => ParseResult;
   if (tool === "codex") {
     sessionFile = await findCodexSessionFile(nativeId);
-    parse = parseCodexJsonl;
   } else if (tool === "copilot") {
     sessionFile = findCopilotSessionFile(nativeId);
-    parse = parseCopilotJsonl;
+  } else if (tool === "opencode") {
+    sessionFile = await findOpenCodeSessionFile(nativeId);
   } else {
     sessionFile = await findSessionFile(nativeId);
-    parse = parseJsonlToMessages;
   }
 
   if (!sessionFile) {
@@ -275,14 +282,15 @@ export async function GET(
   }
 
   try {
-    // Full read is intentional here: a detail view renders every message in a
-    // single session, so the whole file is needed regardless. Unlike the
-    // listing (which streams to scan many files for metadata), this is bounded
-    // to one user-selected session, so loading it once is acceptable.
-    const content = await readFile(sessionFile, "utf-8");
-
     if (format === "raw") {
-      // Return raw JSONL
+      if (tool === "opencode") {
+        const { messages } = await parseOpenCodeSession(nativeId);
+        const ndjson = messages.map((m) => JSON.stringify(m)).join("\n");
+        return new NextResponse(ndjson, {
+          headers: { "Content-Type": "application/x-ndjson" },
+        });
+      }
+      const content = await readFile(sessionFile, "utf-8");
       return new NextResponse(content, {
         headers: {
           "Content-Type": "application/x-ndjson",
@@ -290,8 +298,20 @@ export async function GET(
       });
     }
 
-    // Parse and return structured messages with stats
-    const { messages, stats } = parse(content);
+    let messages: TranscriptMessage[];
+    let stats: ParseResult["stats"];
+    if (tool === "codex") {
+      const content = await readFile(sessionFile, "utf-8");
+      ({ messages, stats } = parseCodexJsonl(content));
+    } else if (tool === "copilot") {
+      const content = await readFile(sessionFile, "utf-8");
+      ({ messages, stats } = parseCopilotJsonl(content));
+    } else if (tool === "opencode") {
+      ({ messages, stats } = await parseOpenCodeSession(nativeId));
+    } else {
+      const content = await readFile(sessionFile, "utf-8");
+      ({ messages, stats } = parseJsonlToMessages(content));
+    }
 
     return NextResponse.json({
       // Bare native id (no `${tool}:` prefix), matching the list route's

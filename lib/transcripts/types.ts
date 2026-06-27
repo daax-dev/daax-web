@@ -1,12 +1,12 @@
 /**
- * Shared types for multi-tool transcripts (Claude, Codex, Copilot).
+ * Shared types for multi-tool transcripts (Claude, Codex, Copilot, OpenCode).
  * See docs/building/transcript-formats.md for the on-disk formats.
  */
 
 import { realpathSync } from "fs";
 import { relative, isAbsolute } from "path";
 
-export type TranscriptTool = "claude" | "codex" | "copilot";
+export type TranscriptTool = "claude" | "codex" | "copilot" | "opencode";
 
 /**
  * Guard against path traversal: session ids come from the URL and are joined

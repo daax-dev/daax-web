@@ -103,6 +103,9 @@ services:
       # Example: export HOME_MCP_JSON_PATH="$HOME/.mcp.json"
       - ${HOME_MCP_JSON_PATH:-/dev/null}:/host-config/.mcp.json:ro
 
+      # OpenCode session storage (transcripts)
+      - ${OPENCODE_DIR:-${HOME}/.local/share/opencode}:/host-opencode:ro
+
     environment:
       # Bind to all interfaces inside container
       - TERMINAL_HOST=0.0.0.0
@@ -123,6 +126,7 @@ services:
 
       # Claude Code config path (for MCP management)
       - CLAUDE_CODE_CONFIG=/host-config/.claude.json
+      - OPENCODE_STORAGE_DIR=/host-opencode/storage
 
       # Home .mcp.json path (for additional MCP configurations)
       # NOTE: Only set when HOME_MCP_JSON_PATH is configured, otherwise app

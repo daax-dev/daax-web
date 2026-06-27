@@ -7,6 +7,7 @@ import type { TranscriptSession } from "@/lib/transcripts/types";
 import { isPathWithin } from "@/lib/transcripts/types";
 import { listCodexSessions } from "@/lib/transcripts/codex";
 import { listCopilotSessions } from "@/lib/transcripts/copilot";
+import { listOpenCodeSessions } from "@/lib/transcripts/opencode";
 
 // Get Claude projects directory
 function getClaudeProjectsDir(): string {
@@ -212,6 +213,7 @@ export async function GET() {
     for (const provider of [
       { name: "codex", fn: listCodexSessions },
       { name: "copilot", fn: listCopilotSessions },
+      { name: "opencode", fn: listOpenCodeSessions },
     ]) {
       try {
         allSessions.push(...(await provider.fn()));

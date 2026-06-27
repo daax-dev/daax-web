@@ -15,7 +15,7 @@ implementation can add per-tool discovery + parsing behind a common model.
 
 The normalized shapes are defined in `lib/transcripts/types.ts` and emitted by
 `app/api/transcripts/route.ts` (list) and `app/api/transcripts/[id]/route.ts` (detail).
-The `tool` discriminator (`"claude" | "codex" | "copilot"`) is part of `TranscriptSession`;
+The `tool` discriminator (`"claude" | "codex" | "copilot" | "opencode"`) is part of `TranscriptSession`;
 the detail route dispatches the parser on the `${tool}:` prefix of the id.
 
 - **Session (list) — `TranscriptSession`:** `{ id, sessionId, tool, projectPath, projectName, firstPrompt, summary, messageCount, created, modified, gitBranch, fullPath, size }`. `id` is `${tool}:${sessionId}`.

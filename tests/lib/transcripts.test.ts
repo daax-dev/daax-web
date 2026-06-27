@@ -12,6 +12,11 @@ import {
   findCopilotSessionFile,
   listCopilotSessions,
 } from "@/lib/transcripts/copilot";
+import {
+  parseOpenCodeSession,
+  findOpenCodeSessionFile,
+  listOpenCodeSessions,
+} from "@/lib/transcripts/opencode";
 import { isSafeSessionId, isPathWithin } from "@/lib/transcripts/types";
 import { GET as transcriptDetailGET } from "@/app/api/transcripts/[id]/route";
 import { GET as transcriptListGET } from "@/app/api/transcripts/route";
@@ -27,6 +32,7 @@ describe("isSafeSessionId / path-traversal guard", () => {
   it("finders return null for unsafe ids (no fs escape)", async () => {
     expect(await findCodexSessionFile("../../../etc/passwd")).toBeNull();
     expect(findCopilotSessionFile("../../../etc/passwd")).toBeNull();
+    expect(await findOpenCodeSessionFile("../../../etc/passwd")).toBeNull();
   });
 });
 
@@ -579,6 +585,188 @@ describe("Claude detail route path-traversal containment (M1)", () => {
         (t) => t.sessionId === "sess-1",
       ),
     ).toBe(false);
+  });
+});
+
+/** Build a minimal OpenCode storage tree for fixture tests. */
+async function writeOpenCodeFixture(
+  root: string,
+  sessionId: string,
+): Promise<void> {
+  const sessionFile = join(root, "session", "default", `${sessionId}.json`);
+  await mkdir(join(root, "session", "default"), { recursive: true });
+  await writeFile(
+    sessionFile,
+    JSON.stringify({
+      id: sessionId,
+      directory: "/work/myproj",
+      title: "Fix login",
+      time: {
+        created: "2025-12-01T10:00:00.000Z",
+        updated: "2025-12-01T10:05:00.000Z",
+      },
+    }),
+    "utf-8",
+  );
+
+  const msgDir = join(root, "message", sessionId);
+  await mkdir(msgDir, { recursive: true });
+  await writeFile(
+    join(msgDir, "msg_u1.json"),
+    JSON.stringify({
+      id: "msg_u1",
+      sessionID: sessionId,
+      role: "user",
+      time: { created: "2025-12-01T10:00:01.000Z" },
+    }),
+    "utf-8",
+  );
+  await writeFile(
+    join(msgDir, "msg_a1.json"),
+    JSON.stringify({
+      id: "msg_a1",
+      sessionID: sessionId,
+      role: "assistant",
+      time: { created: "2025-12-01T10:00:02.000Z" },
+    }),
+    "utf-8",
+  );
+
+  const partU = join(root, "part", "msg_u1");
+  await mkdir(partU, { recursive: true });
+  await writeFile(
+    join(partU, "prt_t1.json"),
+    JSON.stringify({
+      id: "prt_t1",
+      messageID: "msg_u1",
+      type: "text",
+      text: "hello opencode",
+    }),
+    "utf-8",
+  );
+
+  const partA = join(root, "part", "msg_a1");
+  await mkdir(partA, { recursive: true });
+  await writeFile(
+    join(partA, "prt_t2.json"),
+    JSON.stringify({
+      id: "prt_t2",
+      messageID: "msg_a1",
+      type: "text",
+      text: "hi back",
+    }),
+    "utf-8",
+  );
+  await writeFile(
+    join(partA, "prt_tool1.json"),
+    JSON.stringify({
+      id: "prt_tool1",
+      messageID: "msg_a1",
+      type: "tool",
+      name: "read_file",
+      text: '{"path":"x.ts"}',
+    }),
+    "utf-8",
+  );
+}
+
+describe("parseOpenCodeSession", () => {
+  const tmpDirs: string[] = [];
+  const sessionId = "ses_test123";
+  afterEach(async () => {
+    delete process.env.OPENCODE_STORAGE_DIR;
+    await Promise.all(
+      tmpDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })),
+    );
+  });
+
+  it("joins session → message → text parts and maps tool parts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "opencode-storage-"));
+    tmpDirs.push(root);
+    await writeOpenCodeFixture(root, sessionId);
+    process.env.OPENCODE_STORAGE_DIR = root;
+
+    const { messages } = await parseOpenCodeSession(sessionId);
+    expect(messages.map((m) => m.type)).toEqual([
+      "user",
+      "assistant",
+      "tool_use",
+    ]);
+    expect(messages[0].content).toBe("hello opencode");
+    expect(messages[1].content).toBe("hi back");
+    expect(messages[2]).toMatchObject({
+      type: "tool_use",
+      toolName: "read_file",
+    });
+  });
+});
+
+describe("listOpenCodeSessions messageCount matches detail count", () => {
+  const tmpDirs: string[] = [];
+  const sessionId = "ses_test123";
+  afterEach(async () => {
+    delete process.env.OPENCODE_STORAGE_DIR;
+    await Promise.all(
+      tmpDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })),
+    );
+  });
+
+  it("list messageCount equals parseOpenCodeSession().messages.length", async () => {
+    const root = await mkdtemp(join(tmpdir(), "opencode-list-"));
+    tmpDirs.push(root);
+    await writeOpenCodeFixture(root, sessionId);
+    process.env.OPENCODE_STORAGE_DIR = root;
+
+    const sessions = await listOpenCodeSessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].tool).toBe("opencode");
+    expect(sessions[0].id).toBe(`opencode:${sessionId}`);
+    expect(sessions[0].projectName).toBe("myproj");
+    expect(sessions[0].firstPrompt).toBe("hello opencode");
+
+    const detailCount = (await parseOpenCodeSession(sessionId)).messages.length;
+    expect(sessions[0].messageCount).toBe(detailCount);
+    expect(sessions[0].messageCount).toBe(3);
+  });
+
+  it("findOpenCodeSessionFile resolves by session id", async () => {
+    const root = await mkdtemp(join(tmpdir(), "opencode-find-"));
+    tmpDirs.push(root);
+    await writeOpenCodeFixture(root, sessionId);
+    process.env.OPENCODE_STORAGE_DIR = root;
+
+    const hit = await findOpenCodeSessionFile(sessionId);
+    expect(hit).not.toBeNull();
+    expect(hit).toContain(`${sessionId}.json`);
+  });
+});
+
+describe("opencode transcript detail route", () => {
+  const tmpDirs: string[] = [];
+  const sessionId = "ses_test123";
+  afterEach(async () => {
+    delete process.env.OPENCODE_STORAGE_DIR;
+    await Promise.all(
+      tmpDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })),
+    );
+  });
+
+  it("strips the opencode: prefix and exposes tool separately", async () => {
+    const root = await mkdtemp(join(tmpdir(), "opencode-detail-"));
+    tmpDirs.push(root);
+    await writeOpenCodeFixture(root, sessionId);
+    process.env.OPENCODE_STORAGE_DIR = root;
+
+    const id = `opencode:${sessionId}`;
+    const res = await transcriptDetailGET(
+      new Request(`http://test/api/transcripts/${id}`),
+      { params: Promise.resolve({ id }) },
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.sessionId).toBe(sessionId);
+    expect(data.tool).toBe("opencode");
+    expect(data.messages[0].content).toBe("hello opencode");
   });
 });
 
