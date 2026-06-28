@@ -13,6 +13,9 @@ export default defineConfig({
   test: {
     environment: "node",
     globals: true,
+    // Stub the `server-only` import guard so server modules under test can load
+    // (e.g. lib/db/console.ts for F6 #102) — mirrors the default config's setup.
+    setupFiles: ["./tests/integration-setup.ts"],
     include: ["tests/integration/**/*.test.ts"],
     // Container start + migrate round-trips need headroom beyond the 5s default.
     testTimeout: 60_000,
