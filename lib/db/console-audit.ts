@@ -146,7 +146,20 @@ export async function forceAuditRow(
     planned.add(col.name);
   };
 
-  assign(pick(columns, ACTOR_COLUMNS), entry.actor);
+  // The ACTOR is the load-bearing audit field: an audit row that records THAT an
+  // RBAC change happened but not WHO is worthless for accountability. Require an
+  // actor column to map, else fail closed (the write is refused & rolled back).
+  const actorCol = pick(columns, ACTOR_COLUMNS);
+  if (!actorCol) {
+    throw new ConsoleError(
+      "Refusing audited write: auth_audit has no column that maps to the actor " +
+        "(who performed the write). Cannot record accountability — extend the " +
+        "actor candidate mapping or add an actor column.",
+      409,
+    );
+  }
+
+  assign(actorCol, entry.actor);
   assign(pick(columns, ACTION_COLUMNS), entry.action);
   assign(pick(columns, TARGET_COLUMNS), entry.targetTable);
   assign(pick(columns, DETAIL_COLUMNS), entry.detail);

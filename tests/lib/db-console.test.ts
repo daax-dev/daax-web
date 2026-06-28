@@ -123,6 +123,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   delete process.env.DAAX_DB_CONSOLE_WRITES;
   delete process.env.DAAX_DB_CONSOLE_AUDITED_TABLES;
+  delete process.env.DAAX_PROXY_SECRET;
   installFakeDb();
   mockHeaderGet.mockReturnValue(null); // default: local-operator request
 });
@@ -370,6 +371,13 @@ describe("executeWrite", () => {
     );
     expect(audit).toBeDefined();
     expect(audit!.params).toContain("alice@example.com");
+    // The detail captures the SUBMITTED VALUES (forensic "what to which value"),
+    // not just column names.
+    expect(
+      audit!.params?.some(
+        (p) => typeof p === "string" && p.includes('"admin"'),
+      ),
+    ).toBe(true);
     // BEGIN before the audit + write, COMMIT after — and the audit precedes the write.
     const sqls = calls.map((c) => c.sql);
     expect(sqls[0]).toBe("BEGIN");
@@ -377,6 +385,30 @@ describe("executeWrite", () => {
     const auditIdx = sqls.findIndex((s) => s.includes("auth_audit"));
     const writeIdx = sqls.findIndex((s) => s.startsWith("UPDATE"));
     expect(auditIdx).toBeLessThan(writeIdx);
+  });
+
+  it("refuses an audited write when auth_audit has no actor column (fail-closed)", async () => {
+    process.env.DAAX_DB_CONSOLE_WRITES = "1";
+    // auth_audit exists but maps no actor candidate → cannot record WHO.
+    const { client, calls } = fakeClient(["action", "target_table", "detail"]);
+    getClientMock.mockResolvedValue(client);
+
+    await expect(
+      executeWrite(
+        {
+          table: "rbac_roles",
+          action: "update",
+          values: { name: "admin" },
+          where: { id: "1" },
+        },
+        "alice@example.com",
+      ),
+    ).rejects.toMatchObject({ status: 409 });
+
+    const sqls = calls.map((c) => c.sql);
+    expect(sqls).toContain("ROLLBACK");
+    expect(sqls.some((s) => s.startsWith("UPDATE"))).toBe(false); // write never ran
+    expect(sqls.some((s) => s.includes("INSERT INTO"))).toBe(false); // no audit row
   });
 
   it("refuses an audited write and rolls back when auth_audit is absent (fail-closed)", async () => {
@@ -501,10 +533,23 @@ describe("super-admin gate (requireSuperAdmin, provenance via headers)", () => {
     expect(res?.status).toBe(403);
   });
 
-  it("allows (null) a super-admin matched by email", async () => {
+  it("allows a forwarded super-admin by email when the proxy secret is set", async () => {
     process.env.DAAX_DB_CONSOLE_SUPERADMINS = "bob@example.com";
+    process.env.DAAX_PROXY_SECRET = "s3cret"; // trust boundary enforced
     mockHeaderGet.mockReturnValue("uuid-123"); // forwarded identity present
     expect(await requireSuperAdmin(user())).toBeNull();
+    delete process.env.DAAX_DB_CONSOLE_SUPERADMINS;
+    delete process.env.DAAX_PROXY_SECRET;
+  });
+
+  it("REFUSES a forwarded identity when the trust boundary is not enforced (no proxy secret)", async () => {
+    // Even a correctly-listed email must be refused: without DAAX_PROXY_SECRET a
+    // direct client could forge X-Forwarded-Email. Defense-in-depth, fail-closed.
+    process.env.DAAX_DB_CONSOLE_SUPERADMINS = "bob@example.com";
+    delete process.env.DAAX_PROXY_SECRET;
+    mockHeaderGet.mockReturnValue("uuid-123"); // forwarded identity present
+    const res = await requireSuperAdmin(user());
+    expect(res?.status).toBe(403);
     delete process.env.DAAX_DB_CONSOLE_SUPERADMINS;
   });
 

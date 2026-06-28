@@ -91,7 +91,12 @@ export interface WriteOp {
   action: WriteAction;
   /** Column→value map for insert/update. */
   values?: Record<string, unknown>;
-  /** Equality filter column→value for update/delete (required; no mass writes). */
+  /**
+   * Equality filter column→value for update/delete. Required and non-empty: the
+   * guard forbids an UNCONDITIONAL write (it does not, and cannot, guarantee the
+   * predicate matches a single row — equality on a non-unique column may affect
+   * many).
+   */
   where?: Record<string, unknown>;
 }
 
@@ -316,7 +321,7 @@ function buildPredicates(
  *
  * Refuses unless DAAX_DB_CONSOLE_WRITES=1. Validates the table and every column;
  * binds all values as `$N::type`. UPDATE/DELETE require a non-empty WHERE (no
- * unconditional mass mutation). When the table is audited (D4), the write and a
+ * unconditional write). When the table is audited (D4), the write and a
  * forced `auth_audit` row commit together in one transaction; if the audit row
  * cannot be written, the whole transaction rolls back (fail-closed).
  *
@@ -421,11 +426,17 @@ export async function executeWrite(
         actor,
         action: `db_console_${op.action}`,
         targetTable: canonical,
+        // Record the SUBMITTED VALUES, not just column names: an RBAC audit's
+        // whole purpose is forensic — "who changed what TO WHICH value" (e.g.
+        // "alice set role=superadmin"). Names alone ("changed the role column")
+        // lose the key fact. The audited set is the RBAC tables (role/identity
+        // assignments), and auth_audit is itself admin-restricted, so capturing
+        // values here is appropriate and not a secret-leak vector.
         detail: {
           action: op.action,
           table: canonical,
-          columns: op.values ? Object.keys(op.values) : [],
-          where: op.where ? Object.keys(op.where) : [],
+          values: op.values ?? null,
+          where: op.where ?? null,
         },
       });
     }

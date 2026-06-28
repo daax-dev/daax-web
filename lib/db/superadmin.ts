@@ -29,6 +29,17 @@ import type { AuthUser } from "@/lib/auth-types";
  * FAIL-CLOSED: when the allow-list is empty or unset, NO ONE is a super-admin.
  * The console is therefore disabled by default and must be explicitly enabled
  * per-operator.
+ *
+ * DEFENSE-IN-DEPTH (trust boundary): this gate is only as strong as the F1a
+ * proxy-secret boundary. When `DAAX_PROXY_SECRET` is unset and auth is non-strict,
+ * `lib/auth.ts` trusts forwarded headers verbatim, so any client that can reach
+ * the app directly could send `X-Forwarded-Email: <listed-admin>` and obtain full
+ * DB read + RBAC write. Because the console's blast radius is the entire database,
+ * `requireSuperAdmin` additionally REFUSES a forwarded identity unless the trust
+ * boundary is provably enforced (`DAAX_PROXY_SECRET` set) — only the local
+ * operator (no forward-auth header) is exempt. Enabling
+ * `DAAX_DB_CONSOLE_SUPERADMINS` for proxied access therefore REQUIRES
+ * `DAAX_PROXY_SECRET` (and, normally, `DAAX_REQUIRE_AUTH=1`).
  */
 const SUPERADMINS_ENV = "DAAX_DB_CONSOLE_SUPERADMINS";
 
@@ -43,6 +54,15 @@ const LOCAL_OPERATOR_USERNAME = "local";
 const USER_HEADER = (
   process.env.DAAX_AUTH_USER_HEADER || "x-forwarded-user"
 ).toLowerCase();
+
+/**
+ * Whether the F1a proxy-secret trust boundary is configured (mirrors the
+ * module-private check in lib/auth.ts). When true, forwarded identity is only
+ * honored if it carried the shared secret injected by the trusted proxy.
+ */
+function proxySecretConfigured(): boolean {
+  return !!process.env.DAAX_PROXY_SECRET;
+}
 
 /** Parse the allow-list env into a set of lower-cased identifiers (empty if unset). */
 export function superAdminAllowlist(
@@ -112,6 +132,23 @@ export async function requireSuperAdmin(
   user: AuthUser,
 ): Promise<NextResponse | null> {
   const localOperator = await isLocalOperatorRequest();
+
+  // Defense-in-depth: refuse a forwarded identity unless the proxy-secret trust
+  // boundary is provably enforced. Otherwise a directly-reachable client could
+  // forge X-Forwarded-Email and obtain full DB + RBAC access. Fail closed.
+  if (!proxySecretConfigured() && !localOperator) {
+    return NextResponse.json(
+      {
+        error: "Forbidden",
+        message:
+          "Admin DB console is disabled: the forward-auth trust boundary is not " +
+          "enforced. Set DAAX_PROXY_SECRET (recommended with DAAX_REQUIRE_AUTH=1) " +
+          "so forwarded identity is verified, or run host-dev as the local operator.",
+      },
+      { status: 403 },
+    );
+  }
+
   if (isSuperAdmin(user, localOperator)) return null;
   return NextResponse.json(
     {
