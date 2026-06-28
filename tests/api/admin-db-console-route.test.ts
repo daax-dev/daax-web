@@ -14,6 +14,13 @@ import type { NextRequest } from "next/server";
 const mockRequireAuth = vi.fn();
 vi.mock("@/lib/auth", () => ({ requireAuth: () => mockRequireAuth() }));
 
+// requireSuperAdmin reads next/headers for the local-operator provenance check.
+// These tests authorize by email, so the header value is irrelevant — just make
+// headers() resolve. (Default: no forward-auth header → local-operator request.)
+vi.mock("next/headers", () => ({
+  headers: vi.fn(async () => ({ get: () => null })),
+}));
+
 // --- mock the console data layer --------------------------------------------
 const mockListTables = vi.fn();
 const mockListRows = vi.fn();

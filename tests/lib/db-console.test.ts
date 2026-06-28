@@ -29,6 +29,13 @@ vi.mock("@/lib/db/pg", () => ({
   getClient: () => getClientMock(),
 }));
 
+// Mock next/headers so requireSuperAdmin's provenance check is controllable.
+// Default: no forward-auth header present (→ local-operator request).
+const mockHeaderGet = vi.fn<(name: string) => string | null>(() => null);
+vi.mock("next/headers", () => ({
+  headers: vi.fn(async () => ({ get: (n: string) => mockHeaderGet(n) })),
+}));
+
 import {
   validateTable,
   getColumns,
@@ -117,6 +124,7 @@ beforeEach(() => {
   delete process.env.DAAX_DB_CONSOLE_WRITES;
   delete process.env.DAAX_DB_CONSOLE_AUDITED_TABLES;
   installFakeDb();
+  mockHeaderGet.mockReturnValue(null); // default: local-operator request
 });
 
 // ---------------------------------------------------------------------------
@@ -404,24 +412,30 @@ function user(overrides: Partial<AuthUser> = {}): AuthUser {
   };
 }
 
-describe("super-admin gate", () => {
+describe("super-admin gate (pure isSuperAdmin)", () => {
+  // 2nd arg = provenance (isLocalOperatorRequest result).
   it("default-denies when the allow-list is empty (fail-closed)", () => {
-    expect(isSuperAdmin(user(), env({}))).toBe(false);
+    expect(isSuperAdmin(user(), true, env({}))).toBe(false);
     expect(superAdminAllowlist(env({})).size).toBe(0);
   });
 
-  it("grants the email-less local operator by username (case-insensitive)", () => {
-    // Only the synthetic local operator (no email) is matched by username.
+  it("grants the genuine local operator by sentinel username (case-insensitive)", () => {
     const localOp = user({ username: "local", email: null });
+    // provenance = true (no forward-auth header)
     expect(
-      isSuperAdmin(localOp, env({ DAAX_DB_CONSOLE_SUPERADMINS: "LOCAL" })),
+      isSuperAdmin(
+        localOp,
+        true,
+        env({ DAAX_DB_CONSOLE_SUPERADMINS: "LOCAL" }),
+      ),
     ).toBe(true);
   });
 
-  it("grants when email matches (case-insensitive)", () => {
+  it("grants when email matches (case-insensitive), regardless of provenance", () => {
     expect(
       isSuperAdmin(
         user(),
+        false,
         env({
           DAAX_DB_CONSOLE_SUPERADMINS: "alice@example.com, BOB@example.com",
         }),
@@ -430,20 +444,31 @@ describe("super-admin gate", () => {
   });
 
   it("does NOT match a forwarded user by username (display-name is spoofable)", () => {
-    // user() has an email, so the spoofable username is never consulted.
     expect(
-      isSuperAdmin(user(), env({ DAAX_DB_CONSOLE_SUPERADMINS: "bob" })),
+      isSuperAdmin(user(), false, env({ DAAX_DB_CONSOLE_SUPERADMINS: "bob" })),
     ).toBe(false);
   });
 
   it("fails closed for an email-less forwarded user (non-'local' username)", () => {
-    // A forwarded identity with no X-Forwarded-Email must NOT be authorized by
-    // its spoofable display username, even if that username is allow-listed.
     const emaillessForwarded = user({ username: "admin", email: null });
     expect(
       isSuperAdmin(
         emaillessForwarded,
+        false,
         env({ DAAX_DB_CONSOLE_SUPERADMINS: "admin" }),
+      ),
+    ).toBe(false);
+  });
+
+  it("fails closed for a forwarded 'local' username when provenance is false", () => {
+    // A forwarded identity whose display name is "local" and no email — even if
+    // "local" is allow-listed — must NOT be treated as the local operator.
+    const fakeLocal = user({ username: "local", email: null });
+    expect(
+      isSuperAdmin(
+        fakeLocal,
+        false,
+        env({ DAAX_DB_CONSOLE_SUPERADMINS: "local" }),
       ),
     ).toBe(false);
   });
@@ -452,6 +477,7 @@ describe("super-admin gate", () => {
     expect(
       isSuperAdmin(
         user(),
+        false,
         env({ DAAX_DB_CONSOLE_SUPERADMINS: "alice@example.com" }),
       ),
     ).toBe(false);
@@ -461,22 +487,39 @@ describe("super-admin gate", () => {
     expect(
       isSuperAdmin(
         user({ authenticated: false }),
+        true,
         env({ DAAX_DB_CONSOLE_SUPERADMINS: "bob@example.com" }),
       ),
     ).toBe(false);
   });
+});
 
-  it("requireSuperAdmin returns a 403 response for a non-super-admin", () => {
-    const prev = process.env.DAAX_DB_CONSOLE_SUPERADMINS;
+describe("super-admin gate (requireSuperAdmin, provenance via headers)", () => {
+  it("returns a 403 response for a non-super-admin", async () => {
     delete process.env.DAAX_DB_CONSOLE_SUPERADMINS;
-    const res = requireSuperAdmin(user());
+    const res = await requireSuperAdmin(user());
     expect(res?.status).toBe(403);
-    if (prev !== undefined) process.env.DAAX_DB_CONSOLE_SUPERADMINS = prev;
   });
 
-  it("requireSuperAdmin returns null (allows) for a super-admin", () => {
+  it("allows (null) a super-admin matched by email", async () => {
     process.env.DAAX_DB_CONSOLE_SUPERADMINS = "bob@example.com";
-    expect(requireSuperAdmin(user())).toBeNull();
+    mockHeaderGet.mockReturnValue("uuid-123"); // forwarded identity present
+    expect(await requireSuperAdmin(user())).toBeNull();
+    delete process.env.DAAX_DB_CONSOLE_SUPERADMINS;
+  });
+
+  it("allows the local operator only when no forward-auth header is present", async () => {
+    process.env.DAAX_DB_CONSOLE_SUPERADMINS = "local";
+    const localOp = user({ username: "local", email: null });
+
+    mockHeaderGet.mockReturnValue(null); // local-operator request
+    expect(await requireSuperAdmin(localOp)).toBeNull();
+
+    // Same shape but a forward-auth header is present → forwarded → 403.
+    mockHeaderGet.mockReturnValue("uuid-123");
+    const denied = await requireSuperAdmin(localOp);
+    expect(denied?.status).toBe(403);
+
     delete process.env.DAAX_DB_CONSOLE_SUPERADMINS;
   });
 });

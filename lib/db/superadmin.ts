@@ -1,4 +1,5 @@
 import "server-only";
+import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 
 import type { AuthUser } from "@/lib/auth-types";
@@ -16,10 +17,14 @@ import type { AuthUser } from "@/lib/auth-types";
  * email addresses (case-insensitive). Matching is on a STABLE identifier only:
  * the forwarded email (`X-Forwarded-Email`). `AuthUser.username` is
  * display-name-preferred (`displayName || username`, see lib/auth.ts) and thus
- * spoofable, so it is NOT matched for forwarded users — allow-list real users by
- * their email. The synthetic local operator (host-dev bypass) has no email, so
- * for it alone the username ("local") is matched; add `local` to the allow-list
- * to use the console in host-dev.
+ * spoofable, so it is NEVER used to authorize a forwarded identity.
+ *
+ * The host-dev local operator (the absent-forward-auth-header bypass in
+ * lib/auth.ts) has no email; it alone may be matched by the sentinel username
+ * `local`, and ONLY when the request truly carries no forward-auth identity
+ * header (provenance check — see `isLocalOperatorRequest`). A forwarded identity
+ * that merely lacks an email, or whose display name is "local", fails closed.
+ * Add `local` to the allow-list to use the console in host-dev.
  *
  * FAIL-CLOSED: when the allow-list is empty or unset, NO ONE is a super-admin.
  * The console is therefore disabled by default and must be explicitly enabled
@@ -30,9 +35,14 @@ const SUPERADMINS_ENV = "DAAX_DB_CONSOLE_SUPERADMINS";
 /**
  * The synthetic local-operator username (mirrors LOCAL_OPERATOR in lib/auth.ts,
  * which is module-private there). This is the ONLY username honored without an
- * email — it identifies the host-dev bypass principal, not a forwarded identity.
+ * email, and only for a provenance-verified local operator.
  */
 const LOCAL_OPERATOR_USERNAME = "local";
+
+/** Forward-auth user header (must match lib/auth.ts USER_HEADER resolution). */
+const USER_HEADER = (
+  process.env.DAAX_AUTH_USER_HEADER || "x-forwarded-user"
+).toLowerCase();
 
 /** Parse the allow-list env into a set of lower-cased identifiers (empty if unset). */
 export function superAdminAllowlist(
@@ -48,26 +58,40 @@ export function superAdminAllowlist(
   );
 }
 
-/** True only when the allow-list is configured AND the user matches it. */
+/**
+ * Provenance check: true only when the request carries NO forward-auth identity
+ * header — the exact condition under which lib/auth.ts returns the synthetic
+ * LOCAL_OPERATOR. A present header (even one a forwarded user controls) makes
+ * this false, so a forwarded identity can never be treated as the local operator.
+ */
+export async function isLocalOperatorRequest(): Promise<boolean> {
+  const h = await headers();
+  return h.get(USER_HEADER) === null;
+}
+
+/**
+ * Pure authorization decision. `isLocalOperator` MUST be the provenance result
+ * from `isLocalOperatorRequest()` (false for any forwarded identity). Returns
+ * true only when the allow-list is configured AND the user matches it.
+ */
 export function isSuperAdmin(
   user: AuthUser,
+  isLocalOperator: boolean,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   if (!user.authenticated) return false;
   const allow = superAdminAllowlist(env);
   if (allow.size === 0) return false; // fail closed
 
-  // Forwarded users are matched ONLY on their stable email (X-Forwarded-Email);
-  // AuthUser.username is display-name-preferred and spoofable, so it is never
-  // used to authorize a forwarded identity.
+  // Forwarded users are matched ONLY on their stable email (X-Forwarded-Email).
   const email = user.email?.trim().toLowerCase();
   if (email) return allow.has(email);
 
-  // No email → the only principal honored is the synthetic local operator
-  // (host-dev bypass), identified by its sentinel username. Any other email-less
-  // authenticated identity (e.g. a forwarded user with no X-Forwarded-Email)
-  // fails closed, so a spoofable display username can never grant access.
-  if (user.username === LOCAL_OPERATOR_USERNAME) {
+  // No email → the only principal honored is the genuine local operator:
+  // provenance-verified (no forward-auth header) AND carrying the sentinel
+  // username. Any forwarded identity without an email fails closed, so a
+  // spoofable display username can never grant access.
+  if (isLocalOperator && user.username === LOCAL_OPERATOR_USERNAME) {
     return allow.has(LOCAL_OPERATOR_USERNAME);
   }
   return false;
@@ -81,11 +105,14 @@ export function isSuperAdmin(
  * @example
  * const auth = await requireAuth();
  * if (!auth.authenticated) return auth.response;
- * const denied = requireSuperAdmin(auth.user);
+ * const denied = await requireSuperAdmin(auth.user);
  * if (denied) return denied;
  */
-export function requireSuperAdmin(user: AuthUser): NextResponse | null {
-  if (isSuperAdmin(user)) return null;
+export async function requireSuperAdmin(
+  user: AuthUser,
+): Promise<NextResponse | null> {
+  const localOperator = await isLocalOperatorRequest();
+  if (isSuperAdmin(user, localOperator)) return null;
   return NextResponse.json(
     {
       error: "Forbidden",

@@ -28,7 +28,7 @@ interface RouteContext {
 export async function GET(request: NextRequest, ctx: RouteContext) {
   const auth = await requireAuth();
   if (!auth.authenticated) return auth.response;
-  const denied = requireSuperAdmin(auth.user);
+  const denied = await requireSuperAdmin(auth.user);
   if (denied) return denied;
 
   try {
@@ -49,7 +49,7 @@ const VALID_ACTIONS: WriteAction[] = ["insert", "update", "delete"];
 export async function POST(request: NextRequest, ctx: RouteContext) {
   const auth = await requireAuth();
   if (!auth.authenticated) return auth.response;
-  const denied = requireSuperAdmin(auth.user);
+  const denied = await requireSuperAdmin(auth.user);
   if (denied) return denied;
 
   try {

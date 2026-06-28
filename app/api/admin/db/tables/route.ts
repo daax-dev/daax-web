@@ -16,7 +16,7 @@ import { consoleErrorResponse } from "@/lib/db/console-api";
 export async function GET() {
   const auth = await requireAuth();
   if (!auth.authenticated) return auth.response;
-  const denied = requireSuperAdmin(auth.user);
+  const denied = await requireSuperAdmin(auth.user);
   if (denied) return denied;
 
   try {
