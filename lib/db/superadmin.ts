@@ -13,13 +13,17 @@ import type { AuthUser } from "@/lib/auth-types";
  * self-grantable role"). This mirrors reference-platform's `requireSuperAdmin`.
  *
  * The allow-list is `DAAX_DB_CONSOLE_SUPERADMINS`: a comma-separated list of
- * usernames and/or email addresses. Matching is case-insensitive against the
- * authenticated user's `username` and `email`.
+ * email addresses (case-insensitive). Matching is on a STABLE identifier only:
+ * the forwarded email (`X-Forwarded-Email`). `AuthUser.username` is
+ * display-name-preferred (`displayName || username`, see lib/auth.ts) and thus
+ * spoofable, so it is NOT matched for forwarded users — allow-list real users by
+ * their email. The synthetic local operator (host-dev bypass) has no email, so
+ * for it alone the username ("local") is matched; add `local` to the allow-list
+ * to use the console in host-dev.
  *
  * FAIL-CLOSED: when the allow-list is empty or unset, NO ONE is a super-admin.
  * The console is therefore disabled by default and must be explicitly enabled
- * per-operator. In host-dev (the LOCAL_OPERATOR bypass, username "local"), add
- * `local` to the allow-list to use the console locally.
+ * per-operator.
  */
 const SUPERADMINS_ENV = "DAAX_DB_CONSOLE_SUPERADMINS";
 
@@ -45,10 +49,15 @@ export function isSuperAdmin(
   if (!user.authenticated) return false;
   const allow = superAdminAllowlist(env);
   if (allow.size === 0) return false; // fail closed
-  const candidates = [user.username, user.email]
-    .filter((v): v is string => !!v && v.trim().length > 0)
-    .map((v) => v.trim().toLowerCase());
-  return candidates.some((c) => allow.has(c));
+  // Match on a STABLE key: the email when present (forwarded users), otherwise
+  // the username (only the email-less synthetic local operator reaches this).
+  // username is never matched for a user that has an email, since it is
+  // display-name-preferred and spoofable.
+  const email = user.email?.trim();
+  const key = email
+    ? email.toLowerCase()
+    : (user.username?.trim().toLowerCase() ?? "");
+  return key.length > 0 && allow.has(key);
 }
 
 /**

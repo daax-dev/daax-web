@@ -184,8 +184,10 @@ export async function forceAuditRow(
 
   const allCols = [...boundCols, ...exprCols].map((c) => escapeIdentifier(c));
   const placeholders = [...boundVals.map((_, i) => `$${i + 1}`), ...exprSql];
+  // Schema-qualify the audit target too, so a hostile search_path cannot divert
+  // the forced audit row to a same-named table in another schema.
   await client.query(
-    `INSERT INTO auth_audit (${allCols.join(", ")}) VALUES (${placeholders.join(", ")})`,
+    `INSERT INTO "public"."auth_audit" (${allCols.join(", ")}) VALUES (${placeholders.join(", ")})`,
     boundVals,
   );
 }

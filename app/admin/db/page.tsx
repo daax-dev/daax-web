@@ -131,7 +131,8 @@ export default function AdminDbConsolePage() {
             </CardTitle>
             <CardDescription>
               The admin database console requires super-admin privileges. Add
-              your username or email to the{" "}
+              your email (or <code className="text-foreground">local</code> in
+              host-dev) to the{" "}
               <code className="text-foreground">
                 DAAX_DB_CONSOLE_SUPERADMINS
               </code>{" "}

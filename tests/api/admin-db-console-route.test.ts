@@ -88,7 +88,7 @@ describe("GET /api/admin/db/tables", () => {
 
   it("200 with tables for a super-admin", async () => {
     setAuthenticated();
-    process.env.DAAX_DB_CONSOLE_SUPERADMINS = "bob";
+    process.env.DAAX_DB_CONSOLE_SUPERADMINS = "bob@example.com";
     mockListTables.mockResolvedValue([{ name: "releases", estimatedRows: 3 }]);
     const res = await listTablesGET();
     expect(res.status).toBe(200);
@@ -168,7 +168,7 @@ describe("POST /api/admin/db/tables/[table]", () => {
 
   it("400 on an invalid action", async () => {
     setAuthenticated();
-    process.env.DAAX_DB_CONSOLE_SUPERADMINS = "bob";
+    process.env.DAAX_DB_CONSOLE_SUPERADMINS = "bob@example.com";
     const res = await tablePOST(
       req("http://localhost/api/admin/db/tables/releases", {
         method: "POST",
@@ -182,7 +182,7 @@ describe("POST /api/admin/db/tables/[table]", () => {
 
   it("delegates a valid write to executeWrite with the actor", async () => {
     setAuthenticated();
-    process.env.DAAX_DB_CONSOLE_SUPERADMINS = "bob";
+    process.env.DAAX_DB_CONSOLE_SUPERADMINS = "bob@example.com";
     mockExecuteWrite.mockResolvedValue({
       table: "rbac_roles",
       action: "update",

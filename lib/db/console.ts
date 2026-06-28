@@ -31,6 +31,16 @@ export { ConsoleError };
 /** node-pg-migrate's bookkeeping table — never an inspection target. */
 const MIGRATION_TABLE = "pgmigrations";
 
+/**
+ * Schema-qualify a validated table name as `"public"."name"`. Identifiers are
+ * validated to exist in the `public` schema; qualifying every statement to
+ * `public` prevents a hostile `search_path` from redirecting a read/write to a
+ * same-named table in another schema (defense-in-depth).
+ */
+function qualify(name: string): string {
+  return `"public".${escapeIdentifier(name)}`;
+}
+
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 
@@ -38,11 +48,17 @@ const WRITES_ENV = "DAAX_DB_CONSOLE_WRITES";
 const AUDITED_TABLES_ENV = "DAAX_DB_CONSOLE_AUDITED_TABLES";
 
 /**
- * Tables whose raw writes MUST be audited (D4). Defaults to the RBAC tables F5
- * (#101) will introduce; overridable via DAAX_DB_CONSOLE_AUDITED_TABLES so the
- * set can track F5's final naming without a code change.
+ * Tables whose raw writes MUST be audited (D4). The RBAC tables F5 (#101) will
+ * introduce are ALWAYS audited and cannot be removed by configuration;
+ * DAAX_DB_CONSOLE_AUDITED_TABLES can only ADD to this set (e.g. to track F5's
+ * final naming, or audit additional sensitive tables) — never shrink it, so a
+ * misconfiguration can never silence RBAC-table auditing.
  */
-const DEFAULT_AUDITED_TABLES = ["rbac_users", "rbac_roles", "rbac_user_roles"];
+const MANDATORY_AUDITED_TABLES = [
+  "rbac_users",
+  "rbac_roles",
+  "rbac_user_roles",
+];
 
 export interface ColumnMeta {
   name: string;
@@ -91,16 +107,21 @@ export function writesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env[WRITES_ENV] === "1";
 }
 
-/** The set of tables whose writes must be audited (lower-cased). */
+/**
+ * The set of tables whose writes must be audited (lower-cased). Always includes
+ * the mandatory RBAC set; DAAX_DB_CONSOLE_AUDITED_TABLES is ADDITIVE only.
+ */
 export function auditedTables(
   env: NodeJS.ProcessEnv = process.env,
 ): Set<string> {
+  const set = new Set(MANDATORY_AUDITED_TABLES);
   const raw = env[AUDITED_TABLES_ENV];
-  const list =
-    raw && raw.trim().length > 0
-      ? raw.split(",").map((s) => s.trim().toLowerCase())
-      : DEFAULT_AUDITED_TABLES;
-  return new Set(list.filter(Boolean));
+  if (raw && raw.trim().length > 0) {
+    for (const t of raw.split(",").map((s) => s.trim().toLowerCase())) {
+      if (t) set.add(t);
+    }
+  }
+  return set;
 }
 
 /**
@@ -229,7 +250,7 @@ export async function listRows(
   const canonical = await validateTable(table);
   const columns = await getColumns(canonical);
   const { limit, offset } = clampPaging(paging.limit, paging.offset);
-  const quoted = escapeIdentifier(canonical);
+  const quoted = qualify(canonical);
 
   const totalRes = await query<{ count: string }>(
     `SELECT count(*)::bigint AS count FROM ${quoted}`,
@@ -314,7 +335,7 @@ export async function executeWrite(
 
   const canonical = await validateTable(op.table);
   const columns = await getColumns(canonical);
-  const quotedTable = escapeIdentifier(canonical);
+  const quotedTable = qualify(canonical);
   const isAudited = auditedTables().has(canonical.toLowerCase());
 
   // Build the write SQL + params (identifiers validated+quoted, values bound).

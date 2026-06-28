@@ -173,7 +173,7 @@ describe("listRows (read-only)", () => {
       String(c[0]).startsWith("SELECT * FROM"),
     );
     expect(sel).toBeDefined();
-    expect(String(sel![0])).toContain('SELECT * FROM "releases"');
+    expect(String(sel![0])).toContain('SELECT * FROM "public"."releases"');
     expect(String(sel![0])).toContain("LIMIT $1 OFFSET $2");
     expect(sel![1]).toEqual([10, 20]);
   });
@@ -221,13 +221,15 @@ describe("write configuration", () => {
     expect(writesEnabled(env({ DAAX_DB_CONSOLE_WRITES: "1" }))).toBe(true);
   });
 
-  it("audited tables default to the RBAC set, overridable via env", () => {
+  it("audited tables always include the RBAC set; env is additive only", () => {
     expect(auditedTables(env({})).has("rbac_roles")).toBe(true);
     const custom = auditedTables(
       env({ DAAX_DB_CONSOLE_AUDITED_TABLES: "foo, bar" }),
     );
     expect(custom.has("foo")).toBe(true);
-    expect(custom.has("rbac_roles")).toBe(false);
+    // The mandatory RBAC set cannot be removed by configuration.
+    expect(custom.has("rbac_roles")).toBe(true);
+    expect(custom.has("rbac_users")).toBe(true);
   });
 });
 
@@ -295,13 +297,13 @@ describe("executeWrite", () => {
 
     const write = calls.find((c) => c.sql.startsWith("UPDATE"));
     expect(write).toBeDefined();
-    expect(write!.sql).toContain('UPDATE "releases" SET "name" = $1::"text"');
+    expect(write!.sql).toContain(
+      'UPDATE "public"."releases" SET "name" = $1::"text"',
+    );
     expect(write!.sql).toContain('WHERE "id" = $2::"text"');
     expect(write!.params).toEqual(["renamed", "r1"]);
     // No audit row for a non-audited table.
-    expect(calls.some((c) => c.sql.includes("INSERT INTO auth_audit"))).toBe(
-      false,
-    );
+    expect(calls.some((c) => c.sql.includes("auth_audit"))).toBe(false);
   });
 
   it("refuses an UPDATE/DELETE without a WHERE (no mass mutation)", async () => {
@@ -355,16 +357,16 @@ describe("executeWrite", () => {
     );
     expect(res.audited).toBe(true);
 
-    const audit = calls.find((c) => c.sql.includes("INSERT INTO auth_audit"));
+    const audit = calls.find((c) =>
+      c.sql.includes('INSERT INTO "public"."auth_audit"'),
+    );
     expect(audit).toBeDefined();
     expect(audit!.params).toContain("alice@example.com");
     // BEGIN before the audit + write, COMMIT after — and the audit precedes the write.
     const sqls = calls.map((c) => c.sql);
     expect(sqls[0]).toBe("BEGIN");
     expect(sqls).toContain("COMMIT");
-    const auditIdx = sqls.findIndex((s) =>
-      s.includes("INSERT INTO auth_audit"),
-    );
+    const auditIdx = sqls.findIndex((s) => s.includes("auth_audit"));
     const writeIdx = sqls.findIndex((s) => s.startsWith("UPDATE"));
     expect(auditIdx).toBeLessThan(writeIdx);
   });
@@ -408,21 +410,30 @@ describe("super-admin gate", () => {
     expect(superAdminAllowlist(env({})).size).toBe(0);
   });
 
-  it("grants when username matches (case-insensitive)", () => {
+  it("grants the email-less local operator by username (case-insensitive)", () => {
+    // Only the synthetic local operator (no email) is matched by username.
+    const localOp = user({ username: "local", email: null });
     expect(
-      isSuperAdmin(user(), env({ DAAX_DB_CONSOLE_SUPERADMINS: "BOB" })),
+      isSuperAdmin(localOp, env({ DAAX_DB_CONSOLE_SUPERADMINS: "LOCAL" })),
     ).toBe(true);
   });
 
-  it("grants when email matches", () => {
+  it("grants when email matches (case-insensitive)", () => {
     expect(
       isSuperAdmin(
         user(),
         env({
-          DAAX_DB_CONSOLE_SUPERADMINS: "alice@example.com, bob@example.com",
+          DAAX_DB_CONSOLE_SUPERADMINS: "alice@example.com, BOB@example.com",
         }),
       ),
     ).toBe(true);
+  });
+
+  it("does NOT match a forwarded user by username (display-name is spoofable)", () => {
+    // user() has an email, so the spoofable username is never consulted.
+    expect(
+      isSuperAdmin(user(), env({ DAAX_DB_CONSOLE_SUPERADMINS: "bob" })),
+    ).toBe(false);
   });
 
   it("denies a non-matching user", () => {
@@ -438,7 +449,7 @@ describe("super-admin gate", () => {
     expect(
       isSuperAdmin(
         user({ authenticated: false }),
-        env({ DAAX_DB_CONSOLE_SUPERADMINS: "bob" }),
+        env({ DAAX_DB_CONSOLE_SUPERADMINS: "bob@example.com" }),
       ),
     ).toBe(false);
   });
@@ -452,7 +463,7 @@ describe("super-admin gate", () => {
   });
 
   it("requireSuperAdmin returns null (allows) for a super-admin", () => {
-    process.env.DAAX_DB_CONSOLE_SUPERADMINS = "bob";
+    process.env.DAAX_DB_CONSOLE_SUPERADMINS = "bob@example.com";
     expect(requireSuperAdmin(user())).toBeNull();
     delete process.env.DAAX_DB_CONSOLE_SUPERADMINS;
   });
