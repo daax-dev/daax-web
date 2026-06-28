@@ -27,6 +27,13 @@ import type { AuthUser } from "@/lib/auth-types";
  */
 const SUPERADMINS_ENV = "DAAX_DB_CONSOLE_SUPERADMINS";
 
+/**
+ * The synthetic local-operator username (mirrors LOCAL_OPERATOR in lib/auth.ts,
+ * which is module-private there). This is the ONLY username honored without an
+ * email — it identifies the host-dev bypass principal, not a forwarded identity.
+ */
+const LOCAL_OPERATOR_USERNAME = "local";
+
 /** Parse the allow-list env into a set of lower-cased identifiers (empty if unset). */
 export function superAdminAllowlist(
   env: NodeJS.ProcessEnv = process.env,
@@ -49,15 +56,21 @@ export function isSuperAdmin(
   if (!user.authenticated) return false;
   const allow = superAdminAllowlist(env);
   if (allow.size === 0) return false; // fail closed
-  // Match on a STABLE key: the email when present (forwarded users), otherwise
-  // the username (only the email-less synthetic local operator reaches this).
-  // username is never matched for a user that has an email, since it is
-  // display-name-preferred and spoofable.
-  const email = user.email?.trim();
-  const key = email
-    ? email.toLowerCase()
-    : (user.username?.trim().toLowerCase() ?? "");
-  return key.length > 0 && allow.has(key);
+
+  // Forwarded users are matched ONLY on their stable email (X-Forwarded-Email);
+  // AuthUser.username is display-name-preferred and spoofable, so it is never
+  // used to authorize a forwarded identity.
+  const email = user.email?.trim().toLowerCase();
+  if (email) return allow.has(email);
+
+  // No email → the only principal honored is the synthetic local operator
+  // (host-dev bypass), identified by its sentinel username. Any other email-less
+  // authenticated identity (e.g. a forwarded user with no X-Forwarded-Email)
+  // fails closed, so a spoofable display username can never grant access.
+  if (user.username === LOCAL_OPERATOR_USERNAME) {
+    return allow.has(LOCAL_OPERATOR_USERNAME);
+  }
+  return false;
 }
 
 /**

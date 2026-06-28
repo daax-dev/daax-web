@@ -436,6 +436,18 @@ describe("super-admin gate", () => {
     ).toBe(false);
   });
 
+  it("fails closed for an email-less forwarded user (non-'local' username)", () => {
+    // A forwarded identity with no X-Forwarded-Email must NOT be authorized by
+    // its spoofable display username, even if that username is allow-listed.
+    const emaillessForwarded = user({ username: "admin", email: null });
+    expect(
+      isSuperAdmin(
+        emaillessForwarded,
+        env({ DAAX_DB_CONSOLE_SUPERADMINS: "admin" }),
+      ),
+    ).toBe(false);
+  });
+
   it("denies a non-matching user", () => {
     expect(
       isSuperAdmin(
