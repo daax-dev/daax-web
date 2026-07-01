@@ -95,17 +95,30 @@ RUN bun run build
 
 # Generate the dependency SBOM (settings > Build panel) at image build so
 # container mode ships a real bill of materials, not just local dev. syft is
-# installed pinned. This step is REQUIRED: a failed syft install or scan fails
-# the image build so a release can never silently ship without an SBOM. Set
-# DAAX_SKIP_SBOM=1 to opt out (e.g. an air-gapped build) and accept the panel's
-# graceful "no SBOM in this build" state.
+# installed from a pinned release artifact whose checksum is verified (no piping
+# a remote script into a shell). This step is REQUIRED: a failed download,
+# checksum mismatch, or scan fails the image build so a release can never
+# silently ship without an SBOM. Set DAAX_SKIP_SBOM=1 to opt out (e.g. an
+# air-gapped build) and accept the panel's graceful "no SBOM in this build".
 ARG DAAX_SKIP_SBOM=
+ARG SYFT_VERSION=1.45.1
 RUN if [ -n "$DAAX_SKIP_SBOM" ]; then \
       echo "DAAX_SKIP_SBOM set — skipping SBOM generation"; mkdir -p /app/sbom; \
     else \
-      curl -fsSL https://raw.githubusercontent.com/anchore/syft/v1.45.1/install.sh \
-        | sh -s -- -b /usr/local/bin v1.45.1 \
-      && bun run sbom:generate; \
+      set -eu; \
+      arch="$(dpkg --print-architecture)"; \
+      base="https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}"; \
+      tarball="syft_${SYFT_VERSION}_linux_${arch}.tar.gz"; \
+      cd /tmp; \
+      curl -fsSL -o "$tarball" "${base}/${tarball}"; \
+      curl -fsSL -o syft_checksums.txt "${base}/syft_${SYFT_VERSION}_checksums.txt"; \
+      grep " ${tarball}\$" syft_checksums.txt | sha256sum -c -; \
+      tar -xzf "$tarball" syft; \
+      install -m 0755 syft /usr/local/bin/syft; \
+      rm -f "$tarball" syft_checksums.txt syft; \
+      cd /app; \
+      syft version; \
+      bun run sbom:generate; \
     fi
 
 # -----------------------------------------------------------

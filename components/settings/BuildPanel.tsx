@@ -222,8 +222,10 @@ function SbomSection({ sboms }: { sboms: SbomRef[] }) {
     if (!open) return;
     // Cache hit: show it and clear any error/loading left over from a prior,
     // possibly still-in-flight, selection (the old effect's finally won't run
-    // once it's cancelled, so clear the spinner here).
-    if (cache[key]) {
+    // once it's cancelled, so clear the spinner here). Depend on the derived
+    // `sbom` for THIS key — not the whole `cache` object — so a write for a
+    // different key doesn't retrigger this effect and start a duplicate fetch.
+    if (sbom) {
       setErr("");
       setLoading(false);
       return;
@@ -248,7 +250,7 @@ function SbomSection({ sboms }: { sboms: SbomRef[] }) {
     return () => {
       cancelled = true;
     };
-  }, [open, key, sel.component, sel.format, cache]);
+  }, [open, key, sel.component, sel.format, sbom]);
 
   const rows = useMemo(() => (sbom ? rowsFromSbom(sbom) : []), [sbom]);
   const rawJson = useMemo(

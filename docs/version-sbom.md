@@ -105,13 +105,14 @@ reads nested lockfiles that carry no license data), so the script scans
 `package.json` — yielding real versions _and_ licenses. The `sbom/` directory is
 git-ignored (generated).
 
-**Container mode.** The Dockerfile installs syft (pinned) in the builder stage
-and runs `bun run sbom:generate` after the app build, then copies `sbom/` into
-the runtime image — so container deployments ship the same dependency SBOM, not
-just local dev. This step is **required**: a syft install/scan failure fails the
-image build so a release can't silently ship without an SBOM. Set
-`DAAX_SKIP_SBOM=1` to opt out (e.g. an air-gapped build) and accept the panel's
-graceful empty state.
+**Container mode.** The Dockerfile installs syft in the builder stage from a
+pinned release artifact whose sha256 is verified against the published checksums
+(no piping a remote script into a shell), runs `bun run sbom:generate` after the
+app build, then copies `sbom/` into the runtime image — so container deployments
+ship the same dependency SBOM, not just local dev. This step is **required**: a
+failed download, checksum mismatch, or scan fails the image build so a release
+can't silently ship without an SBOM. Set `DAAX_SKIP_SBOM=1` to opt out (e.g. an
+air-gapped build) and accept the panel's graceful empty state.
 
 ---
 
