@@ -23,14 +23,24 @@ import type { SbomFormatId, SbomComponentId, SbomRef } from "./sbom-format";
 /** Default upper bound (bytes) on an SBOM file the route will read into memory. */
 export const SBOM_MAX_BYTES_DEFAULT = 32 * 1024 * 1024;
 
+/** Parse a positive-integer env var, falling back to `fallback` for
+ * unset/empty/zero/negative/NaN values. */
+export function positiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 /**
  * Upper bound (bytes) on an SBOM file the route will read into memory. A real
  * dependency SBOM is a few MB; this caps a corrupt/oversized file from causing a
- * large synchronous read+parse per request. Override via DAAX_SBOM_MAX_BYTES.
- * Read per-call so operators (and tests) can change it without a restart.
+ * large synchronous read+parse per request. Override via DAAX_SBOM_MAX_BYTES
+ * (a positive integer; 0/negative/invalid are ignored). Read per-call so
+ * operators (and tests) can change it without a restart.
  */
 export function sbomMaxBytes(): number {
-  return Number(process.env.DAAX_SBOM_MAX_BYTES) || SBOM_MAX_BYTES_DEFAULT;
+  return positiveIntEnv("DAAX_SBOM_MAX_BYTES", SBOM_MAX_BYTES_DEFAULT);
 }
 
 /** daax's deployment surface — the analogue of the reference's Azure card. */

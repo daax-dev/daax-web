@@ -60,8 +60,8 @@ interface BuildInfo {
 function InfoTile({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col rounded-md border p-3">
-      <dt className="text-xs uppercase text-muted-foreground">{label}</dt>
-      <dd className="break-all font-mono text-sm">{value}</dd>
+      <span className="text-xs uppercase text-muted-foreground">{label}</span>
+      <span className="break-all font-mono text-sm">{value}</span>
     </div>
   );
 }
@@ -142,28 +142,28 @@ export function BuildPanel() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
-        <dl
+        <div
           className="grid grid-cols-1 gap-2 sm:grid-cols-2"
           data-testid="build-version"
         >
           {versionRows.map(([k, v]) => (
             <InfoTile key={k} label={k} value={v} />
           ))}
-        </dl>
+        </div>
 
         <div className="space-y-2">
           <h3 className="flex items-center gap-2 text-sm font-semibold">
             <Cloud className="h-4 w-4 text-muted-foreground" /> Deployment
           </h3>
           {deployRows.length > 0 ? (
-            <dl
+            <div
               className="grid grid-cols-1 gap-2 sm:grid-cols-2"
               data-testid="build-deployment"
             >
               {deployRows.map(([k, v]) => (
                 <InfoTile key={k} label={k} value={v} />
               ))}
-            </dl>
+            </div>
           ) : (
             <p
               className="text-sm text-muted-foreground"

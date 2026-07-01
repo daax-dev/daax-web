@@ -105,11 +105,13 @@ reads nested lockfiles that carry no license data), so the script scans
 `package.json` — yielding real versions _and_ licenses. The `sbom/` directory is
 git-ignored (generated).
 
-**Container mode.** The Dockerfile installs syft in the builder stage and runs
-`bun run sbom:generate` after the app build, then copies `sbom/` into the runtime
-image — so container deployments ship the same dependency SBOM, not just local
-dev. Generation is best-effort: if syft can't be installed/run the image still
-builds and the panel shows the graceful empty state.
+**Container mode.** The Dockerfile installs syft (pinned) in the builder stage
+and runs `bun run sbom:generate` after the app build, then copies `sbom/` into
+the runtime image — so container deployments ship the same dependency SBOM, not
+just local dev. This step is **required**: a syft install/scan failure fails the
+image build so a release can't silently ship without an SBOM. Set
+`DAAX_SKIP_SBOM=1` to opt out (e.g. an air-gapped build) and accept the panel's
+graceful empty state.
 
 ---
 
@@ -220,19 +222,23 @@ panel, the server route, and unit tests:
 
 ### Configuration (env vars)
 
-| Var                            | Effect                                                      |
-| ------------------------------ | ----------------------------------------------------------- |
-| `NEXT_PUBLIC_BUILD_*`          | Injected by `next.config.ts` (commit/branch/host/timestamp) |
-| `DAAX_SBOM_DIR`                | Override the SBOM directory (default `<cwd>/sbom`)          |
-| `DAAX_SBOM_MAX_BYTES`          | Max SBOM file size the route will read (default 32 MB)      |
-| `DAAX_REQUIRE_AUTH`            | `1` → the build routes (and app) require authentication     |
-| `DAAX_DEPLOY_MODE`             | Force `host` / `container` (else inferred)                  |
-| `DAAX_DEPLOY_VIA`              | e.g. `github-actions`, `github-runner`, `host`              |
-| `DAAX_DEPLOY_BY`               | Deployer (falls back to `$USER` / `$USERNAME`)              |
-| `DAAX_IMAGE_REGISTRY`          | e.g. `ghcr.io/daax-dev/daax-web`                            |
-| `DAAX_IMAGE`, `DAAX_IMAGE_TAG` | Container image reference / tag                             |
-| `HOST_WORKSPACE_PATH`          | Workspace mount (also implies `container` mode)             |
-| `DAAX_DEPLOY_HOST`             | Tailnet / deploy host                                       |
+| Var                               | Effect                                                      |
+| --------------------------------- | ----------------------------------------------------------- |
+| `NEXT_PUBLIC_BUILD_*`             | Injected by `next.config.ts` (commit/branch/host/timestamp) |
+| `DAAX_SBOM_DIR`                   | Override the SBOM directory (default `<cwd>/sbom`)          |
+| `DAAX_SBOM_MAX_BYTES`             | Max SBOM file size the route will read (default 32 MB)      |
+| `DAAX_IMAGE_SBOM_MAX_BYTES`       | Max per-image SBOM retained in cache (default 64 MB)        |
+| `DAAX_IMAGE_SBOM_MAX_CONCURRENCY` | Max concurrent per-image syft scans (default 2)             |
+| `DAAX_RUNTIME_BASE_IMAGE`         | Override the app runtime base image ref shown               |
+| `DAAX_CODE_SERVER_IMAGE`          | Override the code-server image ref shown                    |
+| `DAAX_REQUIRE_AUTH`               | `1` → the build routes (and app) require authentication     |
+| `DAAX_DEPLOY_MODE`                | Force `host` / `container` (else inferred)                  |
+| `DAAX_DEPLOY_VIA`                 | e.g. `github-actions`, `github-runner`, `host`              |
+| `DAAX_DEPLOY_BY`                  | Deployer (falls back to `$USER` / `$USERNAME`)              |
+| `DAAX_IMAGE_REGISTRY`             | e.g. `ghcr.io/daax-dev/daax-web`                            |
+| `DAAX_IMAGE`, `DAAX_IMAGE_TAG`    | Container image reference / tag                             |
+| `HOST_WORKSPACE_PATH`             | Workspace mount (also implies `container` mode)             |
+| `DAAX_DEPLOY_HOST`                | Tailnet / deploy host                                       |
 
 ### Tests
 

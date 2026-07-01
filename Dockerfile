@@ -103,7 +103,7 @@ ARG DAAX_SKIP_SBOM=
 RUN if [ -n "$DAAX_SKIP_SBOM" ]; then \
       echo "DAAX_SKIP_SBOM set — skipping SBOM generation"; mkdir -p /app/sbom; \
     else \
-      curl -fsSL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+      curl -fsSL https://raw.githubusercontent.com/anchore/syft/v1.45.1/install.sh \
         | sh -s -- -b /usr/local/bin v1.45.1 \
       && bun run sbom:generate; \
     fi
@@ -144,8 +144,9 @@ COPY --from=builder /app/plugins ./plugins
 COPY --from=builder /app/migrations ./migrations
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
-# Dependency SBOM generated in the builder stage (settings > Build panel). Always
-# present (builder mkdir's it); may be empty if syft was unavailable at build.
+# Dependency SBOM generated in the builder stage (settings > Build panel). The
+# builder step is fatal unless DAAX_SKIP_SBOM=1, so this is populated for a normal
+# build and empty only when SBOM generation was explicitly skipped.
 COPY --from=builder /app/sbom ./sbom
 COPY --from=builder /app/postcss.config.mjs ./postcss.config.mjs
 COPY --from=builder /app/instrumentation.ts ./instrumentation.ts

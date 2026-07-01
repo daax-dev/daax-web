@@ -15,7 +15,7 @@ vi.mock("@/lib/auth", () => ({ requireAuth: mockRequireAuth }));
 vi.mock("@/lib/build/images", () => ({ isKnownImageRef: mockIsKnownImageRef }));
 vi.mock("@/lib/sbom-syft", () => ({ generateRealSbom: mockGenerateRealSbom }));
 
-import { GET } from "@/app/api/build/images/sbom/route";
+import { GET, __resetImageSbomState } from "@/app/api/build/images/sbom/route";
 
 function req(query: string): NextRequest {
   return new NextRequest(`http://localhost/api/build/images/sbom${query}`);
@@ -35,6 +35,7 @@ const REAL_SBOM = JSON.stringify({
 describe("GET /api/build/images/sbom", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    __resetImageSbomState();
     mockRequireAuth.mockResolvedValue({ authenticated: true, user: {} });
     mockIsKnownImageRef.mockReturnValue(true);
     mockGenerateRealSbom.mockResolvedValue(REAL_SBOM);
@@ -50,6 +51,23 @@ describe("GET /api/build/images/sbom", () => {
     expect(res.headers.get("Content-Disposition")).toContain("inline");
     expect(await res.text()).toBe(REAL_SBOM);
     expect(mockGenerateRealSbom).toHaveBeenCalledWith("img-ok:1");
+  });
+
+  it("coalesces concurrent scans for the same ref into one syft run", async () => {
+    let resolveScan!: (v: string) => void;
+    mockGenerateRealSbom.mockReturnValue(
+      new Promise<string>((r) => {
+        resolveScan = r;
+      }),
+    );
+    const p1 = GET(req("?ref=img-coalesce:1"));
+    const p2 = GET(req("?ref=img-coalesce:1"));
+    await Promise.resolve(); // let both requests register on the in-flight map
+    resolveScan(REAL_SBOM);
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    expect(mockGenerateRealSbom).toHaveBeenCalledTimes(1);
   });
 
   it("returns 401 when unauthenticated", async () => {
