@@ -22,6 +22,7 @@ import {
   sbomFilePath,
   readSbom,
   availableSboms,
+  positiveIntEnv,
 } from "@/lib/build/build-info";
 
 // A real CycloneDX SBOM: correct marker, non-empty components, > 512 bytes.
@@ -59,6 +60,29 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   rmSync(sbomDir, { recursive: true, force: true });
+});
+
+describe("positiveIntEnv", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("returns the value only for a positive integer", () => {
+    vi.stubEnv("T_INT", "8");
+    expect(positiveIntEnv("T_INT", 99)).toBe(8);
+  });
+
+  it("falls back for unset, empty, zero, negative, fractional, or NaN", () => {
+    expect(positiveIntEnv("T_UNSET", 99)).toBe(99);
+    for (const [v, label] of [
+      ["", "empty"],
+      ["0", "zero"],
+      ["-5", "negative"],
+      ["2.5", "fractional"],
+      ["abc", "NaN"],
+    ] as const) {
+      vi.stubEnv("T_VAL", v);
+      expect(positiveIntEnv("T_VAL", 99), label).toBe(99);
+    }
+  });
 });
 
 describe("getDeployment", () => {

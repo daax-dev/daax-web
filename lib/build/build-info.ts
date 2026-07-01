@@ -29,7 +29,9 @@ export function positiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
   const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+  // Require a positive *integer*; reject 0, negatives, NaN, and fractions like
+  // "2.5" (which would otherwise slip past a bare isFinite check).
+  return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 
 /**
