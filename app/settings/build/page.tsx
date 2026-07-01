@@ -1,6 +1,7 @@
 import { Package } from "lucide-react";
 
 import { BuildPanel } from "@/components/settings/BuildPanel";
+import { BuildImages } from "@/components/settings/BuildImages";
 
 export const metadata = {
   title: "Build — Settings",
@@ -19,7 +20,10 @@ export default function BuildSettingsPage() {
           app.
         </p>
       </div>
-      <BuildPanel />
+      <div className="space-y-6">
+        <BuildPanel />
+        <BuildImages />
+      </div>
     </div>
   );
 }

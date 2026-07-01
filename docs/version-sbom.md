@@ -76,6 +76,23 @@ If no SBOM has been generated, the panel degrades gracefully to _"No SBOM
 bundled in this build"_ with a hint to run `bun run sbom:generate`. It never
 shows a placeholder that merely _looks_ like an SBOM (see the guard below).
 
+### Base & dependency images
+
+Below the app panel, a **Base & dependency images** section lists the container
+images daax is built on and uses, in three groups:
+
+- **App runtime base** — the image the daax container is built `FROM`
+  (`node:22-bookworm-slim`).
+- **Platform & tooling** — images daax runs (code-server, the syft scanner).
+- **Devcontainer base catalog** — the base images users pick when spawning
+  devcontainers.
+
+Each row shows the exact reference and its **sha256 digest**, resolved live from
+the local Docker daemon (`docker inspect` → `RepoDigests`). Images not present
+locally show "not pulled". Each present image has a **View** action that
+generates its SBOM on demand with syft (`GET /api/build/images/sbom?ref=…`,
+whitelisted to the known set) and renders the same component table.
+
 ### Generating the SBOM
 
 ```bash
@@ -100,16 +117,20 @@ builds and the panel shows the graceful empty state.
 
 ### Files
 
-| Path                                 | Role                                                                    |
-| ------------------------------------ | ----------------------------------------------------------------------- |
-| `app/settings/layout.tsx`            | 2nd-level settings sub-nav (General · Build · Releases · Voice · Debug) |
-| `app/settings/build/page.tsx`        | Build route; renders `<BuildPanel />`                                   |
-| `components/settings/BuildPanel.tsx` | Client panel: version cards, deployment, SBOM viewer                    |
-| `lib/build/build-info.ts`            | Server-side `BuildInfo` assembly + SBOM whitelist                       |
-| `lib/build/sbom-format.ts`           | Pure SBOM/deploy render helpers (client + server + tests)               |
-| `app/api/build/route.ts`             | `GET /api/build` → `BuildInfo` JSON                                     |
-| `app/api/build/sbom/route.ts`        | `GET /api/build/sbom` → whitelisted SBOM file                           |
-| `scripts/generate-sbom.sh`           | syft → `sbom/daax.{cyclonedx,spdx}.json`                                |
+| Path                                  | Role                                                                    |
+| ------------------------------------- | ----------------------------------------------------------------------- |
+| `app/settings/layout.tsx`             | 2nd-level settings sub-nav (General · Build · Releases · Voice · Debug) |
+| `app/settings/build/page.tsx`         | Build route; renders `<BuildPanel />`                                   |
+| `components/settings/BuildPanel.tsx`  | Client panel: version cards, deployment, SBOM viewer                    |
+| `lib/build/build-info.ts`             | Server-side `BuildInfo` assembly + SBOM whitelist                       |
+| `lib/build/sbom-format.ts`            | Pure SBOM/deploy render helpers (client + server + tests)               |
+| `lib/build/images.ts`                 | Base/dependency image enumeration + digest resolution (dockerode)       |
+| `components/settings/BuildImages.tsx` | Client: base/dependency images table + per-image SBOM                   |
+| `app/api/build/route.ts`              | `GET /api/build` → `BuildInfo` JSON                                     |
+| `app/api/build/sbom/route.ts`         | `GET /api/build/sbom` → whitelisted SBOM file                           |
+| `app/api/build/images/route.ts`       | `GET /api/build/images` → images + sha256 digests                       |
+| `app/api/build/images/sbom/route.ts`  | `GET /api/build/images/sbom?ref=` → per-image syft SBOM (whitelisted)   |
+| `scripts/generate-sbom.sh`            | syft → `sbom/daax.{cyclonedx,spdx}.json`                                |
 
 ### `GET /api/build`
 

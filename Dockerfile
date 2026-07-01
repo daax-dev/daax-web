@@ -95,14 +95,18 @@ RUN bun run build
 
 # Generate the dependency SBOM (settings > Build panel) at image build so
 # container mode ships a real bill of materials, not just local dev. syft is
-# installed pinned; SBOM generation is best-effort (a download/scan failure must
-# not fail the image build — the panel degrades to "no SBOM in this build").
-# mkdir guarantees /app/sbom exists so the runner COPY always succeeds.
-RUN mkdir -p /app/sbom && \
-    (curl -fsSL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
-       | sh -s -- -b /usr/local/bin v1.45.1 \
-     && bun run sbom:generate) \
-    || echo "WARN: SBOM generation skipped (syft install or scan failed)"
+# installed pinned. This step is REQUIRED: a failed syft install or scan fails
+# the image build so a release can never silently ship without an SBOM. Set
+# DAAX_SKIP_SBOM=1 to opt out (e.g. an air-gapped build) and accept the panel's
+# graceful "no SBOM in this build" state.
+ARG DAAX_SKIP_SBOM=
+RUN if [ -n "$DAAX_SKIP_SBOM" ]; then \
+      echo "DAAX_SKIP_SBOM set — skipping SBOM generation"; mkdir -p /app/sbom; \
+    else \
+      curl -fsSL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+        | sh -s -- -b /usr/local/bin v1.45.1 \
+      && bun run sbom:generate; \
+    fi
 
 # -----------------------------------------------------------
 # Production stage

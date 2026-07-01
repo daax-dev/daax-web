@@ -220,9 +220,12 @@ function SbomSection({ sboms }: { sboms: SbomRef[] }) {
 
   useEffect(() => {
     if (!open) return;
-    // Cache hit: show it and clear any error left over from a prior selection.
+    // Cache hit: show it and clear any error/loading left over from a prior,
+    // possibly still-in-flight, selection (the old effect's finally won't run
+    // once it's cancelled, so clear the spinner here).
     if (cache[key]) {
       setErr("");
+      setLoading(false);
       return;
     }
     let cancelled = false;
