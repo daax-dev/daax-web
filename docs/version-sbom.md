@@ -203,7 +203,7 @@ carries mode/host/deployer; image fields appear only when their env vars are set
   its detected format must match the requested one (a misconfigured slot → 500,
   not a silently-wrong download).
 
-**Real-vs-placeholder guard.** `readRealSbom()` runs the shared
+**Real-vs-placeholder guard.** `readSbom()` runs the shared
 `lib/sbom-guard.ts` `checkSbom()` over the file contents: it must parse, be a
 non-empty object, clear a 512-byte floor, and carry the correct format marker
 plus a non-empty inventory (`bomFormat: "CycloneDX"` + `components[]`, or
