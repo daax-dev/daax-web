@@ -112,7 +112,7 @@ RUN if [ -n "$DAAX_SKIP_SBOM" ]; then \
       cd /tmp; \
       curl -fsSL -o "$tarball" "${base}/${tarball}"; \
       curl -fsSL -o syft_checksums.txt "${base}/syft_${SYFT_VERSION}_checksums.txt"; \
-      line="$(grep " ${tarball}\$" syft_checksums.txt)"; \
+      line="$(awk -v f="$tarball" '$2 == f {print}' syft_checksums.txt)"; \
       [ -n "$line" ] || { echo "no checksum entry for ${tarball}" >&2; exit 1; }; \
       printf '%s\n' "$line" | sha256sum -c -; \
       tar -xzf "$tarball" syft; \

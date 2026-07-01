@@ -13,7 +13,8 @@ import { checkSbom } from "@/lib/sbom-guard";
  * container images (settings > Build panel per-image SBOM).
  *   - Unauthenticated (strict mode) → 401.
  *   - `ref` missing / not whitelisted → 400.
- *   - Image not present / syft failed → 404 (graceful).
+ *   - Image not present / syft returned an unusable SBOM → 404 (graceful).
+ *   - syft execution threw → 500.
  *   - Otherwise → 200 application/json.
  *
  * `ref` MUST be one of the closed known-image set (isKnownImageRef): syft runs
