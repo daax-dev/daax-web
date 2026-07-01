@@ -100,9 +100,12 @@ function digestFromInspect(
   return info.Id && info.Id.startsWith("sha256:") ? info.Id : null;
 }
 
-async function resolveImage(r: KnownImageRef): Promise<KnownImage> {
+async function resolveImage(
+  docker: ReturnType<typeof getDocker>,
+  r: KnownImageRef,
+): Promise<KnownImage> {
   try {
-    const info = await getDocker().getImage(r.ref).inspect();
+    const info = await docker.getImage(r.ref).inspect();
     return { ...r, digest: digestFromInspect(info, r.ref), present: true };
   } catch {
     // Not pulled locally, or the daemon is unreachable.
@@ -112,5 +115,8 @@ async function resolveImage(r: KnownImageRef): Promise<KnownImage> {
 
 /** Resolve every known image's digest/presence (best-effort, in parallel). */
 export async function collectImages(): Promise<KnownImage[]> {
-  return Promise.all(knownImageRefs().map(resolveImage));
+  // Reuse a single Docker client for the whole collection rather than opening
+  // one per image.
+  const docker = getDocker();
+  return Promise.all(knownImageRefs().map((r) => resolveImage(docker, r)));
 }

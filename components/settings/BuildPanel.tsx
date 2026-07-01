@@ -169,7 +169,7 @@ export function BuildPanel() {
               className="text-sm text-muted-foreground"
               data-testid="build-deployment-none"
             >
-              Not deployed — running from source (dev build).
+              No deployment metadata available.
             </p>
           )}
         </div>
