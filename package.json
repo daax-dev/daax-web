@@ -8,6 +8,7 @@
     "dev:next": "next dev -p 4200",
     "dev:terminal": "tsx server/terminal-server.ts",
     "parse:safe-mcp": "tsx scripts/parse-safe-mcp.ts",
+    "sbom:generate": "./scripts/generate-sbom.sh",
     "prebuild": "node -e \"const fs=require('fs'); if (fs.existsSync('3rd-party/safe-mcp')) { require('child_process').execSync('bun run parse:safe-mcp', { stdio: 'inherit' }); } else { console.log('Skipping SAFE-MCP parse (3rd-party/safe-mcp not found)'); }\"",
     "build": "next build",
     "start": "next start",
