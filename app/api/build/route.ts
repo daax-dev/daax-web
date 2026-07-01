@@ -1,19 +1,24 @@
 import { NextResponse } from "next/server";
 
+import { requireAuth } from "@/lib/auth";
 import { collectBuildInfo } from "@/lib/build/build-info";
 
 /**
  * GET /api/build — build/version + deployment metadata and the set of available
  * SBOMs, for the settings > Build panel.
  *
- * Public by design (no `requireAuth`): the same information is baked into the
- * client bundle (NEXT_PUBLIC_BUILD_*) and is useful for uptime/version probes.
- * Deployment fields are omitted for a non-deployed dev build.
+ * Requires auth: the payload includes commit SHA, hostname, deploying user, and
+ * deployment surface — not something to expose unauthenticated. In local/non-
+ * strict mode `requireAuth` bypasses to the local operator, so `bun dev` is
+ * unaffected; when `DAAX_REQUIRE_AUTH=1` it returns 401 to anonymous callers.
+ * (Liveness probes use the public /api/health, not this route.)
  */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
   try {
     return NextResponse.json(collectBuildInfo(), {
       headers: { "Cache-Control": "no-store" },

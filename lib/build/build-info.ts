@@ -14,11 +14,24 @@
  * "no SBOM in this build" rather than shipping something that looks present but
  * isn't.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { checkSbom } from "@/lib/sbom-guard";
 import type { SbomFormatId, SbomComponentId, SbomRef } from "./sbom-format";
+
+/** Default upper bound (bytes) on an SBOM file the route will read into memory. */
+export const SBOM_MAX_BYTES_DEFAULT = 32 * 1024 * 1024;
+
+/**
+ * Upper bound (bytes) on an SBOM file the route will read into memory. A real
+ * dependency SBOM is a few MB; this caps a corrupt/oversized file from causing a
+ * large synchronous read+parse per request. Override via DAAX_SBOM_MAX_BYTES.
+ * Read per-call so operators (and tests) can change it without a restart.
+ */
+export function sbomMaxBytes(): number {
+  return Number(process.env.DAAX_SBOM_MAX_BYTES) || SBOM_MAX_BYTES_DEFAULT;
+}
 
 /** daax's deployment surface — the analogue of the reference's Azure card. */
 export interface DaaxDeployment {
@@ -95,21 +108,84 @@ export function sbomFilePath(component: string, format: string): string | null {
 }
 
 /**
- * Read a whitelisted SBOM file and return its raw JSON only when it passes the
- * placeholder-vs-real guard; null otherwise (unknown pair, missing file, read
- * error, or placeholder/undersized content).
+ * Outcome of reading a whitelisted SBOM file.
+ *  - `not-found`  : the pair is unknown or the file is absent (→ 404).
+ *  - `placeholder`: present but fails the placeholder-vs-real guard (→ 404).
+ *  - `oversize`   : file exceeds {@link sbomMaxBytes} (→ 500, config issue).
+ *  - `mismatch`   : real SBOM, but its format differs from the one requested
+ *                   (→ 500, misconfigured slot).
+ *  - `error`      : stat/read failure or a symlink escaping the SBOM dir (→ 500).
  */
-export function readRealSbom(component: string, format: string): string | null {
+export type SbomReadResult =
+  | { ok: true; content: string; format: SbomFormatId }
+  | {
+      ok: false;
+      reason: "not-found" | "placeholder" | "oversize" | "mismatch" | "error";
+    };
+
+/**
+ * Read a whitelisted SBOM file, defensively. Resolves the real path and rejects
+ * anything that escapes the SBOM directory (symlink containment), enforces a
+ * size cap before reading, validates with the shared placeholder-vs-real guard,
+ * and verifies the parsed format matches the requested one.
+ */
+export function readSbom(component: string, format: string): SbomReadResult {
   const file = sbomFilePath(component, format);
-  if (!file || !existsSync(file)) return null;
+  if (!file || !existsSync(file)) return { ok: false, reason: "not-found" };
+
+  // Resolve symlinks and require the target to stay inside the SBOM dir, so a
+  // symlink planted under sbom/ cannot make the route serve arbitrary files.
+  let realFile: string;
+  let realDir: string;
+  try {
+    realFile = realpathSync(file);
+    realDir = realpathSync(sbomDir());
+  } catch (error) {
+    console.error(
+      `[Build] failed to resolve SBOM ${component}/${format}:`,
+      error,
+    );
+    return { ok: false, reason: "error" };
+  }
+  if (realFile !== realDir && !realFile.startsWith(realDir + path.sep)) {
+    console.error(
+      `[Build] SBOM ${component}/${format} escapes sbom dir: ${realFile}`,
+    );
+    return { ok: false, reason: "error" };
+  }
+
+  let size: number;
+  try {
+    size = statSync(realFile).size;
+  } catch (error) {
+    console.error(`[Build] failed to stat SBOM ${component}/${format}:`, error);
+    return { ok: false, reason: "error" };
+  }
+  const maxBytes = sbomMaxBytes();
+  if (size > maxBytes) {
+    console.error(
+      `[Build] SBOM ${component}/${format} too large: ${size} > ${maxBytes}`,
+    );
+    return { ok: false, reason: "oversize" };
+  }
+
   let content: string;
   try {
-    content = readFileSync(file, "utf-8");
+    content = readFileSync(realFile, "utf-8");
   } catch (error) {
     console.error(`[Build] failed to read SBOM ${component}/${format}:`, error);
-    return null;
+    return { ok: false, reason: "error" };
   }
-  return checkSbom(content).real ? content : null;
+
+  const check = checkSbom(content);
+  if (!check.real) return { ok: false, reason: "placeholder" };
+  if (check.format !== format) {
+    console.error(
+      `[Build] SBOM ${component}/${format} format mismatch: file is ${check.format}`,
+    );
+    return { ok: false, reason: "mismatch" };
+  }
+  return { ok: true, content, format: check.format };
 }
 
 /** The set of real SBOMs currently bundled, as {component, format} refs. */
@@ -117,7 +193,7 @@ export function availableSboms(): SbomRef[] {
   const refs: SbomRef[] = [];
   for (const component of SBOM_COMPONENTS) {
     for (const format of SBOM_FORMATS) {
-      if (readRealSbom(component, format)) refs.push({ component, format });
+      if (readSbom(component, format).ok) refs.push({ component, format });
     }
   }
   return refs;

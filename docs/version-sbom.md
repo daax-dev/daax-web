@@ -86,7 +86,13 @@ syft's directory scanner skips `node_modules` by default (and its lock cataloger
 reads nested lockfiles that carry no license data), so the script scans
 `node_modules` with the **package cataloger**, which reads each installed
 `package.json` — yielding real versions _and_ licenses. The `sbom/` directory is
-git-ignored (generated, local-only).
+git-ignored (generated).
+
+**Container mode.** The Dockerfile installs syft in the builder stage and runs
+`bun run sbom:generate` after the app build, then copies `sbom/` into the runtime
+image — so container deployments ship the same dependency SBOM, not just local
+dev. Generation is best-effort: if syft can't be installed/run the image still
+builds and the panel shows the graceful empty state.
 
 ---
 
@@ -107,8 +113,12 @@ git-ignored (generated, local-only).
 
 ### `GET /api/build`
 
-Public (no auth), `runtime = "nodejs"`, `dynamic = "force-dynamic"`,
-`Cache-Control: no-store`. Returns `BuildInfo`:
+**Requires auth** (`requireAuth`) — the payload includes commit SHA, hostname,
+deploying user, and deployment surface, so it is not exposed unauthenticated. In
+local/non-strict mode `requireAuth` bypasses to the local operator, so `bun dev`
+is unaffected; with `DAAX_REQUIRE_AUTH=1` anonymous callers get `401`. Liveness
+probes use the public `/api/health`, not this route. `runtime = "nodejs"`,
+`dynamic = "force-dynamic"`, `Cache-Control: no-store`. Returns `BuildInfo`:
 
 ```jsonc
 {
@@ -138,26 +148,36 @@ carries mode/host/deployer; image fields appear only when their env vars are set
 
 ### `GET /api/build/sbom`
 
-Query params: `component` (default `app`), `format` (`cyclonedx` | `spdx`,
-default `cyclonedx`), `inline` (`1|true|yes|on` → `Content-Disposition: inline`,
-otherwise `attachment`).
+**Requires auth** (same rationale as `/api/build`). Query params: `component`
+(default `app`), `format` (`cyclonedx` | `spdx`, default `cyclonedx`), `inline`
+(`1|true|yes|on` → `Content-Disposition: inline`, otherwise `attachment`).
 
-| Case                      | Response                                                                                                                                            |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Unknown component/format  | `400` `{ error, components, formats }`                                                                                                              |
-| Not bundled / placeholder | `404` `{ available: false, component, format, note }`                                                                                               |
-| Success                   | `200` `application/json`, `X-Content-Type-Options: nosniff`, `Content-Disposition: <inline\|attachment>; filename="daax-<component>-<format>.json"` |
+| Case                             | Response                                                                                                                                            |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unauthenticated (strict mode)    | `401`                                                                                                                                               |
+| Unknown component/format         | `400` `{ error, components, formats }`                                                                                                              |
+| Not bundled / placeholder        | `404` `{ available: false, component, format, note }`                                                                                               |
+| Read error / oversize / mismatch | `500` `{ error, reason }`                                                                                                                           |
+| Success                          | `200` `application/json`, `X-Content-Type-Options: nosniff`, `Content-Disposition: <inline\|attachment>; filename="daax-<component>-<format>.json"` |
 
-**Path-traversal safety.** The (component, format) pair is resolved through a
-closed whitelist map to a fixed filename; request input never reaches the file
-path:
+**Defensive read (`readSbom`).** Beyond the request-side whitelist:
 
-```ts
-const SBOM_FILES = {
-  "app:cyclonedx": "daax.cyclonedx.json",
-  "app:spdx": "daax.spdx.json",
-};
-```
+- **Whitelist → fixed filename.** The (component, format) pair maps through a
+  closed table; request input never reaches the file path:
+  ```ts
+  const SBOM_FILES = {
+    "app:cyclonedx": "daax.cyclonedx.json",
+    "app:spdx": "daax.spdx.json",
+  };
+  ```
+- **Symlink containment.** The real path (`realpathSync`) must stay inside the
+  SBOM dir, so a symlink planted under `sbom/` can't make the route serve files
+  elsewhere.
+- **Size cap.** Files larger than `DAAX_SBOM_MAX_BYTES` (default 32 MB) are
+  rejected before any read/parse, bounding a corrupt/oversized-file DoS.
+- **Guard + format match.** Content must pass the placeholder-vs-real guard and
+  its detected format must match the requested one (a misconfigured slot → 500,
+  not a silently-wrong download).
 
 **Real-vs-placeholder guard.** `readRealSbom()` runs the shared
 `lib/sbom-guard.ts` `checkSbom()` over the file contents: it must parse, be a
@@ -183,6 +203,8 @@ panel, the server route, and unit tests:
 | ------------------------------ | ----------------------------------------------------------- |
 | `NEXT_PUBLIC_BUILD_*`          | Injected by `next.config.ts` (commit/branch/host/timestamp) |
 | `DAAX_SBOM_DIR`                | Override the SBOM directory (default `<cwd>/sbom`)          |
+| `DAAX_SBOM_MAX_BYTES`          | Max SBOM file size the route will read (default 32 MB)      |
+| `DAAX_REQUIRE_AUTH`            | `1` → the build routes (and app) require authentication     |
 | `DAAX_DEPLOY_MODE`             | Force `host` / `container` (else inferred)                  |
 | `DAAX_DEPLOY_VIA`              | e.g. `github-actions`, `github-runner`, `host`              |
 | `DAAX_DEPLOY_BY`               | Deployer (falls back to `$USER` / `$USERNAME`)              |

@@ -1,26 +1,26 @@
 /**
- * Tests for the server-side build-info assembly + SBOM whitelist.
+ * Tests for the server-side build-info assembly + SBOM read path.
  *
- * Mocks node:fs so the SBOM files and package.json are deterministic.
+ * These use a REAL temporary SBOM directory (no node:fs mock) so the defensive
+ * read path — size cap, symlink containment, placeholder guard, and format
+ * mismatch — is actually exercised, not stubbed away.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-
-const { mockExistsSync, mockReadFileSync } = vi.hoisted(() => ({
-  mockExistsSync: vi.fn<(p: string) => boolean>(),
-  mockReadFileSync: vi.fn<(p: string, enc?: string) => string>(),
-}));
-
-vi.mock("node:fs", () => ({
-  default: { existsSync: mockExistsSync, readFileSync: mockReadFileSync },
-  existsSync: mockExistsSync,
-  readFileSync: mockReadFileSync,
-}));
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  symlinkSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import {
   collectBuildInfo,
   getDeployment,
   sbomFilePath,
-  readRealSbom,
+  readSbom,
   availableSboms,
 } from "@/lib/build/build-info";
 
@@ -39,17 +39,30 @@ function realCycloneDx(): string {
   });
 }
 
-const PACKAGE_JSON = JSON.stringify({
-  version: "0.1.0",
-  dependencies: { next: "16.1.6" },
+function realSpdx(): string {
+  const packages = Array.from({ length: 20 }, (_, i) => ({
+    name: `pkg-${i}`,
+    versionInfo: "1.0.0",
+    licenseConcluded: "MIT",
+  }));
+  return JSON.stringify({ spdxVersion: "SPDX-2.3", packages });
+}
+
+let sbomDir: string;
+
+beforeEach(() => {
+  vi.unstubAllEnvs();
+  sbomDir = mkdtempSync(path.join(tmpdir(), "daax-sbom-"));
+  vi.stubEnv("DAAX_SBOM_DIR", sbomDir);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  rmSync(sbomDir, { recursive: true, force: true });
 });
 
 describe("getDeployment", () => {
-  beforeEach(() => vi.unstubAllEnvs());
-  afterEach(() => vi.unstubAllEnvs());
-
   it("defaults to host mode with no image fields for a from-source build", () => {
-    // Ensure a clean slate for the env vars it reads.
     for (const k of [
       "DAAX_DEPLOY_MODE",
       "DAAX_DEPLOY_VIA",
@@ -66,7 +79,6 @@ describe("getDeployment", () => {
     const dep = getDeployment();
     expect(dep.mode).toBe("host");
     expect(dep.via).toBe("host");
-    // No container image for a from-source run.
     expect(dep.image).toBeUndefined();
     expect(dep.registry).toBeUndefined();
     expect(dep.workspace).toBeUndefined();
@@ -75,8 +87,8 @@ describe("getDeployment", () => {
   it("infers container mode from HOST_WORKSPACE_PATH", () => {
     vi.stubEnv("HOST_WORKSPACE_PATH", "/workspace");
     const dep = getDeployment();
-    expect(dep?.mode).toBe("container");
-    expect(dep?.workspace).toBe("/workspace");
+    expect(dep.mode).toBe("container");
+    expect(dep.workspace).toBe("/workspace");
   });
 
   it("surfaces explicit deployment fields", () => {
@@ -108,71 +120,107 @@ describe("sbomFilePath (whitelist)", () => {
   });
 });
 
-describe("readRealSbom / availableSboms", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockExistsSync.mockReturnValue(false);
+describe("readSbom (real filesystem)", () => {
+  const write = (name: string, content: string) =>
+    writeFileSync(path.join(sbomDir, name), content);
+
+  it("returns not-found when the file is absent", () => {
+    expect(readSbom("app", "cyclonedx")).toEqual({
+      ok: false,
+      reason: "not-found",
+    });
   });
 
-  it("returns null when the file is absent", () => {
-    expect(readRealSbom("app", "cyclonedx")).toBeNull();
+  it("returns content for a real CycloneDX SBOM", () => {
+    const content = realCycloneDx();
+    write("daax.cyclonedx.json", content);
+    expect(readSbom("app", "cyclonedx")).toEqual({
+      ok: true,
+      content,
+      format: "cyclonedx",
+    });
   });
 
   it("rejects a placeholder ({}) SBOM", () => {
-    mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockReturnValue("{}");
-    expect(readRealSbom("app", "cyclonedx")).toBeNull();
+    write("daax.cyclonedx.json", "{}");
+    expect(readSbom("app", "cyclonedx")).toEqual({
+      ok: false,
+      reason: "placeholder",
+    });
   });
 
-  it("returns content for a real SBOM", () => {
-    const content = realCycloneDx();
-    mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockReturnValue(content);
-    expect(readRealSbom("app", "cyclonedx")).toBe(content);
+  it("rejects an oversized file before parsing", () => {
+    vi.stubEnv("DAAX_SBOM_MAX_BYTES", "1000");
+    write("daax.cyclonedx.json", realCycloneDx()); // > 1000 bytes
+    expect(readSbom("app", "cyclonedx")).toEqual({
+      ok: false,
+      reason: "oversize",
+    });
+  });
+
+  it("flags a format mismatch (SPDX content in the CycloneDX slot)", () => {
+    write("daax.cyclonedx.json", realSpdx());
+    expect(readSbom("app", "cyclonedx")).toEqual({
+      ok: false,
+      reason: "mismatch",
+    });
+  });
+
+  it("rejects a symlink escaping the SBOM directory", () => {
+    const outside = mkdtempSync(path.join(tmpdir(), "daax-outside-"));
+    try {
+      writeFileSync(path.join(outside, "secret.json"), realCycloneDx());
+      symlinkSync(
+        path.join(outside, "secret.json"),
+        path.join(sbomDir, "daax.cyclonedx.json"),
+      );
+      expect(readSbom("app", "cyclonedx")).toEqual({
+        ok: false,
+        reason: "error",
+      });
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it("lists only real, available SBOMs", () => {
-    mockExistsSync.mockImplementation((p: string) =>
-      p.endsWith("daax.cyclonedx.json"),
-    );
-    mockReadFileSync.mockReturnValue(realCycloneDx());
+    write("daax.cyclonedx.json", realCycloneDx());
     expect(availableSboms()).toEqual([
       { component: "app", format: "cyclonedx" },
+    ]);
+    write("daax.spdx.json", realSpdx());
+    expect(availableSboms()).toEqual([
+      { component: "app", format: "cyclonedx" },
+      { component: "app", format: "spdx" },
     ]);
   });
 });
 
 describe("collectBuildInfo", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    vi.unstubAllEnvs();
-    mockExistsSync.mockReturnValue(false);
-    mockReadFileSync.mockImplementation((p: string) => {
-      if (p.endsWith("package.json")) return PACKAGE_JSON;
-      throw new Error(`unexpected read: ${p}`);
-    });
+    // sbomDir is a fresh empty temp dir → no SBOMs available.
+    mkdirSync(sbomDir, { recursive: true });
   });
-  afterEach(() => vi.unstubAllEnvs());
 
-  it("assembles version, runtime, and next version", () => {
+  it("assembles version, runtime, deployment, and empty SBOM set", () => {
     vi.stubEnv("NEXT_PUBLIC_BUILD_COMMIT", "abcdef1234567890");
     vi.stubEnv("NEXT_PUBLIC_BUILD_BRANCH", "sbom");
     const info = collectBuildInfo();
-    expect(info.version).toBe("v0.1.0+abcdef1");
+    // Version is derived from the real package.json ("vX.Y.Z+<sha7>").
+    expect(info.version).toMatch(/^v\d+\.\d+\.\d+\+abcdef1$/);
     expect(info.gitSha).toBe("abcdef1234567890");
-    expect(info.nextVersion).toBe("16.1.6");
+    expect(info.nextVersion).toBeTruthy();
     expect(info.branch).toBe("sbom");
     expect(info.nodeVersion).toBe(process.version);
     expect(info.sbomAvailable).toBe(false);
     expect(info.sboms).toEqual([]);
-    // Deployment is always populated with locally-knowable fields.
     expect(info.deployment?.mode).toBe("host");
   });
 
   it("omits the +sha suffix for a bare dev build", () => {
-    // No NEXT_PUBLIC_BUILD_COMMIT → gitSha defaults to 000000.
+    vi.stubEnv("NEXT_PUBLIC_BUILD_COMMIT", "");
     const info = collectBuildInfo();
     expect(info.gitSha).toBe("000000");
-    expect(info.version).toBe("v0.1.0");
+    expect(info.version).toMatch(/^v\d+\.\d+\.\d+$/);
   });
 });

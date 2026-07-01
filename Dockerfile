@@ -93,6 +93,17 @@ COPY . .
 # Build Next.js (NEXT_PUBLIC_* vars are inlined at build time)
 RUN bun run build
 
+# Generate the dependency SBOM (settings > Build panel) at image build so
+# container mode ships a real bill of materials, not just local dev. syft is
+# installed pinned; SBOM generation is best-effort (a download/scan failure must
+# not fail the image build — the panel degrades to "no SBOM in this build").
+# mkdir guarantees /app/sbom exists so the runner COPY always succeeds.
+RUN mkdir -p /app/sbom && \
+    (curl -fsSL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+       | sh -s -- -b /usr/local/bin v1.45.1 \
+     && bun run sbom:generate) \
+    || echo "WARN: SBOM generation skipped (syft install or scan failed)"
+
 # -----------------------------------------------------------
 # Production stage
 FROM base AS runner
@@ -129,6 +140,9 @@ COPY --from=builder /app/plugins ./plugins
 COPY --from=builder /app/migrations ./migrations
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
+# Dependency SBOM generated in the builder stage (settings > Build panel). Always
+# present (builder mkdir's it); may be empty if syft was unavailable at build.
+COPY --from=builder /app/sbom ./sbom
 COPY --from=builder /app/postcss.config.mjs ./postcss.config.mjs
 COPY --from=builder /app/instrumentation.ts ./instrumentation.ts
 COPY --from=builder /app/config.toml ./config.toml

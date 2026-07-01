@@ -1,14 +1,20 @@
 /**
- * Tests for GET /api/build — mocks the build-info collector.
+ * Tests for GET /api/build — mocks the build-info collector and auth.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { NextResponse } from "next/server";
 
-const { mockCollectBuildInfo } = vi.hoisted(() => ({
+const { mockCollectBuildInfo, mockRequireAuth } = vi.hoisted(() => ({
   mockCollectBuildInfo: vi.fn(),
+  mockRequireAuth: vi.fn(),
 }));
 
 vi.mock("@/lib/build/build-info", () => ({
   collectBuildInfo: mockCollectBuildInfo,
+}));
+
+vi.mock("@/lib/auth", () => ({
+  requireAuth: mockRequireAuth,
 }));
 
 import { GET } from "@/app/api/build/route";
@@ -29,6 +35,7 @@ describe("GET /api/build", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCollectBuildInfo.mockReturnValue(FIXTURE);
+    mockRequireAuth.mockResolvedValue({ authenticated: true, user: {} });
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -37,6 +44,19 @@ describe("GET /api/build", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     expect(await res.json()).toEqual(FIXTURE);
+  });
+
+  it("returns 401 when unauthenticated", async () => {
+    mockRequireAuth.mockResolvedValue({
+      authenticated: false,
+      response: NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 },
+      ),
+    });
+    const res = await GET();
+    expect(res.status).toBe(401);
+    expect(mockCollectBuildInfo).not.toHaveBeenCalled();
   });
 
   it("returns 500 when collection throws", async () => {

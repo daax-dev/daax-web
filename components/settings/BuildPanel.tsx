@@ -219,7 +219,12 @@ function SbomSection({ sboms }: { sboms: SbomRef[] }) {
   const sbom = cache[key] ?? null;
 
   useEffect(() => {
-    if (!open || cache[key]) return;
+    if (!open) return;
+    // Cache hit: show it and clear any error left over from a prior selection.
+    if (cache[key]) {
+      setErr("");
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setErr("");
