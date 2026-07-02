@@ -12,9 +12,7 @@ import {
   Plus,
   X,
   Bot,
-  Sparkles,
   Code,
-  Wand2,
   Terminal,
   FolderOpen,
   ShieldOff,
@@ -42,45 +40,53 @@ import { tailscaleHosts } from "@/lib/tailscale-hosts";
 import { OsIcon } from "@/components/icons/OsIcons";
 import { TailscaleIcon } from "@/components/icons/TailscaleIcon";
 import { CloudProviderIcon } from "@/components/icons/CloudProviderIcons";
+import {
+  ClaudeIcon,
+  CodexIcon,
+  GeminiIcon,
+  CopilotIcon,
+  OpenCodeIcon,
+} from "@/components/icons/AgentIcons";
 import { TerminalRecordingsPanel } from "@/plugins/terminal-recorder";
 import { AgentTabsLayout } from "./AgentTabsLayout";
 import { McpStatusBar } from "@/components/session/McpStatusBar";
 
 // AI Tools available in the container
-// Ordered: Claude, OpenCode, Copilot, Codex, Gemini
+// Ordered: Claude, OpenCode, Copilot, Codex, Gemini.
+// Icons are the real brand marks (see components/icons/AgentIcons).
 const AI_TOOLS = [
   {
     id: "claude" as AIToolId,
     name: "Claude Code",
-    icon: Bot,
+    icon: ClaudeIcon,
     command: "claude",
     description: "Anthropic Claude CLI",
   },
   {
     id: "opencode" as AIToolId,
     name: "OpenCode",
-    icon: Terminal,
+    icon: OpenCodeIcon,
     command: "opencode",
     description: "Multi-provider AI CLI (Copilot/Grok)",
   },
   {
     id: "copilot" as AIToolId,
     name: "GitHub Copilot",
-    icon: Code,
+    icon: CopilotIcon,
     command: "copilot",
     description: "GitHub Copilot CLI (@github/copilot)",
   },
   {
     id: "codex" as AIToolId,
     name: "Codex CLI",
-    icon: Wand2,
+    icon: CodexIcon,
     command: "codex",
     description: "OpenAI Codex CLI",
   },
   {
     id: "gemini" as AIToolId,
     name: "Gemini CLI",
-    icon: Sparkles,
+    icon: GeminiIcon,
     command: "gemini",
     description: "Google Gemini CLI",
   },
