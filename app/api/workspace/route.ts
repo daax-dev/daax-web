@@ -47,6 +47,27 @@ function getWorkspacePath(settings?: { basePath: string }): string {
   return expandPath(basePath);
 }
 
+// Maximum directory depth to walk below the workspace base. Bounds filesystem
+// cost while comfortably covering real nesting (e.g. kb/src/terragen).
+const MAX_DEPTH = 5;
+
+// Directories never worth descending into when hunting for git repos.
+const IGNORED_DIRS = new Set([
+  "node_modules",
+  ".git",
+  ".next",
+  ".turbo",
+  "dist",
+  "build",
+  "out",
+  "coverage",
+  "vendor",
+  "target",
+  ".venv",
+  "venv",
+  "__pycache__",
+]);
+
 // Check if a directory has a .git folder
 function hasGitFolder(dirPath: string): boolean {
   try {
@@ -56,19 +77,63 @@ function hasGitFolder(dirPath: string): boolean {
   }
 }
 
-// Check if a directory has subdirectories with .git folders
-function hasGitSubprojects(dirPath: string): boolean {
+interface WalkedDir extends GitProject {
+  hasRepoDescendant: boolean;
+}
+
+/**
+ * Recursively walk `dirPath` (whose path relative to the base is `relPrefix`)
+ * and collect every directory into `out`. Repos are NOT treated as leaves —
+ * the walk keeps descending so repo-in-repo layouts (a git repo that contains
+ * nested git repos) stay fully reachable. Returns true if any repo was found
+ * at or below `dirPath`.
+ */
+function walk(
+  dirPath: string,
+  relPrefix: string,
+  depth: number,
+  toDisplay: (p: string) => string,
+  out: WalkedDir[],
+): boolean {
+  let entries;
   try {
-    const entries = readdirSync(dirPath, { withFileTypes: true });
-    return entries.some(
-      (entry) =>
-        entry.isDirectory() &&
-        !entry.name.startsWith(".") &&
-        hasGitFolder(join(dirPath, entry.name)),
-    );
+    entries = readdirSync(dirPath, { withFileTypes: true });
   } catch {
     return false;
   }
+
+  let subtreeHasRepo = false;
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    if (IGNORED_DIRS.has(entry.name)) continue;
+
+    const childPath = join(dirPath, entry.name);
+    const childRel = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
+    const isRepo = hasGitFolder(childPath);
+
+    // Descend unless we've hit the depth cap.
+    const childHasRepo =
+      depth < MAX_DEPTH
+        ? walk(childPath, childRel, depth + 1, toDisplay, out)
+        : false;
+
+    if (isRepo || childHasRepo) subtreeHasRepo = true;
+
+    // Emit repos, containers (repo somewhere below), and top-level plain
+    // folders. Prune deeper folder-only branches to keep the tree focused.
+    const isTopLevel = depth === 0;
+    if (isRepo || childHasRepo || isTopLevel) {
+      out.push({
+        name: childRel,
+        path: toDisplay(childPath),
+        type: isRepo ? "git" : childHasRepo ? "planning" : "folder",
+        hasRepoDescendant: childHasRepo,
+      });
+    }
+  }
+
+  return subtreeHasRepo;
 }
 
 export async function GET(request: Request) {
@@ -107,12 +172,6 @@ export async function GET(request: Request) {
       );
     }
 
-    // Read directory entries
-    const entries = readdirSync(workspacePath, { withFileTypes: true });
-
-    // Find all directories (not just Git projects)
-    const allProjects: GitProject[] = [];
-
     // Helper to convert container paths back to user's preferred paths
     const getUserPath = (containerPath: string): string => {
       if (
@@ -125,60 +184,15 @@ export async function GET(request: Request) {
       return containerPath;
     };
 
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith(".")) {
-        continue;
-      }
+    // Recursively discover directories (repos at any depth, their containers,
+    // and top-level folders). See walk() for the traversal rules.
+    const walked: WalkedDir[] = [];
+    walk(workspacePath, "", 0, getUserPath, walked);
 
-      const fullPath = join(workspacePath, entry.name);
-      const displayPath = getUserPath(fullPath);
-
-      // Check what type of directory this is
-      const isGitProject = hasGitFolder(fullPath);
-      const hasSubprojects = hasGitSubprojects(fullPath);
-
-      if (isGitProject) {
-        // It's a Git project
-        allProjects.push({
-          name: entry.name,
-          path: displayPath,
-          type: "git",
-        });
-      } else if (hasSubprojects) {
-        // It's a planning project (has git subdirectories)
-        allProjects.push({
-          name: entry.name,
-          path: displayPath,
-          type: "planning",
-          hasSubprojects: true,
-        });
-
-        // Also add the git subprojects
-        const subEntries = readdirSync(fullPath, { withFileTypes: true });
-        for (const subEntry of subEntries) {
-          if (!subEntry.isDirectory() || subEntry.name.startsWith(".")) {
-            continue;
-          }
-
-          const subPath = join(fullPath, subEntry.name);
-          const subDisplayPath = getUserPath(subPath);
-          if (hasGitFolder(subPath)) {
-            allProjects.push({
-              name: `${entry.name}/${subEntry.name}`,
-              path: subDisplayPath,
-              type: "git",
-            });
-          }
-        }
-      } else {
-        // It's just a regular folder - but we still want to show it!
-        allProjects.push({
-          name: entry.name,
-          path: displayPath,
-          type: "folder",
-        });
-      }
-    }
+    // Drop the internal helper flag before returning; keep the public shape.
+    const allProjects: GitProject[] = walked.map(
+      ({ hasRepoDescendant: _ignored, ...rest }) => rest,
+    );
 
     // Sort projects: planning projects first, then git, then folders, then by name
     allProjects.sort((a, b) => {
