@@ -328,9 +328,8 @@ const externalLinks: {
 
 // A single row in the project selector, rendered recursively for nesting.
 // Repos (type "git") are switchable on click; any node with children shows a
-// chevron to expand. Styling is intentionally uniform (muted icons) — the row
-// only distinguishes repo vs. container by icon shape, not colour.
-function ProjectTreeItem({
+// chevron to expand. Styling uses muted repo icons and cobalt folder/container
+// icons so repos remain visually distinct.
   node,
   depth,
   activeProject,

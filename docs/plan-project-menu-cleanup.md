@@ -28,7 +28,7 @@ reached. The one-level split is also the source of the purple/gray/yellow color 
 Replace one-level classification with a bounded recursive walk:
 - `maxDepth = 5`; skip hidden dirs + heavy dirs (`node_modules`, `.git`, `.next`, `dist`,
   `build`, `vendor`, `target`, `coverage`).
-- A dir with its own `.git` → `type: "git"`, STOP descending (repos are leaves).
+- A dir with its own `.git` → `type: "git"` (repo); the walk continues descending so repo-in-repo stays reachable.
 - A dir with a repo somewhere below → `type: "planning"`.
 - A dir with no repo below → `type: "folder"`.
 - Emit a flat list (unchanged response shape / `directories` array) of: every repo, every

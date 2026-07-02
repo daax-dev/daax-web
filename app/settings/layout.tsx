@@ -68,8 +68,10 @@ const SETTINGS_TABS: SettingsTab[] = [
 function SettingsSubNav() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const currentTab = searchParams.get("tab") || "user";
-
+  const rawTab = searchParams.get("tab");
+  const allowedTabs = new Set(["user", "projects", "admin"]);
+  const requestedTab = rawTab && allowedTabs.has(rawTab) ? rawTab : "user";
+  const currentTab = requestedTab === "admin" && !isAdminMode ? "user" : requestedTab;
   return (
     <div className="border-b bg-card">
       <nav

@@ -114,10 +114,9 @@ function walk(
 
     // Descend unless we've hit the depth cap.
     const childHasRepo =
-      depth < MAX_DEPTH
+      depth + 1 < MAX_DEPTH
         ? walk(childPath, childRel, depth + 1, toDisplay, out)
         : false;
-
     if (isRepo || childHasRepo) subtreeHasRepo = true;
 
     // Emit repos, containers (repo somewhere below), and top-level plain

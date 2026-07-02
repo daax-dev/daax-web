@@ -130,10 +130,8 @@ function DirVisibilityItem({
   depth: number;
   disabled: string[];
   parentDisabled: boolean;
-  expanded: Set<string>;
   onToggleExpand: (name: string) => void;
-  onToggleDir: (name: string, enable: boolean) => void;
-}) {
+  onToggleDir: (name: string, currentlyDisabled: boolean) => void;
   const selfDisabled = disabled.includes(node.name);
   const effectivelyDisabled = parentDisabled || selfDisabled;
   const hasChildren = node.children.length > 0;
@@ -262,8 +260,10 @@ function SettingsInner() {
   const searchParams = useSearchParams();
   // The active tab is driven by the ?tab= query so the User Settings / Projects
   // / Admin tabs can live in the shared 2nd-level settings nav (see layout.tsx).
-  const rawTab = searchParams.get("tab") || "user";
-  const activeTab = rawTab === "admin" && !isAdminMode ? "user" : rawTab;
+  const rawTab = searchParams.get("tab");
+  const allowedTabs = new Set(["user", "projects", "admin"]);
+  const requestedTab = rawTab && allowedTabs.has(rawTab) ? rawTab : "user";
+  const activeTab = requestedTab === "admin" && !isAdminMode ? "user" : requestedTab;
   const setActiveTab = (tab: string) =>
     router.replace(tab === "user" ? "/settings" : `/settings?tab=${tab}`, {
       scroll: false,
