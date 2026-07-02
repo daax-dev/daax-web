@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { readdirSync, existsSync } from "fs";
+import { readdirSync, existsSync, type Dirent } from "fs";
 import { join } from "path";
 import { getSettings } from "@/lib/settings";
 import { expandPath } from "@/lib/path-utils";
@@ -52,18 +52,16 @@ function getWorkspacePath(settings?: { basePath: string }): string {
 const MAX_DEPTH = 5;
 
 // Directories never worth descending into when hunting for git repos.
+// Dot-prefixed dirs (.git, .next, .venv, …) are already skipped by the
+// `entry.name.startsWith(".")` guard, so only non-dot names belong here.
 const IGNORED_DIRS = new Set([
   "node_modules",
-  ".git",
-  ".next",
-  ".turbo",
   "dist",
   "build",
   "out",
   "coverage",
   "vendor",
   "target",
-  ".venv",
   "venv",
   "__pycache__",
 ]);
@@ -95,7 +93,7 @@ function walk(
   toDisplay: (p: string) => string,
   out: WalkedDir[],
 ): boolean {
-  let entries;
+  let entries: Dirent[];
   try {
     entries = readdirSync(dirPath, { withFileTypes: true });
   } catch {
@@ -112,9 +110,11 @@ function walk(
     const childRel = relPrefix ? `${relPrefix}/${entry.name}` : entry.name;
     const isRepo = hasGitFolder(childPath);
 
-    // Descend unless we've hit the depth cap.
+    // Descend unless we've hit the depth cap. `depth < MAX_DEPTH` allows
+    // walking into directories at depth == MAX_DEPTH so repos there are still
+    // found (stopping only beyond MAX_DEPTH).
     const childHasRepo =
-      depth + 1 < MAX_DEPTH
+      depth < MAX_DEPTH
         ? walk(childPath, childRel, depth + 1, toDisplay, out)
         : false;
     if (isRepo || childHasRepo) subtreeHasRepo = true;

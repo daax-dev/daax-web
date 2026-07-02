@@ -24,8 +24,6 @@ interface SettingsTab {
   href: string;
   label: string;
   icon: LucideIcon;
-  /** Match the pathname exactly (used for the /settings root). */
-  exact?: boolean;
   /**
    * For the tabs that live on the /settings page itself, the `?tab=` value
    * that selects them. Absent for the sub-routes (Build, Releases, …).
@@ -43,7 +41,6 @@ const SETTINGS_TABS: SettingsTab[] = [
     href: "/settings",
     label: "User Settings",
     icon: SlidersHorizontal,
-    exact: true,
     tab: "user",
   },
   {
@@ -85,10 +82,7 @@ function SettingsSubNav() {
             const isActive =
               tab.tab !== undefined
                 ? pathname === "/settings" && currentTab === tab.tab
-                : tab.exact
-                  ? pathname === tab.href
-                  : pathname === tab.href ||
-                    pathname.startsWith(`${tab.href}/`);
+                : pathname === tab.href || pathname.startsWith(`${tab.href}/`);
             return (
               <Link
                 key={tab.label}

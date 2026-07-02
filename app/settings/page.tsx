@@ -145,7 +145,7 @@ function DirVisibilityItem({
     <div>
       <div
         className="flex items-center gap-1 py-1"
-        style={{ paddingLeft: `${depth * 1}rem` }}
+        style={{ paddingLeft: `${depth}rem` }}
       >
         {hasChildren ? (
           <button
@@ -180,6 +180,7 @@ function DirVisibilityItem({
           {node.segment}
         </span>
         <button
+          type="button"
           role="switch"
           aria-checked={!effectivelyDisabled}
           aria-label={`Toggle ${node.name}`}
@@ -2565,7 +2566,10 @@ function SettingsInner() {
                       variant="ghost"
                       size="sm"
                       onClick={() =>
-                        setSettings({ ...settings, disabledProjectDirs: [] })
+                        setSettings((prev) => ({
+                          ...prev,
+                          disabledProjectDirs: [],
+                        }))
                       }
                     >
                       Reset
