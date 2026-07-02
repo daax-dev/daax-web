@@ -152,6 +152,7 @@ function DirVisibilityItem({
             type="button"
             onClick={() => onToggleExpand(node.name)}
             className="shrink-0 text-muted-foreground hover:text-foreground"
+            aria-expanded={isExpanded}
             aria-label={isExpanded ? "Collapse" : "Expand"}
           >
             {isExpanded ? (
@@ -459,14 +460,18 @@ function SettingsInner() {
   // (cascading to children) and prunes now-redundant descendant entries;
   // enabling removes it.
   const toggleDirVisibility = (name: string, currentlyDisabled: boolean) => {
-    const current = settings.disabledProjectDirs ?? [];
-    const next = currentlyDisabled
-      ? current.filter((d) => d !== name)
-      : [
-          ...current.filter((d) => d !== name && !d.startsWith(`${name}/`)),
-          name,
-        ];
-    setSettings({ ...settings, disabledProjectDirs: next });
+    // Functional update so rapid/batched toggles always compute from the
+    // latest state instead of a stale render-closure snapshot.
+    setSettings((prev) => {
+      const current = prev.disabledProjectDirs ?? [];
+      const next = currentlyDisabled
+        ? current.filter((d) => d !== name)
+        : [
+            ...current.filter((d) => d !== name && !d.startsWith(`${name}/`)),
+            name,
+          ];
+      return { ...prev, disabledProjectDirs: next };
+    });
   };
 
   const toggleDirVisExpand = (name: string) =>

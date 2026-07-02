@@ -380,6 +380,7 @@ function ProjectTreeItem({
             type="button"
             onClick={() => onToggle(node.name)}
             className="shrink-0 text-muted-foreground hover:text-foreground"
+            aria-expanded={isExpanded}
             aria-label={isExpanded ? "Collapse" : "Expand"}
           >
             {isExpanded ? (
