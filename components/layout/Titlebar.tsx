@@ -396,7 +396,12 @@ function ProjectTreeItem({
           onClick={handleClick}
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
         >
-          <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
+          <Icon
+            className={cn(
+              "h-4 w-4 shrink-0",
+              isRepo ? "text-muted-foreground" : "text-folder",
+            )}
+          />
           <span className="flex-1 truncate">{node.segment}</span>
           {hasChildren && (
             <span className="text-xs text-muted-foreground">

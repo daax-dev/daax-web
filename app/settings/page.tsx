@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -36,7 +36,6 @@ import {
   RotateCw,
   GripVertical,
   Package,
-  Shield,
   Database,
   Play,
   ArrowLeftRight,
@@ -45,7 +44,7 @@ import {
   FolderGit2,
 } from "lucide-react";
 import Link from "next/link";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import {
   getSettings,
   saveSettings,
@@ -165,7 +164,13 @@ function DirVisibilityItem({
           <span className="w-4 shrink-0" />
         )}
         <Icon
-          className={`h-4 w-4 shrink-0 ${effectivelyDisabled ? "text-muted-foreground/50" : "text-muted-foreground"}`}
+          className={`h-4 w-4 shrink-0 ${
+            effectivelyDisabled
+              ? "text-muted-foreground/50"
+              : isRepo
+                ? "text-muted-foreground"
+                : "text-folder"
+          }`}
         />
         <span
           className={`flex-1 min-w-0 truncate text-sm ${effectivelyDisabled ? "text-muted-foreground line-through" : ""}`}
@@ -251,8 +256,18 @@ function findMatchingVariant(imageName: string) {
   );
 }
 
-export default function SettingsPage() {
+function SettingsInner() {
   const { refreshDirectories: refreshProjectList } = useProject();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // The active tab is driven by the ?tab= query so the User Settings / Projects
+  // / Admin tabs can live in the shared 2nd-level settings nav (see layout.tsx).
+  const rawTab = searchParams.get("tab") || "user";
+  const activeTab = rawTab === "admin" && !isAdminMode ? "user" : rawTab;
+  const setActiveTab = (tab: string) =>
+    router.replace(tab === "user" ? "/settings" : `/settings?tab=${tab}`, {
+      scroll: false,
+    });
 
   const [detectedMode, setDetectedMode] = useState<DeploymentMode>("host");
   const [settings, setSettings] = useState<DaaxSettings>(DEFAULT_SETTINGS);
@@ -482,21 +497,7 @@ export default function SettingsPage() {
           <GitHubMessages />
         </Suspense>
 
-        <Tabs defaultValue="user" className="w-full">
-          <TabsList className="mb-4">
-            <TabsTrigger value="user">User Settings</TabsTrigger>
-            <TabsTrigger value="projects" className="gap-2">
-              <ArrowLeftRight className="h-4 w-4" />
-              Projects
-            </TabsTrigger>
-            {isAdminMode && (
-              <TabsTrigger value="admin" className="gap-2">
-                <Shield className="h-4 w-4" />
-                Admin
-              </TabsTrigger>
-            )}
-          </TabsList>
-
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsContent value="user" className="space-y-6 mt-0">
             <Card>
               <CardHeader>
@@ -3658,5 +3659,15 @@ export default function SettingsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// useSearchParams() (for the ?tab= driven tabs) must sit under a Suspense
+// boundary, so the page component is a thin wrapper around SettingsInner.
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={null}>
+      <SettingsInner />
+    </Suspense>
   );
 }
