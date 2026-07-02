@@ -330,6 +330,7 @@ const externalLinks: {
 // Repos (type "git") are switchable on click; any node with children shows a
 // chevron to expand. Styling uses muted repo icons and cobalt folder/container
 // icons so repos remain visually distinct.
+function ProjectTreeItem({
   node,
   depth,
   activeProject,

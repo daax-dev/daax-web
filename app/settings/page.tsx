@@ -130,8 +130,10 @@ function DirVisibilityItem({
   depth: number;
   disabled: string[];
   parentDisabled: boolean;
+  expanded: Set<string>;
   onToggleExpand: (name: string) => void;
   onToggleDir: (name: string, currentlyDisabled: boolean) => void;
+}) {
   const selfDisabled = disabled.includes(node.name);
   const effectivelyDisabled = parentDisabled || selfDisabled;
   const hasChildren = node.children.length > 0;
@@ -263,7 +265,8 @@ function SettingsInner() {
   const rawTab = searchParams.get("tab");
   const allowedTabs = new Set(["user", "projects", "admin"]);
   const requestedTab = rawTab && allowedTabs.has(rawTab) ? rawTab : "user";
-  const activeTab = requestedTab === "admin" && !isAdminMode ? "user" : requestedTab;
+  const activeTab =
+    requestedTab === "admin" && !isAdminMode ? "user" : requestedTab;
   const setActiveTab = (tab: string) =>
     router.replace(tab === "user" ? "/settings" : `/settings?tab=${tab}`, {
       scroll: false,
