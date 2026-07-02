@@ -446,6 +446,9 @@ export interface DaaxSettings {
   pluginOrder: string[];
   // Custom sub-feature order per plugin (plugin id -> array of sub-feature IDs)
   subFeatureOrder: Record<string, string[]>;
+  // Project directories disabled in the titlebar selector (full relative paths).
+  // Disabling a directory cascades to all of its children.
+  disabledProjectDirs: string[];
   // Reasons for hiding items (item key -> reason string)
   hiddenReasons: Record<string, string>;
   // Homepage card settings
@@ -614,6 +617,8 @@ const DEFAULT_SETTINGS: DaaxSettings = {
   pluginOrder: [],
   // Sub-feature order per plugin - empty means use default order from plugin definition
   subFeatureOrder: {},
+  // Disabled project directories - empty means all directories are shown
+  disabledProjectDirs: [],
   // Reasons for hiding items
   hiddenReasons: {},
   // Homepage cards - empty means use DEFAULT_HOMEPAGE_CARDS

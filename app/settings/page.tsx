@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -36,13 +36,15 @@ import {
   RotateCw,
   GripVertical,
   Package,
-  Shield,
   Database,
   Play,
   ArrowLeftRight,
+  FolderTree,
+  Folder,
+  FolderGit2,
 } from "lucide-react";
 import Link from "next/link";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import {
   getSettings,
   saveSettings,
@@ -88,6 +90,7 @@ import Image from "next/image";
 // Admin mode: show admin features. Set NEXT_PUBLIC_ADMIN_MODE=false in release builds to hide.
 const isAdminMode = process.env.NEXT_PUBLIC_ADMIN_MODE !== "false";
 import { useProject } from "@/lib/project-context";
+import { buildProjectTree, type ProjectTreeNode } from "@/lib/project-tree";
 
 // Icon mapping for homepage cards
 const CARD_ICONS: Record<
@@ -107,6 +110,111 @@ const CARD_ICONS: Record<
 interface WorkspaceDirectory {
   name: string;
   path: string;
+  type?: "git" | "planning" | "folder";
+}
+
+// Recursive row for the "Project Directory Visibility" tree in settings.
+// Toggling a directory off adds it to disabledProjectDirs, which cascades to
+// all descendants. A directory under an already-disabled ancestor renders
+// greyed with a non-interactive switch.
+function DirVisibilityItem({
+  node,
+  depth,
+  disabled,
+  parentDisabled,
+  expanded,
+  onToggleExpand,
+  onToggleDir,
+}: {
+  node: ProjectTreeNode;
+  depth: number;
+  disabled: string[];
+  parentDisabled: boolean;
+  expanded: Set<string>;
+  onToggleExpand: (name: string) => void;
+  onToggleDir: (name: string, currentlyDisabled: boolean) => void;
+}) {
+  const selfDisabled = disabled.includes(node.name);
+  const effectivelyDisabled = parentDisabled || selfDisabled;
+  const hasChildren = node.children.length > 0;
+  const isExpanded = expanded.has(node.name);
+  const isRepo = node.type === "git";
+  const Icon = isRepo ? FolderGit2 : hasChildren ? FolderTree : Folder;
+
+  return (
+    <div>
+      <div
+        className="flex items-center gap-1 py-1"
+        style={{ paddingLeft: `${depth}rem` }}
+      >
+        {hasChildren ? (
+          <button
+            type="button"
+            onClick={() => onToggleExpand(node.name)}
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+            aria-expanded={isExpanded}
+            aria-label={isExpanded ? "Collapse" : "Expand"}
+          >
+            {isExpanded ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </button>
+        ) : (
+          <span className="w-4 shrink-0" />
+        )}
+        <Icon
+          className={`h-4 w-4 shrink-0 ${
+            effectivelyDisabled
+              ? "text-muted-foreground/50"
+              : isRepo
+                ? "text-muted-foreground"
+                : "text-folder"
+          }`}
+        />
+        <span
+          className={`flex-1 min-w-0 truncate text-sm ${effectivelyDisabled ? "text-muted-foreground line-through" : ""}`}
+          title={node.name}
+        >
+          {node.segment}
+        </span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={!effectivelyDisabled}
+          aria-label={`Toggle ${node.name}`}
+          disabled={parentDisabled}
+          onClick={() => onToggleDir(node.name, selfDisabled)}
+          className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+            !effectivelyDisabled ? "bg-primary" : "bg-muted"
+          }`}
+        >
+          <span
+            className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+              !effectivelyDisabled ? "translate-x-5" : "translate-x-1"
+            }`}
+          />
+        </button>
+      </div>
+      {hasChildren && isExpanded && (
+        <div className="border-l border-border/50 ml-2">
+          {node.children.map((child) => (
+            <DirVisibilityItem
+              key={child.name}
+              node={child}
+              depth={depth + 1}
+              disabled={disabled}
+              parentDisabled={effectivelyDisabled}
+              expanded={expanded}
+              onToggleExpand={onToggleExpand}
+              onToggleDir={onToggleDir}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 interface GitHubStatus {
@@ -150,8 +258,21 @@ function findMatchingVariant(imageName: string) {
   );
 }
 
-export default function SettingsPage() {
+function SettingsInner() {
   const { refreshDirectories: refreshProjectList } = useProject();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // The active tab is driven by the ?tab= query so the User Settings / Projects
+  // / Admin tabs can live in the shared 2nd-level settings nav (see layout.tsx).
+  const rawTab = searchParams.get("tab");
+  const allowedTabs = new Set(["user", "projects", "admin"]);
+  const requestedTab = rawTab && allowedTabs.has(rawTab) ? rawTab : "user";
+  const activeTab =
+    requestedTab === "admin" && !isAdminMode ? "user" : requestedTab;
+  const setActiveTab = (tab: string) =>
+    router.replace(tab === "user" ? "/settings" : `/settings?tab=${tab}`, {
+      scroll: false,
+    });
 
   const [detectedMode, setDetectedMode] = useState<DeploymentMode>("host");
   const [settings, setSettings] = useState<DaaxSettings>(DEFAULT_SETTINGS);
@@ -191,6 +312,8 @@ export default function SettingsPage() {
   const [availableLogos, setAvailableLogos] = useState<
     { id: string; name: string; path: string }[]
   >([]);
+  // Expanded directories in the project-visibility tree
+  const [expandedDirVis, setExpandedDirVis] = useState<Set<string>>(new Set());
 
   // Initialize settings on client side
   useEffect(() => {
@@ -334,6 +457,32 @@ export default function SettingsPage() {
     setBasePathError("");
   };
 
+  // Toggle a directory's visibility. Disabling adds it to disabledProjectDirs
+  // (cascading to children) and prunes now-redundant descendant entries;
+  // enabling removes it.
+  const toggleDirVisibility = (name: string, currentlyDisabled: boolean) => {
+    // Functional update so rapid/batched toggles always compute from the
+    // latest state instead of a stale render-closure snapshot.
+    setSettings((prev) => {
+      const current = prev.disabledProjectDirs ?? [];
+      const next = currentlyDisabled
+        ? current.filter((d) => d !== name)
+        : [
+            ...current.filter((d) => d !== name && !d.startsWith(`${name}/`)),
+            name,
+          ];
+      return { ...prev, disabledProjectDirs: next };
+    });
+  };
+
+  const toggleDirVisExpand = (name: string) =>
+    setExpandedDirVis((prev) => {
+      const nextSet = new Set(prev);
+      if (nextSet.has(name)) nextSet.delete(name);
+      else nextSet.add(name);
+      return nextSet;
+    });
+
   const handleReset = () => {
     // Clear localStorage first
     clearSettings();
@@ -357,21 +506,7 @@ export default function SettingsPage() {
           <GitHubMessages />
         </Suspense>
 
-        <Tabs defaultValue="user" className="w-full">
-          <TabsList className="mb-4">
-            <TabsTrigger value="user">User Settings</TabsTrigger>
-            <TabsTrigger value="projects" className="gap-2">
-              <ArrowLeftRight className="h-4 w-4" />
-              Projects
-            </TabsTrigger>
-            {isAdminMode && (
-              <TabsTrigger value="admin" className="gap-2">
-                <Shield className="h-4 w-4" />
-                Admin
-              </TabsTrigger>
-            )}
-          </TabsList>
-
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsContent value="user" className="space-y-6 mt-0">
             <Card>
               <CardHeader>
@@ -417,12 +552,20 @@ export default function SettingsPage() {
                     The root directory for workspaces. Use ~ for home directory.
                     Default: ~/prj
                   </p>
-                  {directories.length > 0 && (
-                    <div className="text-xs text-muted-foreground mt-2 p-2 rounded bg-muted/50">
-                      Found {directories.length} Git project
-                      {directories.length !== 1 ? "s" : ""}
-                    </div>
-                  )}
+                  {directories.length > 0 &&
+                    (() => {
+                      const repoCount = directories.filter(
+                        (d) => d.type === "git",
+                      ).length;
+                      return (
+                        <div className="text-xs text-muted-foreground mt-2 p-2 rounded bg-muted/50">
+                          Found {repoCount} Git repositor
+                          {repoCount !== 1 ? "ies" : "y"} across{" "}
+                          {directories.length} director
+                          {directories.length !== 1 ? "ies" : "y"}
+                        </div>
+                      );
+                    })()}
                 </div>
               </CardContent>
             </Card>
@@ -846,11 +989,17 @@ export default function SettingsPage() {
                         className="w-full h-10 px-3 pr-10 rounded-md border border-input bg-background text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 appearance-none"
                       >
                         <option value="">No default (always prompt)</option>
-                        {directories.map((dir) => (
-                          <option key={dir.name} value={dir.name}>
-                            {dir.name}
-                          </option>
-                        ))}
+                        {directories
+                          .filter(
+                            (dir) =>
+                              dir.type === "git" ||
+                              dir.name === settings.defaultProject,
+                          )
+                          .map((dir) => (
+                            <option key={dir.name} value={dir.name}>
+                              {dir.name}
+                            </option>
+                          ))}
                       </select>
                       <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 opacity-50 pointer-events-none" />
                     </div>
@@ -2344,6 +2493,95 @@ export default function SettingsPage() {
                 </p>
               </CardContent>
             </Card>
+
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <FolderTree className="h-5 w-5" />
+                      Project Directory Visibility
+                    </CardTitle>
+                    <CardDescription>
+                      Choose which directories appear in the titlebar project
+                      selector. Turning a directory off also hides everything
+                      inside it.
+                    </CardDescription>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => fetchDirectories()}
+                    disabled={loadingDirs}
+                    title="Refresh directory list"
+                  >
+                    <RefreshCw
+                      className={`h-4 w-4 ${loadingDirs ? "animate-spin" : ""}`}
+                    />
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {(() => {
+                  const tree = buildProjectTree(
+                    directories.map((d) => ({
+                      name: d.name,
+                      type: (d.type ?? "folder") as ProjectTreeNode["type"],
+                    })),
+                  );
+                  if (tree.length === 0) {
+                    return (
+                      <p className="text-sm text-muted-foreground">
+                        No directories found for the current base path.
+                      </p>
+                    );
+                  }
+                  return (
+                    <div className="rounded-md border p-2">
+                      {tree.map((node) => (
+                        <DirVisibilityItem
+                          key={node.name}
+                          node={node}
+                          depth={0}
+                          disabled={settings.disabledProjectDirs ?? []}
+                          parentDisabled={false}
+                          expanded={expandedDirVis}
+                          onToggleExpand={toggleDirVisExpand}
+                          onToggleDir={toggleDirVisibility}
+                        />
+                      ))}
+                    </div>
+                  );
+                })()}
+                {(settings.disabledProjectDirs?.length ?? 0) > 0 && (
+                  <div className="flex items-center justify-between border-t pt-3">
+                    <p className="text-xs text-muted-foreground">
+                      {settings.disabledProjectDirs.length} director
+                      {settings.disabledProjectDirs.length === 1
+                        ? "y"
+                        : "ies"}{" "}
+                      hidden.
+                    </p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        setSettings((prev) => ({
+                          ...prev,
+                          disabledProjectDirs: [],
+                        }))
+                      }
+                    >
+                      Reset
+                    </Button>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Remember to press <span className="font-medium">Save</span> to
+                  apply changes.
+                </p>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* Admin Tab - Only visible in admin mode */}
@@ -2388,6 +2626,9 @@ export default function SettingsPage() {
                 <CardContent className="space-y-2">
                   <div className="grid gap-1">
                     {orderedPlugins.map((plugin, index) => {
+                      // Settings is a fixed gear next to the user avatar — it is
+                      // not reorderable or hideable, so omit it from this list.
+                      if (plugin.id === "settings") return null;
                       const currentMaturity =
                         settings.pluginMaturity[plugin.id] || plugin.maturity;
                       const isDragging = draggedPlugin === plugin.id;
@@ -3430,5 +3671,15 @@ export default function SettingsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// useSearchParams() (for the ?tab= driven tabs) must sit under a Suspense
+// boundary, so the page component is a thin wrapper around SettingsInner.
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={null}>
+      <SettingsInner />
+    </Suspense>
   );
 }
