@@ -96,6 +96,44 @@ export function isDirDisabled(
 }
 
 /**
+ * Derive the absolute workspace base from a workspace-directory listing.
+ * Each entry pairs a base-relative `name` (e.g. "ps/daax") with an absolute
+ * `path` (e.g. "/workspace/ps/daax"); stripping the name off the path yields
+ * the base ("/workspace"). Returns null if no entry lets us derive it.
+ *
+ * This is derived from the same listing that `disabledProjectDirs` is defined
+ * against, so the relative paths line up exactly — more robust than assuming a
+ * particular `basePath` string format (e.g. "~/prj" vs "/workspace").
+ */
+export function deriveWorkspaceBase(
+  dirs: readonly { name: string; path: string }[],
+): string | null {
+  for (const d of dirs) {
+    if (d.name && d.path.endsWith(`/${d.name}`)) {
+      return d.path.slice(0, d.path.length - d.name.length - 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * True if an absolute project path is hidden by the disabled-dirs filter.
+ * The base project itself (path === base) and any path outside the base are
+ * treated as visible (fail-open) so unknown layouts never silently vanish.
+ */
+export function isProjectPathDisabled(
+  absPath: string,
+  base: string | null,
+  disabled: Iterable<string>,
+): boolean {
+  if (!base) return false;
+  if (absPath === base) return false;
+  if (!absPath.startsWith(`${base}/`)) return false;
+  const relative = absPath.slice(base.length + 1);
+  return isDirDisabled(relative, disabled);
+}
+
+/**
  * Prune nodes whose path is in the disabled set. Because a pruned parent is
  * removed with its whole subtree, cascade-to-children is automatic.
  */

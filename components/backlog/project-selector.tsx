@@ -1,7 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useBacklog } from "./backlog-context";
+import { useProject } from "@/lib/project-context";
+import { getSettings, subscribeToSettings } from "@/lib/settings";
+import { deriveWorkspaceBase, isProjectPathDisabled } from "@/lib/project-tree";
 import {
   Select,
   SelectContent,
@@ -70,20 +73,49 @@ export function ProjectSelector() {
     projects,
     selectedProject,
     setSelectedProject,
+    clearSelectedProject,
     isLoadingProjects,
     isLoadingTasks,
   } = useBacklog();
+  const { directories } = useProject();
+
+  // Track the Settings folder-visibility filter (disabledProjectDirs) and stay
+  // in sync when it changes, so hiding a folder in Settings updates the Backlog
+  // project picker live — matching the Titlebar/Settings tree behavior.
+  const [disabledDirs, setDisabledDirs] = useState<string[]>(() =>
+    typeof window === "undefined"
+      ? []
+      : (getSettings().disabledProjectDirs ?? []),
+  );
+  useEffect(() => {
+    setDisabledDirs(getSettings().disabledProjectDirs ?? []);
+    return subscribeToSettings((s) =>
+      setDisabledDirs(s.disabledProjectDirs ?? []),
+    );
+  }, []);
+
+  // Apply the same visibility filter Settings uses. Fail-open when nothing is
+  // disabled or the workspace base can't be derived, so behavior is unchanged
+  // unless the operator has actually hidden folders.
+  const visibleProjects = useMemo(() => {
+    if (disabledDirs.length === 0) return projects;
+    const base = deriveWorkspaceBase(directories);
+    if (!base) return projects;
+    return projects.filter(
+      (p) => !isProjectPathDisabled(p.path, base, disabledDirs),
+    );
+  }, [projects, directories, disabledDirs]);
 
   // Group projects by subfolder, with base project first
   const { groupedProjects, baseProjectPath } = useMemo(() => {
-    if (projects.length === 0)
+    if (visibleProjects.length === 0)
       return { groupedProjects: [], baseProjectPath: null };
 
     // Find the base project (shortest path)
     let basePath: string | null = null;
     let minLength = Infinity;
 
-    for (const p of projects) {
+    for (const p of visibleProjects) {
       if (p.path.length < minLength) {
         minLength = p.path.length;
         basePath = p.path;
@@ -93,7 +125,7 @@ export function ProjectSelector() {
     // Group projects by subfolder
     const groups = new Map<string | null, BacklogProject[]>();
 
-    for (const project of projects) {
+    for (const project of visibleProjects) {
       const subfolder = basePath ? getSubfolder(project.path, basePath) : null;
       const existing = groups.get(subfolder) || [];
       existing.push(project);
@@ -124,7 +156,7 @@ export function ProjectSelector() {
     }
 
     return { groupedProjects: result, baseProjectPath: basePath };
-  }, [projects]);
+  }, [visibleProjects]);
 
   // Get display name for a project
   const getDisplayName = (project: { path: string; name: string }): string => {
@@ -139,6 +171,40 @@ export function ProjectSelector() {
     () => groupedProjects.flatMap((g) => g.projects),
     [groupedProjects],
   );
+
+  // If the folder filter hides the *currently selected* project, actually
+  // switch the selection to the first visible project — not just the displayed
+  // label. Otherwise the board, task loading, and create/update would keep
+  // operating on the hidden project while the picker shows a different one.
+  const selectedIsVisible =
+    selectedProject != null &&
+    allProjects.some((p) => p.path === selectedProject.path);
+  useEffect(() => {
+    if (
+      isLoadingProjects ||
+      isLoadingTasks ||
+      selectedProject == null ||
+      selectedIsVisible
+    ) {
+      return;
+    }
+    if (allProjects.length > 0) {
+      // Switch to the first still-visible project.
+      setSelectedProject(allProjects[0].path);
+    } else {
+      // Every project is hidden by the filter — clear the selection so the
+      // board stops operating on the now-hidden project.
+      clearSelectedProject();
+    }
+  }, [
+    isLoadingProjects,
+    isLoadingTasks,
+    selectedProject,
+    selectedIsVisible,
+    allProjects,
+    setSelectedProject,
+    clearSelectedProject,
+  ]);
 
   if (isLoadingProjects) {
     return (
@@ -161,7 +227,11 @@ export function ProjectSelector() {
     );
   }
 
-  const effectiveSelectedProject = selectedProject ?? allProjects[0];
+  // Display fallback for the paint before the switch effect above runs, so the
+  // trigger never flashes a dangling value for a hidden project.
+  const effectiveSelectedProject = selectedIsVisible
+    ? selectedProject
+    : allProjects[0];
 
   return (
     <div className="flex items-center gap-2">

@@ -19,6 +19,7 @@ import {
   CopilotIcon,
   OpenCodeIcon,
 } from "@/components/icons/AgentIcons";
+import { getSettings, sortByAgentOrder } from "@/lib/settings";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -59,7 +60,8 @@ const TOOL_META: Record<
   claude: { Icon: ClaudeIcon, accent: "text-orange-500", label: "Claude" },
   copilot: { Icon: CopilotIcon, accent: "text-emerald-500", label: "Copilot" },
   gemini: { Icon: GeminiIcon, accent: "text-blue-500", label: "Gemini" },
-  codex: { Icon: CodexIcon, accent: "text-violet-500", label: "Codex" },
+  // OpenAI's mark is monochrome; text-foreground = white on dark, black on light.
+  codex: { Icon: CodexIcon, accent: "text-foreground", label: "Codex" },
   opencode: { Icon: OpenCodeIcon, accent: "text-cyan-500", label: "OpenCode" },
 };
 
@@ -573,14 +575,16 @@ export function AgentTabsLayout() {
             <div>
               <label className="text-sm font-medium mb-3 block">Agent:</label>
               <div className="space-y-2">
-                {(
+                {sortByAgentOrder(
                   [
                     { id: "claude", label: "Claude Code" },
                     { id: "opencode", label: "OpenCode" },
                     { id: "copilot", label: "GitHub Copilot" },
                     { id: "gemini", label: "Gemini CLI" },
                     { id: "codex", label: "Codex CLI" },
-                  ] as { id: AIToolId; label: string }[]
+                  ] as { id: AIToolId; label: string }[],
+                  (t) => t.id,
+                  getSettings().aiAgentOrder,
                 ).map(({ id, label }) => {
                   const { Icon, accent } = TOOL_META[id];
                   return (

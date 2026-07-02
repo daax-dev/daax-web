@@ -21,6 +21,7 @@ import {
   Monitor,
   Server,
   ChevronDown,
+  ChevronUp,
   ChevronRight,
   RefreshCw,
   Mic,
@@ -60,6 +61,7 @@ import {
   getSubFeatureMaturity,
   getOrderedPlugins,
   getOrderedHomepageCards,
+  normalizeAgentOrder,
   type DaaxSettings,
   type DeploymentMode,
   type MaturityLevel,
@@ -69,6 +71,18 @@ import {
   type BrandingConfig,
 } from "@/lib/settings";
 import { ContainerImageSelector } from "@/components/settings/ContainerImageSelector";
+import { AGENT_ICONS, AGENT_ACCENTS } from "@/components/icons/AgentIcons";
+import { cn } from "@/lib/utils";
+
+// Display labels for the AI coding agents (keyed by AIToolId) — used by the
+// agent-order reorder control in AI Coding settings.
+const AI_AGENT_LABELS: Record<string, string> = {
+  claude: "Claude Code",
+  codex: "Codex CLI",
+  opencode: "OpenCode",
+  copilot: "GitHub Copilot",
+  gemini: "Gemini CLI",
+};
 import {
   Bot,
   Code,
@@ -1629,6 +1643,64 @@ function SettingsInner() {
                         </div>
                       </div>
                     </label>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <Label>Agent Order</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Reorder how AI coding agents appear in the agents menu
+                  </p>
+                  <div className="space-y-2">
+                    {normalizeAgentOrder(settings.aiAgentOrder).map(
+                      (id, index, arr) => {
+                        const Icon = AGENT_ICONS[id];
+                        const accent = AGENT_ACCENTS[id];
+                        const label = AI_AGENT_LABELS[id] ?? id;
+                        const move = (dir: -1 | 1) => {
+                          const target = index + dir;
+                          if (target < 0 || target >= arr.length) return;
+                          const next = [...arr];
+                          [next[index], next[target]] = [
+                            next[target],
+                            next[index],
+                          ];
+                          setSettings({ ...settings, aiAgentOrder: next });
+                        };
+                        return (
+                          <div
+                            key={id}
+                            className="flex items-center gap-3 rounded-md border border-border p-2"
+                          >
+                            <span className="w-4 text-center text-xs text-muted-foreground">
+                              {index + 1}
+                            </span>
+                            {Icon ? (
+                              <Icon className={cn("h-4 w-4", accent)} />
+                            ) : null}
+                            <span className="flex-1 text-sm">{label}</span>
+                            <button
+                              type="button"
+                              aria-label={`Move ${label} up`}
+                              disabled={index === 0}
+                              onClick={() => move(-1)}
+                              className="rounded p-1 text-muted-foreground hover:bg-muted disabled:opacity-30 disabled:hover:bg-transparent"
+                            >
+                              <ChevronUp className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              aria-label={`Move ${label} down`}
+                              disabled={index === arr.length - 1}
+                              onClick={() => move(1)}
+                              className="rounded p-1 text-muted-foreground hover:bg-muted disabled:opacity-30 disabled:hover:bg-transparent"
+                            >
+                              <ChevronDown className="h-4 w-4" />
+                            </button>
+                          </div>
+                        );
+                      },
+                    )}
                   </div>
                 </div>
               </CardContent>

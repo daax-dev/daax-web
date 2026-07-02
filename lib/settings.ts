@@ -471,6 +471,9 @@ export interface DaaxSettings {
   transcriptSettings: TranscriptSettings;
   // AI Coding page layout: "tree" (left sidebar with agent tree) or "tabs" (tabs like shell page)
   aiCodingLayout: "tree" | "tabs";
+  // Display order of AI coding agents (by AIToolId). Reorderable in Settings.
+  // Any agent missing from this list falls back to DEFAULT_AI_AGENT_ORDER position.
+  aiAgentOrder: string[];
   // Git worktree settings for AI sessions
   autoWorktreeEnabled: boolean; // Auto-create worktrees for AI sessions
   autoWorktreeCleanup: boolean; // Auto-cleanup worktrees on session close
@@ -581,6 +584,42 @@ export interface BacklogInitDefaults {
   autoInit: boolean;
 }
 
+// Canonical AI coding agent order (by AIToolId). Codex is 2nd by default.
+// Used as the fallback ordering when a saved order is missing an agent.
+export const DEFAULT_AI_AGENT_ORDER = [
+  "claude",
+  "codex",
+  "opencode",
+  "copilot",
+  "gemini",
+] as const;
+
+// Normalize a saved agent order: keep only known ids, then append any known
+// agents missing from the saved list (e.g. a newly added agent) in canonical
+// order so nothing silently disappears from the menus.
+export function normalizeAgentOrder(order: string[] | undefined): string[] {
+  const canonical = DEFAULT_AI_AGENT_ORDER as readonly string[];
+  const saved = Array.isArray(order)
+    ? order.filter((id) => canonical.includes(id))
+    : [];
+  const missing = canonical.filter((id) => !saved.includes(id));
+  return [...saved, ...missing];
+}
+
+// Sort a list of agent-bearing items by the saved display order.
+export function sortByAgentOrder<T>(
+  items: T[],
+  getId: (item: T) => string,
+  order: string[] | undefined,
+): T[] {
+  const ordered = normalizeAgentOrder(order);
+  const rank = (id: string) => {
+    const i = ordered.indexOf(id);
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  return [...items].sort((a, b) => rank(getId(a)) - rank(getId(b)));
+}
+
 const DEFAULT_SETTINGS: DaaxSettings = {
   basePath: "~/prj",
   codeServerPort: 18080,
@@ -657,6 +696,8 @@ const DEFAULT_SETTINGS: DaaxSettings = {
   },
   // AI Coding layout - default to tree (current sidebar design)
   aiCodingLayout: "tree",
+  // AI coding agent display order (Codex 2nd by default). See DEFAULT_AI_AGENT_ORDER.
+  aiAgentOrder: [...DEFAULT_AI_AGENT_ORDER],
   // Git worktree settings - enabled by default for isolated AI sessions
   autoWorktreeEnabled: true,
   autoWorktreeCleanup: true,
