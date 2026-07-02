@@ -93,6 +93,36 @@ COPY . .
 # Build Next.js (NEXT_PUBLIC_* vars are inlined at build time)
 RUN bun run build
 
+# Generate the dependency SBOM (settings > Build panel) at image build so
+# container mode ships a real bill of materials, not just local dev. syft is
+# installed from a pinned release artifact whose checksum is verified (no piping
+# a remote script into a shell). This step is REQUIRED: a failed download,
+# checksum mismatch, or scan fails the image build so a release can never
+# silently ship without an SBOM. Set DAAX_SKIP_SBOM=1 to opt out (e.g. an
+# air-gapped build) and accept the panel's graceful "no SBOM in this build".
+ARG DAAX_SKIP_SBOM=
+ARG SYFT_VERSION=1.45.1
+RUN if [ -n "$DAAX_SKIP_SBOM" ]; then \
+      echo "DAAX_SKIP_SBOM set — skipping SBOM generation"; mkdir -p /app/sbom; \
+    else \
+      set -eu; \
+      arch="$(dpkg --print-architecture)"; \
+      base="https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}"; \
+      tarball="syft_${SYFT_VERSION}_linux_${arch}.tar.gz"; \
+      cd /tmp; \
+      curl -fsSL -o "$tarball" "${base}/${tarball}"; \
+      curl -fsSL -o syft_checksums.txt "${base}/syft_${SYFT_VERSION}_checksums.txt"; \
+      line="$(awk -v f="$tarball" '$2 == f {print}' syft_checksums.txt)"; \
+      [ -n "$line" ] || { echo "no checksum entry for ${tarball}" >&2; exit 1; }; \
+      printf '%s\n' "$line" | sha256sum -c -; \
+      tar -xzf "$tarball" syft; \
+      install -m 0755 syft /usr/local/bin/syft; \
+      rm -f "$tarball" syft_checksums.txt syft; \
+      cd /app; \
+      syft version; \
+      bun run sbom:generate; \
+    fi
+
 # -----------------------------------------------------------
 # Production stage
 FROM base AS runner
@@ -129,6 +159,10 @@ COPY --from=builder /app/plugins ./plugins
 COPY --from=builder /app/migrations ./migrations
 COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
+# Dependency SBOM generated in the builder stage (settings > Build panel). The
+# builder step is fatal unless DAAX_SKIP_SBOM=1, so this is populated for a normal
+# build and empty only when SBOM generation was explicitly skipped.
+COPY --from=builder /app/sbom ./sbom
 COPY --from=builder /app/postcss.config.mjs ./postcss.config.mjs
 COPY --from=builder /app/instrumentation.ts ./instrumentation.ts
 COPY --from=builder /app/config.toml ./config.toml

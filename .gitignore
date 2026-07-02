@@ -53,3 +53,6 @@ logs/
 # Playwright run output
 /playwright-report/
 /test-results/
+
+# Generated SBOMs (settings > Build panel; produced by `bun run sbom:generate`)
+/sbom/
