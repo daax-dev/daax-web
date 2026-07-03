@@ -29,7 +29,10 @@ export async function fetchWithRetry(
         Number.isFinite(parsed) && parsed > 0
           ? Math.min(parsed * 1000, MAX_BACKOFF_MS)
           : Math.min(1000 * (attempt + 1), MAX_BACKOFF_MS);
-      const delayMs = base * (0.5 + Math.random() * 0.5);
+      const delayMs =
+        Number.isFinite(parsed) && parsed > 0
+          ? base
+          : base * (0.5 + Math.random() * 0.5);
 
       await new Promise((r) => setTimeout(r, delayMs));
       continue;
