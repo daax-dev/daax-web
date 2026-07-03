@@ -105,9 +105,15 @@ describe("GET /api/files authorization (#194)", () => {
     const res = await GET(req());
 
     expect(res.status).toBe(401);
-    // The recursive walk must not have been invoked at all.
+    // No fs-touching helper reachable from the handler may run before the
+    // auth check — requireAuth() must be the first thing in the handler,
+    // ahead of getWorkspacePath() (existsSync) and the recursive walk
+    // (readdir/readFile/stat/realpath).
+    expect(mockExistsSync).not.toHaveBeenCalled();
     expect(mockReaddir).not.toHaveBeenCalled();
     expect(mockReadFile).not.toHaveBeenCalled();
+    expect(mockStat).not.toHaveBeenCalled();
+    expect(mockRealpath).not.toHaveBeenCalled();
 
     // Body must carry the auth error and leak no file listing/content.
     const body = await res.json();
