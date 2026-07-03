@@ -71,7 +71,7 @@ function getGitInfo(): GitInfo {
  * Export a recording as standalone HTML
  */
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   // Require authentication before reading recording data

@@ -316,9 +316,11 @@ export function isValidRecordingId(id: unknown): id is string {
   if (!RECORDING_ID_PATTERN.test(id)) return false;
 
   // Defense-in-depth: even if the allowlist were ever loosened, ensure the
-  // resolved path is a direct child of RECORDINGS_DIR. Uses lexical
-  // resolution (no fs, no symlink surprises) so it is deterministic and
-  // identical in host-dev and container mode.
+  // resolved path is a direct child of RECORDINGS_DIR. `resolve()` here is
+  // fs-free lexical (string-only) normalization — it does NOT touch the
+  // filesystem and does NOT resolve symlinks — so it is deterministic and
+  // identical in host-dev and container mode, at the cost of not detecting
+  // a symlinked entry inside RECORDINGS_DIR that points elsewhere.
   const resolvedDir = resolve(RECORDINGS_DIR);
   const resolvedFile = resolve(RECORDINGS_DIR, `${id}.json`);
   return dirname(resolvedFile) === resolvedDir;
