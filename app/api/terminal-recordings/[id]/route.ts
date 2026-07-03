@@ -3,6 +3,7 @@ import { readFileSync, unlinkSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { requireAuth } from "@/lib/auth";
+import { isValidRecordingId } from "@/server/recording/recorder";
 
 // Terminal recordings storage path (matches terminal-server.ts)
 const RECORDINGS_DIR = join(homedir(), ".daax", "recordings");
@@ -34,6 +35,12 @@ export async function GET(
 ): Promise<NextResponse> {
   try {
     const { id } = await context.params;
+    if (!isValidRecordingId(id)) {
+      return NextResponse.json(
+        { error: "invalid recording id" },
+        { status: 400 },
+      );
+    }
     const metaPath = join(RECORDINGS_DIR, `${id}.json`);
     const castPath = join(RECORDINGS_DIR, `${id}.cast`);
 
@@ -75,6 +82,12 @@ export async function DELETE(
 
   try {
     const { id } = await context.params;
+    if (!isValidRecordingId(id)) {
+      return NextResponse.json(
+        { error: "invalid recording id" },
+        { status: 400 },
+      );
+    }
     const metaPath = join(RECORDINGS_DIR, `${id}.json`);
     const castPath = join(RECORDINGS_DIR, `${id}.cast`);
 

@@ -8,6 +8,7 @@ import {
   generateExportFilename,
 } from "@/plugins/terminal-recorder/lib/html-export";
 import type { TerminalRecording } from "@/plugins/terminal-recorder/types";
+import { isValidRecordingId } from "@/server/recording/recorder";
 
 const RECORDINGS_DIR = join(homedir(), ".daax", "recordings");
 
@@ -76,6 +77,12 @@ export async function GET(
 ): Promise<NextResponse> {
   try {
     const { id } = await context.params;
+    if (!isValidRecordingId(id)) {
+      return NextResponse.json(
+        { error: "invalid recording id" },
+        { status: 400 },
+      );
+    }
     const metaPath = join(RECORDINGS_DIR, `${id}.json`);
     const castPath = join(RECORDINGS_DIR, `${id}.cast`);
 
