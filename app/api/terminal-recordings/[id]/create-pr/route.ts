@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
 import { execFileSync } from "child_process";
 import { getGitHubToken } from "@/lib/github-app";
 import { requireAuth } from "@/lib/auth";
@@ -11,8 +10,7 @@ import {
 } from "@/plugins/terminal-recorder/lib/html-export";
 import type { TerminalRecording } from "@/plugins/terminal-recorder/types";
 import { isValidRecordingId } from "@/server/recording/recorder";
-
-const RECORDINGS_DIR = join(homedir(), ".daax", "recordings");
+import { RECORDINGS_DIR } from "@/server/config/constants";
 
 /**
  * Validate export path to prevent path traversal attacks

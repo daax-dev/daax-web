@@ -78,6 +78,8 @@ import {
   isValidRecordingId,
   getRecording,
   deleteRecording,
+  startRecording,
+  stopRecording,
 } from "@/server/recording/recorder";
 
 // Payloads that MUST be rejected: traversal, separators, NUL, "..", whitespace,
@@ -225,6 +227,64 @@ describe("recorder path traversal (#193)", () => {
       }
 
       consoleSpy.mockRestore();
+    });
+  });
+
+  // Write-side traversal: `sessionType` is client-controlled (URL query param)
+  // and is interpolated into the recording id, which becomes the `.cast`/`.json`
+  // write path. startRecording must slug it so the minted id can never escape
+  // RECORDINGS_DIR (the read/delete guards above do NOT cover this write path).
+  describe("startRecording sanitizes client sessionType (write-side)", () => {
+    // crypto.randomUUID => hex + `-`; slice(0,8) is always allowlist-safe.
+    const SESSION_ID = "1a2b3c4d-0000-4000-8000-000000000000";
+
+    // Malicious client-supplied sessionType values that, unsanitized, would
+    // traverse out of / escape RECORDINGS_DIR when interpolated into the id.
+    const MALICIOUS_SESSION_TYPES: Array<[string, string]> = [
+      ["deep traversal", "../../etc/x"],
+      ["single slash subdir", "a/b"],
+      ["backslash", "a\\b"],
+      ["dotted", "..foo"],
+      ["null byte", "a\0b"],
+      ["whitespace", "a b"],
+    ];
+
+    it.each(MALICIOUS_SESSION_TYPES)(
+      "yields a valid, confined id for %s",
+      async (_label, sessionType) => {
+        // Unique sessionId per case so module-level state does not collide.
+        const sid = `${SESSION_ID}-${_label.replace(/\s+/g, "")}`;
+        const id = startRecording(sid, sessionType, "/bin/bash", 80, 24);
+
+        // Primary invariant: the minted id passes the same allowlist the read
+        // path enforces, so it can never traverse.
+        expect(id).not.toBeNull();
+        expect(isValidRecordingId(id)).toBe(true);
+
+        // Secondary: every file actually written stays directly inside
+        // RECORDINGS_DIR (weaker than the id check, but proves no escape).
+        for (const call of mockWriteFileSync.mock.calls) {
+          const path = String(call[0]);
+          expect(path.startsWith(`${MOCK_RECORDINGS_DIR}/`)).toBe(true);
+          // Directly in RECORDINGS_DIR: no extra separator after the base.
+          expect(path.slice(`${MOCK_RECORDINGS_DIR}/`.length)).not.toContain(
+            "/",
+          );
+        }
+
+        await stopRecording(sid); // release module-level state
+      },
+    );
+
+    it("preserves the expected id shape for a legit sessionType", async () => {
+      const id = startRecording(SESSION_ID, "shell", "/bin/bash", 80, 24);
+
+      expect(id).not.toBeNull();
+      expect(isValidRecordingId(id)).toBe(true);
+      // `${sessionType}-${Date.now()}-${sessionId.slice(0,8)}`
+      expect(id).toMatch(/^shell-\d+-1a2b3c4d$/);
+
+      await stopRecording(SESSION_ID); // release module-level state
     });
   });
 });

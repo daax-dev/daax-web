@@ -72,7 +72,18 @@ export function startRecording(
     }
   }
 
-  const recordingId = `${sessionType}-${Date.now()}-${sessionId.slice(0, 8)}`;
+  // `sessionType` is CLIENT-CONTROLLED (a `sessionType` URL query param, see
+  // server/handlers/connection-handler.ts). Interpolating it raw into
+  // `recordingId` — which is then joined onto RECORDINGS_DIR to build the
+  // `.cast`/`.json` write paths below — would let a crafted value such as
+  // `"../../etc/x"` or `"a/b"` traverse OUT of RECORDINGS_DIR on the write
+  // path (the read/delete guards in isValidRecordingId do not cover writes).
+  // Slug it to the same allowlist isValidRecordingId enforces so the minted id
+  // can never traverse. `sessionId` is a crypto.randomUUID (hex + `-`) and
+  // Date.now() is digits, so the full id always matches RECORDING_ID_PATTERN.
+  // Only the id is sanitized; metadata.sessionType / title keep the raw value.
+  const safeSessionType = sessionType.replace(/[^A-Za-z0-9_-]/g, "-");
+  const recordingId = `${safeSessionType}-${Date.now()}-${sessionId.slice(0, 8)}`;
   const filePath = join(RECORDINGS_DIR, `${recordingId}.cast`);
 
   const metadata: RecordingMetadata = {

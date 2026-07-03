@@ -1,12 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, unlinkSync, existsSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
 import { requireAuth } from "@/lib/auth";
 import { isValidRecordingId } from "@/server/recording/recorder";
-
-// Terminal recordings storage path (matches terminal-server.ts)
-const RECORDINGS_DIR = join(homedir(), ".daax", "recordings");
+import { RECORDINGS_DIR } from "@/server/config/constants";
 
 // Recording metadata type
 interface RecordingMetadata {
