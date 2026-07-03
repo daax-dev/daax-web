@@ -96,40 +96,46 @@ export function isDirDisabled(
 }
 
 /**
- * Derive the absolute workspace base from a workspace-directory listing.
- * Each entry pairs a base-relative `name` (e.g. "ps/daax") with an absolute
- * `path` (e.g. "/workspace/ps/daax"); stripping the name off the path yields
- * the base ("/workspace"). Returns null if no entry lets us derive it.
+ * Map an absolute project path to its workspace-root-relative path using the
+ * workspace directory listing's `name` fields (already root-relative, e.g.
+ * "ps/daax"). Returns the LONGEST directory name that is a path-suffix of
+ * `absPath`, or null if none matches.
  *
- * This is derived from the same listing that `disabledProjectDirs` is defined
- * against, so the relative paths line up exactly — more robust than assuming a
- * particular `basePath` string format (e.g. "~/prj" vs "/workspace").
+ * Crucially this compares only the relative NAMES, never the absolute roots,
+ * so it is robust when the backlog API and the workspace API express absolute
+ * paths under different roots — e.g. backlog "/workspace/ps/daax" while the
+ * workspace listing reports "~/prj/ps/daax". Both still carry name "ps/daax".
  */
-export function deriveWorkspaceBase(
-  dirs: readonly { name: string; path: string }[],
+export function relativeProjectPath(
+  absPath: string,
+  dirNames: Iterable<string>,
 ): string | null {
-  for (const d of dirs) {
-    if (d.name && d.path.endsWith(`/${d.name}`)) {
-      return d.path.slice(0, d.path.length - d.name.length - 1);
+  let best: string | null = null;
+  for (const name of dirNames) {
+    if (!name) continue;
+    if (
+      absPath.endsWith(`/${name}`) &&
+      (best === null || name.length > best.length)
+    ) {
+      best = name;
     }
   }
-  return null;
+  return best;
 }
 
 /**
- * True if an absolute project path is hidden by the disabled-dirs filter.
- * The base project itself (path === base) and any path outside the base are
- * treated as visible (fail-open) so unknown layouts never silently vanish.
+ * True if an absolute project path is hidden by the disabled-dirs filter,
+ * resolved through the workspace directory names. Fail-open (visible) when the
+ * path maps to no known relative directory, so unknown layouts never silently
+ * vanish. The workspace root project (no matching relative name) stays visible.
  */
-export function isProjectPathDisabled(
+export function isProjectDisabled(
   absPath: string,
-  base: string | null,
+  dirNames: Iterable<string>,
   disabled: Iterable<string>,
 ): boolean {
-  if (!base) return false;
-  if (absPath === base) return false;
-  if (!absPath.startsWith(`${base}/`)) return false;
-  const relative = absPath.slice(base.length + 1);
+  const relative = relativeProjectPath(absPath, dirNames);
+  if (relative === null) return false;
   return isDirDisabled(relative, disabled);
 }
 

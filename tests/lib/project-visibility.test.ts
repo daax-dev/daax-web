@@ -3,80 +3,94 @@
  * (components/backlog/project-selector.tsx) so it applies the same
  * `disabledProjectDirs` filter as Settings / the Titlebar tree.
  *
- * Path shapes mirror live data: backlog project paths are absolute
- * ("/workspace/ps/daax"); workspace directories pair a base-relative `name`
- * ("ps/daax") with an absolute `path`; `disabledProjectDirs` holds the
- * base-relative names.
+ * The critical property: backlog project paths are absolute under one root
+ * (e.g. "/workspace/ps/daax") while the workspace directory listing may report
+ * absolute paths under a DIFFERENT root (e.g. "~/prj/ps/daax"). Both still
+ * carry the same root-relative `name` ("ps/daax"), and `disabledProjectDirs`
+ * is defined against those names — so matching must use names, never roots.
  */
 
 import { describe, it, expect } from "vitest";
-import { deriveWorkspaceBase, isProjectPathDisabled } from "@/lib/project-tree";
+import { relativeProjectPath, isProjectDisabled } from "@/lib/project-tree";
 
-const DIRS = [
-  { name: "jp", path: "/workspace/jp" },
-  { name: "ps", path: "/workspace/ps" },
-  { name: "ps/daax", path: "/workspace/ps/daax" },
-  { name: "jp/practice/go", path: "/workspace/jp/practice/go" },
+// Directory names as returned by /api/workspace (root-relative, exhaustive).
+const DIR_NAMES = [
+  "ps",
+  "ps/daax",
+  "ps/hawkeye",
+  "jp",
+  "jp/nova",
+  "jp/career",
+  "psx",
+  "psx/app",
 ];
 
-describe("deriveWorkspaceBase", () => {
-  it("derives the absolute base by stripping a relative name off its path", () => {
-    expect(deriveWorkspaceBase(DIRS)).toBe("/workspace");
-    // Multi-segment name still resolves the same base.
-    expect(deriveWorkspaceBase([{ name: "a/b/c", path: "/root/a/b/c" }])).toBe(
-      "/root",
+describe("relativeProjectPath", () => {
+  it("maps an absolute backlog path to its root-relative directory name", () => {
+    expect(relativeProjectPath("/workspace/ps/daax", DIR_NAMES)).toBe(
+      "ps/daax",
     );
   });
 
-  it("returns null when the base cannot be derived", () => {
-    expect(deriveWorkspaceBase([])).toBeNull();
-    // path does not end with name -> not derivable from this entry
-    expect(
-      deriveWorkspaceBase([{ name: "x", path: "/somewhere/y" }]),
-    ).toBeNull();
+  it("is namespace-proof: works even when the absolute root differs", () => {
+    // Backlog reports "/workspace/...", workspace listing reported "~/prj/...".
+    // Only the relative name matters, so both resolve identically.
+    expect(relativeProjectPath("/workspace/jp/nova", DIR_NAMES)).toBe(
+      "jp/nova",
+    );
+    expect(relativeProjectPath("~/prj/jp/nova", DIR_NAMES)).toBe("jp/nova");
+  });
+
+  it("prefers the LONGEST matching name (most specific)", () => {
+    // Both "ps" and "ps/daax" are suffixes of the path; pick "ps/daax".
+    expect(relativeProjectPath("/root/ps/daax", DIR_NAMES)).toBe("ps/daax");
+  });
+
+  it("returns null for the workspace root / unmapped paths", () => {
+    expect(relativeProjectPath("/workspace", DIR_NAMES)).toBeNull();
+    expect(relativeProjectPath("/somewhere/unknown", DIR_NAMES)).toBeNull();
   });
 });
 
-describe("isProjectPathDisabled", () => {
-  const base = "/workspace";
-
+describe("isProjectDisabled", () => {
   it("hides a project whose folder is directly disabled", () => {
-    expect(isProjectPathDisabled("/workspace/ps/daax", base, ["ps/daax"])).toBe(
-      true,
-    );
-  });
-
-  it("hides descendants when an ancestor folder is disabled (cascade)", () => {
-    expect(isProjectPathDisabled("/workspace/ps/daax", base, ["ps"])).toBe(
-      true,
-    );
     expect(
-      isProjectPathDisabled("/workspace/jp/practice/go", base, ["jp"]),
+      isProjectDisabled("/workspace/ps/daax", DIR_NAMES, ["ps/daax"]),
     ).toBe(true);
   });
 
-  it("keeps projects that are not under any disabled folder", () => {
-    expect(isProjectPathDisabled("/workspace/jp/nova", base, ["ps"])).toBe(
+  it("hides descendants when an ancestor folder is disabled (cascade)", () => {
+    expect(isProjectDisabled("/workspace/ps/daax", DIR_NAMES, ["ps"])).toBe(
+      true,
+    );
+    expect(isProjectDisabled("/workspace/ps/hawkeye", DIR_NAMES, ["ps"])).toBe(
+      true,
+    );
+  });
+
+  it("keeps projects not under any disabled folder", () => {
+    expect(isProjectDisabled("/workspace/jp/nova", DIR_NAMES, ["ps"])).toBe(
       false,
     );
   });
 
-  it("does not match on a shared string prefix (boundary-safe)", () => {
-    // "ps" must not hide "psx"
-    expect(isProjectPathDisabled("/workspace/psx/app", base, ["ps"])).toBe(
+  it("is boundary-safe: disabling 'ps' does not hide 'psx'", () => {
+    expect(isProjectDisabled("/workspace/psx/app", DIR_NAMES, ["ps"])).toBe(
       false,
     );
   });
 
-  it("treats the base project itself and out-of-base paths as visible", () => {
-    expect(isProjectPathDisabled("/workspace", base, ["ps"])).toBe(false);
-    expect(isProjectPathDisabled("/elsewhere/x", base, ["x"])).toBe(false);
+  it("hides across a namespace mismatch (the live-container bug)", () => {
+    // This is the regression the mocked test missed: backlog path uses one
+    // root, workspace names another — the filter must still apply.
+    expect(isProjectDisabled("/workspace/ps/daax", DIR_NAMES, ["ps"])).toBe(
+      true,
+    );
   });
 
-  it("fail-open when base is null or the disabled set is empty", () => {
-    expect(isProjectPathDisabled("/workspace/ps/daax", null, ["ps"])).toBe(
-      false,
-    );
-    expect(isProjectPathDisabled("/workspace/ps/daax", base, [])).toBe(false);
+  it("treats the root project and unmapped paths as visible (fail-open)", () => {
+    expect(isProjectDisabled("/workspace", DIR_NAMES, ["ps"])).toBe(false);
+    expect(isProjectDisabled("/workspace/ps/daax", [], ["ps"])).toBe(false);
+    expect(isProjectDisabled("/workspace/ps/daax", DIR_NAMES, [])).toBe(false);
   });
 });

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useBacklog } from "./backlog-context";
 import { useProject } from "@/lib/project-context";
 import { getSettings, subscribeToSettings } from "@/lib/settings";
-import { deriveWorkspaceBase, isProjectPathDisabled } from "@/lib/project-tree";
+import { isProjectDisabled } from "@/lib/project-tree";
 import {
   Select,
   SelectContent,
@@ -99,10 +99,14 @@ export function ProjectSelector() {
   // unless the operator has actually hidden folders.
   const visibleProjects = useMemo(() => {
     if (disabledDirs.length === 0) return projects;
-    const base = deriveWorkspaceBase(directories);
-    if (!base) return projects;
+    // Match on the workspace directory NAMES (root-relative), not absolute
+    // paths — the backlog API and workspace API report absolute paths under
+    // different roots (e.g. "/workspace/..." vs "~/prj/..."), but both share
+    // the same relative names that disabledProjectDirs is defined against.
+    const dirNames = directories.map((d) => d.name);
+    if (dirNames.length === 0) return projects;
     return projects.filter(
-      (p) => !isProjectPathDisabled(p.path, base, disabledDirs),
+      (p) => !isProjectDisabled(p.path, dirNames, disabledDirs),
     );
   }, [projects, directories, disabledDirs]);
 
