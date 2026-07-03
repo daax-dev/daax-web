@@ -57,11 +57,33 @@ describe("generateExportFilename sanitization (#193 write-side traversal)", () =
 
   it("preserves a legit sessionType as a readable slug", () => {
     const name = generateExportFilename(makeMeta("shell"));
-    // YYYY-MM-DD-HHMMSS-<sessionType>-<id suffix>.html. The date comes from
-    // toISOString() (UTC, stable); the HHMMSS digits come from local time, so
-    // match them by shape to stay deterministic on any runner timezone while
-    // still asserting the readable sessionType/id slug survives unmangled.
-    expect(name).toMatch(/^2025-01-15-\d{6}-shell-1a2b3c4d\.html$/);
+    // YYYY-MM-DD-HHMMSS-<sessionType>-<id suffix>.html. Both the date and the
+    // HHMMSS digits are derived from the same toISOString() (UTC) value, so
+    // the exact filename is deterministic and stable on any runner timezone.
+    // START_TIME = Date.UTC(2025, 0, 15, 12, 34, 56) -> 2025-01-15T12:34:56Z.
+    expect(name).toBe("2025-01-15-123456-shell-1a2b3c4d.html");
+  });
+
+  it("derives an identical filename regardless of the runner's local timezone", () => {
+    // Regression guard for the mixed UTC-date/local-time bug: flip
+    // process.env.TZ across calls (Node re-reads it per Date method call) and
+    // confirm the filename never changes now that both the date and time
+    // components come from the same toISOString() (UTC) value.
+    const originalTZ = process.env.TZ;
+    try {
+      process.env.TZ = "Pacific/Kiritimati"; // UTC+14
+      const namePlus14 = generateExportFilename(makeMeta("shell"));
+      process.env.TZ = "Etc/GMT+12"; // UTC-12
+      const nameMinus12 = generateExportFilename(makeMeta("shell"));
+      process.env.TZ = "UTC";
+      const nameUtc = generateExportFilename(makeMeta("shell"));
+
+      expect(namePlus14).toBe("2025-01-15-123456-shell-1a2b3c4d.html");
+      expect(nameMinus12).toBe("2025-01-15-123456-shell-1a2b3c4d.html");
+      expect(nameUtc).toBe("2025-01-15-123456-shell-1a2b3c4d.html");
+    } finally {
+      process.env.TZ = originalTZ;
+    }
   });
 
   it("slugs an id suffix that would otherwise carry a separator", () => {

@@ -348,8 +348,14 @@ export function slugifyFilenamePart(value: string): string {
  */
 export function generateExportFilename(metadata: TerminalRecording): string {
   const date = new Date(metadata.startTime);
-  const dateStr = date.toISOString().split("T")[0]; // YYYY-MM-DD
-  const timeStr = date.toTimeString().split(" ")[0].replace(/:/g, ""); // HHMMSS
+  // Derive both the date and time from the same UTC `toISOString()` value so
+  // the filename is timezone-independent. Mixing a UTC date with a
+  // local-time `toTimeString()` clock (the previous behavior) let the two
+  // components describe different moments and made the filename vary by
+  // runner timezone.
+  const isoParts = date.toISOString().split("T"); // ["YYYY-MM-DD", "HH:MM:SS.sssZ"]
+  const dateStr = isoParts[0]; // YYYY-MM-DD
+  const timeStr = isoParts[1].split(".")[0].replace(/:/g, ""); // HHMMSS (UTC)
   // `sessionType` is a raw client-controlled value persisted in the recording
   // metadata; slug it so it cannot inject path separators or `..`.
   const sessionType = slugifyFilenamePart(metadata.sessionType);
