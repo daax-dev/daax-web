@@ -472,7 +472,7 @@ export interface DaaxSettings {
   // AI Coding page layout: "tree" (left sidebar with agent tree) or "tabs" (tabs like shell page)
   aiCodingLayout: "tree" | "tabs";
   // Display order of AI coding agents (by AIToolId). Reorderable in Settings.
-  // Any agent missing from this list falls back to DEFAULT_AI_AGENT_ORDER position.
+  // Unknown/stale ids are ignored; missing agents are appended in DEFAULT_AI_AGENT_ORDER order.
   aiAgentOrder: string[];
   // Git worktree settings for AI sessions
   autoWorktreeEnabled: boolean; // Auto-create worktrees for AI sessions
@@ -594,14 +594,23 @@ export const DEFAULT_AI_AGENT_ORDER = [
   "gemini",
 ] as const;
 
-// Normalize a saved agent order: keep only known ids, then append any known
+// Normalize a saved agent order: keep only known ids (deduped), then append any known
 // agents missing from the saved list (e.g. a newly added agent) in canonical
 // order so nothing silently disappears from the menus.
 export function normalizeAgentOrder(order: string[] | undefined): string[] {
   const canonical = DEFAULT_AI_AGENT_ORDER as readonly string[];
-  const saved = Array.isArray(order)
-    ? order.filter((id) => canonical.includes(id))
-    : [];
+  const saved: string[] = [];
+
+  if (Array.isArray(order)) {
+    const seen = new Set<string>();
+    for (const id of order) {
+      if (seen.has(id)) continue;
+      if (!canonical.includes(id)) continue;
+      seen.add(id);
+      saved.push(id);
+    }
+  }
+
   const missing = canonical.filter((id) => !saved.includes(id));
   return [...saved, ...missing];
 }

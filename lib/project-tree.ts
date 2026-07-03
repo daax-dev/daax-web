@@ -108,15 +108,23 @@ export function isDirDisabled(
  */
 export function commonAncestorDir(paths: readonly string[]): string | null {
   if (paths.length === 0) return null;
-  let prefix = paths[0].split("/");
+
+  const split = (p: string) => p.replace(/\/+$/, "").split("/");
+  let prefix = split(paths[0]);
+
   for (let i = 1; i < paths.length; i++) {
-    const segs = paths[i].split("/");
+    const segs = split(paths[i]);
     let j = 0;
     while (j < prefix.length && j < segs.length && prefix[j] === segs[j]) j++;
     prefix = prefix.slice(0, j);
     if (prefix.length === 0) break;
   }
-  return prefix.join("/") || null;
+
+  // If the only shared prefix is the filesystem root, return "/".
+  if (prefix.length === 1 && prefix[0] === "") return "/";
+
+  const joined = prefix.join("/");
+  return joined || null;
 }
 
 /**
@@ -132,8 +140,11 @@ export function isProjectPathDisabled(
 ): boolean {
   if (!base) return false;
   if (absPath === base) return false;
-  if (!absPath.startsWith(`${base}/`)) return false;
-  const relative = absPath.slice(base.length + 1);
+
+  const basePrefix = base === "/" ? "/" : `${base}/`;
+  if (!absPath.startsWith(basePrefix)) return false;
+
+  const relative = absPath.slice(basePrefix.length);
   return isDirDisabled(relative, disabled);
 }
 
