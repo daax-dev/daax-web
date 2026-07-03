@@ -7,7 +7,7 @@
  * Real temp directories are used so realpath resolves.
  */
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync } from "fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 import { isValidPath } from "@/lib/worktree-manager";
@@ -20,6 +20,18 @@ const sibling = join(root, "workspaceEVIL");
 
 mkdirSync(inside, { recursive: true });
 mkdirSync(sibling, { recursive: true });
+
+// Symlink fixtures: one inside `base` pointing OUTSIDE it (escape attempt),
+// one inside `base` pointing to a legitimate directory INSIDE it (control).
+const outsideTarget = join(root, "outside-target");
+const escapeLink = join(base, "escape-link");
+const legitTarget = join(base, "project", "legit-target");
+const legitLink = join(base, "legit-link");
+
+mkdirSync(outsideTarget, { recursive: true });
+mkdirSync(legitTarget, { recursive: true });
+symlinkSync(outsideTarget, escapeLink);
+symlinkSync(legitTarget, legitLink);
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -54,6 +66,14 @@ describe("isValidPath confinement (#189)", () => {
 
   it("rejects paths containing a NUL byte", () => {
     expect(isValidPath(join(base, "foo\0bar"), base)).toBe(false);
+  });
+
+  it("rejects a symlink inside the base that resolves outside it", () => {
+    expect(isValidPath(escapeLink, base)).toBe(false);
+  });
+
+  it("accepts a symlink inside the base that resolves to a legit target inside it", () => {
+    expect(isValidPath(legitLink, base)).toBe(true);
   });
 
   it("requires basePath (compile-time): omitting it is a type error", () => {
