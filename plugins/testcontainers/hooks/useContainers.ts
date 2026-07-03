@@ -129,18 +129,48 @@ export function useContainers(
     await fetchContainers();
   }, [fetchContainers]);
 
-  // Initial fetch and auto-refresh
+  // Initial fetch and auto-refresh.
+  //
+  // The interval is paused while the tab is hidden: a background tab has no UI
+  // to update, and polling it only multiplies requests through the auth proxy —
+  // a known rate-limit ("Too Many Requests") trigger for this endpoint. When
+  // the tab becomes visible again we refresh immediately, then resume polling.
   useEffect(() => {
     fetchContainers();
 
-    if (autoRefresh && refreshInterval > 0) {
-      intervalRef.current = setInterval(fetchContainers, refreshInterval);
+    // No polling requested (e.g. autoRefresh:false), but the mount-time
+    // fetchContainers() above is still in flight — preserve abort-on-unmount so
+    // it doesn't leak or setState after unmount.
+    if (!(autoRefresh && refreshInterval > 0)) {
+      return () => abortControllerRef.current?.abort();
     }
 
-    return () => {
+    const startInterval = () => {
+      if (intervalRef.current) return;
+      intervalRef.current = setInterval(fetchContainers, refreshInterval);
+    };
+    const stopInterval = () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
+        intervalRef.current = null;
       }
+    };
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        stopInterval();
+      } else {
+        fetchContainers(); // catch up on what was missed while hidden
+        startInterval();
+      }
+    };
+
+    if (!document.hidden) startInterval();
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      stopInterval();
+      document.removeEventListener("visibilitychange", handleVisibility);
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
