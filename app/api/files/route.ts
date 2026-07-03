@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { readdir, readFile, stat, realpath } from "fs/promises";
 import { existsSync } from "fs";
 import { join, relative, basename } from "path";
+import { requireAuth } from "@/lib/auth";
 
 // Maximum directory depth to prevent infinite recursion and performance issues
 const MAX_DEPTH = 10;
@@ -176,6 +177,14 @@ async function findJsonlFiles(
 }
 
 export async function GET(request: Request) {
+  // Require authentication before any filesystem access. These .jsonl logs can
+  // contain tokens, transcripts, and decision records, so an unauthenticated
+  // request must be rejected before the recursive walk runs (#194).
+  const auth = await requireAuth();
+  if (!auth.authenticated) {
+    return auth.response;
+  }
+
   const { searchParams } = new URL(request.url);
   const projectFilter = searchParams.get("project"); // Optional: filter by project name
 
