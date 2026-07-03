@@ -12,10 +12,16 @@ param(
     [switch]$SkipPull
 )
 
-# Agent images to pre-pull for AI coding features
+# Agent images to pre-pull for AI coding features.
+# Keep in sync with VARIANTS in scripts/refresh-agent-images.sh and
+# CONTAINER_VARIANTS in lib/settings.ts — pre-pull every variant so a stale
+# local :latest never wins over a newer registry image (matches rebuild.sh).
 $AgentImages = @(
-    "jpoley/daax-agents-flowspec:latest"
-    "jpoley/daax-agents:latest"
+    "jpoley/daax-agents:latest"           # Full Bundle
+    "jpoley/daax-agents-core:latest"      # Core (AI CLIs only)
+    "jpoley/daax-agents-flowspec:latest"  # Core + Flowspec + Backlog.md
+    "jpoley/daax-agents-gsd:latest"       # Core + GSD (default / recommended)
+    "jpoley/daax-agents-openspec:latest"  # Core + OpenSpec
 )
 
 $ErrorActionPreference = "Stop"

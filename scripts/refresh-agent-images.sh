@@ -53,7 +53,9 @@ for variant in "${VARIANTS[@]}"; do
   img="${REGISTRY}/${variant}:${TAG}"
   before="$(digest_of "$img")"
   printf '   Pulling %s ... ' "$img"
-  if docker pull "$img" >/dev/null 2>&1; then
+  # Suppress the noisy progress on stdout but keep stderr, so a failed pull
+  # still shows its registry/auth/network reason in cron/CI logs.
+  if docker pull "$img" >/dev/null; then
     after="$(digest_of "$img")"
     if [ -n "$before" ] && [ "$before" = "$after" ]; then
       echo "✅ up to date"
@@ -79,12 +81,15 @@ fi
 
 # The terminal server caches image *availability* (existence) in memory, not the
 # digest, so a re-pulled :latest is picked up by the next `docker run` without a
-# restart. Restart only if explicitly requested (e.g. to also refresh app code).
-if [ -n "${RESTART_DAAX:-}" ]; then
-  echo
-  echo "🔁 Restarting daax container (RESTART_DAAX set)..."
-  docker restart daax >/dev/null 2>&1 && echo "   ✅ restarted" || echo "   ⚠️  no 'daax' container to restart"
-fi
+# restart. Restart only if explicitly opted in — gate on specific truthy values
+# so a stray `RESTART_DAAX=0` does not trigger a surprise restart.
+case "${RESTART_DAAX:-}" in
+  1 | true | yes)
+    echo
+    echo "🔁 Restarting daax container (RESTART_DAAX=${RESTART_DAAX})..."
+    docker restart daax >/dev/null 2>&1 && echo "   ✅ restarted" || echo "   ⚠️  no 'daax' container to restart"
+    ;;
+esac
 
 # Fail the script if anything failed to pull.
 [ "${#failed[@]}" -eq 0 ]
