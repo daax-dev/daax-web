@@ -76,13 +76,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Pre-pass: confine EVERY client-supplied filename under the project before
-    // writing anything. The `files` object keys are attacker-controlled, so a
-    // key like `../../authorized_keys` must be rejected. Confining against the
-    // (already in-root) project path is stricter than the workspace root and
-    // also blocks intra-workspace escapes. Resolving all targets first keeps
-    // the batch atomic: one bad key rejects the whole request with no partial
-    // writes.
+    // Pre-pass: confine EVERY client-supplied filename under the concrete
+    // `.devcontainer` directory before writing anything. The `files` object
+    // keys are attacker-controlled, so a key like `../../authorized_keys` OR a
+    // key like `../pwn.txt` (which stays inside the project but escapes
+    // `.devcontainer/`) must be rejected. Confining against `devcontainerDir`
+    // (the actual write target) — not the broader project path — is what stops
+    // a `..` from leaving the intended leaf directory. Resolving all targets
+    // first keeps the batch atomic: one bad key rejects the whole request with
+    // no partial writes.
     const devcontainerDir = path.join(fullProjectPath, ".devcontainer");
     const targets: { filename: string; filePath: string; content: string }[] =
       [];
@@ -91,11 +93,11 @@ export async function POST(request: NextRequest) {
 
       let filePath: string;
       try {
-        filePath = confineToRoot(fullProjectPath, ".devcontainer", filename);
+        filePath = confineToRoot(devcontainerDir, filename);
       } catch (err) {
         if (err instanceof PathConfinementError) {
           return NextResponse.json(
-            { error: "filename escapes the project directory" },
+            { error: "filename escapes the .devcontainer directory" },
             { status: 403 },
           );
         }

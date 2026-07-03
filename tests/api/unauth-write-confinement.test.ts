@@ -270,6 +270,30 @@ describe("POST /api/devcontainers/save (#187, AC#4 sibling)", () => {
     expect(mockWriteFile).not.toHaveBeenCalled();
   });
 
+  it("rejects a `files` KEY that stays in-workspace but escapes .devcontainer/ (403, atomic)", async () => {
+    authenticated();
+    // Project exists so execution reaches the filename-confine pre-pass.
+    mockAccess.mockResolvedValue(undefined);
+    // `../pwn.txt` resolves to /workspace/ps/daax/pwn.txt — INSIDE the
+    // workspace (old workspace-root confinement would allow it) but OUTSIDE the
+    // intended `.devcontainer/` leaf. Must be rejected, with no partial write
+    // of the legit sibling key.
+    const res = await devSavePOST(
+      jsonReq(
+        {
+          projectPath: "ps/daax",
+          files: {
+            "devcontainer.json": "ok",
+            "../pwn.txt": "x",
+          },
+        },
+        "POST",
+      ) as never,
+    );
+    expect(res.status).toBe(403);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+
   it("returns 401 when unauthenticated and writes nothing", async () => {
     unauthenticated();
     const res = await devSavePOST(jsonReq(legit, "POST") as never);
@@ -415,6 +439,21 @@ describe("PUT /api/workflow-editor/agents (#187)", () => {
     expect(mockWriteFile).not.toHaveBeenCalled();
   });
 
+  it("rejects a `name` that stays in-workspace but escapes the agent dir (403)", async () => {
+    authenticated();
+    // Resolves under /workspace/jp/... — INSIDE the workspace (old
+    // workspace-root confinement would allow it) but OUTSIDE the intended
+    // `.agents` leaf directory. Must be rejected.
+    const res = await agentsPUT(
+      jsonReq(
+        { name: "../../other-project/.git/config", content: "pwn" },
+        "PUT",
+      ) as never,
+    );
+    expect(res.status).toBe(403);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+
   it("returns 401 when unauthenticated and writes nothing", async () => {
     unauthenticated();
     const res = await agentsPUT(
@@ -449,6 +488,21 @@ describe("PUT /api/workflow-editor/prompts (#187)", () => {
           content: "pwn",
           category: "flow",
         },
+        "PUT",
+      ) as never,
+    );
+    expect(res.status).toBe(403);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+
+  it("rejects a `category` that stays in-workspace but escapes the commands dir (403)", async () => {
+    authenticated();
+    // category `../../..` resolves the target to /workspace/jp/greet.md —
+    // INSIDE the workspace (old workspace-root confinement would allow it) but
+    // OUTSIDE the intended `.claude/commands` leaf. Must be rejected.
+    const res = await promptsPUT(
+      jsonReq(
+        { name: "greet", content: "pwn", category: "../../.." },
         "PUT",
       ) as never,
     );
@@ -534,6 +588,21 @@ describe("workflow-editor/skills (#187)", () => {
     const res = await skillsPOST(
       jsonReq(
         { name: "../../../../etc/cron.d/x", type: "command", content: "pwn" },
+        "POST",
+      ) as never,
+    );
+    expect(res.status).toBe(403);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+
+  it("POST rejects a `phase` that stays in-project but escapes the commands dir (403)", async () => {
+    authenticated();
+    // phase `..` resolves the target to <projectRoot>/.claude/newcmd.md —
+    // INSIDE the project (old project-root confinement would allow it) but
+    // OUTSIDE the intended `.claude/commands` leaf. Must be rejected.
+    const res = await skillsPOST(
+      jsonReq(
+        { name: "newcmd", type: "command", phase: "..", content: "pwn" },
         "POST",
       ) as never,
     );

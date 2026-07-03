@@ -237,38 +237,35 @@ export async function PUT(request: NextRequest) {
 
     let filePath: string;
     let command: string;
+    // Confine relative to the CONCRETE prompts/commands root, not the broad
+    // workspace root. Workspace-root confinement only blocks workspace ESCAPE;
+    // a `name`/`category` like `../../..` stays inside the workspace but escapes
+    // the intended prompts/commands subtree. Passing `category` and `name` as
+    // separate segments under the concrete root means a `..` in either cannot
+    // leave that leaf directory.
+    let promptsRoot: string;
+    let segments: string[];
 
     if (model === "copilot") {
       // Copilot prompts are in .github/prompts
-      filePath = path.join(
-        flowspecPath,
-        ".github",
-        "prompts",
-        name + ".prompt.md",
-      );
+      promptsRoot = path.join(flowspecPath, ".github", "prompts");
+      segments = [name + ".prompt.md"];
       const parsed = parseCopilotPromptName(name + ".prompt.md");
       command = parsed.command;
     } else {
       // Claude prompts - determine directory from category
       const cat = category || "flow";
-      filePath = path.join(
-        flowspecPath,
-        ".claude",
-        "commands",
-        cat,
-        name + ".md",
-      );
+      promptsRoot = path.join(flowspecPath, ".claude", "commands");
+      segments = [cat, name + ".md"];
       command = `/${cat}:${name.replace(/^_/, "")}`;
     }
 
-    // Confine the client-controlled `name`/`category` (embedded in filePath) to
-    // the workspace root, rejecting traversal/absolute-path escapes before write.
     try {
-      filePath = confineToRoot(basePath, filePath);
+      filePath = confineToRoot(promptsRoot, ...segments);
     } catch (err) {
       if (err instanceof PathConfinementError) {
         return NextResponse.json(
-          { error: "Prompt path escapes the workspace root" },
+          { error: "Prompt path escapes the prompts directory" },
           { status: 403 },
         );
       }

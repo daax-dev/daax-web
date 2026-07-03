@@ -411,39 +411,34 @@ export async function POST(request: NextRequest) {
     }
 
     const projectRoot = getProjectRoot();
-    let targetPath: string;
+    // Confine the client-controlled `name`/`phase` relative to the CONCRETE
+    // leaf directory for each type, not the broad project root. Confining to
+    // the project root only blocks project ESCAPE; a `name` like `../pwn` (with
+    // a legit `phase`) stays inside the project but escapes the intended
+    // category/skills directory. Passing the client components as separate
+    // segments under the concrete root means a `..` in either cannot leave that
+    // leaf directory.
+    let confineRoot: string;
+    let segments: string[];
 
     if (type === "config") {
       // Save as workflow config
-      targetPath = path.join(
-        projectRoot,
-        ".flowspec",
-        "workflow-configs",
-        `${name}.json`,
-      );
+      confineRoot = path.join(projectRoot, ".flowspec", "workflow-configs");
+      segments = [`${name}.json`];
     } else if (type === "agent") {
       // Save as agent skill
-      targetPath = path.join(
-        projectRoot,
-        FLOWSPEC_SKILLS_PATH,
-        name,
-        "SKILL.md",
-      );
+      confineRoot = path.join(projectRoot, FLOWSPEC_SKILLS_PATH);
+      segments = [name, "SKILL.md"];
     } else {
       // Save as command
       const category = phase || "custom";
-      targetPath = path.join(
-        projectRoot,
-        CLAUDE_COMMANDS_PATH,
-        category,
-        `${name}.md`,
-      );
+      confineRoot = path.join(projectRoot, CLAUDE_COMMANDS_PATH);
+      segments = [category, `${name}.md`];
     }
 
-    // Confine the client-controlled `name`/`phase` (embedded in targetPath) to
-    // the project directory before creating anything.
+    let targetPath: string;
     try {
-      targetPath = confineToRoot(projectRoot, targetPath);
+      targetPath = confineToRoot(confineRoot, ...segments);
     } catch (err) {
       if (err instanceof PathConfinementError) {
         return NextResponse.json(
