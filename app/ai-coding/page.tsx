@@ -12,9 +12,7 @@ import {
   Plus,
   X,
   Bot,
-  Sparkles,
   Code,
-  Wand2,
   Terminal,
   FolderOpen,
   ShieldOff,
@@ -30,7 +28,11 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { getSettings, isSubFeatureVisible } from "@/lib/settings";
+import {
+  getSettings,
+  isSubFeatureVisible,
+  sortByAgentOrder,
+} from "@/lib/settings";
 import { VoiceInput } from "@/components/ui/voice-input";
 import {
   useTerminalManager,
@@ -42,45 +44,62 @@ import { tailscaleHosts } from "@/lib/tailscale-hosts";
 import { OsIcon } from "@/components/icons/OsIcons";
 import { TailscaleIcon } from "@/components/icons/TailscaleIcon";
 import { CloudProviderIcon } from "@/components/icons/CloudProviderIcons";
+import {
+  ClaudeIcon,
+  CodexIcon,
+  GeminiIcon,
+  CopilotIcon,
+  OpenCodeIcon,
+} from "@/components/icons/AgentIcons";
 import { TerminalRecordingsPanel } from "@/plugins/terminal-recorder";
 import { AgentTabsLayout } from "./AgentTabsLayout";
 import { McpStatusBar } from "@/components/session/McpStatusBar";
 
 // AI Tools available in the container
-// Ordered: Claude, OpenCode, Copilot, Codex, Gemini
+// Ordered: Claude, OpenCode, Copilot, Codex, Gemini.
+// Icons are the real brand marks (see components/icons/AgentIcons).
+// `accent` is each tool's fixed BRAND color (matches AgentTabsLayout TOOL_META),
+// intentionally exempt from the semantic-token rule so the tree view shows the
+// same per-tool brand hues as the tab view. Constant across light/dark.
 const AI_TOOLS = [
   {
     id: "claude" as AIToolId,
     name: "Claude Code",
-    icon: Bot,
+    icon: ClaudeIcon,
+    accent: "text-orange-500",
     command: "claude",
     description: "Anthropic Claude CLI",
   },
   {
     id: "opencode" as AIToolId,
     name: "OpenCode",
-    icon: Terminal,
+    icon: OpenCodeIcon,
+    accent: "text-cyan-500",
     command: "opencode",
     description: "Multi-provider AI CLI (Copilot/Grok)",
   },
   {
     id: "copilot" as AIToolId,
     name: "GitHub Copilot",
-    icon: Code,
+    icon: CopilotIcon,
+    accent: "text-emerald-500",
     command: "copilot",
     description: "GitHub Copilot CLI (@github/copilot)",
   },
   {
     id: "codex" as AIToolId,
     name: "Codex CLI",
-    icon: Wand2,
+    icon: CodexIcon,
+    // OpenAI's mark is monochrome; text-foreground = white on dark, black on light.
+    accent: "text-foreground",
     command: "codex",
     description: "OpenAI Codex CLI",
   },
   {
     id: "gemini" as AIToolId,
     name: "Gemini CLI",
-    icon: Sparkles,
+    icon: GeminiIcon,
+    accent: "text-blue-500",
     command: "gemini",
     description: "Google Gemini CLI",
   },
@@ -590,8 +609,15 @@ function AgentTreeLayout() {
     }
   }, [activeSession, getAISessionRef]);
 
+  // Apply the user's configured agent display order (Settings → AI Coding).
+  const orderedAiTools = sortByAgentOrder(
+    [...AI_TOOLS],
+    (t) => t.id,
+    getSettings().aiAgentOrder,
+  );
+
   // Group sessions by tool
-  const sessionsByTool = AI_TOOLS.map((tool) => ({
+  const sessionsByTool = orderedAiTools.map((tool) => ({
     tool,
     sessions: aiSessions.filter((s) => s.toolId === tool.id),
   }));
@@ -695,7 +721,7 @@ function AgentTreeLayout() {
                               ) : (
                                 <span className="w-5" /> /* spacer */
                               )}
-                              <Icon className="h-4 w-4" />
+                              <Icon className={cn("h-4 w-4", tool.accent)} />
                               <span
                                 className={cn(
                                   "text-sm font-medium",
@@ -934,7 +960,7 @@ function AgentTreeLayout() {
                                 </div>
                               )}
                               {/* Launch agent options */}
-                              {AI_TOOLS.map((tool) => {
+                              {orderedAiTools.map((tool) => {
                                 const ToolIcon = tool.icon;
                                 return (
                                   <div
@@ -949,7 +975,9 @@ function AgentTreeLayout() {
                                     }}
                                   >
                                     <div className="flex items-center gap-2">
-                                      <ToolIcon className="h-3 w-3 text-muted-foreground" />
+                                      <ToolIcon
+                                        className={cn("h-3 w-3", tool.accent)}
+                                      />
                                       <span className="text-xs">
                                         {tool.name}
                                       </span>
@@ -1026,7 +1054,7 @@ function AgentTreeLayout() {
                           {/* Provider agents (expandable) */}
                           {isExpanded && (
                             <div className="ml-6 mt-0.5 space-y-0.5">
-                              {AI_TOOLS.map((tool) => {
+                              {orderedAiTools.map((tool) => {
                                 const ToolIcon = tool.icon;
                                 return (
                                   <div
@@ -1040,7 +1068,9 @@ function AgentTreeLayout() {
                                     }}
                                   >
                                     <div className="flex items-center gap-2">
-                                      <ToolIcon className="h-3 w-3 text-muted-foreground" />
+                                      <ToolIcon
+                                        className={cn("h-3 w-3", tool.accent)}
+                                      />
                                       <span className="text-xs">
                                         {tool.name}
                                       </span>
@@ -1264,7 +1294,7 @@ function AgentTreeLayout() {
                     <McpStatusBar />
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    {AI_TOOLS.map((tool) => {
+                    {orderedAiTools.map((tool) => {
                       const Icon = tool.icon;
                       return (
                         <Button
@@ -1273,7 +1303,7 @@ function AgentTreeLayout() {
                           className="h-auto py-3 flex-col gap-1"
                           onClick={() => handleCreateSession(tool.id)}
                         >
-                          <Icon className="h-5 w-5" />
+                          <Icon className={cn("h-5 w-5", tool.accent)} />
                           <span className="text-xs">{tool.name}</span>
                         </Button>
                       );

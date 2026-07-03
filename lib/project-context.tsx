@@ -57,6 +57,13 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   // Cleanup callbacks registered by other providers (e.g., TerminalManager)
   const cleanupCallbacksRef = useRef<CleanupCallbacks>({});
 
+  // Monotonic counter to drop stale /api/workspace responses. Switching the
+  // base path can trigger several overlapping fetches; the recursive workspace
+  // walk means they can resolve out of order. Only the newest request is
+  // allowed to write state, so the directory list always reflects the latest
+  // requested path instead of whichever request happened to finish last.
+  const fetchSeqRef = useRef(0);
+
   // Register cleanup callbacks from other providers
   const registerCleanupCallback = useCallback((callbacks: CleanupCallbacks) => {
     cleanupCallbacksRef.current = {
@@ -68,6 +75,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   // Fetch workspace directories - always use the passed path
   const refreshDirectories = useCallback(
     async (pathToFetch?: string) => {
+      const seq = ++fetchSeqRef.current;
       setLoadingDirs(true);
       try {
         // Use the explicitly passed path, current basePath, or default
@@ -79,6 +87,10 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
         const response = await fetch(url);
         const data = await response.json();
 
+        // A newer refresh started while this one was in flight — discard this
+        // (stale) result so it cannot clobber the latest directory list.
+        if (seq !== fetchSeqRef.current) return;
+
         console.log(`[ProjectContext] Response:`, data);
 
         if (data.success) {
@@ -88,10 +100,13 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
           setDirectories([]);
         }
       } catch (error) {
+        if (seq !== fetchSeqRef.current) return;
         console.error(`[ProjectContext] Fetch error:`, error);
         setDirectories([]);
+      } finally {
+        // Only the newest request controls the loading flag.
+        if (seq === fetchSeqRef.current) setLoadingDirs(false);
       }
-      setLoadingDirs(false);
     },
     [basePath],
   );

@@ -5,11 +5,17 @@ import {
   Bot,
   Code,
   Sparkles,
-  Wand2,
   Terminal,
   FolderOpen,
   Container,
 } from "lucide-react";
+import {
+  ClaudeIcon,
+  CodexIcon,
+  GeminiIcon,
+  CopilotIcon,
+  OpenCodeIcon,
+} from "@/components/icons/AgentIcons";
 import {
   Dialog,
   DialogContent,
@@ -40,15 +46,15 @@ interface NewSessionModalProps {
   defaultWorkingDirectory?: string;
 }
 
-// Map icon names to components
+// Map AI_AGENTS icon-name strings to real brand marks.
+// (kiro-cli keeps a generic Lucide glyph — no brand icon.)
 const iconMap: Record<string, React.ElementType> = {
-  Bot,
-  Github: Code, // Fallback since Github icon may not be available
-  Code,
-  Sparkles,
-  Zap: Wand2,
-  Wand2,
-  Gem: Sparkles,
+  Bot: ClaudeIcon, // claude-code
+  Github: CopilotIcon, // github-copilot
+  Zap: CodexIcon, // openai-codex
+  Gem: GeminiIcon, // google-gemini
+  Code: OpenCodeIcon, // opencode
+  Sparkles, // kiro-cli
   Terminal,
 };
 

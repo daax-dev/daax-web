@@ -136,3 +136,59 @@ describe("settings migration: legacy container plugin IDs", () => {
     expect(localStorage.setItem).not.toHaveBeenCalled();
   });
 });
+
+describe("settings migration: legacy ~/ps basePath", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Fixture with every `=== undefined`-guarded field pre-set, so basePath is
+  // the ONLY thing that can trigger a migration/re-save.
+  function baseFixture(basePath: string) {
+    return {
+      basePath,
+      containerImage: "jpoley/daax-agents:latest",
+      terminalRecordingEnabled: true,
+      autoWorktreeEnabled: true,
+      autoWorktreeCleanup: true,
+      autoWorktreePushBeforeCleanup: true,
+      aiCoding: {
+        defaultContainerImage: "jpoley/daax-agents-gsd:latest",
+        containerRegistry: "jpoley",
+        autoPullLatest: false,
+        usePrebuiltImage: true,
+      },
+    };
+  }
+
+  it("preserves a valid basePath containing the substring '/ps' (regression)", async () => {
+    const { getSettings } = await loadSettings();
+    mockStored(baseFixture("~/prj/ps"));
+
+    const result = getSettings();
+
+    // Must NOT be reverted to the default and must NOT trigger a re-save.
+    expect(result.basePath).toBe("~/prj/ps");
+    expect(localStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("still migrates the exact legacy root '~/ps' to '~/prj'", async () => {
+    const { getSettings, DEFAULT_SETTINGS } = await loadSettings();
+    mockStored(baseFixture("~/ps"));
+
+    const result = getSettings();
+
+    expect(result.basePath).toBe(DEFAULT_SETTINGS.basePath);
+    expect(localStorage.setItem).toHaveBeenCalledTimes(1);
+  });
+
+  it("still migrates a legacy '~/ps/<sub>' subpath to '~/prj/<sub>'", async () => {
+    const { getSettings } = await loadSettings();
+    mockStored(baseFixture("~/ps/myrepo"));
+
+    const result = getSettings();
+
+    expect(result.basePath).toBe("~/prj/myrepo");
+    expect(localStorage.setItem).toHaveBeenCalledTimes(1);
+  });
+});

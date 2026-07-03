@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -94,15 +94,21 @@ export default function ReleasesPage() {
   );
   const [shareValue, setShareValue] = useState("");
 
-  const loadReleases = useCallback(async () => {
+  // Returns the freshly loaded releases so callers (e.g. the build poll) can
+  // read the current status without depending on the stale `releases` state
+  // captured in their render closure.
+  const loadReleases = useCallback(async (): Promise<Release[]> => {
     try {
       setLoading(true);
       const response = await fetch("/api/releases");
       const data = await response.json();
-      setReleases(data.releases || []);
+      const list: Release[] = data.releases || [];
+      setReleases(list);
+      return list;
     } catch (error) {
       console.error("Failed to load releases:", error);
       toast.error("Failed to load releases");
+      return [];
     } finally {
       setLoading(false);
     }
@@ -118,9 +124,26 @@ export default function ReleasesPage() {
     }
   }, []);
 
+  // Track live build-poll timers so they can be cleared if the user navigates
+  // away mid-build — otherwise the 3s poll (and its 10-minute safety timeout)
+  // would keep hitting /api/releases after this page unmounts.
+  const pollTimersRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
+  const pollTimeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+
   useEffect(() => {
     loadReleases();
   }, [loadReleases]);
+
+  useEffect(() => {
+    const timers = pollTimersRef.current;
+    const timeouts = pollTimeoutsRef.current;
+    return () => {
+      timers.forEach(clearInterval);
+      timeouts.forEach(clearTimeout);
+      timers.clear();
+      timeouts.clear();
+    };
+  }, []);
 
   useEffect(() => {
     if (selectedRelease) {
@@ -187,12 +210,21 @@ export default function ReleasesPage() {
       toast.success("Build started");
       loadReleases();
 
-      // Poll for build status
+      // Poll for build status. Read the freshly returned list — not the
+      // `releases` state, which is frozen at this closure's render — so the
+      // poll actually sees the build finish and stops instead of running the
+      // full 10-minute timeout and hammering /api/releases every 3s.
       const pollInterval = setInterval(async () => {
-        await loadReleases();
-        const release = releases.find((r) => r.id === id);
+        const latest = await loadReleases();
+        const release = latest.find((r) => r.id === id);
         if (release && release.build_status !== "building") {
           clearInterval(pollInterval);
+          pollTimersRef.current.delete(pollInterval);
+          // Cancel the paired safety timeout on normal completion. This
+          // callback first runs after 3s, by which point `safetyTimeout`
+          // (declared just below) is already initialized.
+          clearTimeout(safetyTimeout);
+          pollTimeoutsRef.current.delete(safetyTimeout);
           if (release.build_status === "success") {
             toast.success("Build completed successfully");
           } else if (release.build_status === "failed") {
@@ -200,9 +232,15 @@ export default function ReleasesPage() {
           }
         }
       }, 3000);
+      pollTimersRef.current.add(pollInterval);
 
-      // Clear interval after 10 minutes
-      setTimeout(() => clearInterval(pollInterval), 600000);
+      // Safety cap: stop polling after 10 minutes even if status never settles.
+      const safetyTimeout = setTimeout(() => {
+        clearInterval(pollInterval);
+        pollTimersRef.current.delete(pollInterval);
+        pollTimeoutsRef.current.delete(safetyTimeout);
+      }, 600000);
+      pollTimeoutsRef.current.add(safetyTimeout);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to start build",

@@ -44,6 +44,12 @@ import { UserMenu } from "@/components/layout/UserMenu";
 import { Button } from "@/components/ui/button";
 import { useProject } from "@/lib/project-context";
 import {
+  buildProjectTree,
+  filterDisabledTree,
+  ancestorPaths,
+  type ProjectTreeNode,
+} from "@/lib/project-tree";
+import {
   getSettings,
   subscribeToSettings,
   isPluginVisible,
@@ -320,11 +326,110 @@ const externalLinks: {
   icon: React.ComponentType<{ className?: string }>;
 }[] = [];
 
-interface ProjectNode {
-  name: string;
-  displayName: string;
-  type: "git" | "planning" | "folder";
-  children: ProjectNode[];
+// A single row in the project selector, rendered recursively for nesting.
+// Repos (type "git") are switchable on click; any node with children shows a
+// chevron to expand. Styling uses muted repo icons and cobalt folder/container
+// icons so repos remain visually distinct.
+function ProjectTreeItem({
+  node,
+  depth,
+  activeProject,
+  expandedFolders,
+  onToggle,
+  onSelect,
+}: {
+  node: ProjectTreeNode;
+  depth: number;
+  activeProject: string;
+  expandedFolders: Set<string>;
+  onToggle: (name: string) => void;
+  onSelect: (name: string) => void;
+}) {
+  const hasChildren = node.children.length > 0;
+  const isRepo = node.type === "git";
+  const isExpanded = expandedFolders.has(node.name);
+  const isActive = activeProject === node.name;
+  const hasActiveDescendant =
+    !isActive && activeProject.startsWith(`${node.name}/`);
+
+  const Icon = isRepo ? GitBranch : hasChildren ? FolderTree : Folder;
+
+  const handleClick = () => {
+    // Repos switch on click; pure containers toggle; a leaf folder switches.
+    if (isRepo) {
+      onSelect(node.name);
+    } else if (hasChildren) {
+      onToggle(node.name);
+    } else {
+      onSelect(node.name);
+    }
+  };
+
+  return (
+    <div>
+      <div
+        className={cn(
+          "flex w-full items-center gap-1 rounded-sm pr-2 py-1.5 text-sm hover:bg-accent",
+          isActive && "bg-accent",
+          hasActiveDescendant && "text-primary",
+        )}
+        style={{ paddingLeft: `${0.5 + depth * 0.75}rem` }}
+      >
+        {hasChildren ? (
+          <button
+            type="button"
+            onClick={() => onToggle(node.name)}
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+            aria-expanded={isExpanded}
+            aria-label={isExpanded ? "Collapse" : "Expand"}
+          >
+            {isExpanded ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
+            )}
+          </button>
+        ) : (
+          <span className="w-3 shrink-0" />
+        )}
+        <button
+          type="button"
+          onClick={handleClick}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        >
+          <Icon
+            className={cn(
+              "h-4 w-4 shrink-0",
+              isRepo ? "text-muted-foreground" : "text-folder",
+            )}
+          />
+          <span className="flex-1 truncate">{node.segment}</span>
+          {hasChildren && (
+            <span className="text-xs text-muted-foreground">
+              {node.children.length}
+            </span>
+          )}
+          {isActive && <Check className="h-4 w-4 shrink-0" />}
+        </button>
+      </div>
+
+      {hasChildren && isExpanded && (
+        <div className="border-l border-border/50 ml-3">
+          {node.children.map((child) => (
+            <ProjectTreeItem
+              key={child.name}
+              node={child}
+              depth={depth + 1}
+              activeProject={activeProject}
+              expandedFolders={expandedFolders}
+              onToggle={onToggle}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function Titlebar() {
@@ -396,75 +501,52 @@ export function Titlebar() {
       pluginId: plugin.id,
     }));
 
-    // Filter by visibility
-    return items.filter((item) => isPluginVisible(item.pluginId, settings));
+    // Filter by visibility. "settings" is excluded here — it is rendered as a
+    // fixed gear next to the user avatar and is not part of the reorderable nav.
+    return items.filter(
+      (item) =>
+        item.pluginId !== "settings" &&
+        isPluginVisible(item.pluginId, settings),
+    );
   }, [settings]);
 
-  // Build tree structure from flat directories
+  // Build the nested tree from the flat directory list, then hide any
+  // directories the user disabled in settings (cascading to their children).
   const projectTree = useMemo(() => {
-    const planningProjects: ProjectNode[] = [];
-    const standaloneProjects: ProjectNode[] = [];
-    const folders: ProjectNode[] = [];
+    const disabled = new Set(settings?.disabledProjectDirs ?? []);
+    const tree = buildProjectTree(
+      directories.map((d) => ({
+        name: d.name,
+        type: (d.type ?? "folder") as ProjectTreeNode["type"],
+      })),
+    );
+    return filterDisabledTree(tree, disabled);
+  }, [directories, settings?.disabledProjectDirs]);
 
-    // First pass: identify planning projects and create nodes
-    const planningMap = new Map<string, ProjectNode>();
-
-    for (const dir of directories) {
-      if (dir.type === "planning") {
-        const node: ProjectNode = {
-          name: dir.name,
-          displayName: dir.name,
-          type: "planning",
-          children: [],
-        };
-        planningMap.set(dir.name, node);
-        planningProjects.push(node);
-      }
-    }
-
-    // Second pass: assign subprojects to their parents or standalone
-    for (const dir of directories) {
-      if (dir.type === "planning") continue;
-
-      const isSubproject = dir.name.includes("/");
-      if (isSubproject) {
-        const [parent] = dir.name.split("/");
-        const parentNode = planningMap.get(parent);
-        if (parentNode) {
-          parentNode.children.push({
-            name: dir.name,
-            displayName: dir.name.split("/").slice(1).join("/"),
-            type: dir.type as "git" | "folder",
-            children: [],
-          });
-        }
-      } else if (dir.type === "folder") {
-        folders.push({
-          name: dir.name,
-          displayName: dir.name,
-          type: "folder",
-          children: [],
-        });
-      } else {
-        standaloneProjects.push({
-          name: dir.name,
-          displayName: dir.name,
-          type: "git",
-          children: [],
-        });
-      }
-    }
-
-    return { planningProjects, standaloneProjects, folders };
-  }, [directories]);
-
-  // Auto-expand folder containing active project
+  // Auto-expand every ancestor of the active project so it is revealed.
   useEffect(() => {
-    if (activeProject && activeProject.includes("/")) {
-      const [parent] = activeProject.split("/");
-      setExpandedFolders((prev) => new Set(prev).add(parent));
-    }
+    if (!activeProject) return;
+    const prefixes = ancestorPaths(activeProject);
+    if (prefixes.length === 0) return;
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      for (const p of prefixes) next.add(p);
+      return next;
+    });
   }, [activeProject]);
+
+  const toggleFolder = (name: string) =>
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+
+  const selectProject = (name: string) => {
+    setActiveProject(name);
+    setIsOpen(false);
+  };
 
   // Close project dropdown when clicking outside
   useEffect(() => {
@@ -649,129 +731,22 @@ export function Titlebar() {
                 </button>
                 <div className="my-1 h-px bg-border" />
                 <div className="max-h-80 overflow-y-auto">
-                  {/* Planning projects (collapsible) */}
-                  {projectTree.planningProjects.map((project) => {
-                    const isExpanded = expandedFolders.has(project.name);
-                    const hasActiveChild = activeProject?.startsWith(
-                      project.name + "/",
-                    );
-
-                    return (
-                      <div key={project.name}>
-                        <button
-                          onClick={() => {
-                            setExpandedFolders((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(project.name)) {
-                                next.delete(project.name);
-                              } else {
-                                next.add(project.name);
-                              }
-                              return next;
-                            });
-                          }}
-                          className={cn(
-                            "flex w-full items-center gap-1 rounded-sm px-2 py-1.5 text-sm hover:bg-accent",
-                            hasActiveChild && "text-primary",
-                          )}
-                        >
-                          {isExpanded ? (
-                            <ChevronDown className="h-3 w-3 shrink-0" />
-                          ) : (
-                            <ChevronRight className="h-3 w-3 shrink-0" />
-                          )}
-                          <FolderTree className="h-4 w-4 text-purple-500 shrink-0" />
-                          <span className="flex-1 text-left truncate">
-                            {project.displayName}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {project.children.length}
-                          </span>
-                        </button>
-
-                        {/* Nested children */}
-                        {isExpanded && project.children.length > 0 && (
-                          <div className="ml-4 border-l border-border/50">
-                            {project.children.map((child) => (
-                              <button
-                                key={child.name}
-                                onClick={() => {
-                                  setActiveProject(child.name);
-                                  setIsOpen(false);
-                                }}
-                                className={cn(
-                                  "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent",
-                                  activeProject === child.name && "bg-accent",
-                                )}
-                              >
-                                <GitBranch className="h-4 w-4 text-muted-foreground shrink-0" />
-                                <span className="flex-1 text-left truncate">
-                                  {child.displayName}
-                                </span>
-                                {activeProject === child.name && (
-                                  <Check className="h-4 w-4 shrink-0" />
-                                )}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-
-                  {/* Standalone git projects */}
-                  {projectTree.standaloneProjects.length > 0 &&
-                    projectTree.planningProjects.length > 0 && (
-                      <div className="my-1 h-px bg-border" />
-                    )}
-                  {projectTree.standaloneProjects.map((project) => (
-                    <button
-                      key={project.name}
-                      onClick={() => {
-                        setActiveProject(project.name);
-                        setIsOpen(false);
-                      }}
-                      className={cn(
-                        "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent",
-                        activeProject === project.name && "bg-accent",
-                      )}
-                    >
-                      <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-                      <span className="flex-1 text-left truncate">
-                        {project.displayName}
-                      </span>
-                      {activeProject === project.name && (
-                        <Check className="h-4 w-4 shrink-0" />
-                      )}
-                    </button>
-                  ))}
-
-                  {/* Folders (no git) */}
-                  {projectTree.folders.length > 0 && (
-                    <>
-                      <div className="my-1 h-px bg-border" />
-                      {projectTree.folders.map((folder) => (
-                        <button
-                          key={folder.name}
-                          onClick={() => {
-                            setActiveProject(folder.name);
-                            setIsOpen(false);
-                          }}
-                          className={cn(
-                            "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent",
-                            activeProject === folder.name && "bg-accent",
-                          )}
-                        >
-                          <Folder className="h-4 w-4 text-yellow-500 shrink-0" />
-                          <span className="flex-1 text-left truncate">
-                            {folder.displayName}
-                          </span>
-                          {activeProject === folder.name && (
-                            <Check className="h-4 w-4 shrink-0" />
-                          )}
-                        </button>
-                      ))}
-                    </>
+                  {projectTree.length === 0 ? (
+                    <div className="px-2 py-2 text-xs text-muted-foreground">
+                      No projects found.
+                    </div>
+                  ) : (
+                    projectTree.map((node) => (
+                      <ProjectTreeItem
+                        key={node.name}
+                        node={node}
+                        depth={0}
+                        activeProject={activeProject}
+                        expandedFolders={expandedFolders}
+                        onToggle={toggleFolder}
+                        onSelect={selectProject}
+                      />
+                    ))
                   )}
                 </div>
               </div>
@@ -779,6 +754,20 @@ export function Titlebar() {
           </div>
 
           <ThemeToggle />
+
+          {/* Fixed settings gear — icon only, always next to the user avatar.
+              Not part of the reorderable/hideable nav. */}
+          <Button
+            variant={pathname.startsWith("/settings") ? "secondary" : "ghost"}
+            size="icon"
+            asChild
+            title="Settings"
+          >
+            <Link href="/settings" aria-label="Settings">
+              <Settings className="h-4 w-4" />
+            </Link>
+          </Button>
+
           <UserMenu />
         </div>
       </div>
