@@ -47,19 +47,28 @@ export function resolveWorkspaceRoot(): string {
  * and pass confinement. To close that bypass, resolve the LONGEST EXISTING
  * ANCESTOR via realpath (dereferencing any parent symlinks), then re-append the
  * remaining non-existent trailing segments lexically.
+ *
+ * Fails CLOSED: if canonicalization cannot be performed — realpath on the
+ * existing ancestor throws (EACCES / ELOOP, or a TOCTOU race where the ancestor
+ * vanishes between the existsSync check and the realpath call), or no existing
+ * ancestor is found — this returns `null`. Returning the purely lexical
+ * `resolved` form in that case would leave symlinks in EXISTING segments
+ * un-dereferenced, turning a realpath failure into a potential confinement
+ * bypass. Callers MUST treat `null` as "reject".
  */
-function canonicalizePath(p: string): string {
+function canonicalizePath(p: string): string | null {
   const resolved = resolve(p);
-  // Walk up until we find an ancestor that exists on disk; realpath it (that is
-  // guaranteed to succeed), then re-attach the peeled-off trailing segments.
+  // Walk up until we find an ancestor that exists on disk; realpath it, then
+  // re-attach the peeled-off trailing segments.
   let existing = resolved;
   const trailing: string[] = [];
   while (!existsSync(existing)) {
     const parent = dirname(existing);
     if (parent === existing) {
       // Reached the filesystem root without finding an existing ancestor.
-      // Root always exists, so this is defensive; bail to the lexical form.
-      return resolved;
+      // Root always exists, so this is defensive; fail closed rather than
+      // fall back to the un-dereferenced lexical form.
+      return null;
     }
     trailing.unshift(basename(existing));
     existing = parent;
@@ -68,7 +77,9 @@ function canonicalizePath(p: string): string {
     const realAncestor = realpathSync(existing);
     return trailing.length > 0 ? join(realAncestor, ...trailing) : realAncestor;
   } catch {
-    return resolved;
+    // realpath failed (EACCES / ELOOP / TOCTOU race). Fail closed: do NOT
+    // return the lexical `resolved` form, which would bypass confinement.
+    return null;
   }
 }
 
@@ -109,6 +120,13 @@ export function isValidPath(path: string, basePath: string): boolean {
   // cwd = translatePath(path), so that is the location that must be confined.
   const candidate = canonicalizePath(translatePath(path));
   const base = canonicalizePath(translatePath(basePath));
+
+  // Fail CLOSED: if either path could not be canonicalized (realpath failure —
+  // EACCES / ELOOP / TOCTOU race, or no existing ancestor), reject. Accepting a
+  // non-dereferenced lexical form here would reopen the symlink-escape bypass.
+  if (candidate === null || base === null) {
+    return false;
+  }
 
   // When the base canonicalizes to the filesystem root ("/"), every absolute
   // path is under it. The trailing-separator boundary below would otherwise

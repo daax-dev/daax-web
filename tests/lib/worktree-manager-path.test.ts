@@ -20,6 +20,37 @@ import { tmpdir } from "os";
 import { join, sep } from "path";
 import { isValidPath } from "@/lib/worktree-manager";
 
+// Control set for forcing realpathSync failures on specific paths. Populated
+// per-test to prove isValidPath fails CLOSED when canonicalization cannot be
+// performed (EACCES / ELOOP / TOCTOU). Named imports in the SUT bind to the
+// module namespace, so vi.spyOn(fs, ...) does NOT intercept them — the module
+// must be mocked so the SUT loads the wrapped realpathSync.
+const { failRealpathFor } = vi.hoisted(() => ({
+  failRealpathFor: new Set<string>(),
+}));
+
+vi.mock("fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("fs")>();
+  const wrapped = Object.assign(
+    (p: Parameters<typeof actual.realpathSync>[0], ...rest: unknown[]) => {
+      if (failRealpathFor.has(String(p))) {
+        const err = new Error("ELOOP: too many symbolic links") as NodeJS.ErrnoException;
+        err.code = "ELOOP";
+        throw err;
+      }
+      return (actual.realpathSync as (...a: unknown[]) => unknown)(p, ...rest);
+    },
+    actual.realpathSync,
+  ) as typeof actual.realpathSync;
+  // Both named and default exports must be overridden: Vite's CJS interop
+  // synthesizes named imports of the `fs` built-in from the default export.
+  return {
+    ...actual,
+    realpathSync: wrapped,
+    default: { ...actual, realpathSync: wrapped },
+  };
+});
+
 // Root temp dir for all cases (real path so realpath resolves cleanly).
 const root = mkdtempSync(join(tmpdir(), "wt-path-"));
 const base = join(root, "workspace");
@@ -101,6 +132,27 @@ describe("isValidPath confinement (#189)", () => {
     // existing ancestor (escape-link) dereferences it, so it must be rejected.
     const target = join(escapeLink, "newchild");
     expect(isValidPath(target, base)).toBe(false);
+  });
+
+  it("fails CLOSED when realpath cannot dereference an existing ancestor (#189)", () => {
+    // A genuine realpath failure (EACCES / ELOOP / a TOCTOU race where the
+    // ancestor vanishes) must REJECT, not fall back to the un-dereferenced
+    // lexical form. Before the fix, canonicalizePath returned the lexical
+    // `resolved` path on realpath throw, so this candidate — which is lexically
+    // inside `base` — would have been ACCEPTED. Force realpathSync to throw for
+    // exactly this (existing) directory; `base` still realpaths normally.
+    const victim = join(base, "race-victim");
+    mkdirSync(victim, { recursive: true });
+
+    // `victim` exists (so it is the "longest existing ancestor"), but realpath
+    // on it now throws. `base` still realpaths normally, so only the candidate's
+    // canonicalization fails -> null -> reject.
+    failRealpathFor.add(victim);
+    try {
+      expect(isValidPath(victim, base)).toBe(false);
+    } finally {
+      failRealpathFor.delete(victim);
+    }
   });
 
   it("accepts a non-existent leaf under a legit existing directory", () => {
