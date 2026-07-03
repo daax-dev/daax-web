@@ -332,11 +332,29 @@ function escapeHtml(str: string): string {
 }
 
 /**
+ * Reduce a client-controlled value to a filesystem-safe token.
+ *
+ * Any character outside `[A-Za-z0-9_-]` (path separators, `.`, whitespace,
+ * etc.) is replaced with `-`, so the result can never contain `/`, `\`, or
+ * `..` — closing the write-side path-traversal where the raw value would flow
+ * into `join(outputDir, filename)` (#193).
+ */
+function slugifyFilenamePart(value: string): string {
+  return String(value).replace(/[^A-Za-z0-9_-]/g, "-");
+}
+
+/**
  * Generate a filename for the HTML export
  */
 export function generateExportFilename(metadata: TerminalRecording): string {
   const date = new Date(metadata.startTime);
   const dateStr = date.toISOString().split("T")[0]; // YYYY-MM-DD
   const timeStr = date.toTimeString().split(" ")[0].replace(/:/g, ""); // HHMMSS
-  return `${dateStr}-${timeStr}-${metadata.sessionType}-${metadata.id.slice(-8)}.html`;
+  // `sessionType` is a raw client-controlled value persisted in the recording
+  // metadata; slug it so it cannot inject path separators or `..`.
+  const sessionType = slugifyFilenamePart(metadata.sessionType);
+  // `id` is server-generated and route-validated, but slug its tail defensively
+  // so every component of the filename is guaranteed separator-free.
+  const idSuffix = slugifyFilenamePart(metadata.id.slice(-8));
+  return `${dateStr}-${timeStr}-${sessionType}-${idSuffix}.html`;
 }
