@@ -38,7 +38,12 @@ export async function GET() {
   // Require authentication before reading env or building the token response
   // (#188): an unauthenticated caller must never receive the gateway URL/token.
   const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  if (!auth.authenticated) {
+    for (const [key, value] of Object.entries(NO_CACHE_HEADERS)) {
+      auth.response.headers.set(key, value);
+    }
+    return auth.response;
+  }
 
   const url = process.env.CLAWD_GATEWAY_URL;
   const token = process.env.CLAWD_GATEWAY_TOKEN;

@@ -39,6 +39,13 @@ describe("GET /api/clawd/token authz (#188)", () => {
     const res = await GET();
     expect(res.status).toBe(401);
 
+    // Credential-related 401 responses must not be cacheable by intermediaries.
+    expect(res.headers.get("Cache-Control")).toBe(
+      "no-store, no-cache, must-revalidate",
+    );
+    expect(res.headers.get("Pragma")).toBe("no-cache");
+    expect(res.headers.get("Expires")).toBe("0");
+
     const raw = await res.text();
     // The sensitive values must not appear anywhere in the response body.
     expect(raw).not.toContain(GATEWAY_TOKEN);
