@@ -2,7 +2,9 @@
  * Auth + path-confinement tests for the unauthenticated arbitrary-directory
  * write routes (#187, Fable Review H2):
  *   - POST /api/devcontainers/save-local
+ *   - POST /api/devcontainers/save        (sibling audit route, AC#4)
  *   - POST /api/workflow-editor/save
+ *   - POST /api/workflow-editor/create    (sibling audit route, AC#4)
  *   - PUT  /api/workflow-editor/agents
  *   - PUT  /api/workflow-editor/prompts
  *   - PUT  /api/workflow-editor/skills
@@ -85,7 +87,9 @@ vi.mock("fs", async (importOriginal) => {
 });
 
 import { POST as saveLocalPOST } from "@/app/api/devcontainers/save-local/route";
+import { POST as devSavePOST } from "@/app/api/devcontainers/save/route";
 import { POST as workflowSavePOST } from "@/app/api/workflow-editor/save/route";
+import { POST as workflowCreatePOST } from "@/app/api/workflow-editor/create/route";
 import { PUT as agentsPUT } from "@/app/api/workflow-editor/agents/route";
 import { PUT as promptsPUT } from "@/app/api/workflow-editor/prompts/route";
 import {
@@ -170,10 +174,7 @@ describe("POST /api/devcontainers/save-local (#187)", () => {
   it("rejects a traversal `project` with 403 and writes nothing", async () => {
     authenticated();
     const res = await saveLocalPOST(
-      jsonReq(
-        { ...legit, project: "../../../../etc/cron.d" },
-        "POST",
-      ),
+      jsonReq({ ...legit, project: "../../../../etc/cron.d" }, "POST"),
     );
     expect(res.status).toBe(403);
     expect(mockWriteFile).not.toHaveBeenCalled();
@@ -193,9 +194,7 @@ describe("POST /api/devcontainers/save-local (#187)", () => {
     expect(res.status).toBe(200);
     expect(mockWriteFile).toHaveBeenCalledTimes(1);
     const target = String(mockWriteFile.mock.calls[0][0]);
-    expect(target).toBe(
-      "/workspace/ps/daax/.devcontainer/devcontainer.json",
-    );
+    expect(target).toBe("/workspace/ps/daax/.devcontainer/devcontainer.json");
     assertNoEscapedWrite(WORKSPACE_ROOT);
   });
 
@@ -206,16 +205,86 @@ describe("POST /api/devcontainers/save-local (#187)", () => {
     delete process.env.HOST_WORKSPACE_PATH;
     authenticated();
     const res = await saveLocalPOST(
-      jsonReq(
-        { ...legit, basePath: "/tmp/pwn", project: "x" },
-        "POST",
-      ),
+      jsonReq({ ...legit, basePath: "/tmp/pwn", project: "x" }, "POST"),
     );
     expect(res.status).toBe(200);
     const target = String(mockWriteFile.mock.calls.at(-1)?.[0]);
     // Root is the configured workspace, not the body's /tmp/pwn.
     expect(target.startsWith(WORKSPACE_ROOT + "/")).toBe(true);
     expect(target).not.toContain("/tmp/pwn");
+    assertNoEscapedWrite(WORKSPACE_ROOT);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// devcontainers/save (projectPath + each client filename confined to /workspace)
+// ---------------------------------------------------------------------------
+describe("POST /api/devcontainers/save (#187, AC#4 sibling)", () => {
+  const legit = {
+    projectPath: "ps/daax",
+    files: { "devcontainer.json": '{"image":"x"}' },
+  };
+
+  it("rejects a traversal `projectPath` with 403 and writes nothing", async () => {
+    authenticated();
+    const res = await devSavePOST(
+      jsonReq(
+        { ...legit, projectPath: "../../../../etc/cron.d" },
+        "POST",
+      ) as never,
+    );
+    expect(res.status).toBe(403);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+
+  it("rejects a sibling-prefix `projectPath` (/workspace-evil) with 403", async () => {
+    authenticated();
+    const res = await devSavePOST(
+      jsonReq(
+        { ...legit, projectPath: "../workspace-evil/x" },
+        "POST",
+      ) as never,
+    );
+    expect(res.status).toBe(403);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+
+  it("rejects a traversal `files` KEY with 403 and writes nothing (atomic batch)", async () => {
+    authenticated();
+    // Project exists so execution reaches the filename-confine pre-pass.
+    mockAccess.mockResolvedValue(undefined);
+    const res = await devSavePOST(
+      jsonReq(
+        {
+          projectPath: "ps/daax",
+          files: {
+            "devcontainer.json": "ok",
+            "../../../../tmp/pwned": "x",
+          },
+        },
+        "POST",
+      ) as never,
+    );
+    expect(res.status).toBe(403);
+    // One bad key rejects the whole batch — no partial write of the legit file.
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+
+  it("returns 401 when unauthenticated and writes nothing", async () => {
+    unauthenticated();
+    const res = await devSavePOST(jsonReq(legit, "POST") as never);
+    expect(res.status).toBe(401);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+
+  it("writes the confined devcontainer file when authenticated + in-root", async () => {
+    authenticated();
+    mockAccess.mockResolvedValue(undefined);
+    const res = await devSavePOST(jsonReq(legit, "POST") as never);
+    expect(res.status).toBe(200);
+    expect(mockWriteFile).toHaveBeenCalledTimes(1);
+    const target = String(mockWriteFile.mock.calls[0][0]);
+    expect(target).toBe("/workspace/ps/daax/.devcontainer/devcontainer.json");
     assertNoEscapedWrite(WORKSPACE_ROOT);
   });
 });
@@ -265,6 +334,61 @@ describe("POST /api/workflow-editor/save (#187)", () => {
     const res = await workflowSavePOST(
       jsonReq(
         { projectPath: "/workspace/proj", config: { a: 1 } },
+        "POST",
+      ) as never,
+    );
+    expect(res.status).toBe(200);
+    const target = String(mockWriteFile.mock.calls.at(-1)?.[0]);
+    expect(target).toBe("/workspace/proj/flowspec_workflow.yml");
+    assertNoEscapedWrite(WORKSPACE_ROOT);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// workflow-editor/create (projectPath confined to /workspace)
+// ---------------------------------------------------------------------------
+describe("POST /api/workflow-editor/create (#187, AC#4 sibling)", () => {
+  it("rejects an out-of-root projectPath with 403 and writes nothing", async () => {
+    authenticated();
+    const res = await workflowCreatePOST(
+      jsonReq(
+        { projectPath: "/etc/systemd/user", template: "minimal" },
+        "POST",
+      ) as never,
+    );
+    expect(res.status).toBe(403);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+
+  it("rejects a traversal projectPath with 403 and writes nothing", async () => {
+    authenticated();
+    const res = await workflowCreatePOST(
+      jsonReq(
+        { projectPath: "/workspace/../../etc", template: "minimal" },
+        "POST",
+      ) as never,
+    );
+    expect(res.status).toBe(403);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+
+  it("returns 401 when unauthenticated and writes nothing", async () => {
+    unauthenticated();
+    const res = await workflowCreatePOST(
+      jsonReq(
+        { projectPath: "/workspace/proj", template: "minimal" },
+        "POST",
+      ) as never,
+    );
+    expect(res.status).toBe(401);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
+
+  it("writes flowspec_workflow.yml in-root when authenticated", async () => {
+    authenticated();
+    const res = await workflowCreatePOST(
+      jsonReq(
+        { projectPath: "/workspace/proj", template: "minimal" },
         "POST",
       ) as never,
     );
@@ -335,7 +459,10 @@ describe("PUT /api/workflow-editor/prompts (#187)", () => {
   it("returns 401 when unauthenticated and writes nothing", async () => {
     unauthenticated();
     const res = await promptsPUT(
-      jsonReq({ name: "greet", content: "hi", category: "flow" }, "PUT") as never,
+      jsonReq(
+        { name: "greet", content: "hi", category: "flow" },
+        "PUT",
+      ) as never,
     );
     expect(res.status).toBe(401);
     expect(mockWriteFile).not.toHaveBeenCalled();
@@ -344,7 +471,10 @@ describe("PUT /api/workflow-editor/prompts (#187)", () => {
   it("writes a confined prompt file when authenticated", async () => {
     authenticated();
     const res = await promptsPUT(
-      jsonReq({ name: "greet", content: "hi", category: "flow" }, "PUT") as never,
+      jsonReq(
+        { name: "greet", content: "hi", category: "flow" },
+        "PUT",
+      ) as never,
     );
     expect(res.status).toBe(200);
     const target = String(mockWriteFile.mock.calls.at(-1)?.[0]);
@@ -376,7 +506,10 @@ describe("workflow-editor/skills (#187)", () => {
   it("PUT returns 401 when unauthenticated and writes nothing", async () => {
     unauthenticated();
     const res = await skillsPUT(
-      jsonReq({ path: ".claude/commands/flow/x.md", content: "hi" }, "PUT") as never,
+      jsonReq(
+        { path: ".claude/commands/flow/x.md", content: "hi" },
+        "PUT",
+      ) as never,
     );
     expect(res.status).toBe(401);
     expect(mockWriteFile).not.toHaveBeenCalled();
