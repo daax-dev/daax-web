@@ -7,14 +7,19 @@
  *
  * Security Model:
  * - This endpoint is designed for deployment on private networks (e.g., Tailscale)
- * - Network-level authentication is provided by the deployment environment
- * - For public deployment, add authentication middleware (session, API key, etc.)
  * - Application-level authentication is enforced via requireAuth() (#188): an
  *   unauthenticated caller receives 401 and NO credentials are disclosed.
+ * - This is fully effective under enforced auth (DAAX_REQUIRE_AUTH=1, behind
+ *   the forward-auth proxy): only an authenticated caller reaches the env
+ *   read/response below.
+ * - On the default host-dev posture (DAAX_REQUIRE_AUTH unset, no proxy
+ *   header), requireAuth() falls back to the LOCAL_OPERATOR bypass, so
+ *   network-level trust (e.g., Tailscale) is still the operative control.
  *
  * Follow-up (issue #188 AC #2, deferred — requires operator sign-off): replace
  * this endpoint with a server-side proxy or mint short-TTL/scoped per-session
  * tokens instead of returning the long-lived gateway bearer token verbatim.
+ * This remains the residual exposure to close.
  *
  * @see task-130 for security validation requirements
  */

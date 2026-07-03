@@ -20,12 +20,11 @@ const GATEWAY_TOKEN = "super-secret-gateway-token";
 describe("GET /api/clawd/token authz (#188)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.CLAWD_GATEWAY_URL = GATEWAY_URL;
-    process.env.CLAWD_GATEWAY_TOKEN = GATEWAY_TOKEN;
+    vi.stubEnv("CLAWD_GATEWAY_URL", GATEWAY_URL);
+    vi.stubEnv("CLAWD_GATEWAY_TOKEN", GATEWAY_TOKEN);
   });
   afterEach(() => {
-    delete process.env.CLAWD_GATEWAY_URL;
-    delete process.env.CLAWD_GATEWAY_TOKEN;
+    vi.unstubAllEnvs();
   });
 
   it("returns 401 and discloses NEITHER token NOR url when unauthenticated", async () => {
