@@ -7,6 +7,7 @@ import {
   generateExportFilename,
 } from "@/plugins/terminal-recorder/lib/html-export";
 import type { TerminalRecording } from "@/plugins/terminal-recorder/types";
+import { requireAuth } from "@/lib/auth";
 import { isValidRecordingId } from "@/server/recording/recorder";
 import { RECORDINGS_DIR } from "@/server/config/constants";
 
@@ -73,6 +74,10 @@ export async function GET(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  // Require authentication before reading recording data
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { id } = await context.params;
     if (!isValidRecordingId(id)) {

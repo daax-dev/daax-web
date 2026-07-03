@@ -83,6 +83,7 @@ const {
   mockCopyFileSync,
   mockReaddirSync,
   mockExecFileSync,
+  mockRequireAuth,
 } = vi.hoisted(() => ({
   mockExistsSync: vi.fn(() => true),
   mockReadFileSync: vi.fn((_p: string) => ""),
@@ -91,6 +92,7 @@ const {
   mockCopyFileSync: vi.fn(),
   mockReaddirSync: vi.fn(() => [] as string[]),
   mockExecFileSync: vi.fn((..._args: unknown[]) => ""),
+  mockRequireAuth: vi.fn(),
 }));
 
 vi.mock("fs", () => ({
@@ -115,6 +117,10 @@ vi.mock("child_process", () => ({
   default: { execFileSync: mockExecFileSync },
 }));
 
+vi.mock("@/lib/auth", () => ({
+  requireAuth: mockRequireAuth,
+}));
+
 // NOTE: html-export is intentionally NOT mocked here, so the real
 // generateExportFilename runs inside the publish handler.
 
@@ -131,6 +137,7 @@ const req = (body?: unknown) =>
 describe("publish route write-side traversal via sessionType (#193)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRequireAuth.mockResolvedValue({ authenticated: true, user: {} });
     mockExistsSync.mockReturnValue(true);
     mockReaddirSync.mockReturnValue([]);
     // getGitInfo() resolves the repo root from `git rev-parse --show-toplevel`.

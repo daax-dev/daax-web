@@ -33,7 +33,6 @@
     "releases/[id]",
     "releases/[id]/build",
     "settings/debug",
-    "terminal-recordings/[id]/publish",
     "workflow-editor/agents",
     "workflow-editor/prompts",
     "workflow-editor/save",

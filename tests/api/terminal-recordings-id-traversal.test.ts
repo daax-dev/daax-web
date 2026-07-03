@@ -162,6 +162,17 @@ describe("terminal-recordings [id] REST path traversal (#193)", () => {
       },
     );
 
+    it("returns 401 without any fs access when unauthenticated", async () => {
+      mockExistsSync.mockReturnValue(true);
+      mockRequireAuth.mockResolvedValue({
+        authenticated: false,
+        response: NextResponse.json({ error: "auth" }, { status: 401 }),
+      });
+      const res = await GET(req("GET") as NextRequest, ctx(LEGIT_ID));
+      expect(res.status).toBe(401);
+      expectNoFsAccess();
+    });
+
     it("lets a legitimate id reach the normal fs path", async () => {
       mockExistsSync.mockReturnValue(true);
       mockReadFileSync.mockImplementation((p: string) =>
@@ -217,6 +228,18 @@ describe("terminal-recordings [id] REST path traversal (#193)", () => {
         expectNoSpawn();
       },
     );
+
+    it("returns 401 without any fs/git access when unauthenticated", async () => {
+      mockExistsSync.mockReturnValue(true);
+      mockRequireAuth.mockResolvedValue({
+        authenticated: false,
+        response: NextResponse.json({ error: "auth" }, { status: 401 }),
+      });
+      const res = await EXPORT_GET(req("GET") as NextRequest, ctx(LEGIT_ID));
+      expect(res.status).toBe(401);
+      expectNoFsAccess();
+      expectNoSpawn();
+    });
 
     it("lets a legitimate id reach the normal export path", async () => {
       mockExistsSync.mockReturnValue(true);
@@ -369,5 +392,33 @@ describe("terminal-recordings [id] REST path traversal (#193)", () => {
         expectNoFsAccess();
       },
     );
+
+    it("returns 401 without any git/fs side effect when unauthenticated", async () => {
+      mockExistsSync.mockReturnValue(true);
+      mockRequireAuth.mockResolvedValue({
+        authenticated: false,
+        response: NextResponse.json({ error: "auth" }, { status: 401 }),
+      });
+      const res = await PUBLISH_POST(
+        req("POST", {}) as NextRequest,
+        ctx(LEGIT_ID),
+      );
+      expect(res.status).toBe(401);
+      expectNoSpawn();
+      expectNoFsAccess();
+    });
+
+    it("lets an authenticated legitimate id reach the normal publish path", async () => {
+      // Past auth + id-validation the handler must touch the filesystem to
+      // resolve the recording (existsSync on the meta/cast paths).
+      mockExistsSync.mockReturnValue(false);
+      const res = await PUBLISH_POST(
+        req("POST", {}) as NextRequest,
+        ctx(LEGIT_ID),
+      );
+      // No recording on disk → 404, but only after the guard let it through.
+      expect(res.status).toBe(404);
+      expect(mockExistsSync).toHaveBeenCalled();
+    });
   });
 });
