@@ -4,12 +4,22 @@ import {
   getCurrentBranch,
   getWorktreeStatus,
   isValidPath,
+  resolveWorkspaceRoot,
 } from "@/lib/worktree-manager";
+import { requireAuth } from "@/lib/auth";
 
 /**
  * GET /api/git/status?path=... - Get git status for a path
+ *
+ * SECURITY: Requires authentication (runs git with cwd=path — unauthenticated
+ * access would allow host filesystem reconnaissance) and confines `path` to the
+ * operator-configured workspace root.
  */
 export async function GET(req: NextRequest) {
+  // Require authentication: this handler executes git against an arbitrary cwd.
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   const path = req.nextUrl.searchParams.get("path");
 
   if (!path) {
@@ -19,9 +29,9 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Validate path to prevent path traversal attacks
-  if (!isValidPath(path)) {
-    console.error("[API] Invalid path (path traversal attempt):", path);
+  // Validate path: reject traversal and confine to the workspace root.
+  if (!isValidPath(path, resolveWorkspaceRoot())) {
+    console.error("[API] Invalid path (outside workspace root):", path);
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
 

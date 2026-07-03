@@ -5,25 +5,72 @@
 
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { existsSync, mkdirSync } from "fs";
-import { join, normalize } from "path";
+import { existsSync, mkdirSync, realpathSync } from "fs";
+import { join, resolve, sep } from "path";
 import { homedir } from "os";
+import { expandPath } from "./path-utils";
+import { getSettings } from "./settings";
 
 const execFileAsync = promisify(execFile);
 
 /**
- * Validates a path to prevent path traversal attacks.
+ * Resolve the operator-configured workspace root for path confinement.
  *
- * Path traversal detection works by comparing the original path (before normalization)
- * with the normalized result. If the original contains ".." sequences that would
- * escape the expected directory, the normalized path will differ from what a simple
- * string append would produce.
+ * This is the SAME namespace that translatePath() maps candidate paths into:
+ * - Container mode: the host workspace is bind-mounted at /workspace, and
+ *   translatePath() rewrites host/tilde paths to /workspace/... , so the root
+ *   is "/workspace".
+ * - Host mode: the operator's configured base path from settings (default
+ *   "~/prj"), expanded to an absolute path — the same source used by the
+ *   workspace API (app/api/workspace/route.ts).
  *
- * @param path - The path to validate
- * @param basePath - Optional base path that the path must be within
- * @returns true if the path is safe, false otherwise
+ * Not a new config path — it reuses the existing HOST_WORKSPACE_PATH/"/workspace"
+ * container convention and the settings basePath.
  */
-export function isValidPath(path: string, basePath?: string): boolean {
+export function resolveWorkspaceRoot(): string {
+  if (process.env.HOST_WORKSPACE_PATH && existsSync("/workspace")) {
+    return "/workspace";
+  }
+  return expandPath(getSettings().basePath);
+}
+
+/**
+ * Canonicalize a path for confinement comparison: resolve to an absolute path
+ * and, where it exists on disk, follow symlinks via realpath so a symlinked
+ * escape cannot slip past the boundary. Where the path does not exist yet, fall
+ * back to a lexical resolve (there is nothing to dereference).
+ */
+function canonicalizePath(p: string): string {
+  const resolved = resolve(p);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+/**
+ * Validates a path to prevent path traversal attacks AND enforce workspace-root
+ * confinement.
+ *
+ * `basePath` is REQUIRED: every accepted path must resolve to a location inside
+ * (or equal to) `basePath`. Callers pass the operator-configured workspace root
+ * (see resolveWorkspaceRoot()). An absolute host path outside that root — even a
+ * sibling-prefix like "/workspaceEVIL" for base "/workspace" — is rejected.
+ *
+ * Confinement is done on CANONICALIZED paths, in the execution-context namespace:
+ * the candidate is first run through translatePath() (host/tilde -> container
+ * mapping) so it is compared in the same namespace as the git command's cwd,
+ * then both candidate and base are resolved with realpath (where they exist) and
+ * compared with a trailing-separator boundary. A raw normalize()+startsWith()
+ * would let "/workspaceEVIL" pass for base "/workspace"; the separator boundary
+ * and realpath do not.
+ *
+ * @param path - The path to validate (host-form or already-translated)
+ * @param basePath - Workspace root the path must be confined within (required)
+ * @returns true if the path is safe and confined, false otherwise
+ */
+export function isValidPath(path: string, basePath: string): boolean {
   // Check for null bytes (common injection vector)
   if (path.includes("\0")) {
     return false;
@@ -35,18 +82,14 @@ export function isValidPath(path: string, basePath?: string): boolean {
     return false;
   }
 
-  // Normalize the path to resolve . sequences
-  const normalizedPath = normalize(path);
+  // Compare in the execution-context namespace: the git command runs with
+  // cwd = translatePath(path), so that is the location that must be confined.
+  const candidate = canonicalizePath(translatePath(path));
+  const base = canonicalizePath(translatePath(basePath));
 
-  // If a base path is provided, ensure the path is within it
-  if (basePath) {
-    const normalizedBase = normalize(basePath);
-    if (!normalizedPath.startsWith(normalizedBase)) {
-      return false;
-    }
-  }
-
-  return true;
+  // Equal to the root, or strictly inside it (trailing-separator boundary so a
+  // sibling-prefix such as "/workspaceEVIL" does NOT pass for base "/workspace").
+  return candidate === base || candidate.startsWith(base + sep);
 }
 
 /**
@@ -462,8 +505,10 @@ export async function deleteWorktree(
   force = false,
 ): Promise<boolean> {
   try {
+    const workspaceRoot = resolveWorkspaceRoot();
+
     // Validate paths BEFORE translation to catch injection attempts early
-    if (!isValidPath(worktreePath)) {
+    if (!isValidPath(worktreePath, workspaceRoot)) {
       console.error("Invalid worktree path (pre-translation):", worktreePath);
       return false;
     }
@@ -472,7 +517,7 @@ export async function deleteWorktree(
     const containerWorktreePath = translatePath(worktreePath);
 
     // Validate paths AFTER translation in case translation introduced issues
-    if (!isValidPath(containerWorktreePath)) {
+    if (!isValidPath(containerWorktreePath, workspaceRoot)) {
       console.error(
         "Invalid worktree path (post-translation):",
         containerWorktreePath,
