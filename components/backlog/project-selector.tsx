@@ -1,70 +1,139 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useBacklog } from "./backlog-context";
 import { getSettings, subscribeToSettings } from "@/lib/settings";
-import { commonAncestorDir, isProjectPathDisabled } from "@/lib/project-tree";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  SelectGroup,
-  SelectLabel,
-} from "@/components/ui/select";
-import { Loader2 } from "lucide-react";
+  ancestorPaths,
+  buildBacklogProjectTree,
+  commonAncestorDir,
+  isProjectPathDisabled,
+  type BacklogTreeNode,
+} from "@/lib/project-tree";
+import { Button } from "@/components/ui/button";
+import {
+  ChevronDown,
+  ChevronRight,
+  Folder,
+  FolderTree,
+  Loader2,
+  SquareKanban,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { BacklogProject } from "@/types/backlog";
 
-// Extract last directory segment from a path
-// Handles container mode where /workspace maps to a default project directory
+// Extract last directory segment from a path. Handles container mode where
+// /workspace maps to a default project directory name.
 function getDirectoryName(path: string): string {
   const cleaned = path.replace(/\/+$/, "");
-
-  // In container mode, /workspace is the base; use a stable default directory name.
-  if (cleaned === "/workspace") {
-    return "prj";
-  }
-
+  if (cleaned === "/workspace") return "prj";
   const segments = cleaned.split("/");
   return segments[segments.length - 1] || path;
 }
 
-// Get the subfolder relative to base path (e.g., "ps" or "jp")
-function getSubfolder(projectPath: string, basePath: string): string | null {
-  // Same project as base: no subfolder
-  if (projectPath === basePath) return null;
-
-  // Ensure projectPath is actually under basePath before slicing.
-  // This avoids incorrect "relative" paths when the canonical projectPath
-  // is outside the base or only shares a string prefix (e.g., "/foo-bar" vs "/foo").
-  if (!projectPath.startsWith(basePath)) {
-    return null;
-  }
-
-  const nextChar = projectPath.charAt(basePath.length);
-  if (nextChar === "") {
-    // No next character (end of string). This should already be covered by the
-    // equality check above, but return null defensively for clarity.
-    return null;
-  }
-  if (nextChar !== "/") {
-    // basePath is only a partial prefix (e.g. "/foo" vs "/foo-bar")
-    return null;
-  }
-
-  // Get the relative path from base
-  const relative = projectPath.slice(basePath.length).replace(/^\/+/, "");
-  const segments = relative.split("/");
-
-  // Return first segment (top-level subfolder)
-  return segments[0] || null;
+// Display label for a node: the root project shows the friendly base name.
+function nodeLabel(node: BacklogTreeNode): string {
+  if (node.name === "" && node.project)
+    return getDirectoryName(node.project.path);
+  return node.segment;
 }
 
-interface ProjectGroup {
-  name: string | null; // null = base project (no group)
-  projects: BacklogProject[];
+// A single row in the backlog project tree, rendered recursively for nesting.
+// Mirrors the Titlebar project chooser: a chevron to expand folders, a folder
+// icon for pure folders, and a board icon + task count for backlog projects.
+function BacklogTreeItem({
+  node,
+  depth,
+  selectedPath,
+  expandedFolders,
+  onToggle,
+  onSelect,
+}: {
+  node: BacklogTreeNode;
+  depth: number;
+  selectedPath: string | null;
+  expandedFolders: Set<string>;
+  onToggle: (name: string) => void;
+  onSelect: (path: string) => void;
+}) {
+  const hasChildren = node.children.length > 0;
+  const isProject = node.project !== null;
+  const isExpanded = expandedFolders.has(node.name);
+  const isActive = isProject && node.project!.path === selectedPath;
+
+  const Icon = isProject ? SquareKanban : hasChildren ? FolderTree : Folder;
+
+  const handleClick = () => {
+    // A project selects on click; a pure folder toggles its children.
+    if (isProject) onSelect(node.project!.path);
+    else if (hasChildren) onToggle(node.name);
+  };
+
+  return (
+    <div>
+      <div
+        className={cn(
+          "flex w-full items-center gap-1 rounded-sm pr-2 py-1.5 text-sm hover:bg-accent",
+          isActive && "bg-accent",
+        )}
+        style={{ paddingLeft: `${0.5 + depth * 0.75}rem` }}
+      >
+        {hasChildren ? (
+          <button
+            type="button"
+            onClick={() => onToggle(node.name)}
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+            aria-expanded={isExpanded}
+            aria-label={isExpanded ? "Collapse" : "Expand"}
+          >
+            {isExpanded ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
+            )}
+          </button>
+        ) : (
+          <span className="w-3 shrink-0" />
+        )}
+        <button
+          type="button"
+          onClick={handleClick}
+          disabled={!isProject && !hasChildren}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+        >
+          <Icon
+            className={cn(
+              "h-4 w-4 shrink-0",
+              isProject ? "text-muted-foreground" : "text-folder",
+            )}
+          />
+          <span className={cn("flex-1 truncate", isActive && "font-medium")}>
+            {nodeLabel(node)}
+          </span>
+          {isProject && (
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {node.project!.taskCount} tasks
+            </span>
+          )}
+        </button>
+      </div>
+
+      {hasChildren && isExpanded && (
+        <div className="border-l border-border/50 ml-3">
+          {node.children.map((child) => (
+            <BacklogTreeItem
+              key={child.name}
+              node={child}
+              depth={depth + 1}
+              selectedPath={selectedPath}
+              expandedFolders={expandedFolders}
+              onToggle={onToggle}
+              onSelect={onSelect}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ProjectSelector() {
@@ -76,6 +145,12 @@ export function ProjectSelector() {
     isLoadingProjects,
     isLoadingTasks,
   } = useBacklog();
+
+  const [isOpen, setIsOpen] = useState(false);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
+    new Set(),
+  );
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Track the Settings folder-visibility filter (disabledProjectDirs) and stay
   // in sync when it changes, so hiding a folder in Settings updates the Backlog
@@ -93,94 +168,42 @@ export function ProjectSelector() {
   }, []);
 
   // Apply the same visibility filter Settings uses. Fail-open when nothing is
-  // disabled or the workspace base can't be derived, so behavior is unchanged
-  // unless the operator has actually hidden folders.
+  // disabled, so behavior is unchanged unless folders have actually been hidden.
+  // Derive the workspace root from the backlog project paths themselves so the
+  // filter is robust to path-namespace differences and covers nested projects.
+  const workspaceBase = useMemo(
+    () => commonAncestorDir(projects.map((p) => p.path)),
+    [projects],
+  );
   const visibleProjects = useMemo(() => {
     if (disabledDirs.length === 0) return projects;
-    // Derive the workspace root from the backlog project paths themselves, then
-    // filter on each project's path relative to that root. Staying within the
-    // backlog path namespace (rather than the workspace-scan namespace) makes
-    // this robust to the two APIs using different absolute roots, and it covers
-    // nested projects that the shallower directory scan never lists.
-    const base = commonAncestorDir(projects.map((p) => p.path));
     return projects.filter(
-      (p) => !isProjectPathDisabled(p.path, base, disabledDirs),
+      (p) => !isProjectPathDisabled(p.path, workspaceBase, disabledDirs),
     );
-  }, [projects, disabledDirs]);
+  }, [projects, workspaceBase, disabledDirs]);
 
-  // Group projects by subfolder, with base project first
-  const { groupedProjects, baseProjectPath } = useMemo(() => {
-    if (visibleProjects.length === 0)
-      return { groupedProjects: [], baseProjectPath: null };
-
-    // Find the base project (shortest path)
-    let basePath: string | null = null;
-    let minLength = Infinity;
-
-    for (const p of visibleProjects) {
-      if (p.path.length < minLength) {
-        minLength = p.path.length;
-        basePath = p.path;
-      }
-    }
-
-    // Group projects by subfolder
-    const groups = new Map<string | null, BacklogProject[]>();
-
-    for (const project of visibleProjects) {
-      const subfolder = basePath ? getSubfolder(project.path, basePath) : null;
-      const existing = groups.get(subfolder) || [];
-      existing.push(project);
-      groups.set(subfolder, existing);
-    }
-
-    // Sort projects within each group alphabetically
-    for (const projectList of groups.values()) {
-      projectList.sort((a, b) => a.name.localeCompare(b.name));
-    }
-
-    // Convert to array with base (null) first, then sorted group names
-    const result: ProjectGroup[] = [];
-
-    // Base project first (if exists)
-    if (groups.has(null)) {
-      result.push({ name: null, projects: groups.get(null)! });
-      groups.delete(null);
-    }
-
-    // Then other groups sorted alphabetically
-    const sortedGroupNames = Array.from(groups.keys()).sort((a, b) =>
-      (a || "").localeCompare(b || ""),
-    );
-
-    for (const groupName of sortedGroupNames) {
-      result.push({ name: groupName, projects: groups.get(groupName)! });
-    }
-
-    return { groupedProjects: result, baseProjectPath: basePath };
-  }, [visibleProjects]);
-
-  // Get display name for a project
-  const getDisplayName = (project: { path: string; name: string }): string => {
-    if (project.path === baseProjectPath) {
-      return getDirectoryName(project.path);
-    }
-    return project.name;
-  };
-
-  // Flatten for finding effective selected project
-  const allProjects = useMemo(
-    () => groupedProjects.flatMap((g) => g.projects),
-    [groupedProjects],
+  // Foldable folder tree of the active backlog projects (leaves carry task
+  // counts), mirroring the Titlebar project chooser.
+  const tree = useMemo(
+    () =>
+      buildBacklogProjectTree(
+        visibleProjects.map((p) => ({
+          path: p.path,
+          name: p.name,
+          taskCount: p.taskCount ?? 0,
+        })),
+        workspaceBase,
+      ),
+    [visibleProjects, workspaceBase],
   );
 
   // If the folder filter hides the *currently selected* project, actually
-  // switch the selection to the first visible project — not just the displayed
-  // label. Otherwise the board, task loading, and create/update would keep
-  // operating on the hidden project while the picker shows a different one.
+  // switch the selection to the first visible project (not just the label);
+  // clear it when every project is hidden, so the board never operates on a
+  // hidden project.
   const selectedIsVisible =
     selectedProject != null &&
-    allProjects.some((p) => p.path === selectedProject.path);
+    visibleProjects.some((p) => p.path === selectedProject.path);
   useEffect(() => {
     if (
       isLoadingProjects ||
@@ -190,12 +213,9 @@ export function ProjectSelector() {
     ) {
       return;
     }
-    if (allProjects.length > 0) {
-      // Switch to the first still-visible project.
-      setSelectedProject(allProjects[0].path);
+    if (visibleProjects.length > 0) {
+      setSelectedProject(visibleProjects[0].path);
     } else {
-      // Every project is hidden by the filter — clear the selection so the
-      // board stops operating on the now-hidden project.
       clearSelectedProject();
     }
   }, [
@@ -203,10 +223,55 @@ export function ProjectSelector() {
     isLoadingTasks,
     selectedProject,
     selectedIsVisible,
-    allProjects,
+    visibleProjects,
     setSelectedProject,
     clearSelectedProject,
   ]);
+
+  // Auto-expand every folder on the path to the selected project so it shows.
+  useEffect(() => {
+    if (!selectedProject || !workspaceBase) return;
+    const rel =
+      selectedProject.path === workspaceBase
+        ? ""
+        : selectedProject.path.startsWith(`${workspaceBase}/`)
+          ? selectedProject.path.slice(workspaceBase.length + 1)
+          : "";
+    if (!rel) return;
+    const prefixes = [...ancestorPaths(rel), rel];
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      for (const p of prefixes) next.add(p);
+      return next;
+    });
+  }, [selectedProject, workspaceBase]);
+
+  // Close the dropdown when clicking outside.
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const toggleFolder = (name: string) =>
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+
+  const selectProject = (path: string) => {
+    setSelectedProject(path);
+    setIsOpen(false);
+  };
 
   if (isLoadingProjects) {
     return (
@@ -219,7 +284,7 @@ export function ProjectSelector() {
     );
   }
 
-  if (allProjects.length === 0) {
+  if (visibleProjects.length === 0) {
     return (
       <div className="flex items-center gap-2">
         <span className="text-sm text-muted-foreground">
@@ -229,72 +294,63 @@ export function ProjectSelector() {
     );
   }
 
-  // Display fallback for the paint before the switch effect above runs, so the
-  // trigger never flashes a dangling value for a hidden project.
+  // Display fallback for the paint before the switch effect runs, so the
+  // trigger never shows a dangling value for a hidden project.
   const effectiveSelectedProject = selectedIsVisible
     ? selectedProject
-    : allProjects[0];
+    : visibleProjects[0];
+  const triggerLabel = effectiveSelectedProject
+    ? effectiveSelectedProject.path === workspaceBase
+      ? getDirectoryName(effectiveSelectedProject.path)
+      : effectiveSelectedProject.name
+    : "Select a project";
 
   return (
     <div className="flex items-center gap-2">
       <span className="text-sm text-muted-foreground">Project:</span>
-      <Select
-        value={effectiveSelectedProject?.path || ""}
-        onValueChange={(value) => setSelectedProject(value)}
-        disabled={isLoadingTasks}
-      >
-        <SelectTrigger className="w-[300px]">
-          {isLoadingTasks ? (
-            <div className="flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Switching project...</span>
-            </div>
-          ) : (
-            <SelectValue placeholder="Select a project">
-              {effectiveSelectedProject
-                ? getDisplayName(effectiveSelectedProject)
-                : "Select a project"}
-            </SelectValue>
-          )}
-        </SelectTrigger>
-        <SelectContent
-          position="popper"
-          side="bottom"
-          align="start"
-          className="max-h-[300px] z-[70]"
+      <div className="relative" ref={dropdownRef}>
+        <Button
+          variant="outline"
+          onClick={() => setIsOpen((o) => !o)}
+          disabled={isLoadingTasks}
+          className="w-[300px] justify-between font-normal"
         >
-          {groupedProjects.map((group) => (
-            <SelectGroup key={group.name ?? "__base__"}>
-              {group.name !== null && (
-                <SelectLabel className="text-xs text-muted-foreground font-normal px-2 py-1">
-                  {group.name}/
-                </SelectLabel>
-              )}
-              {group.projects.map((project) => {
-                const isBaseProject = project.path === baseProjectPath;
-                const displayName = getDisplayName(project);
+          {isLoadingTasks ? (
+            <span className="flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Switching project...
+            </span>
+          ) : (
+            <span className="flex items-center gap-2 truncate">
+              <SquareKanban className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="truncate">{triggerLabel}</span>
+            </span>
+          )}
+          <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+        </Button>
 
-                return (
-                  <SelectItem key={project.path} value={project.path}>
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={cn(
-                          isBaseProject && "text-green-500 font-medium",
-                        )}
-                      >
-                        {displayName}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        ({project.taskCount || 0} tasks)
-                      </span>
-                    </div>
-                  </SelectItem>
-                );
-              })}
-            </SelectGroup>
-          ))}
-        </SelectContent>
-      </Select>
+        {isOpen && (
+          <div className="absolute left-0 top-full mt-1 w-[320px] rounded-md border bg-popover p-1 shadow-md z-[70]">
+            <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+              Select Project
+            </div>
+            <div className="my-1 h-px bg-border" />
+            <div className="max-h-80 overflow-y-auto">
+              {tree.map((node) => (
+                <BacklogTreeItem
+                  key={node.name}
+                  node={node}
+                  depth={0}
+                  selectedPath={effectiveSelectedProject?.path ?? null}
+                  expandedFolders={expandedFolders}
+                  onToggle={toggleFolder}
+                  onSelect={selectProject}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

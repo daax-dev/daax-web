@@ -167,3 +167,122 @@ export function ancestorPaths(name: string): string[] {
   }
   return prefixes;
 }
+
+// ---------------------------------------------------------------------------
+// Backlog project tree
+//
+// The Backlog project picker shows a foldable folder tree (like the Titlebar
+// project chooser) whose leaves are the active backlog projects, each with its
+// task count. Intermediate folders are foldable; a node can be BOTH a project
+// and a folder (e.g. "ps/daax" is a project that also contains nested
+// projects). The tree is built from the (already visibility-filtered) backlog
+// projects and the workspace root derived via commonAncestorDir().
+// ---------------------------------------------------------------------------
+
+export interface BacklogProjectRef {
+  path: string; // absolute project path
+  name: string; // backlog project display name
+  taskCount: number;
+}
+
+export interface BacklogTreeNode {
+  name: string; // workspace-root-relative path, e.g. "ps/daax" ("" = root)
+  segment: string; // last path segment, for display
+  // The backlog project living exactly at this node, or null for a pure folder.
+  project: BacklogProjectRef | null;
+  children: BacklogTreeNode[];
+}
+
+/**
+ * Build the foldable backlog tree from a flat project list. Each project's path
+ * is made relative to `base` (the workspace root) and split into folder
+ * segments; the deepest segment is marked as the project (carrying its task
+ * count). Missing intermediate folders are synthesized so the hierarchy is
+ * fully connected. The root project (path === base) is attached to a synthetic
+ * root node whose segment is the base directory name.
+ */
+export function buildBacklogProjectTree(
+  projects: readonly BacklogProjectRef[],
+  base: string | null,
+): BacklogTreeNode[] {
+  const roots: BacklogTreeNode[] = [];
+  const map = new Map<string, BacklogTreeNode>();
+
+  const toRelative = (p: string): string => {
+    if (!base) return p;
+    if (p === base) return "";
+    if (p.startsWith(`${base}/`)) return p.slice(base.length + 1);
+    return p; // outside base (unexpected after filtering) — keep as-is
+  };
+
+  const lastSegment = (p: string): string => {
+    const cleaned = p.replace(/\/+$/, "");
+    const segs = cleaned.split("/").filter(Boolean);
+    return segs[segs.length - 1] || cleaned;
+  };
+
+  // Sort by relative path so parents are created before their children.
+  const items = projects
+    .map((p) => ({ project: p, rel: toRelative(p.path) }))
+    .sort((a, b) => a.rel.localeCompare(b.rel));
+
+  for (const { project, rel } of items) {
+    const ref: BacklogProjectRef = {
+      path: project.path,
+      name: project.name,
+      taskCount: project.taskCount,
+    };
+
+    if (rel === "") {
+      // Root project — synthesize a root node keyed by "".
+      let node = map.get("");
+      if (!node) {
+        node = {
+          name: "",
+          segment: lastSegment(project.path),
+          project: null,
+          children: [],
+        };
+        map.set("", node);
+        roots.push(node);
+      }
+      node.project = ref;
+      continue;
+    }
+
+    const segments = rel.split("/").filter(Boolean);
+    let path = "";
+    let siblings = roots;
+    for (let i = 0; i < segments.length; i++) {
+      path = path ? `${path}/${segments[i]}` : segments[i];
+      let node = map.get(path);
+      if (!node) {
+        node = {
+          name: path,
+          segment: segments[i],
+          project: null,
+          children: [],
+        };
+        map.set(path, node);
+        siblings.push(node);
+      }
+      if (i === segments.length - 1) node.project = ref;
+      siblings = node.children;
+    }
+  }
+
+  sortBacklogTree(roots);
+  return roots;
+}
+
+// Folders (nodes with children) first, then alphabetical by segment — matching
+// the Titlebar project tree ordering.
+function sortBacklogTree(nodes: BacklogTreeNode[]): void {
+  nodes.sort((a, b) => {
+    const aHas = a.children.length > 0 ? 0 : 1;
+    const bHas = b.children.length > 0 ? 0 : 1;
+    if (aHas !== bHas) return aHas - bHas;
+    return a.segment.localeCompare(b.segment);
+  });
+  for (const node of nodes) sortBacklogTree(node.children);
+}
