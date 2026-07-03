@@ -7,6 +7,7 @@ import { requireAuth } from "@/lib/auth";
 import {
   generateRecordingHtml,
   generateExportFilename,
+  slugifyFilenamePart,
 } from "@/plugins/terminal-recorder/lib/html-export";
 import type { TerminalRecording } from "@/plugins/terminal-recorder/types";
 import { isValidRecordingId } from "@/server/recording/recorder";
@@ -231,8 +232,15 @@ export async function POST(
     const castFilename = htmlFilename.replace(".html", ".cast");
 
     // Create branch name
+    // `sessionType` is a raw client-controlled value persisted in the
+    // recording metadata; slug it (same helper used for export filenames)
+    // so it cannot inject `/`, `\`, or `..` into the GitHub branch/ref name.
+    // `id` is server-generated and route-validated, but slug its tail
+    // defensively so every interpolated component is separator-free.
     const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    const branchName = `recording/${timestamp}-${metadata.sessionType}-${id.slice(-8)}`;
+    const safeSessionType = slugifyFilenamePart(metadata.sessionType);
+    const safeIdSuffix = slugifyFilenamePart(id.slice(-8));
+    const branchName = `recording/${timestamp}-${safeSessionType}-${safeIdSuffix}`;
 
     // Get the SHA of the base branch
     const baseRefResponse = await githubApi(

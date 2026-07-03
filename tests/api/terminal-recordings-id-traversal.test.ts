@@ -86,10 +86,20 @@ vi.mock("@/lib/github-app", () => ({
   getGitHubToken: mockGetGitHubToken,
 }));
 
-vi.mock("@/plugins/terminal-recorder/lib/html-export", () => ({
-  generateRecordingHtml: mockGenerateRecordingHtml,
-  generateExportFilename: mockGenerateExportFilename,
-}));
+vi.mock("@/plugins/terminal-recorder/lib/html-export", async (importOriginal) => {
+  // Keep the real `slugifyFilenamePart` export (needed by the create-pr
+  // route's branch-name slugging) while still stubbing the heavier
+  // HTML/filename generators used elsewhere in this suite.
+  const actual =
+    await importOriginal<
+      typeof import("@/plugins/terminal-recorder/lib/html-export")
+    >();
+  return {
+    ...actual,
+    generateRecordingHtml: mockGenerateRecordingHtml,
+    generateExportFilename: mockGenerateExportFilename,
+  };
+});
 
 import { GET, DELETE } from "@/app/api/terminal-recordings/[id]/route";
 import { GET as EXPORT_GET } from "@/app/api/terminal-recordings/[id]/export/route";
@@ -235,6 +245,115 @@ describe("terminal-recordings [id] REST path traversal (#193)", () => {
         expectNoSpawn();
         expect(mockGetGitHubToken).not.toHaveBeenCalled();
         expectNoFsAccess();
+      },
+    );
+  });
+
+  describe("POST /api/terminal-recordings/[id]/create-pr — branch name slug safety (#193)", () => {
+    const originalFetch = global.fetch;
+
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    function githubResponse(json: unknown): Response {
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => json,
+      } as Response;
+    }
+
+    it.each([
+      ["dot-dot + nested path traversal", "../../etc/x"],
+      ["nested path segment", "a/b"],
+    ])(
+      "slugs a malicious sessionType (%s) out of the GitHub branch ref",
+      async (_label, sessionType) => {
+        mockExistsSync.mockReturnValue(true);
+        mockReadFileSync.mockImplementation((p: string) =>
+          String(p).endsWith(".json")
+            ? JSON.stringify({
+                id: LEGIT_ID,
+                sessionType,
+                command: "echo hi",
+                startTime: Date.now(),
+              })
+            : "cast-content",
+        );
+        mockExecFileSync.mockImplementation(((...args: unknown[]) => {
+          const joined = (Array.isArray(args[1]) ? args[1] : []).join(" ");
+          if (joined.includes("show-toplevel")) return "/repo";
+          if (joined.includes("remote get-url origin")) {
+            return "git@github.com:owner/repo.git";
+          }
+          if (joined.includes("abbrev-ref HEAD")) return "feature-branch";
+          if (joined.includes("symbolic-ref")) {
+            return "refs/remotes/origin/main";
+          }
+          return "";
+        }) as () => string);
+
+        let createdRefName: string | undefined;
+        const fetchMock = vi.fn(
+          async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            const endpoint = url.replace("https://api.github.com", "");
+            const method = init?.method ?? "GET";
+
+            if (/^\/repos\/[^/]+\/[^/]+\/git\/ref\/heads\//.test(endpoint)) {
+              return githubResponse({ object: { sha: "base-sha" } });
+            }
+            if (
+              endpoint === "/repos/owner/repo/git/refs" &&
+              method === "POST"
+            ) {
+              createdRefName = JSON.parse(String(init?.body)).ref;
+              return githubResponse({});
+            }
+            if (endpoint === "/repos/owner/repo/git/blobs") {
+              return githubResponse({ sha: "blob-sha" });
+            }
+            if (endpoint === "/repos/owner/repo/git/trees") {
+              return githubResponse({ sha: "tree-sha" });
+            }
+            if (endpoint === "/repos/owner/repo/git/commits") {
+              return githubResponse({ sha: "commit-sha" });
+            }
+            if (
+              /^\/repos\/[^/]+\/[^/]+\/git\/refs\/heads\//.test(endpoint) &&
+              method === "PATCH"
+            ) {
+              return githubResponse({});
+            }
+            if (endpoint === "/repos/owner/repo/pulls") {
+              return githubResponse({
+                number: 1,
+                html_url: "http://x",
+                title: "t",
+              });
+            }
+            return githubResponse({});
+          },
+        );
+        global.fetch = fetchMock as unknown as typeof fetch;
+
+        const res = await CREATE_PR_POST(
+          req("POST", {}) as NextRequest,
+          ctx(LEGIT_ID),
+        );
+
+        expect(res.status).toBe(200);
+        expect(createdRefName).toBeDefined();
+        const branchRef = createdRefName!.replace(/^refs\/heads\//, "");
+        expect(branchRef.startsWith("recording/")).toBe(true);
+        const rest = branchRef.slice("recording/".length);
+        // No path separators or traversal sequences beyond the intended
+        // `recording/` prefix — the raw sessionType must be fully slugged.
+        expect(rest).not.toContain("/");
+        expect(rest).not.toContain("\\");
+        expect(rest).not.toContain("..");
       },
     );
   });

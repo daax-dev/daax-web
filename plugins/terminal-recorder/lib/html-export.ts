@@ -339,7 +339,7 @@ function escapeHtml(str: string): string {
  * `..` — closing the write-side path-traversal where the raw value would flow
  * into `join(outputDir, filename)` (#193).
  */
-function slugifyFilenamePart(value: string): string {
+export function slugifyFilenamePart(value: string): string {
   return String(value).replace(/[^A-Za-z0-9_-]/g, "-");
 }
 
