@@ -780,15 +780,19 @@ export function getSettings(): DaaxSettings {
     if (stored) {
       const parsed = JSON.parse(stored);
 
-      // Deep migration: Update ANY ~/ps paths to ~/prj
+      // Persisted-settings migrations. Each guarded block upgrades one legacy
+      // field in place and flips needsMigration so the result is re-saved.
       let needsMigration = false;
 
-      // Check basePath for any ~/ps references
+      // Migrate the legacy `~/ps` workspace root to `~/prj`.
+      // Scope this to the exact legacy value or a `~/ps/` prefix only.
+      // A substring test (e.g. `.includes("/ps")`) is far too broad: it would
+      // revert a perfectly valid basePath such as `~/prj/ps` to the default on
+      // EVERY read, so a user's chosen path would never stick.
       if (
         !parsed.basePath ||
         parsed.basePath === "~/ps" ||
-        parsed.basePath.startsWith("~/ps/") ||
-        parsed.basePath.includes("/ps")
+        parsed.basePath.startsWith("~/ps/")
       ) {
         console.log("[Settings] Migrating old basePath:", parsed.basePath);
         // If it was a subpath like ~/ps/something, convert to ~/prj/something

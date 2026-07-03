@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
@@ -335,9 +335,14 @@ function SettingsInner() {
       .catch((err) => console.error("Failed to fetch logos:", err));
   }, []);
 
+  // Latest-wins guard: overlapping directory fetches (rapid saves / path edits)
+  // can resolve out of order; only the newest is allowed to write state.
+  const dirFetchSeqRef = useRef(0);
+
   // Fetch workspace directories
   const fetchDirectories = useCallback(
     async (customBasePath?: string) => {
+      const seq = ++dirFetchSeqRef.current;
       setLoadingDirs(true);
       setBasePathError("");
       try {
@@ -347,6 +352,9 @@ function SettingsInner() {
         const url = `/api/workspace?basePath=${encodeURIComponent(pathToTest)}`;
         const response = await fetch(url);
         const data = await response.json();
+
+        // Discard a stale response superseded by a newer fetch.
+        if (seq !== dirFetchSeqRef.current) return;
 
         console.log("Workspace API response:", data);
 
@@ -359,12 +367,14 @@ function SettingsInner() {
           setBasePathError(data.error || "Failed to read directory");
         }
       } catch (error) {
+        if (seq !== dirFetchSeqRef.current) return;
         console.error("Error fetching directories:", error);
         setBasePathError(
           "Failed to fetch directories: " + (error as Error).message,
         );
+      } finally {
+        if (seq === dirFetchSeqRef.current) setLoadingDirs(false);
       }
-      setLoadingDirs(false);
     },
     [settings.basePath],
   );
@@ -430,23 +440,18 @@ function SettingsInner() {
   };
 
   const handleSave = async () => {
-    // Save settings - this will trigger subscriptions
+    // Save settings. This notifies subscribers, and the shared ProjectProvider
+    // subscription refreshes the project context with the new base path.
     saveSettings(settings);
     setSaved(true);
 
-    // Force immediate refresh with new basepath
+    // Refresh only this page's own directory list. The shared project context
+    // is already refreshed by the settings subscription above, so the previous
+    // extra refreshProjectList() call plus the 100ms setTimeout re-fetch were
+    // redundant: they fired 2 additional overlapping /api/workspace requests
+    // (each doing a recursive filesystem walk) and raced the real update.
     if (settings.basePath) {
-      // Fetch directories in this component
       await fetchDirectories(settings.basePath);
-
-      // Force project context to refresh with the new path
-      await refreshProjectList(settings.basePath);
-
-      // Small delay to ensure state propagation
-      setTimeout(() => {
-        // Trigger another refresh to ensure UI updates
-        refreshProjectList(settings.basePath);
-      }, 100);
     }
 
     setTimeout(() => setSaved(false), 2000);
