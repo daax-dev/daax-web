@@ -18,7 +18,6 @@
     "cyber/safe-mcp/rules/[id]/test",
     "cyber/safe-mcp/scan",
     "devcontainer",
-    "devcontainers/save-local",
     "docker/pull",
     "ec/pub/[channel]",
     "mcp",
@@ -33,10 +32,6 @@
     "releases/[id]",
     "releases/[id]/build",
     "settings/debug",
-    "terminal-recordings/[id]/publish",
-    "workflow-editor/agents",
-    "workflow-editor/prompts",
-    "workflow-editor/save",
-    "workflow-editor/skills"
+    "terminal-recordings/[id]/publish"
   ]
 }

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
 import { expandPath, getSettings } from "@/lib/settings";
+import { confineToRoot, PathConfinementError } from "@/lib/path-confine";
+import { requireAuth } from "@/lib/auth";
 
 interface AgentInfo {
   name: string;
@@ -152,6 +154,12 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
+  // Require authentication before parsing the body or touching the filesystem.
+  const auth = await requireAuth();
+  if (!auth.authenticated) {
+    return auth.response;
+  }
+
   try {
     const body = await request.json();
     const { name, content, model } = body as {
@@ -180,6 +188,20 @@ export async function PUT(request: NextRequest) {
     } else {
       filename = name + ".md";
       filePath = path.join(flowspecPath, ".agents", filename);
+    }
+
+    // Confine the client-controlled `name` (embedded in filePath) to the
+    // workspace root, rejecting traversal/absolute-path escapes before writing.
+    try {
+      filePath = confineToRoot(basePath, filePath);
+    } catch (err) {
+      if (err instanceof PathConfinementError) {
+        return NextResponse.json(
+          { error: "Agent path escapes the workspace root" },
+          { status: 403 },
+        );
+      }
+      throw err;
     }
 
     // Write the updated content
