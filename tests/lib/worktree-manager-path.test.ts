@@ -6,7 +6,15 @@
  * sibling-prefix such as "/workspaceEVIL" does not pass for base "/workspace".
  * Real temp directories are used so realpath resolves.
  */
-import { describe, it, expect, beforeEach, afterAll } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  afterAll,
+} from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join, sep } from "path";
@@ -37,7 +45,17 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 beforeEach(() => {
   // Ensure host-mode namespace: no container translation of temp paths.
-  delete process.env.HOST_WORKSPACE_PATH;
+  // Uses vi.stubEnv (not `delete process.env...`) so the original value is
+  // tracked internally by Vitest and can be restored deterministically,
+  // rather than mutating global worker env with no way back.
+  vi.stubEnv("HOST_WORKSPACE_PATH", "");
+});
+
+afterEach(() => {
+  // Restore whatever HOST_WORKSPACE_PATH (and any other stubbed env) was
+  // before this file's tests ran, so no global env mutation leaks into
+  // other test files sharing this worker.
+  vi.unstubAllEnvs();
 });
 
 describe("isValidPath confinement (#189)", () => {

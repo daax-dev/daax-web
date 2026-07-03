@@ -513,6 +513,14 @@ export async function deleteWorktree(
       return false;
     }
 
+    // projectPath becomes the git command's cwd below - confine it to the
+    // workspace root too, so a caller that forgets to pre-validate cannot
+    // reintroduce arbitrary-host-path git execution via this argument.
+    if (!isValidPath(projectPath, workspaceRoot)) {
+      console.error("Invalid project path (pre-translation):", projectPath);
+      return false;
+    }
+
     const containerProjectPath = translatePath(projectPath);
     const containerWorktreePath = translatePath(worktreePath);
 
@@ -521,6 +529,14 @@ export async function deleteWorktree(
       console.error(
         "Invalid worktree path (post-translation):",
         containerWorktreePath,
+      );
+      return false;
+    }
+
+    if (!isValidPath(containerProjectPath, workspaceRoot)) {
+      console.error(
+        "Invalid project path (post-translation):",
+        containerProjectPath,
       );
       return false;
     }
