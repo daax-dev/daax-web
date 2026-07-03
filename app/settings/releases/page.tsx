@@ -94,15 +94,21 @@ export default function ReleasesPage() {
   );
   const [shareValue, setShareValue] = useState("");
 
-  const loadReleases = useCallback(async () => {
+  // Returns the freshly loaded releases so callers (e.g. the build poll) can
+  // read the current status without depending on the stale `releases` state
+  // captured in their render closure.
+  const loadReleases = useCallback(async (): Promise<Release[]> => {
     try {
       setLoading(true);
       const response = await fetch("/api/releases");
       const data = await response.json();
-      setReleases(data.releases || []);
+      const list: Release[] = data.releases || [];
+      setReleases(list);
+      return list;
     } catch (error) {
       console.error("Failed to load releases:", error);
       toast.error("Failed to load releases");
+      return [];
     } finally {
       setLoading(false);
     }
@@ -187,10 +193,13 @@ export default function ReleasesPage() {
       toast.success("Build started");
       loadReleases();
 
-      // Poll for build status
+      // Poll for build status. Read the freshly returned list — not the
+      // `releases` state, which is frozen at this closure's render — so the
+      // poll actually sees the build finish and stops instead of running the
+      // full 10-minute timeout and hammering /api/releases every 3s.
       const pollInterval = setInterval(async () => {
-        await loadReleases();
-        const release = releases.find((r) => r.id === id);
+        const latest = await loadReleases();
+        const release = latest.find((r) => r.id === id);
         if (release && release.build_status !== "building") {
           clearInterval(pollInterval);
           if (release.build_status === "success") {
@@ -201,7 +210,7 @@ export default function ReleasesPage() {
         }
       }, 3000);
 
-      // Clear interval after 10 minutes
+      // Safety cap: stop polling after 10 minutes even if status never settles.
       setTimeout(() => clearInterval(pollInterval), 600000);
     } catch (error) {
       toast.error(
