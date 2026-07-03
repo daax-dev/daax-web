@@ -21,11 +21,20 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+// Label for the container workspace root: the basename of the configured base
+// path (e.g. ~/jarvis -> "jarvis"), so the tree reflects the real workspace
+// instead of a hardcoded "prj".
+function workspaceRootLabel(): string {
+  const basePath = getSettings().basePath || "";
+  const name = basePath.replace(/\/+$/, "").split("/").pop();
+  return name || "workspace";
+}
+
 // Extract last directory segment from a path. Handles container mode where
-// /workspace maps to a default project directory name.
+// /workspace maps to the configured base path's directory name.
 function getDirectoryName(path: string): string {
   const cleaned = path.replace(/\/+$/, "");
-  if (cleaned === "/workspace") return "prj";
+  if (cleaned === "/workspace") return workspaceRootLabel();
   const segments = cleaned.split("/");
   return segments[segments.length - 1] || path;
 }

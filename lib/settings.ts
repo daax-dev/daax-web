@@ -854,6 +854,23 @@ export function getSettings(): DaaxSettings {
         needsMigration = true;
       }
 
+      // Upgrade the exact legacy default `~/prj` to this host's derived default
+      // (e.g. `~/jarvis` when HOST_WORKSPACE_PATH points there). Scoped to the
+      // exact old-default string only: a `~/prj/<subpath>` or any other chosen
+      // path the user set deliberately is left untouched. No-op on hosts whose
+      // effective default is still `~/prj`.
+      else if (
+        parsed.basePath === "~/prj" &&
+        effectiveDefaults.basePath !== "~/prj"
+      ) {
+        console.log(
+          "[Settings] Migrating legacy default basePath ~/prj ->",
+          effectiveDefaults.basePath,
+        );
+        parsed.basePath = effectiveDefaults.basePath;
+        needsMigration = true;
+      }
+
       // Migrate old flowspec-agents image to daax-agents
       if (
         parsed.containerImage &&
@@ -1058,16 +1075,25 @@ function notifySubscribers(settings: DaaxSettings) {
 }
 
 export function expandPath(path: string): string {
-  // Handle container mode: ~/prj maps to /workspace
-  // In container, the host's prj directory is mounted at /workspace
-  if (path === "~/prj" || path.startsWith("~/prj/")) {
-    // Check if we're in container mode (DOCKER_NETWORK is set)
-    // We can't use fs.existsSync in browser code, so only check env var
-    const isContainer = process.env.DOCKER_NETWORK;
-
-    if (isContainer) {
-      // In container: ~/prj -> /workspace, ~/prj/foo -> /workspace/foo
-      return path.replace(/^~\/prj/, "/workspace");
+  // Handle container mode: the host workspace root is mounted at /workspace.
+  // Map the configured workspace root — derived from HOST_WORKSPACE_PATH, e.g.
+  // ~/jarvis — as well as the legacy ~/prj, onto /workspace. Keyed on
+  // DOCKER_NETWORK (fs.existsSync is unavailable in browser code; these env
+  // vars are server-only, so this branch is inert in the client bundle).
+  const isContainer = process.env.DOCKER_NETWORK;
+  if (isContainer) {
+    const roots = new Set<string>(["~/prj"]);
+    const hostWorkspace = process.env.HOST_WORKSPACE_PATH;
+    if (hostWorkspace) {
+      const basename = hostWorkspace.replace(/\/+$/, "").split("/").pop();
+      if (basename) roots.add(`~/${basename}`);
+    }
+    for (const root of roots) {
+      // ~/<root> -> /workspace, ~/<root>/foo -> /workspace/foo
+      if (path === root) return "/workspace";
+      if (path.startsWith(root + "/")) {
+        return "/workspace" + path.slice(root.length);
+      }
     }
   }
 
