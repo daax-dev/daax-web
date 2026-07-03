@@ -38,7 +38,7 @@ const {
   mockGenerateExportFilename,
 } = vi.hoisted(() => ({
   mockExistsSync: vi.fn(() => false),
-  mockReadFileSync: vi.fn(() => ""),
+  mockReadFileSync: vi.fn((_p: string) => ""),
   mockUnlinkSync: vi.fn(),
   mockWriteFileSync: vi.fn(),
   mockMkdirSync: vi.fn(),
