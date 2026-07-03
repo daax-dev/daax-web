@@ -5,7 +5,7 @@
 
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { existsSync, mkdirSync, realpathSync } from "fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync } from "fs";
 import { basename, dirname, join, resolve, sep } from "path";
 import { homedir } from "os";
 import { expandPath } from "./path-utils";
@@ -35,6 +35,21 @@ export function resolveWorkspaceRoot(): string {
 }
 
 /**
+ * Existence check that does NOT follow symlinks (lstat, not existsSync). Returns
+ * true when the path NODE itself exists — including a dangling symlink whose
+ * target is missing. existsSync would return false for that dangling link
+ * (it stats the target), which is exactly the confinement bypass this avoids.
+ */
+function pathExistsNoFollow(p: string): boolean {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Canonicalize a path for confinement comparison: resolve to an absolute path,
  * then follow symlinks via realpath so a symlinked escape cannot slip past the
  * boundary.
@@ -48,21 +63,31 @@ export function resolveWorkspaceRoot(): string {
  * ANCESTOR via realpath (dereferencing any parent symlinks), then re-append the
  * remaining non-existent trailing segments lexically.
  *
+ * The "exists" check during the walk-up MUST NOT follow symlinks (uses lstat, not
+ * existsSync). existsSync dereferences: a DANGLING symlink inside base (link node
+ * present, target missing) would look non-existent, so the walk would skip PAST
+ * the symlink segment, realpath the parent, and re-append the symlink name
+ * lexically — accepting `base/dangling-link/newchild` even though `dangling-link`
+ * points outside base (a TOCTOU confinement bypass if the target appears before
+ * the git command runs). With lstat the walk STOPS at the dangling symlink; the
+ * realpath below then throws (target missing) and this fails closed (returns null).
+ *
  * Fails CLOSED: if canonicalization cannot be performed — realpath on the
- * existing ancestor throws (EACCES / ELOOP, or a TOCTOU race where the ancestor
- * vanishes between the existsSync check and the realpath call), or no existing
- * ancestor is found — this returns `null`. Returning the purely lexical
- * `resolved` form in that case would leave symlinks in EXISTING segments
- * un-dereferenced, turning a realpath failure into a potential confinement
- * bypass. Callers MUST treat `null` as "reject".
+ * existing ancestor throws (EACCES / ELOOP, a dangling-symlink ancestor, or a
+ * TOCTOU race where the ancestor vanishes between the lstat check and the
+ * realpath call), or no existing ancestor is found — this returns `null`.
+ * Returning the purely lexical `resolved` form in that case would leave symlinks
+ * in EXISTING segments un-dereferenced, turning a realpath failure into a
+ * potential confinement bypass. Callers MUST treat `null` as "reject".
  */
 function canonicalizePath(p: string): string | null {
   const resolved = resolve(p);
   // Walk up until we find an ancestor that exists on disk; realpath it, then
-  // re-attach the peeled-off trailing segments.
+  // re-attach the peeled-off trailing segments. Use a NO-FOLLOW (lstat) check so
+  // a dangling symlink stops the walk AT the symlink instead of being skipped.
   let existing = resolved;
   const trailing: string[] = [];
-  while (!existsSync(existing)) {
+  while (!pathExistsNoFollow(existing)) {
     const parent = dirname(existing);
     if (parent === existing) {
       // Reached the filesystem root without finding an existing ancestor.

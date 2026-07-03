@@ -67,10 +67,19 @@ const escapeLink = join(base, "escape-link");
 const legitTarget = join(base, "project", "legit-target");
 const legitLink = join(base, "legit-link");
 
+// Dangling symlink inside `base`: the link NODE exists but its target does not.
+// existsSync(danglingLink) is false (it stats the missing target), so the old
+// existsSync-based walk-up would skip PAST this segment and re-append it
+// lexically, wrongly accepting a child under it. lstat stops the walk AT the
+// link, and realpath then throws (target missing) -> fail closed.
+const danglingTarget = join(root, "nonexistent-target-xyz");
+const danglingLink = join(base, "dangling-link");
+
 mkdirSync(outsideTarget, { recursive: true });
 mkdirSync(legitTarget, { recursive: true });
 symlinkSync(outsideTarget, escapeLink);
 symlinkSync(legitTarget, legitLink);
+symlinkSync(danglingTarget, danglingLink);
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
@@ -131,6 +140,17 @@ describe("isValidPath confinement (#189)", () => {
     // `escape-link` un-dereferenced and PASS this. Canonicalizing the longest
     // existing ancestor (escape-link) dereferences it, so it must be rejected.
     const target = join(escapeLink, "newchild");
+    expect(isValidPath(target, base)).toBe(false);
+  });
+
+  it("rejects a DANGLING-symlink parent escape when the leaf does not exist (#189 no-follow)", () => {
+    // `dangling-link` is a symlink inside base whose target is MISSING, and
+    // `newchild` does not exist. existsSync(dangling-link) is false (it stats the
+    // absent target), so the old existsSync-based walk-up skipped past the link
+    // and re-appended it lexically -> the path looked inside `base` and PASSED.
+    // The lstat (no-follow) check stops the walk AT the dangling link, whose
+    // realpath then throws (ENOENT) -> canonicalizePath returns null -> reject.
+    const target = join(danglingLink, "newchild");
     expect(isValidPath(target, base)).toBe(false);
   });
 
