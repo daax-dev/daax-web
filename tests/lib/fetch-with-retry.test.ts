@@ -23,6 +23,7 @@ describe("fetchWithRetry", () => {
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 

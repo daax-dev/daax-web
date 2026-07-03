@@ -8,7 +8,7 @@
  * finish last.
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, act, waitFor } from "@testing-library/react";
 import { ProjectProvider, useProject } from "@/lib/project-context";
 
@@ -51,6 +51,10 @@ describe("project-context: latest-wins directory refresh (A1)", () => {
         });
       }),
     );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("keeps the newest path's result when an older request resolves last", async () => {

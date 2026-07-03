@@ -1,6 +1,6 @@
 # Stability: basePath switching + intermittent "Too Many Requests" (429)
 
-Status: **DIAGNOSIS + PLAN (awaiting operator approval before code)**
+Status: **IMPLEMENTED — Part A (basePath) fixed; Part B (429) request-pressure reductions landed, root cause still unconfirmed.** See "Implementation status" below.
 Goal: make basePath switching deterministic and eliminate spurious 429s for a single user.
 
 ---

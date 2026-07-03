@@ -780,7 +780,8 @@ export function getSettings(): DaaxSettings {
     if (stored) {
       const parsed = JSON.parse(stored);
 
-      // Deep migration: Update ANY ~/ps paths to ~/prj
+      // Persisted-settings migrations. Each guarded block upgrades one legacy
+      // field in place and flips needsMigration so the result is re-saved.
       let needsMigration = false;
 
       // Migrate the legacy `~/ps` workspace root to `~/prj`.
