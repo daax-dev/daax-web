@@ -13,8 +13,11 @@
  *
  * Each handler now calls the shared `isValidRecordingId` allowlist as the FIRST
  * thing after obtaining `id` and returns HTTP 400 before any filesystem / git /
- * spawn operation. These tests assert that guard for GET, DELETE, export,
- * create-pr and publish, and that a legitimate id still reaches the normal path.
+ * spawn operation. These tests assert that guard for all five handlers (GET,
+ * DELETE, export, create-pr, publish). The legitimate-id happy path — where a
+ * valid id reaches the normal fs/git logic past the guard — is additionally
+ * asserted for GET, DELETE, and export only; create-pr and publish are covered
+ * for traversal-rejection alone.
  *
  * fs and child_process are fully mocked, so the suite is deterministic and
  * never touches the real filesystem or spawns git.
@@ -105,9 +108,9 @@ const TRAVERSAL_IDS: Array<[string, string]> = [
 const LEGIT_ID = "shell-1736935200000-1a2b3c4d";
 
 const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
-const req = (body?: unknown) =>
+const req = (method: string = "GET", body?: unknown) =>
   new NextRequest("http://localhost/api/terminal-recordings/x", {
-    method: "POST",
+    method,
     body: body ? JSON.stringify(body) : undefined,
   });
 
@@ -142,7 +145,7 @@ describe("terminal-recordings [id] REST path traversal (#193)", () => {
     it.each(TRAVERSAL_IDS)(
       "rejects %s with 400 and no fs access",
       async (_label, id) => {
-        const res = await GET(req() as NextRequest, ctx(id));
+        const res = await GET(req("GET") as NextRequest, ctx(id));
         expect(res.status).toBe(400);
         expect(await res.json()).toEqual({ error: "invalid recording id" });
         expectNoFsAccess();
@@ -156,7 +159,7 @@ describe("terminal-recordings [id] REST path traversal (#193)", () => {
           ? JSON.stringify({ id: LEGIT_ID, sessionType: "shell" })
           : "cast-content",
       );
-      const res = await GET(req() as NextRequest, ctx(LEGIT_ID));
+      const res = await GET(req("GET") as NextRequest, ctx(LEGIT_ID));
       expect(res.status).toBe(200);
       expect(mockExistsSync).toHaveBeenCalled();
       expect(mockReadFileSync).toHaveBeenCalled();
@@ -168,7 +171,7 @@ describe("terminal-recordings [id] REST path traversal (#193)", () => {
       "rejects %s with 400 and deletes nothing",
       async (_label, id) => {
         mockExistsSync.mockReturnValue(true);
-        const res = await DELETE(req() as NextRequest, ctx(id));
+        const res = await DELETE(req("DELETE") as NextRequest, ctx(id));
         expect(res.status).toBe(400);
         expect(await res.json()).toEqual({ error: "invalid recording id" });
         expect(mockExistsSync).not.toHaveBeenCalled();
@@ -181,13 +184,13 @@ describe("terminal-recordings [id] REST path traversal (#193)", () => {
         authenticated: false,
         response: NextResponse.json({ error: "auth" }, { status: 401 }),
       });
-      const res = await DELETE(req() as NextRequest, ctx(LEGIT_ID));
+      const res = await DELETE(req("DELETE") as NextRequest, ctx(LEGIT_ID));
       expect(res.status).toBe(401);
     });
 
     it("lets a legitimate id reach the normal delete path", async () => {
       mockExistsSync.mockReturnValue(true);
-      const res = await DELETE(req() as NextRequest, ctx(LEGIT_ID));
+      const res = await DELETE(req("DELETE") as NextRequest, ctx(LEGIT_ID));
       expect(res.status).toBe(200);
       expect(mockUnlinkSync).toHaveBeenCalled();
     });
@@ -197,7 +200,7 @@ describe("terminal-recordings [id] REST path traversal (#193)", () => {
     it.each(TRAVERSAL_IDS)(
       "rejects %s with 400 and no fs/git access",
       async (_label, id) => {
-        const res = await EXPORT_GET(req() as NextRequest, ctx(id));
+        const res = await EXPORT_GET(req("GET") as NextRequest, ctx(id));
         expect(res.status).toBe(400);
         expect(await res.json()).toEqual({ error: "invalid recording id" });
         expectNoFsAccess();
@@ -212,7 +215,7 @@ describe("terminal-recordings [id] REST path traversal (#193)", () => {
           ? JSON.stringify({ id: LEGIT_ID, sessionType: "shell" })
           : "cast-content",
       );
-      const res = await EXPORT_GET(req() as NextRequest, ctx(LEGIT_ID));
+      const res = await EXPORT_GET(req("GET") as NextRequest, ctx(LEGIT_ID));
       expect(res.status).toBe(200);
       expect(res.headers.get("Content-Type")).toContain("text/html");
       expect(mockReadFileSync).toHaveBeenCalled();
@@ -223,7 +226,10 @@ describe("terminal-recordings [id] REST path traversal (#193)", () => {
     it.each(TRAVERSAL_IDS)(
       "rejects %s with 400 before any git/token/fs side effect",
       async (_label, id) => {
-        const res = await CREATE_PR_POST(req({}) as NextRequest, ctx(id));
+        const res = await CREATE_PR_POST(
+          req("POST", {}) as NextRequest,
+          ctx(id),
+        );
         expect(res.status).toBe(400);
         expect(await res.json()).toEqual({ error: "invalid recording id" });
         expectNoSpawn();
@@ -237,7 +243,7 @@ describe("terminal-recordings [id] REST path traversal (#193)", () => {
     it.each(TRAVERSAL_IDS)(
       "rejects %s with 400 before any git/fs side effect",
       async (_label, id) => {
-        const res = await PUBLISH_POST(req({}) as NextRequest, ctx(id));
+        const res = await PUBLISH_POST(req("POST", {}) as NextRequest, ctx(id));
         expect(res.status).toBe(400);
         expect(await res.json()).toEqual({ error: "invalid recording id" });
         expectNoSpawn();
