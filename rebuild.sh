@@ -14,11 +14,6 @@ CONTAINER_NAME="daax"
 NETWORK_NAME="daax-net"
 IMAGE_NAME="daax"
 
-# Agent images to pre-pull for AI coding features
-AGENT_IMAGES=(
-  "jpoley/daax-agents-flowspec:latest"
-  "jpoley/daax-agents:latest"
-)
 WORKSPACE_PATH="${DAAX_WORKSPACE:-$HOME/prj}"
 CLAUDE_CONFIG="${CLAUDE_CONFIG_PATH:-$HOME/.claude.json}"
 # HOME_MCP_PATH is optional - only mount if it exists as a file
@@ -35,19 +30,13 @@ fi
 echo "🔨 Building image..."
 docker build -t "$IMAGE_NAME" .
 
-# Pre-pull agent images for AI coding features
+# Force-refresh ALL AI agent images (every variant, every run) so a stale local
+# :latest never wins over a newer registry image. Non-fatal: a pull failure only
+# warns (the image is fetched on-demand at session launch otherwise).
 if [ -z "${SKIP_PULL:-}" ]; then
-  echo "📦 Pre-pulling AI agent images..."
-  for img in "${AGENT_IMAGES[@]}"; do
-    echo "   Pulling $img..."
-    if docker pull "$img" >/dev/null 2>&1; then
-      echo "   ✅ Pulled $img"
-    else
-      echo "   ⚠️  Warning: Could not pull $img (will try on-demand)"
-    fi
-  done
+  ./scripts/refresh-agent-images.sh || echo "   ⚠️  Warning: some agent images could not be refreshed (will try on-demand)"
 else
-  echo "⏭️  Skipping agent image pre-pull (SKIP_PULL set)"
+  echo "⏭️  Skipping agent image refresh (SKIP_PULL set)"
 fi
 
 # Build the code-server image (self-contained, from deploy/code-server/).
