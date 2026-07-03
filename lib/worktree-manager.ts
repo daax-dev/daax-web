@@ -5,25 +5,131 @@
 
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { existsSync, mkdirSync } from "fs";
-import { join, normalize } from "path";
+import { existsSync, lstatSync, mkdirSync, realpathSync } from "fs";
+import { basename, dirname, join, resolve, sep } from "path";
 import { homedir } from "os";
+import { expandPath } from "./path-utils";
+import { getSettings } from "./settings";
 
 const execFileAsync = promisify(execFile);
 
 /**
- * Validates a path to prevent path traversal attacks.
+ * Resolve the operator-configured workspace root for path confinement.
  *
- * Path traversal detection works by comparing the original path (before normalization)
- * with the normalized result. If the original contains ".." sequences that would
- * escape the expected directory, the normalized path will differ from what a simple
- * string append would produce.
+ * This is the SAME namespace that translatePath() maps candidate paths into:
+ * - Container mode: the host workspace is bind-mounted at /workspace, and
+ *   translatePath() rewrites host/tilde paths to /workspace/... , so the root
+ *   is "/workspace".
+ * - Host mode: the operator's configured base path from settings (default
+ *   "~/prj"), expanded to an absolute path — the same source used by the
+ *   workspace API (app/api/workspace/route.ts).
  *
- * @param path - The path to validate
- * @param basePath - Optional base path that the path must be within
- * @returns true if the path is safe, false otherwise
+ * Not a new config path — it reuses the existing HOST_WORKSPACE_PATH/"/workspace"
+ * container convention and the settings basePath.
  */
-export function isValidPath(path: string, basePath?: string): boolean {
+export function resolveWorkspaceRoot(): string {
+  if (process.env.HOST_WORKSPACE_PATH && existsSync("/workspace")) {
+    return "/workspace";
+  }
+  return expandPath(getSettings().basePath);
+}
+
+/**
+ * Existence check that does NOT follow symlinks (lstat, not existsSync). Returns
+ * true when the path NODE itself exists — including a dangling symlink whose
+ * target is missing. existsSync would return false for that dangling link
+ * (it stats the target), which is exactly the confinement bypass this avoids.
+ */
+function pathExistsNoFollow(p: string): boolean {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Canonicalize a path for confinement comparison: resolve to an absolute path,
+ * then follow symlinks via realpath so a symlinked escape cannot slip past the
+ * boundary.
+ *
+ * For paths that do not exist yet (the worktree-CREATION case), realpath on the
+ * full path throws (ENOENT). A purely lexical fallback would be UNSAFE: it would
+ * leave symlinks in EXISTING PARENT segments un-dereferenced, so a path like
+ * `base/escape-link/newchild` (where `escape-link` is a symlink pointing outside
+ * `base` and `newchild` does not exist) would still look lexically inside `base`
+ * and pass confinement. To close that bypass, resolve the LONGEST EXISTING
+ * ANCESTOR via realpath (dereferencing any parent symlinks), then re-append the
+ * remaining non-existent trailing segments lexically.
+ *
+ * The "exists" check during the walk-up MUST NOT follow symlinks (uses lstat, not
+ * existsSync). existsSync dereferences: a DANGLING symlink inside base (link node
+ * present, target missing) would look non-existent, so the walk would skip PAST
+ * the symlink segment, realpath the parent, and re-append the symlink name
+ * lexically — accepting `base/dangling-link/newchild` even though `dangling-link`
+ * points outside base (a TOCTOU confinement bypass if the target appears before
+ * the git command runs). With lstat the walk STOPS at the dangling symlink; the
+ * realpath below then throws (target missing) and this fails closed (returns null).
+ *
+ * Fails CLOSED: if canonicalization cannot be performed — realpath on the
+ * existing ancestor throws (EACCES / ELOOP, a dangling-symlink ancestor, or a
+ * TOCTOU race where the ancestor vanishes between the lstat check and the
+ * realpath call), or no existing ancestor is found — this returns `null`.
+ * Returning the purely lexical `resolved` form in that case would leave symlinks
+ * in EXISTING segments un-dereferenced, turning a realpath failure into a
+ * potential confinement bypass. Callers MUST treat `null` as "reject".
+ */
+function canonicalizePath(p: string): string | null {
+  const resolved = resolve(p);
+  // Walk up until we find an ancestor that exists on disk; realpath it, then
+  // re-attach the peeled-off trailing segments. Use a NO-FOLLOW (lstat) check so
+  // a dangling symlink stops the walk AT the symlink instead of being skipped.
+  let existing = resolved;
+  const trailing: string[] = [];
+  while (!pathExistsNoFollow(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) {
+      // Reached the filesystem root without finding an existing ancestor.
+      // Root always exists, so this is defensive; fail closed rather than
+      // fall back to the un-dereferenced lexical form.
+      return null;
+    }
+    trailing.unshift(basename(existing));
+    existing = parent;
+  }
+  try {
+    const realAncestor = realpathSync(existing);
+    return trailing.length > 0 ? join(realAncestor, ...trailing) : realAncestor;
+  } catch {
+    // realpath failed (EACCES / ELOOP / TOCTOU race). Fail closed: do NOT
+    // return the lexical `resolved` form, which would bypass confinement.
+    return null;
+  }
+}
+
+/**
+ * Validates a path to prevent path traversal attacks AND enforce workspace-root
+ * confinement.
+ *
+ * `basePath` is REQUIRED: every accepted path must resolve to a location inside
+ * (or equal to) `basePath`. Callers pass the operator-configured workspace root
+ * (see resolveWorkspaceRoot()). An absolute host path outside that root — even a
+ * sibling-prefix like "/workspaceEVIL" for base "/workspace" — is rejected.
+ *
+ * Confinement is done on CANONICALIZED paths, in the execution-context namespace:
+ * the candidate is first run through translatePath() (host/tilde -> container
+ * mapping) so it is compared in the same namespace as the git command's cwd,
+ * then both candidate and base are resolved with realpath (where they exist) and
+ * compared with a trailing-separator boundary. A raw normalize()+startsWith()
+ * would let "/workspaceEVIL" pass for base "/workspace"; the separator boundary
+ * and realpath do not.
+ *
+ * @param path - The path to validate (host-form or already-translated)
+ * @param basePath - Workspace root the path must be confined within (required)
+ * @returns true if the path is safe and confined, false otherwise
+ */
+export function isValidPath(path: string, basePath: string): boolean {
   // Check for null bytes (common injection vector)
   if (path.includes("\0")) {
     return false;
@@ -35,18 +141,28 @@ export function isValidPath(path: string, basePath?: string): boolean {
     return false;
   }
 
-  // Normalize the path to resolve . sequences
-  const normalizedPath = normalize(path);
+  // Compare in the execution-context namespace: the git command runs with
+  // cwd = translatePath(path), so that is the location that must be confined.
+  const candidate = canonicalizePath(translatePath(path));
+  const base = canonicalizePath(translatePath(basePath));
 
-  // If a base path is provided, ensure the path is within it
-  if (basePath) {
-    const normalizedBase = normalize(basePath);
-    if (!normalizedPath.startsWith(normalizedBase)) {
-      return false;
-    }
+  // Fail CLOSED: if either path could not be canonicalized (realpath failure —
+  // EACCES / ELOOP / TOCTOU race, or no existing ancestor), reject. Accepting a
+  // non-dereferenced lexical form here would reopen the symlink-escape bypass.
+  if (candidate === null || base === null) {
+    return false;
   }
 
-  return true;
+  // When the base canonicalizes to the filesystem root ("/"), every absolute
+  // path is under it. The trailing-separator boundary below would otherwise
+  // build "//" (sep + sep) and reject everything except "/" itself.
+  if (base === sep) {
+    return true;
+  }
+
+  // Equal to the root, or strictly inside it (trailing-separator boundary so a
+  // sibling-prefix such as "/workspaceEVIL" does NOT pass for base "/workspace").
+  return candidate === base || candidate.startsWith(base + sep);
 }
 
 /**
@@ -462,9 +578,19 @@ export async function deleteWorktree(
   force = false,
 ): Promise<boolean> {
   try {
+    const workspaceRoot = resolveWorkspaceRoot();
+
     // Validate paths BEFORE translation to catch injection attempts early
-    if (!isValidPath(worktreePath)) {
+    if (!isValidPath(worktreePath, workspaceRoot)) {
       console.error("Invalid worktree path (pre-translation):", worktreePath);
+      return false;
+    }
+
+    // projectPath becomes the git command's cwd below - confine it to the
+    // workspace root too, so a caller that forgets to pre-validate cannot
+    // reintroduce arbitrary-host-path git execution via this argument.
+    if (!isValidPath(projectPath, workspaceRoot)) {
+      console.error("Invalid project path (pre-translation):", projectPath);
       return false;
     }
 
@@ -472,10 +598,18 @@ export async function deleteWorktree(
     const containerWorktreePath = translatePath(worktreePath);
 
     // Validate paths AFTER translation in case translation introduced issues
-    if (!isValidPath(containerWorktreePath)) {
+    if (!isValidPath(containerWorktreePath, workspaceRoot)) {
       console.error(
         "Invalid worktree path (post-translation):",
         containerWorktreePath,
+      );
+      return false;
+    }
+
+    if (!isValidPath(containerProjectPath, workspaceRoot)) {
+      console.error(
+        "Invalid project path (post-translation):",
+        containerProjectPath,
       );
       return false;
     }
