@@ -94,6 +94,28 @@ describe("isValidPath confinement (#189)", () => {
     expect(isValidPath(legitLink, base)).toBe(true);
   });
 
+  it("rejects a parent-symlink escape when the leaf does not exist yet (#189 bypass)", () => {
+    // `escape-link` is a symlink inside base -> outside-target; `newchild` does
+    // NOT exist. The old realpath-full-path + lexical-fallback code would keep
+    // `escape-link` un-dereferenced and PASS this. Canonicalizing the longest
+    // existing ancestor (escape-link) dereferences it, so it must be rejected.
+    const target = join(escapeLink, "newchild");
+    expect(isValidPath(target, base)).toBe(false);
+  });
+
+  it("accepts a non-existent leaf under a legit existing directory", () => {
+    // Positive control: `project/src` exists, `newchild` does not.
+    const target = join(inside, "newchild");
+    expect(isValidPath(target, base)).toBe(true);
+  });
+
+  it("treats a root base (canonicalizes to '/') as admitting all absolute paths", () => {
+    // Guards against the "//" boundary bug: base + sep would be "//" and reject
+    // everything but "/". `/` is a real, realpath-stable path on every OS here.
+    expect(isValidPath("/anything/here", "/")).toBe(true);
+    expect(isValidPath("/etc", "/")).toBe(true);
+  });
+
   it("requires basePath (compile-time): omitting it is a type error", () => {
     // Type-only assertion — the function is never invoked (calling it with an
     // undefined base would throw at runtime). The `?`-removal in the signature

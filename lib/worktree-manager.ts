@@ -6,7 +6,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { existsSync, mkdirSync, realpathSync } from "fs";
-import { join, resolve, sep } from "path";
+import { basename, dirname, join, resolve, sep } from "path";
 import { homedir } from "os";
 import { expandPath } from "./path-utils";
 import { getSettings } from "./settings";
@@ -35,15 +35,38 @@ export function resolveWorkspaceRoot(): string {
 }
 
 /**
- * Canonicalize a path for confinement comparison: resolve to an absolute path
- * and, where it exists on disk, follow symlinks via realpath so a symlinked
- * escape cannot slip past the boundary. Where the path does not exist yet, fall
- * back to a lexical resolve (there is nothing to dereference).
+ * Canonicalize a path for confinement comparison: resolve to an absolute path,
+ * then follow symlinks via realpath so a symlinked escape cannot slip past the
+ * boundary.
+ *
+ * For paths that do not exist yet (the worktree-CREATION case), realpath on the
+ * full path throws (ENOENT). A purely lexical fallback would be UNSAFE: it would
+ * leave symlinks in EXISTING PARENT segments un-dereferenced, so a path like
+ * `base/escape-link/newchild` (where `escape-link` is a symlink pointing outside
+ * `base` and `newchild` does not exist) would still look lexically inside `base`
+ * and pass confinement. To close that bypass, resolve the LONGEST EXISTING
+ * ANCESTOR via realpath (dereferencing any parent symlinks), then re-append the
+ * remaining non-existent trailing segments lexically.
  */
 function canonicalizePath(p: string): string {
   const resolved = resolve(p);
+  // Walk up until we find an ancestor that exists on disk; realpath it (that is
+  // guaranteed to succeed), then re-attach the peeled-off trailing segments.
+  let existing = resolved;
+  const trailing: string[] = [];
+  while (!existsSync(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) {
+      // Reached the filesystem root without finding an existing ancestor.
+      // Root always exists, so this is defensive; bail to the lexical form.
+      return resolved;
+    }
+    trailing.unshift(basename(existing));
+    existing = parent;
+  }
   try {
-    return realpathSync(resolved);
+    const realAncestor = realpathSync(existing);
+    return trailing.length > 0 ? join(realAncestor, ...trailing) : realAncestor;
   } catch {
     return resolved;
   }
@@ -86,6 +109,13 @@ export function isValidPath(path: string, basePath: string): boolean {
   // cwd = translatePath(path), so that is the location that must be confined.
   const candidate = canonicalizePath(translatePath(path));
   const base = canonicalizePath(translatePath(basePath));
+
+  // When the base canonicalizes to the filesystem root ("/"), every absolute
+  // path is under it. The trailing-separator boundary below would otherwise
+  // build "//" (sep + sep) and reject everything except "/" itself.
+  if (base === sep) {
+    return true;
+  }
 
   // Equal to the root, or strictly inside it (trailing-separator boundary so a
   // sibling-prefix such as "/workspaceEVIL" does NOT pass for base "/workspace").
