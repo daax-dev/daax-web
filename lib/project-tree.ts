@@ -96,46 +96,44 @@ export function isDirDisabled(
 }
 
 /**
- * Map an absolute project path to its workspace-root-relative path using the
- * workspace directory listing's `name` fields (already root-relative, e.g.
- * "ps/daax"). Returns the LONGEST directory name that is a path-suffix of
- * `absPath`, or null if none matches.
+ * Longest common ancestor DIRECTORY of a set of absolute paths, split on "/".
+ * e.g. ["/workspace", "/workspace/ps/daax", "/workspace/jp/nova"] -> "/workspace".
+ * Returns null for an empty list.
  *
- * Crucially this compares only the relative NAMES, never the absolute roots,
- * so it is robust when the backlog API and the workspace API express absolute
- * paths under different roots — e.g. backlog "/workspace/ps/daax" while the
- * workspace listing reports "~/prj/ps/daax". Both still carry name "ps/daax".
+ * Used to recover the workspace root from the backlog project paths themselves,
+ * so the disabled-dirs filter operates entirely within the backlog path
+ * namespace — robust when the backlog API and the workspace API report absolute
+ * paths under different roots (e.g. "/workspace/..." vs "~/prj/..."), and it
+ * covers nested projects that never appear in the shallower directory scan.
  */
-export function relativeProjectPath(
-  absPath: string,
-  dirNames: Iterable<string>,
-): string | null {
-  let best: string | null = null;
-  for (const name of dirNames) {
-    if (!name) continue;
-    if (
-      absPath.endsWith(`/${name}`) &&
-      (best === null || name.length > best.length)
-    ) {
-      best = name;
-    }
+export function commonAncestorDir(paths: readonly string[]): string | null {
+  if (paths.length === 0) return null;
+  let prefix = paths[0].split("/");
+  for (let i = 1; i < paths.length; i++) {
+    const segs = paths[i].split("/");
+    let j = 0;
+    while (j < prefix.length && j < segs.length && prefix[j] === segs[j]) j++;
+    prefix = prefix.slice(0, j);
+    if (prefix.length === 0) break;
   }
-  return best;
+  return prefix.join("/") || null;
 }
 
 /**
  * True if an absolute project path is hidden by the disabled-dirs filter,
- * resolved through the workspace directory names. Fail-open (visible) when the
- * path maps to no known relative directory, so unknown layouts never silently
- * vanish. The workspace root project (no matching relative name) stays visible.
+ * relative to the workspace `base` (see commonAncestorDir). The base project
+ * itself (path === base) and any path outside the base are treated as visible
+ * (fail-open) so unknown layouts never silently vanish.
  */
-export function isProjectDisabled(
+export function isProjectPathDisabled(
   absPath: string,
-  dirNames: Iterable<string>,
+  base: string | null,
   disabled: Iterable<string>,
 ): boolean {
-  const relative = relativeProjectPath(absPath, dirNames);
-  if (relative === null) return false;
+  if (!base) return false;
+  if (absPath === base) return false;
+  if (!absPath.startsWith(`${base}/`)) return false;
+  const relative = absPath.slice(base.length + 1);
   return isDirDisabled(relative, disabled);
 }
 

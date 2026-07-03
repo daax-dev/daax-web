@@ -2,9 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useBacklog } from "./backlog-context";
-import { useProject } from "@/lib/project-context";
 import { getSettings, subscribeToSettings } from "@/lib/settings";
-import { isProjectDisabled } from "@/lib/project-tree";
+import { commonAncestorDir, isProjectPathDisabled } from "@/lib/project-tree";
 import {
   Select,
   SelectContent,
@@ -77,7 +76,6 @@ export function ProjectSelector() {
     isLoadingProjects,
     isLoadingTasks,
   } = useBacklog();
-  const { directories } = useProject();
 
   // Track the Settings folder-visibility filter (disabledProjectDirs) and stay
   // in sync when it changes, so hiding a folder in Settings updates the Backlog
@@ -99,16 +97,16 @@ export function ProjectSelector() {
   // unless the operator has actually hidden folders.
   const visibleProjects = useMemo(() => {
     if (disabledDirs.length === 0) return projects;
-    // Match on the workspace directory NAMES (root-relative), not absolute
-    // paths — the backlog API and workspace API report absolute paths under
-    // different roots (e.g. "/workspace/..." vs "~/prj/..."), but both share
-    // the same relative names that disabledProjectDirs is defined against.
-    const dirNames = directories.map((d) => d.name);
-    if (dirNames.length === 0) return projects;
+    // Derive the workspace root from the backlog project paths themselves, then
+    // filter on each project's path relative to that root. Staying within the
+    // backlog path namespace (rather than the workspace-scan namespace) makes
+    // this robust to the two APIs using different absolute roots, and it covers
+    // nested projects that the shallower directory scan never lists.
+    const base = commonAncestorDir(projects.map((p) => p.path));
     return projects.filter(
-      (p) => !isProjectDisabled(p.path, dirNames, disabledDirs),
+      (p) => !isProjectPathDisabled(p.path, base, disabledDirs),
     );
-  }, [projects, directories, disabledDirs]);
+  }, [projects, disabledDirs]);
 
   // Group projects by subfolder, with base project first
   const { groupedProjects, baseProjectPath } = useMemo(() => {
