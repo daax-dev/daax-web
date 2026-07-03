@@ -35,6 +35,9 @@ interface BacklogContextValue {
   projects: BacklogProject[];
   selectedProject: BacklogProject | null;
   setSelectedProject: (projectPath: string) => Promise<void>;
+  // Clear the active project (e.g. when the folder-visibility filter hides every
+  // project, so the board stops operating on a hidden selection).
+  clearSelectedProject: () => void;
   isLoadingProjects: boolean;
 
   // Tasks for selected project
@@ -226,6 +229,17 @@ export function BacklogProvider({ children }: { children: ReactNode }) {
     [projects],
   ); // refreshTasks omitted - it uses refs internally and has no deps
 
+  // Clear the active selection and its tasks. Used when the folder-visibility
+  // filter leaves no visible project to fall back to; the board's handlers all
+  // early-return on a null selectedProject, so this makes them safe no-ops.
+  const clearSelectedProject = useCallback(() => {
+    setSelectedProjectState(null);
+    setTasks([]);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("backlog:selectedProject");
+    }
+  }, []);
+
   // Get statuses from selected project config
   const statuses = selectedProject?.config?.statuses ?? [
     "Open",
@@ -240,6 +254,7 @@ export function BacklogProvider({ children }: { children: ReactNode }) {
         projects,
         selectedProject,
         setSelectedProject,
+        clearSelectedProject,
         isLoadingProjects,
         tasks,
         isLoadingTasks,

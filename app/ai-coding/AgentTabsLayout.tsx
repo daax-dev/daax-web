@@ -9,14 +9,17 @@ import {
   X,
   Mic,
   ChevronDown,
-  Sparkles,
-  Github,
-  Stars,
-  Braces,
-  Code2,
   MonitorSmartphone,
   AlertTriangle,
 } from "lucide-react";
+import {
+  ClaudeIcon,
+  CodexIcon,
+  GeminiIcon,
+  CopilotIcon,
+  OpenCodeIcon,
+} from "@/components/icons/AgentIcons";
+import { getSettings, sortByAgentOrder } from "@/lib/settings";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -54,11 +57,12 @@ const TOOL_META: Record<
   // five AI tools, not theme state. They are deliberately exempt from the
   // semantic-token rule — collapsing them to one token would erase the visual
   // distinction between tools. Brand hues stay constant across light/dark.
-  claude: { Icon: Sparkles, accent: "text-orange-500", label: "Claude" },
-  copilot: { Icon: Github, accent: "text-emerald-500", label: "Copilot" },
-  gemini: { Icon: Stars, accent: "text-blue-500", label: "Gemini" },
-  codex: { Icon: Braces, accent: "text-violet-500", label: "Codex" },
-  opencode: { Icon: Code2, accent: "text-cyan-500", label: "OpenCode" },
+  claude: { Icon: ClaudeIcon, accent: "text-orange-500", label: "Claude" },
+  copilot: { Icon: CopilotIcon, accent: "text-emerald-500", label: "Copilot" },
+  gemini: { Icon: GeminiIcon, accent: "text-blue-500", label: "Gemini" },
+  // OpenAI's mark is monochrome; text-foreground = white on dark, black on light.
+  codex: { Icon: CodexIcon, accent: "text-foreground", label: "Codex" },
+  opencode: { Icon: OpenCodeIcon, accent: "text-cyan-500", label: "OpenCode" },
 };
 
 export function AgentTabsLayout() {
@@ -571,14 +575,16 @@ export function AgentTabsLayout() {
             <div>
               <label className="text-sm font-medium mb-3 block">Agent:</label>
               <div className="space-y-2">
-                {(
+                {sortByAgentOrder(
                   [
                     { id: "claude", label: "Claude Code" },
                     { id: "opencode", label: "OpenCode" },
                     { id: "copilot", label: "GitHub Copilot" },
                     { id: "gemini", label: "Gemini CLI" },
                     { id: "codex", label: "Codex CLI" },
-                  ] as { id: AIToolId; label: string }[]
+                  ] as { id: AIToolId; label: string }[],
+                  (t) => t.id,
+                  getSettings().aiAgentOrder,
                 ).map(({ id, label }) => {
                   const { Icon, accent } = TOOL_META[id];
                   return (
