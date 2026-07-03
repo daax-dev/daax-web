@@ -78,6 +78,8 @@ export async function DELETE(
   if (!auth.authenticated) return auth.response;
 
   try {
+    // Auth is checked before id validation: unauthenticated callers get 401
+    // (not 400) and we never process their input. Intentional — do not reorder.
     const { id } = await context.params;
     if (!isValidRecordingId(id)) {
       return NextResponse.json(

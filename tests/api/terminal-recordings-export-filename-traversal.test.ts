@@ -66,7 +66,7 @@ describe("generateExportFilename sanitization (#193 write-side traversal)", () =
 
   it("slugs an id suffix that would otherwise carry a separator", () => {
     const meta = makeMeta("shell");
-    meta.id = "abc/def12"; // slice(-8) = "c/def12"
+    meta.id = "abc/def12"; // slice(-8) = "bc/def12"
     const name = generateExportFilename(meta);
     expect(name).not.toContain("/");
     expect(name).not.toContain("\\");
