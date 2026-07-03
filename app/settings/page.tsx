@@ -1659,8 +1659,15 @@ function SettingsInner() {
                   <div className="space-y-2">
                     {normalizeAgentOrder(settings.aiAgentOrder).map(
                       (id, index, arr) => {
-                        const Icon = AGENT_ICONS[id];
-                        const accent = AGENT_ACCENTS[id];
+                        // aiAgentOrder is a string[]; the AGENT_ICONS/ACCENTS
+                        // maps are keyed by the fixed agent-id union. Narrow via
+                        // keyof so the now self-validating maps stay indexable
+                        // here (behavior is unchanged — order only ever holds
+                        // known agent ids).
+                        const Icon =
+                          AGENT_ICONS[id as keyof typeof AGENT_ICONS];
+                        const accent =
+                          AGENT_ACCENTS[id as keyof typeof AGENT_ACCENTS];
                         const label = AI_AGENT_LABELS[id] ?? id;
                         const move = (dir: -1 | 1) => {
                           const target = index + dir;

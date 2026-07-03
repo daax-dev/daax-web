@@ -94,25 +94,30 @@ export function OpenCodeIcon({ className, ...props }: IconProps) {
   );
 }
 
+// Canonical AI tool ids these maps must stay complete for. Mirrors the
+// `AIToolId` union used across the AI-coding menus; the `satisfies` clauses
+// below make both maps self-validating — a missing or unknown key is a
+// compile error, and the inferred literal type stays indexable by callers.
+type AgentIconId = "claude" | "codex" | "gemini" | "copilot" | "opencode";
+
 // Canonical AIToolId -> brand icon component map (single source of truth).
-// Keys match the `AIToolId` union used across the AI-coding menus.
-export const AGENT_ICONS: Record<string, ComponentType<IconProps>> = {
+export const AGENT_ICONS = {
   claude: ClaudeIcon,
   codex: CodexIcon,
   gemini: GeminiIcon,
   copilot: CopilotIcon,
   opencode: OpenCodeIcon,
-};
+} satisfies Record<AgentIconId, ComponentType<IconProps>>;
 
 // Canonical AIToolId -> brand accent color (single source of truth). These are
 // intentional fixed brand hues, exempt from the semantic-token rule, EXCEPT
 // codex: OpenAI's mark is monochrome, so `text-foreground` renders it white on
 // dark / black on light. Consumers (AI-coding tree, tabs, settings) all read
 // from here so the per-tool colors never drift apart.
-export const AGENT_ACCENTS: Record<string, string> = {
+export const AGENT_ACCENTS = {
   claude: "text-orange-500",
   codex: "text-foreground",
   gemini: "text-blue-500",
   copilot: "text-emerald-500",
   opencode: "text-cyan-500",
-};
+} satisfies Record<AgentIconId, string>;
