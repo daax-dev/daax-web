@@ -1,7 +1,6 @@
 {
   "_comment": "Accepted baseline of unprotected write routes (F4, #96). The auth-drift gate (scripts/audit-auth-routes.ts) fails CI on any unprotected write route NOT listed here. Shrink this list over time as routes are gated; do NOT add new entries without security review.",
   "routes": [
-    "api-tools/templates",
     "api-tools/tests/graphql",
     "api-tools/tests/grpc",
     "api-tools/tests/rest",
@@ -11,26 +10,13 @@
     "backlog/drafts/[draftId]",
     "backlog/search",
     "backlog/status",
-    "catalog/builds",
-    "catalog/builds/[id]",
-    "catalog/builds/[id]/start",
     "code-server",
     "cyber/safe-mcp/rules/[id]/test",
     "cyber/safe-mcp/scan",
     "devcontainer",
-    "docker/pull",
     "ec/pub/[channel]",
-    "mcp",
-    "mcp/[id]",
-    "mcp/gateway",
-    "mcp/gateway/[id]",
-    "mcp/gateway/bulk",
-    "mcp/submit",
-    "mcp/submit/[id]",
     "mcp/tools",
     "plugins/mcp-inspector",
-    "releases/[id]",
-    "releases/[id]/build",
     "settings/debug"
   ]
 }

@@ -8,8 +8,13 @@ import {
   getEnabledMcps,
   getMcpsByContext,
 } from "@/lib/mcp-gateway";
+import { requireAuth } from "@/lib/auth";
 
 export async function POST(request: Request) {
+  // Bulk gateway mutation requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const body = await request.json();
     const { action } = body;

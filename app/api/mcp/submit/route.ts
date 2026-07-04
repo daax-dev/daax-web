@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { submitMcp, getSubmissions } from "@/lib/mcp-registry";
 import type { McpCategory } from "@/types/mcp";
+import { requireAuth } from "@/lib/auth";
 
 // GET /api/mcp/submit - List submissions
 export async function GET(request: NextRequest) {
@@ -33,17 +34,20 @@ export async function GET(request: NextRequest) {
 
 // POST /api/mcp/submit - Submit new MCP for approval
 export async function POST(request: NextRequest) {
+  // Registry submission write requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
+  // Attribution is derived from the authenticated user, never from the client
+  // body — an authenticated caller must not be able to spoof `submittedBy`
+  // (#197). Any `submittedBy` in the request body is ignored.
+  const submittedBy = auth.user.username ?? "anonymous";
+
   try {
     const body = await request.json();
 
     // Validate required fields
-    const required = [
-      "name",
-      "description",
-      "version",
-      "category",
-      "submittedBy",
-    ];
+    const required = ["name", "description", "version", "category"];
     for (const field of required) {
       if (!body[field]) {
         return NextResponse.json(
@@ -83,7 +87,7 @@ export async function POST(request: NextRequest) {
         resources: body.resources || [],
         source: body.source,
       },
-      body.submittedBy,
+      submittedBy,
     );
 
     return NextResponse.json({

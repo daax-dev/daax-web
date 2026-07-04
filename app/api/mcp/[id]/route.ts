@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getMcpById, updateMcp, deleteMcp } from "@/lib/mcp-registry";
+import { requireAuth } from "@/lib/auth";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -32,6 +33,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
 // PATCH /api/mcp/[id] - Update MCP
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
+  // Registry mutation requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { id } = await params;
     const body = await request.json();
@@ -52,6 +57,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
 // DELETE /api/mcp/[id] - Delete MCP
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
+  // Registry mutation requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { id } = await params;
     const deleted = deleteMcp(id);

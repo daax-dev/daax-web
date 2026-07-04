@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { getAllBuildSpecs, createBuildSpec } from "@/lib/catalog";
 import type { ListBuildsResponse, BuildSpec } from "@/types/catalog";
+import { requireAuth } from "@/lib/auth";
 
 export async function GET() {
   try {
@@ -28,6 +29,14 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  // Build spec creation requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
+  // Attribution is derived from the authenticated user, never from the client
+  // body — an authenticated caller must not be able to spoof `createdBy` (#197).
+  const createdBy = auth.user.username ?? "anonymous";
+
   try {
     const body = await request.json();
 
@@ -46,7 +55,7 @@ export async function POST(request: Request) {
       features: body.features || [],
       customizations: body.customizations,
       output: body.output,
-      createdBy: body.createdBy || "anonymous",
+      createdBy,
     };
 
     const created = await createBuildSpec(spec);

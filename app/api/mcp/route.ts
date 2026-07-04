@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAllMcps, addMcp, loadRegistry } from "@/lib/mcp-registry";
 import type { McpServer } from "@/types/mcp";
+import { requireAuth } from "@/lib/auth";
 
 // GET /api/mcp - List all MCPs
 export async function GET(request: NextRequest) {
@@ -38,8 +39,13 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/mcp - Add new MCP directly (admin only in production)
+// POST /api/mcp - Add new MCP directly. Requires authentication (requireAuth()).
+// Admin/group scoping is a future RBAC item (issue #101 / #197 AC#2).
 export async function POST(request: NextRequest) {
+  // Registry mutation requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const body = await request.json();
 

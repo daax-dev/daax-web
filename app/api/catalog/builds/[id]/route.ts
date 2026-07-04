@@ -10,6 +10,7 @@ import {
   updateBuildSpec,
   deleteBuildSpec,
 } from "@/lib/catalog";
+import { requireAuth } from "@/lib/auth";
 
 export async function GET(
   request: Request,
@@ -40,6 +41,10 @@ export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // Build spec update requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { id } = await params;
     const body = await request.json();
@@ -67,6 +72,10 @@ export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // Build spec deletion requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { id } = await params;
     const deleted = await deleteBuildSpec(id);

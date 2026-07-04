@@ -4,6 +4,7 @@ import {
   rejectSubmission,
   getSubmissions,
 } from "@/lib/mcp-registry";
+import { requireAuth } from "@/lib/auth";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -38,22 +39,24 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
 // POST /api/mcp/submit/[id] - Approve or reject submission
 export async function POST(request: NextRequest, { params }: RouteParams) {
+  // Submission approval/rejection write requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
+  // Attribution is derived from the authenticated user, never from the client
+  // body — an authenticated caller must not be able to spoof `reviewedBy`
+  // (#197). Any `reviewedBy` in the request body is ignored.
+  const reviewedBy = auth.user.username ?? "anonymous";
+
   try {
     const { id } = await params;
     const body = await request.json();
 
-    const { action, reviewedBy, reviewNotes } = body;
+    const { action, reviewNotes } = body;
 
     if (!action || !["approve", "reject"].includes(action)) {
       return NextResponse.json(
         { success: false, error: "Action must be 'approve' or 'reject'" },
-        { status: 400 },
-      );
-    }
-
-    if (!reviewedBy) {
-      return NextResponse.json(
-        { success: false, error: "reviewedBy is required" },
         { status: 400 },
       );
     }

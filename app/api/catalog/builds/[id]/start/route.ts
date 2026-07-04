@@ -6,11 +6,16 @@
 
 import { NextResponse } from "next/server";
 import { getBuildSpecById, createBuildJob } from "@/lib/catalog";
+import { requireAuth } from "@/lib/auth";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // Build job creation requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { id } = await params;
 
