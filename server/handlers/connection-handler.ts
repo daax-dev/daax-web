@@ -623,15 +623,24 @@ function buildShellCommand(
         //     `claude login` / `opencode auth login` INSIDE the container; a
         //     read-only mount would discard that, so no session could ever
         //     authenticate.
-        // Mitigation already in place: these are NOT the operator's global
-        // `~/.claude`. Claude auth is a daax-dedicated store (`~/.daax-claude`
-        // in host mode, `${workspace}/.daax/claude` in container mode). OpenCode
-        // in host mode still maps the real `~/.local/share/opencode` (or
-        // $XDG_DATA_HOME/opencode); container mode isolates it to
-        // `${workspace}/.daax/opencode`.
+        // Mitigation scope differs by tool/mode — be precise:
+        //   - Claude: a daax-DEDICATED store, never the operator's global
+        //     `~/.claude`. Host mode uses `~/.daax-claude`; container mode uses
+        //     `${workspace}/.daax/claude`. Exfiltration here leaks only the
+        //     daax-scoped Claude credential.
+        //   - OpenCode, CONTAINER mode: daax-scoped to
+        //     `${workspace}/.daax/opencode`.
+        //   - OpenCode, HOST mode: NOT daax-scoped. auth-paths.ts resolves this
+        //     to the operator's REAL global `~/.local/share/opencode` (or
+        //     $XDG_DATA_HOME/opencode) and mounts it read-WRITE into agent
+        //     containers. So the residual risk for OpenCode host mode is
+        //     exfiltration of the operator's REAL OpenCode credential (their
+        //     actual OpenCode identity), not a daax-scoped copy.
         // Residual risk: untrusted agent code can read/exfiltrate the long-lived
-        // token in the mounted store, and the store is shared across daax agent
-        // sessions. Follow-up (tracked in the #195 decision log): per-session,
+        // token in whichever store is mounted, and the store is shared across
+        // daax agent sessions — with OpenCode host mode being the operator's real
+        // global credential (see above). Follow-up (tracked in the #195 decision
+        // log): a daax-scoped OpenCode store for host mode, plus per-session,
         // short-lived scoped tokens so a compromised session cannot exfiltrate a
         // durable credential or read another session's token.
         "-v",
