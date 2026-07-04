@@ -59,7 +59,10 @@ function unauthResult() {
   return {
     authenticated: false,
     response: NextResponse.json(
-      { error: "Authentication required" },
+      {
+        error: "Authentication required",
+        message: "You must be logged in to access this resource",
+      },
       { status: 401 },
     ),
   };
@@ -136,6 +139,16 @@ describe("debug/info-disclosure routes require auth (#199)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toHaveProperty("environment");
+  });
+
+  it("DELETE /api/settings/debug proceeds when authenticated", async () => {
+    mockRequireAuth.mockResolvedValue({ authenticated: true, user: {} });
+    const res = await settingsDebugDELETE();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Success path returns reset instructions, not any environment/host details.
+    expect(body).toHaveProperty("message");
+    expect(body).not.toHaveProperty("environment");
   });
 
   it("GET /api/debug/workspace proceeds when authenticated", async () => {
