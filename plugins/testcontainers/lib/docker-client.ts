@@ -29,7 +29,11 @@ import {
   SENSITIVE_PATTERNS,
 } from "../constants";
 import { validateVolumes } from "./volume-validation";
-import { buildImageRef } from "@/lib/docker-validation";
+import {
+  buildImageRef,
+  hasEmbeddedTagOrDigest,
+  isValidDockerImageName,
+} from "@/lib/docker-validation";
 
 /**
  * Check if a key is sensitive and should be redacted
@@ -332,6 +336,19 @@ export class DockerClient {
       throw new Error("Refusing to create container: tag must be a string");
     }
 
+    // Reject the ambiguous "embedded tag/digest + separate tag field"
+    // combination at the sink. buildImageRef silently DROPS `tag` when `image`
+    // already carries a tag/digest (to avoid producing an invalid
+    // `postgres:16:latest`). The API route rejects this combination up front,
+    // but the compose/template path bypasses the route — so reject it here too
+    // rather than silently ignoring the caller's `tag` (Copilot review on
+    // #190).
+    if (request.tag && hasEmbeddedTagOrDigest(request.image)) {
+      throw new Error(
+        "Refusing to create container: image already carries an embedded tag or digest; do not also supply a separate tag",
+      );
+    }
+
     // Single source of truth for the image reference: the SAME ref is pulled
     // and passed to createContainer (pull ref ≡ create ref). buildImageRef
     // respects an embedded tag/digest in `request.image` (e.g. `postgres:16`,
@@ -339,6 +356,17 @@ export class DockerClient {
     // and only appends `:${tag || "latest"}` when there is no embedded
     // tag/digest — correctly leaving a registry-host port untouched (#190).
     const imageRef = buildImageRef(request.image, request.tag);
+
+    // Validate the FINAL resolved reference with the SAME shared validator the
+    // API routes use (isValidDockerImageName). The route validates its own
+    // inputs, but the compose/template path reaches this sink WITHOUT that
+    // check — so a malformed image/tag must never reach pull/create via any
+    // code path. Fail closed here before any pull/createContainer (#190).
+    if (!isValidDockerImageName(imageRef)) {
+      throw new Error(
+        `Refusing to create container: invalid image reference "${imageRef}"`,
+      );
+    }
 
     // Pull image if not available locally
     try {
