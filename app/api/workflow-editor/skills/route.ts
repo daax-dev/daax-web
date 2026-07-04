@@ -412,12 +412,14 @@ export async function POST(request: NextRequest) {
 
     const projectRoot = getProjectRoot();
     // Confine the client-controlled `name`/`phase` relative to the CONCRETE
-    // leaf directory for each type, not the broad project root. Confining to
-    // the project root only blocks project ESCAPE; a `name` like `../pwn` (with
-    // a legit `phase`) stays inside the project but escapes the intended
-    // category/skills directory. Passing the client components as separate
-    // segments under the concrete root means a `..` in either cannot leave that
-    // leaf directory.
+    // per-type root, not the broad project root. Project-root confinement only
+    // blocks project ESCAPE; a `name` like `../pwn` (with a legit `phase`) stays
+    // inside the project but escapes the intended skills/commands directory.
+    // Passing the client components as separate segments under the concrete root
+    // guarantees the resolved path stays under that root. Note: for commands,
+    // `phase` is a free, unvalidated segment, so a client can target any
+    // category by naming it directly; confinement guarantees containment to the
+    // commands root, not isolation between sibling categories.
     let confineRoot: string;
     let segments: string[];
 

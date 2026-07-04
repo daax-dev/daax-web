@@ -241,8 +241,11 @@ export async function PUT(request: NextRequest) {
     // workspace root. Workspace-root confinement only blocks workspace ESCAPE;
     // a `name`/`category` like `../../..` stays inside the workspace but escapes
     // the intended prompts/commands subtree. Passing `category` and `name` as
-    // separate segments under the concrete root means a `..` in either cannot
-    // leave that leaf directory.
+    // separate segments under the concrete root guarantees the resolved path
+    // stays under that root (e.g. `.claude/commands`). Note: `category` is a
+    // free, unvalidated segment, so a client can target any category by naming
+    // it directly; the confinement guarantees containment to the commands root,
+    // not isolation between sibling categories (not an enforced boundary here).
     let promptsRoot: string;
     let segments: string[];
 
