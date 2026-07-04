@@ -327,6 +327,46 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
       body: JSON.stringify({ servers: {} }),
     },
   },
+  {
+    // #182: unauthenticated RCE fix — requireAuth() added as defense-in-depth.
+    label: "POST /api/mcp/tools",
+    method: "POST",
+    url: "http://localhost/api/mcp/tools",
+    importPath: "@/app/api/mcp/tools/route",
+    handlerExport: "POST",
+    requestInit: {
+      method: "POST",
+      body: JSON.stringify({ mcpId: "x" }),
+    },
+  },
+  {
+    // #182: unauthenticated RCE fix — requireAuth() added as defense-in-depth.
+    label: "POST /api/plugins/mcp-inspector",
+    method: "POST",
+    url: "http://localhost/api/plugins/mcp-inspector",
+    importPath: "@/app/api/plugins/mcp-inspector/route",
+    handlerExport: "POST",
+    requestInit: {
+      method: "POST",
+      body: JSON.stringify({ mcpId: "x" }),
+    },
+  },
+  {
+    // #182: GET/DELETE are management ops (list/stop inspectors) — also authed.
+    label: "GET /api/plugins/mcp-inspector",
+    method: "GET",
+    url: "http://localhost/api/plugins/mcp-inspector",
+    importPath: "@/app/api/plugins/mcp-inspector/route",
+    handlerExport: "GET",
+  },
+  {
+    label: "DELETE /api/plugins/mcp-inspector",
+    method: "DELETE",
+    url: "http://localhost/api/plugins/mcp-inspector?mcpId=x",
+    importPath: "@/app/api/plugins/mcp-inspector/route",
+    handlerExport: "DELETE",
+    requestInit: { method: "DELETE" },
+  },
 ];
 
 // ---------------------------------------------------------------------------
