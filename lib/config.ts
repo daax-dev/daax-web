@@ -272,6 +272,45 @@ function mergeHomepage(
 }
 
 // =============================================================================
+// DEFAULT WORKSPACE BASE PATH (host-derived)
+// =============================================================================
+
+// Repo-wide fallback default when nothing host-specific is provided.
+const FALLBACK_BASE_PATH = "~/prj";
+
+/**
+ * Resolve the effective default workspace base path for THIS host.
+ *
+ * Repo code stays host-agnostic: the value is derived from the deployment, not
+ * baked in. Precedence:
+ *   1. DAAX_DEFAULT_BASE_PATH  — explicit operator override (used verbatim)
+ *   2. HOST_WORKSPACE_PATH     — the host dir mounted at /workspace, rendered as
+ *                                ~/<basename> (e.g. /home/jpoley/jarvis -> ~/jarvis)
+ *   3. FALLBACK_BASE_PATH      — "~/prj"
+ *
+ * Server-side only (reads process.env). configToSettingsDefaults never runs in
+ * the client bundle — the client receives the resolved value via /api/config.
+ */
+export function resolveDefaultBasePath(): string {
+  const explicit = process.env.DAAX_DEFAULT_BASE_PATH?.trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  const hostWorkspace = process.env.HOST_WORKSPACE_PATH?.trim();
+  if (hostWorkspace) {
+    // Render an absolute host path as ~/<basename> so it matches the tilde form
+    // that the server path resolvers (workspace/backlog/code-server) expect.
+    const basename = hostWorkspace.replace(/\/+$/, "").split("/").pop();
+    if (basename) {
+      return `~/${basename}`;
+    }
+  }
+
+  return FALLBACK_BASE_PATH;
+}
+
+// =============================================================================
 // CONFIG TO SETTINGS MAPPING
 // =============================================================================
 
@@ -280,6 +319,7 @@ function mergeHomepage(
  * This allows settings.ts to use config.toml as the source of defaults
  */
 export function configToSettingsDefaults(config: DaaxConfig): {
+  basePath: string;
   featureVisibility: MaturityLevel;
   showMaturityLabels: boolean;
   aiCodingLayout: "tree" | "tabs";
@@ -316,6 +356,7 @@ export function configToSettingsDefaults(config: DaaxConfig): {
   }
 
   return {
+    basePath: resolveDefaultBasePath(),
     featureVisibility: config.features.visibility,
     showMaturityLabels: config.features.showMaturityLabels,
     aiCodingLayout: config.layout.aiCodingLayout,

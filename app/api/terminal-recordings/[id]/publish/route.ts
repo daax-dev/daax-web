@@ -8,15 +8,15 @@ import {
   readdirSync,
 } from "fs";
 import { join } from "path";
-import { homedir } from "os";
 import { execFileSync } from "child_process";
 import {
   generateRecordingHtml,
   generateExportFilename,
 } from "@/plugins/terminal-recorder/lib/html-export";
 import type { TerminalRecording } from "@/plugins/terminal-recorder/types";
-
-const RECORDINGS_DIR = join(homedir(), ".daax", "recordings");
+import { requireAuth } from "@/lib/auth";
+import { isValidRecordingId } from "@/server/recording/recorder";
+import { RECORDINGS_DIR } from "@/server/config/constants";
 
 /**
  * Validate export path to prevent path traversal attacks
@@ -169,8 +169,18 @@ export async function POST(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  // Require authentication before any filesystem write or git command
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { id } = await context.params;
+    if (!isValidRecordingId(id)) {
+      return NextResponse.json(
+        { error: "invalid recording id" },
+        { status: 400 },
+      );
+    }
     const body = await request.json().catch(() => ({}));
     const exportPath = body.exportPath || "docs/recordings";
 

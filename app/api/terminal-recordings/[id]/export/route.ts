@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
 import { execFileSync } from "child_process";
 import {
   generateRecordingHtml,
   generateExportFilename,
 } from "@/plugins/terminal-recorder/lib/html-export";
 import type { TerminalRecording } from "@/plugins/terminal-recorder/types";
-
-const RECORDINGS_DIR = join(homedir(), ".daax", "recordings");
+import { requireAuth } from "@/lib/auth";
+import { isValidRecordingId } from "@/server/recording/recorder";
+import { RECORDINGS_DIR } from "@/server/config/constants";
 
 interface GitInfo {
   branch?: string;
@@ -71,11 +71,21 @@ function getGitInfo(): GitInfo {
  * Export a recording as standalone HTML
  */
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
+  // Require authentication before reading recording data
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { id } = await context.params;
+    if (!isValidRecordingId(id)) {
+      return NextResponse.json(
+        { error: "invalid recording id" },
+        { status: 400 },
+      );
+    }
     const metaPath = join(RECORDINGS_DIR, `${id}.json`);
     const castPath = join(RECORDINGS_DIR, `${id}.cast`);
 

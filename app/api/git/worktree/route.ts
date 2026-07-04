@@ -7,6 +7,7 @@ import {
   listBranches,
   isValidPath,
   isValidBranchName,
+  resolveWorkspaceRoot,
 } from "@/lib/worktree-manager";
 import { generateUniqueName } from "@/lib/name-generator";
 import { requireAuth } from "@/lib/auth";
@@ -31,10 +32,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Validate projectPath to prevent path traversal attacks
-    if (!isValidPath(projectPath)) {
+    // Validate projectPath: reject traversal and confine to the workspace root
+    if (!isValidPath(projectPath, resolveWorkspaceRoot())) {
       console.error(
-        "[API] Invalid projectPath (path traversal attempt):",
+        "[API] Invalid projectPath (outside workspace root):",
         projectPath,
       );
       return NextResponse.json(
@@ -108,10 +109,10 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Validate projectPath to prevent path traversal attacks
-  if (!isValidPath(projectPath)) {
+  // Validate projectPath: reject traversal and confine to the workspace root
+  if (!isValidPath(projectPath, resolveWorkspaceRoot())) {
     console.error(
-      "[API] Invalid projectPath (path traversal attempt):",
+      "[API] Invalid projectPath (outside workspace root):",
       projectPath,
     );
     return NextResponse.json(
@@ -169,10 +170,11 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    // Validate paths to prevent path traversal attacks
-    if (!isValidPath(projectPath)) {
+    // Validate paths: reject traversal and confine to the workspace root
+    const workspaceRoot = resolveWorkspaceRoot();
+    if (!isValidPath(projectPath, workspaceRoot)) {
       console.error(
-        "[API] Invalid projectPath (path traversal attempt):",
+        "[API] Invalid projectPath (outside workspace root):",
         projectPath,
       );
       return NextResponse.json(
@@ -181,9 +183,9 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    if (!isValidPath(worktreePath)) {
+    if (!isValidPath(worktreePath, workspaceRoot)) {
       console.error(
-        "[API] Invalid worktreePath (path traversal attempt):",
+        "[API] Invalid worktreePath (outside workspace root):",
         worktreePath,
       );
       return NextResponse.json(

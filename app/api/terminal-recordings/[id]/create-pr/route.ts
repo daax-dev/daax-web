@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
 import { execFileSync } from "child_process";
 import { getGitHubToken } from "@/lib/github-app";
 import { requireAuth } from "@/lib/auth";
 import {
   generateRecordingHtml,
   generateExportFilename,
+  slugifyFilenamePart,
 } from "@/plugins/terminal-recorder/lib/html-export";
 import type { TerminalRecording } from "@/plugins/terminal-recorder/types";
-
-const RECORDINGS_DIR = join(homedir(), ".daax", "recordings");
+import { isValidRecordingId } from "@/server/recording/recorder";
+import { RECORDINGS_DIR } from "@/server/config/constants";
 
 /**
  * Validate export path to prevent path traversal attacks
@@ -165,6 +165,12 @@ export async function POST(
 
   try {
     const { id } = await context.params;
+    if (!isValidRecordingId(id)) {
+      return NextResponse.json(
+        { error: "invalid recording id" },
+        { status: 400 },
+      );
+    }
     const body = await request.json().catch(() => ({}));
     const exportPath = body.exportPath || "docs/recordings";
     const prTitle = body.title || `Add AI session recording for audit`;
@@ -226,8 +232,15 @@ export async function POST(
     const castFilename = htmlFilename.replace(".html", ".cast");
 
     // Create branch name
+    // `sessionType` is a raw client-controlled value persisted in the
+    // recording metadata; slug it (same helper used for export filenames)
+    // so it cannot inject `/`, `\`, or `..` into the GitHub branch/ref name.
+    // `id` is server-generated and route-validated, but slug its tail
+    // defensively so every interpolated component is separator-free.
     const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-    const branchName = `recording/${timestamp}-${metadata.sessionType}-${id.slice(-8)}`;
+    const safeSessionType = slugifyFilenamePart(metadata.sessionType);
+    const safeIdSuffix = slugifyFilenamePart(id.slice(-8));
+    const branchName = `recording/${timestamp}-${safeSessionType}-${safeIdSuffix}`;
 
     // Get the SHA of the base branch
     const baseRefResponse = await githubApi(

@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, unlinkSync, existsSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
 import { requireAuth } from "@/lib/auth";
-
-// Terminal recordings storage path (matches terminal-server.ts)
-const RECORDINGS_DIR = join(homedir(), ".daax", "recordings");
+import { isValidRecordingId } from "@/server/recording/recorder";
+import { RECORDINGS_DIR } from "@/server/config/constants";
 
 // Recording metadata type
 interface RecordingMetadata {
@@ -32,8 +30,18 @@ export async function GET(
   _request: NextRequest,
   context: RouteContext,
 ): Promise<NextResponse> {
+  // Require authentication before reading recording data
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { id } = await context.params;
+    if (!isValidRecordingId(id)) {
+      return NextResponse.json(
+        { error: "invalid recording id" },
+        { status: 400 },
+      );
+    }
     const metaPath = join(RECORDINGS_DIR, `${id}.json`);
     const castPath = join(RECORDINGS_DIR, `${id}.cast`);
 
@@ -74,7 +82,15 @@ export async function DELETE(
   if (!auth.authenticated) return auth.response;
 
   try {
+    // Auth is checked before id validation: unauthenticated callers get 401
+    // (not 400) and we never process their input. Intentional — do not reorder.
     const { id } = await context.params;
+    if (!isValidRecordingId(id)) {
+      return NextResponse.json(
+        { error: "invalid recording id" },
+        { status: 400 },
+      );
+    }
     const metaPath = join(RECORDINGS_DIR, `${id}.json`);
     const castPath = join(RECORDINGS_DIR, `${id}.cast`);
 

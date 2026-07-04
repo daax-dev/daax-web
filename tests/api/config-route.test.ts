@@ -68,6 +68,7 @@ describe("/api/config", () => {
 
   // Mock settings defaults that match the expected return type
   const mockSettingsDefaults = {
+    basePath: "~/prj",
     featureVisibility: "alpha" as const,
     showMaturityLabels: true,
     aiCodingLayout: "tree" as const,

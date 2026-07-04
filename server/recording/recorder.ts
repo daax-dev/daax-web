@@ -5,7 +5,7 @@
  * for performance optimization.
  */
 
-import { join } from "path";
+import { join, resolve, dirname } from "path";
 import {
   mkdirSync,
   writeFileSync,
@@ -72,7 +72,18 @@ export function startRecording(
     }
   }
 
-  const recordingId = `${sessionType}-${Date.now()}-${sessionId.slice(0, 8)}`;
+  // `sessionType` is CLIENT-CONTROLLED (a `sessionType` URL query param, see
+  // server/handlers/connection-handler.ts). Interpolating it raw into
+  // `recordingId` — which is then joined onto RECORDINGS_DIR to build the
+  // `.cast`/`.json` write paths below — would let a crafted value such as
+  // `"../../etc/x"` or `"a/b"` traverse OUT of RECORDINGS_DIR on the write
+  // path (the read/delete guards in isValidRecordingId do not cover writes).
+  // Slug it to the same allowlist isValidRecordingId enforces so the minted id
+  // can never traverse. `sessionId` is a crypto.randomUUID (hex + `-`) and
+  // Date.now() is digits, so the full id always matches RECORDING_ID_PATTERN.
+  // Only the id is sanitized; metadata.sessionType / title keep the raw value.
+  const safeSessionType = sessionType.replace(/[^A-Za-z0-9_-]/g, "-");
+  const recordingId = `${safeSessionType}-${Date.now()}-${sessionId.slice(0, 8)}`;
   const filePath = join(RECORDINGS_DIR, `${recordingId}.cast`);
 
   const metadata: RecordingMetadata = {
@@ -281,11 +292,52 @@ export function listRecordings(): RecordingMetadata[] {
 }
 
 /**
+ * Recording id allowlist (#193).
+ *
+ * `getRecording`/`deleteRecording` receive a client-supplied `id` over the WS
+ * message channel and interpolate it into a filesystem path. Without validation
+ * an `id` such as `"../../../../etc/passwd"` would traverse out of
+ * RECORDINGS_DIR and read/delete arbitrary `.json`/`.cast` files (the terminal
+ * server runs as root in container mode). Confine ids to a strict allowlist —
+ * `/`, `\`, `..` (blocked because `.` is disallowed), NUL bytes, and whitespace
+ * are all rejected. IDs minted by `startRecording` have the shape
+ * `${sessionType}-${Date.now()}-${sessionId.slice(0,8)}` (sessionId is a
+ * crypto.randomUUID => hex + `-`), which this pattern accepts.
+ */
+const RECORDING_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * Validate a recording id before it is used in any filesystem path.
+ * Returns true only for allowlisted ids whose resolved file stays directly
+ * inside RECORDINGS_DIR (lexical, fs-free defense-in-depth).
+ */
+export function isValidRecordingId(id: unknown): id is string {
+  if (typeof id !== "string" || id.length === 0) return false;
+  if (!RECORDING_ID_PATTERN.test(id)) return false;
+
+  // Defense-in-depth: even if the allowlist were ever loosened, ensure the
+  // resolved path is a direct child of RECORDINGS_DIR. `resolve()` here is
+  // fs-free lexical (string-only) normalization — it does NOT touch the
+  // filesystem and does NOT resolve symlinks — so it is deterministic and
+  // identical in host-dev and container mode, at the cost of not detecting
+  // a symlinked entry inside RECORDINGS_DIR that points elsewhere.
+  const resolvedDir = resolve(RECORDINGS_DIR);
+  const resolvedFile = resolve(RECORDINGS_DIR, `${id}.json`);
+  return dirname(resolvedFile) === resolvedDir;
+}
+
+/**
  * Get recording content
  */
 export function getRecording(
   id: string,
 ): { metadata: RecordingMetadata; content: string } | null {
+  if (!isValidRecordingId(id)) {
+    console.error(
+      `[Terminal Recorder] Rejected invalid recording id: ${JSON.stringify(id)}`,
+    );
+    return null;
+  }
   try {
     const metaPath = join(RECORDINGS_DIR, `${id}.json`);
     const castPath = join(RECORDINGS_DIR, `${id}.cast`);
@@ -306,6 +358,12 @@ export function getRecording(
  * Delete recording
  */
 export function deleteRecording(id: string): boolean {
+  if (!isValidRecordingId(id)) {
+    console.error(
+      `[Terminal Recorder] Rejected invalid recording id: ${JSON.stringify(id)}`,
+    );
+    return false;
+  }
   try {
     const metaPath = join(RECORDINGS_DIR, `${id}.json`);
     const castPath = join(RECORDINGS_DIR, `${id}.cast`);

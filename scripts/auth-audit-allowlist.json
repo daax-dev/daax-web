@@ -31,7 +31,6 @@
     "plugins/mcp-inspector",
     "releases/[id]",
     "releases/[id]/build",
-    "settings/debug",
-    "terminal-recordings/[id]/publish"
+    "settings/debug"
   ]
 }
