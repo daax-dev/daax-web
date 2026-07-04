@@ -37,6 +37,10 @@ import {
 } from "../recording/recorder";
 import { handleMessage, MessageHandlerContext } from "./message-handler";
 import { scheduleCommand } from "./command-handler";
+import {
+  resolveWorkspaceRoot,
+  isValidPath,
+} from "../../lib/worktree-manager";
 
 // Auth paths are initialized in terminal-server.ts and passed here
 let claudeAuthHostPath: string;
@@ -143,10 +147,21 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     expandedBasePath,
   );
 
-  // Security: Ensure final path is within allowed base
-  // Use HOST_WORKSPACE_PATH if in container mode, otherwise use expanded basePath
-  const securityBasePath = HOST_WORKSPACE_PATH || expandedBasePath;
-  if (!mountPath.startsWith(securityBasePath)) {
+  // Security (#186): Ensure the final mount path is within the operator's
+  // configured workspace root. The base MUST be a server-side constant — never
+  // the client-supplied `basePath` query param (the old `HOST_WORKSPACE_PATH ||
+  // expandedBasePath` let `?basePath=/` widen the base to the filesystem root in
+  // host mode). resolveWorkspaceRoot() returns "/workspace" in container mode and
+  // the operator's settings basePath in host mode; it ignores request input.
+  //
+  // The confinement itself is canonicalized (realpath) with a trailing-separator
+  // boundary via isValidPath() — the shared helper (lib/worktree-manager.ts, from
+  // #189). This replaces the raw lexical `startsWith`, which allowed a
+  // sibling-prefix bypass (base "/home/u/prj", mount "/home/u/prj-secrets") and
+  // followed symlinks planted under the workspace pointing outside it.
+  // isValidPath is the same helper the code-server route (#183) can reuse.
+  const securityBasePath = resolveWorkspaceRoot();
+  if (!isValidPath(mountPath, securityBasePath)) {
     console.log(
       `Rejected mount outside base path: ${mountPath} (base: ${securityBasePath})`,
     );
