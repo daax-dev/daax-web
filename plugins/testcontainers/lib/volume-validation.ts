@@ -54,6 +54,52 @@ const DENIED_PREFIXES = [
 ];
 
 /**
+ * Expand a list of denied prefixes into the union of each literal prefix and
+ * its realpath variant.
+ *
+ * `isDeniedSource` compares against the CANONICALIZED (realpath) source
+ * produced by `canonicalizeForDenylist`, but `DENIED_PREFIXES` above are
+ * literal strings. On hosts where a system path is itself a symlink (e.g.
+ * macOS: `/etc` -> `/private/etc`, `/var` -> `/private/var`), a canonicalized
+ * source under `/etc` becomes `/private/etc/...` and would silently miss the
+ * literal `/etc` prefix — reopening the defense-in-depth gap this module
+ * exists to close (#190 Copilot review). Adding the realpath variant to the
+ * set closes that gap while staying OS-agnostic: on hosts with no such alias
+ * (prod is Linux, where none of these are symlinks) the realpath equals the
+ * literal and the union is a no-op.
+ *
+ * Exported (pure, no I/O side effects beyond the realpath lookup) so tests can
+ * exercise the union logic directly with synthetic symlinks, independent of
+ * whatever aliasing the CI host's real system paths happen to have.
+ *
+ * @param prefixes - Literal denied-prefix strings.
+ */
+export function canonicalizeDeniedPrefixSet(
+  prefixes: readonly string[],
+): Set<string> {
+  const set = new Set<string>();
+  for (const prefix of prefixes) {
+    set.add(prefix);
+    try {
+      const real = realpathSync(prefix);
+      if (real !== prefix) {
+        set.add(real);
+      }
+    } catch {
+      // Prefix does not exist on this host (e.g. no /boot in a minimal
+      // container). Keep just the literal — nothing to alias.
+    }
+  }
+  return set;
+}
+
+// Computed ONCE at module load (not per request): the prefixes are a fixed,
+// small, hardcoded list, and none of the underlying paths are expected to
+// change identity while the process is running.
+const DENIED_PREFIX_SET: ReadonlySet<string> =
+  canonicalizeDeniedPrefixSet(DENIED_PREFIXES);
+
+/**
  * Existence check that does NOT follow symlinks (lstat, not existsSync). Returns
  * true when the path NODE itself exists — including a dangling symlink whose
  * target is missing. existsSync would return false for that dangling link (it
@@ -142,9 +188,12 @@ export function isDeniedSource(source: string): boolean {
     return true;
   }
 
-  return DENIED_PREFIXES.some(
-    (prefix) => canonical === prefix || canonical.startsWith(prefix + "/"),
-  );
+  for (const prefix of DENIED_PREFIX_SET) {
+    if (canonical === prefix || canonical.startsWith(prefix + "/")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export interface VolumeSourceValidation {

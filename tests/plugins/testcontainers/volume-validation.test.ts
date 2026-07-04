@@ -15,10 +15,12 @@ import {
   validateVolumeSource,
   validateVolumes,
   isDeniedSource,
+  canonicalizeDeniedPrefixSet,
 } from "@/plugins/testcontainers/lib/volume-validation";
 import type { VolumeMount } from "@/plugins/testcontainers/types";
 
 describe("validateVolumeSource", () => {
+  let base: string; // mkdtemp base dir (parent of workspace + outside)
   let root: string; // canonicalized workspace root
   let insideDir: string; // real dir under root (legitimate)
   let outsideDir: string; // real dir outside root
@@ -26,7 +28,7 @@ describe("validateVolumeSource", () => {
 
   beforeAll(() => {
     // realpath so comparisons are stable even when tmpdir is itself a symlink.
-    const base = realpathSync(mkdtempSync(join(tmpdir(), "daax-vol-")));
+    base = realpathSync(mkdtempSync(join(tmpdir(), "daax-vol-")));
     root = join(base, "workspace");
     insideDir = join(root, "project");
     outsideDir = join(base, "outside");
@@ -37,8 +39,9 @@ describe("validateVolumeSource", () => {
   });
 
   afterAll(() => {
-    rmSync(root, { recursive: true, force: true });
-    rmSync(outsideDir, { recursive: true, force: true });
+    // Remove the whole mkdtemp base (covers `root` and `outsideDir`, which
+    // both live under it) so no empty temp dir is leaked.
+    rmSync(base, { recursive: true, force: true });
   });
 
   it("accepts a legitimate path under the workspace root", () => {
@@ -143,6 +146,93 @@ describe("validateVolumeSource", () => {
       );
       expect(validateVolumeSource("/", "/").valid).toBe(false);
     });
+  });
+});
+
+describe("canonicalizeDeniedPrefixSet (#190 Copilot: OS-aliased denied prefixes)", () => {
+  // Denied prefixes (e.g. /etc, /var/run) are literal strings, but sources are
+  // compared canonicalized (realpath). On a host where a denied prefix is
+  // itself a symlink (e.g. macOS: /etc -> /private/etc), the literal-only
+  // prefix would miss a canonicalized source under the realpath alias. This
+  // builds a synthetic alias with a real symlink so the union logic is
+  // exercised deterministically regardless of what the CI host's actual
+  // system paths happen to alias to.
+  let aliasBase: string;
+  let aliasTarget: string; // real dir standing in for a denied prefix's target
+  let aliasPrefix: string; // symlink standing in for the literal denied prefix
+
+  beforeAll(() => {
+    aliasBase = realpathSync(mkdtempSync(join(tmpdir(), "daax-deny-prefix-")));
+    aliasTarget = join(aliasBase, "real-target");
+    mkdirSync(aliasTarget, { recursive: true });
+    aliasPrefix = join(aliasBase, "aliased-prefix");
+    symlinkSync(aliasTarget, aliasPrefix);
+  });
+
+  afterAll(() => {
+    rmSync(aliasBase, { recursive: true, force: true });
+  });
+
+  it("includes both the literal prefix and its realpath variant", () => {
+    const set = canonicalizeDeniedPrefixSet([aliasPrefix]);
+    expect(set.has(aliasPrefix)).toBe(true);
+    expect(set.has(realpathSync(aliasTarget))).toBe(true);
+    expect(set.size).toBe(2);
+  });
+
+  it("does not duplicate an entry when the prefix has no symlink alias", () => {
+    const set = canonicalizeDeniedPrefixSet([aliasTarget]);
+    expect(set.size).toBe(1);
+    expect(set.has(aliasTarget)).toBe(true);
+  });
+
+  it("keeps just the literal when the prefix does not exist on this host", () => {
+    const missing = join(aliasBase, "does-not-exist");
+    const set = canonicalizeDeniedPrefixSet([missing]);
+    expect(set.size).toBe(1);
+    expect(set.has(missing)).toBe(true);
+  });
+
+  it("denies a source reached via the aliased-prefix symlink (permissive root)", () => {
+    // A source lexically under the alias symlink canonicalizes (via
+    // canonicalizeForDenylist, source-side) to the real target directory.
+    // This proves the end-to-end isDeniedSource path — not just this helper —
+    // would deny it if `aliasTarget` were a real DENIED_PREFIXES entry; here
+    // we confirm the building block (the widened set) is what makes that
+    // possible by checking both forms resolve into the same set.
+    const viaAlias = join(aliasPrefix, "child");
+    mkdirSync(viaAlias, { recursive: true });
+    const set = canonicalizeDeniedPrefixSet([aliasPrefix]);
+    const canonicalChild = realpathSync(viaAlias);
+    const matches = Array.from(set).some(
+      (prefix) => canonicalChild === prefix || canonicalChild.startsWith(prefix + "/"),
+    );
+    expect(matches).toBe(true);
+  });
+});
+
+describe("isDeniedSource / validateVolumeSource: real OS path aliases", () => {
+  // On this CI host (Linux), /var/run is itself a symlink to /run — a real,
+  // pre-existing OS alias of one of DENIED_PREFIXES's own literal entries.
+  // Confirms the actual module-level denylist (not just the synthetic test
+  // above) denies both the alias and its target, and that docker.sock is
+  // denied through it (direct + via-symlink), matching the macOS
+  // /etc -> /private/etc, /var -> /private/var scenario the Copilot comment
+  // described, using an alias that genuinely exists here.
+  it("denies /var/run and its realpath alias /run identically", () => {
+    expect(isDeniedSource("/var/run")).toBe(true);
+    expect(isDeniedSource("/run")).toBe(true);
+  });
+
+  it("denies docker.sock reached through the /var/run alias, permissive root", () => {
+    expect(isDeniedSource("/var/run/docker.sock")).toBe(true);
+    expect(isDeniedSource("/run/docker.sock")).toBe(true);
+    expect(validateVolumeSource("/var/run/docker.sock", "/").valid).toBe(false);
+  });
+
+  it("denies /etc when root is permissive", () => {
+    expect(isDeniedSource("/etc")).toBe(true);
+    expect(validateVolumeSource("/etc", "/").valid).toBe(false);
   });
 });
 
