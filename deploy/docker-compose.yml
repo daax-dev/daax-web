@@ -12,6 +12,8 @@ services:
   # Persistent named volume; not published externally (reached only on daax-net).
   # The password MUST be provided via env/secret — fail-closed, never committed.
   postgres:
+    # TODO(#203): digest-pin (postgres:18-alpine@sha256:...); deferred pending
+    # registry access to resolve the digest (do not invent one).
     image: postgres:18-alpine
     container_name: daax-postgres
     restart: unless-stopped
@@ -270,6 +272,8 @@ services:
 
   # Optional: whoami service for testing
   whoami:
+    # TODO(#203): digest-pin (traefik/whoami@sha256:...) if retained; deferred
+    # pending registry access. Debug-only smoke-test service (profile: debug).
     image: traefik/whoami
     container_name: whoami
     restart: unless-stopped

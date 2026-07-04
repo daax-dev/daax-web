@@ -14,6 +14,8 @@ services:
   # Postgres — daax's single data engine (brain2daax Phase 0 #92).
   # Persistent named volume so data survives `docker compose restart`/`down`.
   postgres:
+    # TODO(#203): digest-pin (postgres:18-alpine@sha256:...); deferred pending
+    # registry access to resolve the digest (do not invent one).
     image: postgres:18-alpine
     container_name: daax-postgres
     restart: unless-stopped
