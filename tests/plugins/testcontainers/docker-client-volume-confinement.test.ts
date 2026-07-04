@@ -107,7 +107,10 @@ describe("DockerClient.createContainer volume confinement", () => {
     mockPull.mockImplementation((_image: string, cb: (err: Error) => void) =>
       cb(new Error("pull failed (test stub, ignored by createContainer)")),
     );
-    mockCreateContainer.mockResolvedValue({ id: "abc123def456", start: mockStart });
+    mockCreateContainer.mockResolvedValue({
+      id: "abc123def456",
+      start: mockStart,
+    });
     mockStart.mockResolvedValue(undefined);
     mockGetContainer.mockReturnValue({
       inspect: vi.fn().mockResolvedValue({

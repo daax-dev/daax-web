@@ -48,7 +48,10 @@ describe("POST /api/testcontainers validation", () => {
   });
 
   it("blocks unauthenticated requests before any validation", async () => {
-    const denied = NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const denied = NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401 },
+    );
     mockRequireAuth.mockResolvedValueOnce({
       authenticated: false,
       response: denied,
@@ -157,9 +160,7 @@ describe("POST /api/testcontainers validation", () => {
   });
 
   it("rejects a null volume entry with 400 and no container", async () => {
-    const res = await POST(
-      req({ image: "alpine", volumes: [null] }),
-    );
+    const res = await POST(req({ image: "alpine", volumes: [null] }));
     expect(res.status).toBe(400);
     expect(mockCreateContainer).not.toHaveBeenCalled();
   });

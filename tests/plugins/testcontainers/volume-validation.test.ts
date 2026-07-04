@@ -205,7 +205,8 @@ describe("canonicalizeDeniedPrefixSet (#190 Copilot: OS-aliased denied prefixes)
     const set = canonicalizeDeniedPrefixSet([aliasPrefix]);
     const canonicalChild = realpathSync(viaAlias);
     const matches = Array.from(set).some(
-      (prefix) => canonicalChild === prefix || canonicalChild.startsWith(prefix + "/"),
+      (prefix) =>
+        canonicalChild === prefix || canonicalChild.startsWith(prefix + "/"),
     );
     expect(matches).toBe(true);
   });
@@ -287,7 +288,9 @@ describe("validateVolumes", () => {
     expect(
       validateVolumes("not-an-array" as unknown as VolumeMount[], "/").valid,
     ).toBe(false);
-    expect(validateVolumes(42 as unknown as VolumeMount[], "/").valid).toBe(false);
+    expect(validateVolumes(42 as unknown as VolumeMount[], "/").valid).toBe(
+      false,
+    );
   });
 
   it("rejects (never throws) a null entry inside the array", () => {
