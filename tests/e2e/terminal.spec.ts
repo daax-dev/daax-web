@@ -28,7 +28,7 @@ test.describe("Terminal", () => {
 
   test("terminal component mounts after opening a shell", async ({ page }) => {
     // The shell page starts with no terminal tabs and renders an empty-state
-    // placeholder ("Click 'New Shell' to open a terminal"). A terminal only
+    // placeholder (Click "New Shell" to open a terminal). A terminal only
     // mounts after a tab is opened, so open one first.
     await expect(
       page.getByText(/Click "New Shell" to open a terminal/i),

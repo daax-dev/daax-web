@@ -84,7 +84,9 @@ test.describe("Build provenance page", () => {
 
     const download = page.getByTestId("sbom-download");
     const none = page.getByTestId("sbom-none");
-    // Exactly one of the two SBOM states renders.
+    // Exactly one of the two SBOM states renders — enforce the invariant so a
+    // regression that renders both (or neither) can't silently pass.
+    expect(await download.or(none).count()).toBe(1);
     await expect(download.or(none)).toBeVisible();
 
     if ((await download.count()) > 0) {
