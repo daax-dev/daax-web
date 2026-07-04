@@ -43,10 +43,20 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
     apt-get install -y --no-install-recommends docker-ce-cli && \
     rm -rf /var/lib/apt/lists/*
 
-# Install bun
+# Install bun — pinned version (#200). No longer an unpinned "latest via
+# curl|bash": the version is pinned to match package.json
+# "packageManager": "bun@1.3.9", so a build is reproducible and a compromise of
+# the moving latest release does not silently land here.
+# TODO(#200): add checksum/signature verification of the bun release artifact
+# (mirroring the syft/Go pattern elsewhere in this repo) once network/registry
+# access is available to resolve the published SHA256 for this pinned version.
+# Not done here to avoid inventing a checksum that would break the build offline.
 ENV BUN_INSTALL=/usr/local/bun
-RUN curl -fsSL https://bun.sh/install | bash
+ARG BUN_VERSION=1.3.9
+RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}"
 ENV PATH="$BUN_INSTALL/bin:$PATH"
+# Fail the build if the installed bun is not the pinned version.
+RUN bun --version | grep -qx "${BUN_VERSION}" || { echo "bun version mismatch: expected ${BUN_VERSION}, got $(bun --version)" >&2; exit 1; }
 
 # Install pnpm and backlog.md CLI globally for subprocess management
 ENV PNPM_HOME=/usr/local/pnpm
