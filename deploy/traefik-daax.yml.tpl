@@ -104,15 +104,18 @@ http:
     #     NON-BROWSER clients (webhooks, API callers, service-to-service) in
     #     addition to the daax /bot iframe. Those clients cannot perform an
     #     interactive passkey login, so Pocket ID forward-auth would break them.
-    #   - The gateway authenticates every request with its OWN mandatory bearer
-    #     token (CLAWD_GATEWAY_TOKEN). daax's /bot page fetches that token from
-    #     /api/clawd/token (itself gated by requireAuth, #188) and hands it to
-    #     the embedded gateway iframe. Token auth — not a passkey session — is
-    #     the design's authentication primitive for this host.
+    #   - The gateway is DESIGNED to authenticate every request with its OWN
+    #     bearer token (CLAWD_GATEWAY_TOKEN); actual enforcement lives in the
+    #     gateway service and is the operator's responsibility to verify (see
+    #     below). daax's /bot page fetches that token from /api/clawd/token
+    #     (itself gated by requireAuth, #188) and hands it to the embedded
+    #     gateway iframe. Token auth — not a passkey session — is the design's
+    #     authentication primitive for this host.
     #
-    # Compensating control (the SOLE protection for this host):
+    # Compensating control (the application-level authentication for this
+    # router; network-level trust boundaries such as the tailnet still apply):
     #   The Clawdbot gateway's own bearer-token auth. Its strength depends
-    #   entirely on that token being mandatory (no bypass) and a strong,
+    #   on that token being enforced as mandatory (no bypass) and a strong,
     #   non-default secret.
     #
     # OPERATOR RESPONSIBILITY (out-of-band — cannot be verified from this repo;
