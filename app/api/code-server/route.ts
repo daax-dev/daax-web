@@ -341,14 +341,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
-      // Remove existing container if it exists (running or stopped)
-      if (containerExists()) {
-        removeContainer();
-      }
-
-      // Initialize default settings (dark theme) in the volume if not present
-      initializeCodeServerSettings();
-
       // The workspace root is a SERVER-side constant, never derived from the
       // request body (#183). Container mode: the host dir mounted at /workspace
       // (HOST_WORKSPACE_PATH). Host-dev mode: the operator-configured root from
@@ -426,6 +418,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       console.log(
         `code-server: project=${project}, hostWorkspace=${hostWorkspace}, containerPath=${containerPath}`,
       );
+
+      // Side effects only run AFTER all validation + confinement passes (#183
+      // Copilot follow-up). Previously these ran before the confinement gates,
+      // so an authenticated request that was ultimately rejected with 400
+      // ("Path not allowed" / invalid port) could still tear down an existing
+      // code-server container and mutate the settings volume — a DoS / unintended
+      // side effect on invalid input. Confinement is now a strict gate.
+
+      // Remove existing container if it exists (running or stopped)
+      if (containerExists()) {
+        removeContainer();
+      }
+
+      // Initialize default settings (dark theme) in the volume if not present
+      initializeCodeServerSettings();
 
       // Start code-server container
       // Persist user data so theme preference is saved after first manual set

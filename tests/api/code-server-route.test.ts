@@ -426,6 +426,84 @@ describe("/api/code-server", () => {
     });
   });
 
+  describe("no side effects before validation passes (#183 Copilot follow-up)", () => {
+    // removeContainer() runs `docker rm -f`; initializeCodeServerSettings() runs
+    // `docker run --rm -v daax-code-server-data:/data alpine ...`. Both are
+    // execFileSync (spawn is only the final `docker run -d`). Assert neither
+    // fired when the request is ultimately rejected with a 400 — the confinement
+    // and port gates must be strict, with no destructive/mutating side effect on
+    // invalid input.
+    const removeContainerCalled = () =>
+      mockExecFileSync.mock.calls.some((call) => call[1]?.[0] === "rm");
+    const initSettingsCalled = () =>
+      mockExecFileSync.mock.calls.some(
+        (call) => call[1]?.[0] === "run" && call[1]?.includes("alpine"),
+      );
+
+    it("does not remove the container or init settings on a confinement reject", async () => {
+      installDockerMock(true);
+
+      // A traversal `project` that escapes the server root; `basePath:"/"` is
+      // ignored (server-derived root wins) so this is rejected by confineToRoot.
+      const response = await POST(
+        startRequest({
+          action: "start",
+          basePath: "/",
+          project: "../../../etc",
+        }),
+      );
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.error).toBe("Path not allowed");
+      expect(removeContainerCalled()).toBe(false);
+      expect(initSettingsCalled()).toBe(false);
+      expect(mockSpawn).not.toHaveBeenCalled();
+    });
+
+    it("does not remove the container or init settings on a symlink-escape reject", async () => {
+      installDockerMock(true);
+
+      const tmpBase = mkdtempSync(join(tmpdir(), "cs-confine-sfx-"));
+      const realRoot = join(tmpBase, "root");
+      const outside = join(tmpBase, "outside");
+      mkdirSync(realRoot);
+      mkdirSync(outside);
+      symlinkSync(outside, join(realRoot, "escape"));
+      mockSettings.basePath = realRoot;
+
+      try {
+        const response = await POST(
+          startRequest({ action: "start", project: "escape" }),
+        );
+        const data = await response.json();
+
+        expect(response.status).toBe(400);
+        expect(data.error).toBe("Path not allowed");
+        expect(removeContainerCalled()).toBe(false);
+        expect(initSettingsCalled()).toBe(false);
+        expect(mockSpawn).not.toHaveBeenCalled();
+      } finally {
+        rmSync(tmpBase, { recursive: true, force: true });
+      }
+    });
+
+    it("does not remove the container or init settings on an invalid port", async () => {
+      installDockerMock(true);
+
+      const response = await POST(
+        startRequest({ action: "start", project: "demo", port: 70000 }),
+      );
+      const data = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(data.error).toContain("Invalid port");
+      expect(removeContainerCalled()).toBe(false);
+      expect(initSettingsCalled()).toBe(false);
+      expect(mockSpawn).not.toHaveBeenCalled();
+    });
+  });
+
   describe("POST start pre-flight", () => {
     it("returns 400 IMAGE_NOT_FOUND when the image is missing", async () => {
       installDockerMock(false);
