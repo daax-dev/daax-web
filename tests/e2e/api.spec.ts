@@ -81,8 +81,22 @@ test.describe("API Endpoints", () => {
     expect(response.status()).toBeLessThan(500);
   });
 
-  test("protected endpoints return 401 without auth", async ({ request }) => {
-    const response = await request.get("/api/secrets");
+  test("protected endpoints reject a malformed forwarded identity with 401", async ({
+    request,
+  }) => {
+    // The e2e server runs NON-strict (no DAAX_REQUIRE_AUTH): a request with NO
+    // x-forwarded-user header is treated as the trusted local operator — the
+    // zero-friction host-dev bypass in lib/auth-trust (allow-operator), so it
+    // returns 200, not 401. That is by design and predates the #181 middleware.
+    //
+    // A PRESENT-but-empty x-forwarded-user, however, is a MALFORMED credential:
+    // deriveAuthContext() trims it to null, the operator bypass is skipped
+    // (rawUserHeader !== null), and evaluateAuthDecision() denies with 401 even
+    // in non-strict mode. That is the real rejection path this test asserts —
+    // exercising a genuine 401 without needing a live proxy or strict mode.
+    const response = await request.get("/api/secrets", {
+      headers: { "x-forwarded-user": "" },
+    });
     expect(response.status()).toBe(401);
 
     const data = await response.json();

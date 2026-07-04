@@ -47,7 +47,13 @@ test.describe("Navigation", () => {
   test("can navigate to settings page", async ({ page }) => {
     await page.goto("/settings");
     await expect(page).toHaveURL(/\/settings/);
-    await expect(page.getByText(/Settings|Configuration/i)).toBeVisible();
+    // Assert the page's own heading rather than a broad /Settings|Configuration/i
+    // text match: the settings sub-nav and its many cards mean that regex now
+    // resolves to a dozen elements (strict-mode violation). The <h1>Settings</h1>
+    // is the unique, stable marker that the settings page rendered.
+    await expect(
+      page.getByRole("heading", { name: "Settings", level: 1 }),
+    ).toBeVisible();
   });
 
   test("titlebar navigation works", async ({ page }) => {
