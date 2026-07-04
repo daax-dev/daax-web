@@ -69,6 +69,53 @@ describe("validateVolumeSource", () => {
     expect(result.reason).toMatch(/outside the workspace root/);
   });
 
+  describe("denylist dereferences a symlinked ancestor with a non-existent leaf", () => {
+    // #190 Copilot defense-in-depth gap: `<link>/newdir` where `<link> -> /dev`
+    // and `newdir` does NOT exist. realpathSync on the FULL path throws (leaf
+    // missing), so the OLD lexical `resolve()` fallback returned
+    // `<tmp>/deny-link/newdir` — NOT dereferencing the symlinked ancestor — and
+    // thus MISSED the `/dev` denied prefix. The walk-up canonicalization now
+    // realpaths the existing ancestor (`/dev`) and re-appends `newdir`, so the
+    // denied prefix is caught. Uses a permissive "/" root to isolate the
+    // denylist from the allowlist. `/dev` is a real, non-symlinked directory on
+    // both Linux and macOS (unlike `/etc`, which is a symlink on macOS), keeping
+    // the assertion portable.
+    let denyLink: string; // symlink -> /dev (a real DENIED_PREFIXES location)
+    let danglingLink: string; // symlink -> a non-existent target (dangling)
+    let symlinkBase: string;
+
+    beforeAll(() => {
+      symlinkBase = realpathSync(mkdtempSync(join(tmpdir(), "daax-deny-")));
+      denyLink = join(symlinkBase, "deny-link");
+      symlinkSync("/dev", denyLink);
+      danglingLink = join(symlinkBase, "dangling-link");
+      symlinkSync(join(symlinkBase, "no-such-target"), danglingLink);
+    });
+
+    afterAll(() => {
+      rmSync(symlinkBase, { recursive: true, force: true });
+    });
+
+    it("denies <symlinked-ancestor>/<non-existent-leaf> pointing into /dev", () => {
+      const leaf = join(denyLink, "newdir"); // newdir does not exist on disk
+      // Sanity: the leaf itself must not exist, so realpathSync(full) would throw
+      // and the OLD lexical fallback (no ancestor dereference) would have PASSED.
+      expect(isDeniedSource(leaf)).toBe(true);
+      const result = validateVolumeSource(leaf, "/");
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/denied sensitive host path/);
+    });
+
+    it("fails CLOSED (denies) a dangling symlink whose target is missing", () => {
+      // The walk-up uses a NO-FOLLOW (lstat) existence check, so it STOPS at the
+      // dangling symlink node; realpathSync on it then throws (missing target),
+      // canonicalization returns null, and isDeniedSource treats that as DENIED
+      // rather than silently allowing it (#189 fail-closed behavior).
+      expect(isDeniedSource(danglingLink)).toBe(true);
+      expect(validateVolumeSource(danglingLink, "/").valid).toBe(false);
+    });
+  });
+
   it("accepts a Docker named volume (not a host path)", () => {
     expect(validateVolumeSource("pgdata", root).valid).toBe(true);
     expect(validateVolumeSource("my_data-1", root).valid).toBe(true);

@@ -23,8 +23,8 @@
  * so the verbatim host path must be preserved; validation only accepts/rejects.
  */
 
-import { realpathSync } from "fs";
-import { resolve } from "path";
+import { lstatSync, realpathSync } from "fs";
+import { basename, dirname, join, resolve } from "path";
 import { isValidPath, resolveWorkspaceRoot } from "@/lib/worktree-manager";
 import type { VolumeMount } from "../types";
 
@@ -54,25 +54,84 @@ const DENIED_PREFIXES = [
 ];
 
 /**
- * Canonicalize a source path for denylist comparison. Follows symlinks via
- * realpath where the path exists; falls back to a lexical absolute resolve for
- * paths that do not exist yet (the denylist matches on name/prefix, so a
- * non-existent "/var/run/docker.sock" is still caught).
+ * Existence check that does NOT follow symlinks (lstat, not existsSync). Returns
+ * true when the path NODE itself exists — including a dangling symlink whose
+ * target is missing. existsSync would return false for that dangling link (it
+ * stats the target), so the walk-up below would skip PAST the symlink segment and
+ * re-append its name lexically — the exact denylist bypass this avoids.
  */
-function canonicalizeForDenylist(source: string): string {
+function pathExistsNoFollow(p: string): boolean {
   try {
-    return realpathSync(source);
+    lstatSync(p);
+    return true;
   } catch {
-    return resolve(source);
+    return false;
+  }
+}
+
+/**
+ * Canonicalize a source path for denylist comparison.
+ *
+ * A purely lexical `resolve(source)` fallback (for paths that do not exist yet)
+ * is UNSAFE: it leaves symlinks in EXISTING ANCESTOR segments un-dereferenced. A
+ * source like `/tmp/link/newdir` where `/tmp/link -> /etc` and `newdir` does not
+ * exist would resolve lexically to `/tmp/link/newdir` and MISS the `/etc` denied
+ * prefix (#190 Copilot defense-in-depth gap). To close that, resolve the LONGEST
+ * EXISTING ANCESTOR via realpath (dereferencing any parent symlinks), then
+ * re-append the peeled-off non-existent trailing segments lexically — the same
+ * walk-up technique as lib/worktree-manager's canonicalizePath, implemented
+ * locally here.
+ *
+ * The "exists" check during the walk-up MUST NOT follow symlinks (uses lstat, so
+ * a DANGLING symlink stops the walk at the symlink node instead of being skipped;
+ * the realpath below then throws on the missing target and this fails CLOSED).
+ *
+ * Returns `null` when canonicalization cannot be performed — no existing ancestor
+ * found (defensive; root always exists), or realpath on the existing ancestor
+ * throws (EACCES / ELOOP / dangling-symlink ancestor / a TOCTOU race). Callers
+ * MUST treat `null` as DENIED, never silently allow.
+ */
+function canonicalizeForDenylist(source: string): string | null {
+  const resolved = resolve(source);
+  let existing = resolved;
+  const trailing: string[] = [];
+  while (!pathExistsNoFollow(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) {
+      // Reached the filesystem root without an existing ancestor. Root always
+      // exists, so this is defensive; fail closed rather than fall back to the
+      // un-dereferenced lexical form.
+      return null;
+    }
+    trailing.unshift(basename(existing));
+    existing = parent;
+  }
+  try {
+    const realAncestor = realpathSync(existing);
+    return trailing.length > 0 ? join(realAncestor, ...trailing) : realAncestor;
+  } catch {
+    // realpath failed (EACCES / ELOOP / dangling-symlink ancestor / TOCTOU).
+    // Fail closed: do NOT return the lexical `resolved` form, which would leave
+    // ancestor symlinks un-dereferenced and reopen the denylist bypass.
+    return null;
   }
 }
 
 /**
  * True if the (canonicalized) source is an explicitly denied sensitive host path
  * — the Docker socket, filesystem root, or a Docker/system state directory.
+ *
+ * Fails CLOSED: if the source cannot be canonicalized (see canonicalizeForDenylist
+ * returning `null`), it is treated as DENIED rather than allowed.
  */
 export function isDeniedSource(source: string): boolean {
   const canonical = canonicalizeForDenylist(source);
+
+  // Fail closed: a source we cannot canonicalize is treated as denied, never
+  // silently allowed through the denylist.
+  if (canonical === null) {
+    return true;
+  }
 
   if (DENIED_EXACT.has(canonical)) {
     return true;
