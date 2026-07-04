@@ -5,10 +5,10 @@ import {
   getEnabledMcps,
   getRecommendedMcps,
   updateGatewayConfig,
+  syncDiscoveredMcps,
   AVAILABLE_CONTEXTS,
 } from "@/lib/mcp-gateway";
 import { discoverAllMcps, type McpDiscoveryResult } from "@/lib/mcp-discovery";
-import { syncDiscoveredMcps } from "@/lib/mcp-gateway";
 import { requireAuth } from "@/lib/auth";
 
 export async function GET(request: Request) {
