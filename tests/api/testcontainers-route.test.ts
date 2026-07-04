@@ -201,4 +201,39 @@ describe("POST /api/testcontainers validation", () => {
     expect(res.status).toBe(400);
     expect(mockCreateContainer).not.toHaveBeenCalled();
   });
+
+  it("rejects a `null` JSON body with 400, not 500, and no container", async () => {
+    // Copilot review on #190: `request.json()` parses the literal `null`
+    // without throwing, so dereferencing `body.image` would throw a TypeError
+    // caught by the outer catch and surface as a 500. Must fail closed with 400.
+    const res = await POST(req(null));
+    const data = await res.json();
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Request body must be a JSON object");
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("rejects a bare-number JSON body with 400, not 500, and no container", async () => {
+    const res = await POST(req(123));
+    const data = await res.json();
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Request body must be a JSON object");
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("rejects a bare-string JSON body with 400, not 500, and no container", async () => {
+    const res = await POST(req("str"));
+    const data = await res.json();
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Request body must be a JSON object");
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("rejects an array JSON body with 400, not 500, and no container", async () => {
+    const res = await POST(req([]));
+    const data = await res.json();
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Request body must be a JSON object");
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
 });

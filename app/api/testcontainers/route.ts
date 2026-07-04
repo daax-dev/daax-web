@@ -86,6 +86,18 @@ export async function POST(request: Request) {
       );
     }
 
+    // `request.json()` parses the JSON literals `null`, `123`, `"str"`, `[]`
+    // without throwing, leaving `body` as a non-object. Dereferencing
+    // `body.image` on those would throw a TypeError caught by the outer catch
+    // and surface as a 500. Reject a non-object body up front with a controlled
+    // 400 (Copilot review on #190).
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json(
+        { error: "Request body must be a JSON object" },
+        { status: 400 },
+      );
+    }
+
     // Validate required fields
     if (!body.image) {
       return NextResponse.json({ error: "Image is required" }, { status: 400 });
