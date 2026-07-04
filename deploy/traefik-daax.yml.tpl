@@ -97,7 +97,8 @@ http:
     # Clawdbot Gateway
     #
     # pocket-id-auth (Pocket ID passkey ForwardAuth) is INTENTIONALLY EXCLUDED
-    # from this router — unlike daax / daax-ws / daax-code above (issue #202, L5).
+    # from this router — unlike daax / daax-ws / daax-code above (issue #202,
+    # Fable Review Finding L5).
     #
     # Why excluded:
     #   - Clawdbot is an AI agent orchestrator / bot gateway. It is reached by
@@ -119,7 +120,7 @@ http:
     #   non-default secret.
     #
     # OPERATOR RESPONSIBILITY (out-of-band — cannot be verified from this repo;
-    # the gateway is a separate project, ~/clawd): confirm the Clawdbot gateway
+    # the gateway is a separate project — the clawdbot repo): confirm that gateway
     # rejects requests with no/invalid token and that CLAWD_GATEWAY_TOKEN is a
     # strong, non-default secret (#202 AC#2).
     clawd:
