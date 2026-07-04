@@ -86,6 +86,32 @@ describe("DockerClient.createContainer image reference validation (sink)", () =>
     expect(mockCreateContainer).not.toHaveBeenCalled();
   });
 
+  it("rejects an explicit empty-string tag and never pulls/creates", async () => {
+    // Copilot review on #190: the sink checks `tag` by PRESENCE
+    // (`!== undefined`), not truthiness — an explicit empty-string tag `""`
+    // must be rejected, not silently treated as "no tag" and defaulted to
+    // `latest` by buildImageRef.
+    const client = new DockerClient();
+
+    await expect(
+      client.createContainer({ image: "alpine", tag: "" }),
+    ).rejects.toThrow(/tag must be a non-empty string/);
+
+    expect(mockPull).not.toHaveBeenCalled();
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("rejects a whitespace-only tag and never pulls/creates", async () => {
+    const client = new DockerClient();
+
+    await expect(
+      client.createContainer({ image: "alpine", tag: "   " }),
+    ).rejects.toThrow(/tag must be a non-empty string/);
+
+    expect(mockPull).not.toHaveBeenCalled();
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
   it("still creates a container for a valid embedded-tag image (no separate tag)", async () => {
     const client = new DockerClient();
     mockPull.mockImplementation((_ref: string, cb: (err: Error) => void) =>

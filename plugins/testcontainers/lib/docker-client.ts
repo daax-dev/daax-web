@@ -335,6 +335,16 @@ export class DockerClient {
     if (request.tag !== undefined && typeof request.tag !== "string") {
       throw new Error("Refusing to create container: tag must be a string");
     }
+    // Treat `tag` by PRESENCE (`!== undefined`), not truthiness: an explicitly
+    // provided empty-string tag `""` is INVALID and must be rejected, not
+    // silently treated as "no tag" and defaulted to `latest` by buildImageRef.
+    // Only an omitted (`undefined`) tag means "no tag provided" (Copilot review
+    // on #190).
+    if (request.tag !== undefined && request.tag.trim() === "") {
+      throw new Error(
+        "Refusing to create container: tag must be a non-empty string",
+      );
+    }
 
     // Reject the ambiguous "embedded tag/digest + separate tag field"
     // combination at the sink. buildImageRef silently DROPS `tag` when `image`
@@ -343,7 +353,7 @@ export class DockerClient {
     // but the compose/template path bypasses the route — so reject it here too
     // rather than silently ignoring the caller's `tag` (Copilot review on
     // #190).
-    if (request.tag && hasEmbeddedTagOrDigest(request.image)) {
+    if (request.tag !== undefined && hasEmbeddedTagOrDigest(request.image)) {
       throw new Error(
         "Refusing to create container: image already carries an embedded tag or digest; do not also supply a separate tag",
       );

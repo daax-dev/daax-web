@@ -121,14 +121,26 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+    // Treat `tag` by PRESENCE (`!== undefined`), not truthiness: an explicitly
+    // provided empty-string tag `""` is INVALID and must be rejected, not
+    // silently treated as "no tag". Only an omitted (`undefined`) tag means
+    // "no tag provided" (Copilot review on #190).
+    if (body.tag !== undefined && body.tag.trim() === "") {
+      return NextResponse.json(
+        { error: "Tag must be a non-empty string" },
+        { status: 400 },
+      );
+    }
 
     // Validate image name format (same pattern as app/api/docker/pull). Also
     // validate the fully-qualified image:tag reference (imageRef) so a
-    // crafted tag cannot slip through.
-    const imageRef = body.tag ? `${body.image}:${body.tag}` : body.image;
+    // crafted tag cannot slip through. `tag` presence is checked with
+    // `!== undefined` (an empty string was already rejected above).
+    const imageRef =
+      body.tag !== undefined ? `${body.image}:${body.tag}` : body.image;
     if (
       !isValidDockerImageName(body.image) ||
-      (body.tag && !isValidDockerImageName(imageRef))
+      (body.tag !== undefined && !isValidDockerImageName(imageRef))
     ) {
       return NextResponse.json(
         { error: "Invalid image name format" },

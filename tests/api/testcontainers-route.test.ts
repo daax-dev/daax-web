@@ -101,6 +101,33 @@ describe("POST /api/testcontainers validation", () => {
     expect(mockCreateContainer).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects an explicit empty-string `tag` with 400 and no container", async () => {
+    // Copilot review on #190: `tag` presence is checked by PRESENCE
+    // (`!== undefined`), not truthiness — an explicit empty-string tag `""` is
+    // invalid and must be rejected, not silently treated as "no tag".
+    const res = await POST(req({ image: "alpine", tag: "" }));
+    const data = await res.json();
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Tag must be a non-empty string");
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("rejects a whitespace-only `tag` with 400 and no container", async () => {
+    const res = await POST(req({ image: "alpine", tag: "   " }));
+    const data = await res.json();
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Tag must be a non-empty string");
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("creates a container when `tag` is omitted (undefined)", async () => {
+    // An omitted tag means "no tag provided" — the legitimate default that
+    // resolves to `latest`/the embedded tag downstream. Must still succeed.
+    const res = await POST(req({ image: "alpine" }));
+    expect(res.status).toBe(201);
+    expect(mockCreateContainer).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects source '/' with 400 and no container", async () => {
     const res = await POST(
       req({ image: "alpine", volumes: [{ source: "/", target: "/host" }] }),
