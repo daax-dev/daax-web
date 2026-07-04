@@ -26,17 +26,21 @@ test.describe("Terminal", () => {
     await expect(nav.first()).toBeVisible();
   });
 
-  test("terminal component exists or loading state shown", async ({ page }) => {
-    // Either terminal loads or we see loading state
+  test("terminal component mounts after opening a shell", async ({ page }) => {
+    // The shell page starts with no terminal tabs and renders an empty-state
+    // placeholder ("Click 'New Shell' to open a terminal"). A terminal only
+    // mounts after a tab is opened, so open one first.
+    await expect(
+      page.getByText(/Click "New Shell" to open a terminal/i),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "New Shell" }).click();
+
+    // xterm.js injects the `.xterm` element into the DOM on mount
+    // (term.open()), independent of whether the WebSocket/PTY actually
+    // connects. This keeps the assertion meaningful (the terminal UI loads)
+    // while staying robust in a headless CI env without a live PTY.
     const terminal = page.locator(".xterm");
-    const loading = page.getByText(/Loading|Connecting/i);
-
-    // One of these should be visible
-    const terminalVisible = await terminal.isVisible().catch(() => false);
-    const loadingVisible = await loading.isVisible().catch(() => false);
-
-    // Page should be in a valid state - at least one UI element should be present
-    expect(terminalVisible || loadingVisible).toBe(true);
+    await expect(terminal.first()).toBeVisible({ timeout: 15000 });
   });
 
   test("shell page has navigation elements", async ({ page }) => {
