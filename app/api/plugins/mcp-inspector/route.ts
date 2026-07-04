@@ -1,5 +1,69 @@
+// MCP Inspector launch API.
+//
+// SECURITY (#182): This route NEVER launches an arbitrary client-supplied
+// command. The MCP server command/args/env are resolved SERVER-SIDE from the
+// registered MCP configuration (looked up by `mcpId`). For a genuinely ad-hoc
+// / custom launch (the "custom" flow in InspectorPanel that has no registered
+// id) the command must match an explicit allowlist of known MCP launchers —
+// shells and arbitrary binaries/paths are rejected before any spawn. The child
+// receives an explicit minimal env (never the full process.env), and
+// requireAuth() is enforced as defense-in-depth.
+
+import { existsSync } from "fs";
 import { NextRequest, NextResponse } from "next/server";
 import { spawn, ChildProcess } from "child_process";
+import { requireAuth } from "@/lib/auth";
+import { discoverAllMcps } from "@/lib/mcp-config";
+
+// Allowlist of executables permitted for an ad-hoc (unregistered) inspector
+// launch. These are the standard MCP launchers; a bare basename resolved via
+// PATH is required (no path separators), which blocks /bin/sh, ./evil, etc.
+const ALLOWED_LAUNCHERS = new Set([
+  "npx",
+  "node",
+  "bun",
+  "bunx",
+  "uv",
+  "uvx",
+  "python",
+  "python3",
+  "deno",
+  "docker",
+]);
+
+function isAllowedAdHocCommand(command: string): boolean {
+  if (typeof command !== "string" || command.length === 0) return false;
+  // Must be a bare command (no path separator) resolved via PATH.
+  if (command.includes("/") || command.includes("\\")) return false;
+  return ALLOWED_LAUNCHERS.has(command);
+}
+
+// Default project path used to scope MCP discovery: /workspace in container
+// mode, otherwise the current working directory (mirrors /api/mcp/config).
+function getDefaultProjectPath(): string {
+  if (process.env.CLAUDE_CODE_CONFIG || existsSync("/workspace")) {
+    return "/workspace";
+  }
+  return process.cwd();
+}
+
+// Build an explicit, minimal env for the spawned inspector (#182). Only PATH
+// and HOME from the app environment, plus the registered MCP's own declared
+// env. The full process.env is never spread in, so app secrets are not leaked.
+function buildChildEnv(
+  configEnv: Record<string, string> | undefined,
+  extra: Record<string, string>,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  if (process.env.PATH) env.PATH = process.env.PATH;
+  if (process.env.HOME) env.HOME = process.env.HOME;
+  if (configEnv) {
+    for (const [key, value] of Object.entries(configEnv)) {
+      if (typeof value === "string") env[key] = value;
+    }
+  }
+  return { ...env, ...extra };
+}
 
 // Track running inspector processes
 const inspectorProcesses: Map<
@@ -43,11 +107,22 @@ export async function GET() {
 
 // POST - Launch inspector for an MCP server
 export async function POST(request: NextRequest) {
+  // Defense-in-depth: require authentication (#182).
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const body = await request.json();
-    const { mcpId, command, args = [], env = {}, transport = "stdio" } = body;
+    const { mcpId } = body;
+    // `projectPath` only scopes server-side discovery lookup; it is never a
+    // command. Client-supplied command/args/env on the body are only consulted
+    // via the allowlisted ad-hoc path below — never for a registered mcpId.
+    const projectPath =
+      typeof body.projectPath === "string" && body.projectPath.length > 0
+        ? body.projectPath
+        : getDefaultProjectPath();
 
-    if (!mcpId) {
+    if (!mcpId || typeof mcpId !== "string") {
       return NextResponse.json({ error: "mcpId is required" }, { status: 400 });
     }
 
@@ -63,6 +138,51 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Resolve the command/args/env SERVER-SIDE from the registered MCP config.
+    // Client-supplied command/args/env are ignored for a registered mcpId; they
+    // are only honored (and only when allowlisted) for an ad-hoc launch.
+    const discovered = discoverAllMcps(projectPath).mcps.find(
+      (m) => m.id === mcpId,
+    );
+
+    let resolvedCommand: string | undefined;
+    let resolvedArgs: string[] = [];
+    let resolvedEnv: Record<string, string> | undefined;
+
+    if (discovered && discovered.config) {
+      // Registered MCP: use its own command/args/env, never the client body.
+      resolvedCommand = discovered.config.command;
+      resolvedArgs = discovered.config.args || [];
+      resolvedEnv = discovered.config.env;
+    } else {
+      // Ad-hoc / custom launch (no registered id): only permit an allowlisted
+      // launcher, and never spread the client-supplied env into the child.
+      const adHocCommand = body.command;
+      if (adHocCommand === undefined) {
+        return NextResponse.json(
+          {
+            error: `Unknown MCP: ${mcpId}. Register the MCP first, or supply an allowlisted launcher command.`,
+          },
+          { status: 403 },
+        );
+      }
+      if (!isAllowedAdHocCommand(adHocCommand)) {
+        return NextResponse.json(
+          {
+            error: `Command not permitted for ad-hoc launch. Allowed launchers: ${Array.from(
+              ALLOWED_LAUNCHERS,
+            ).join(", ")}.`,
+          },
+          { status: 400 },
+        );
+      }
+      resolvedCommand = adHocCommand;
+      resolvedArgs = Array.isArray(body.args)
+        ? body.args.filter((a: unknown): a is string => typeof a === "string")
+        : [];
+      resolvedEnv = undefined;
+    }
+
     // Find available port for inspector client (starts from 6274)
     const clientPort = await findAvailablePort(6274);
     const serverPort = clientPort + 3; // Proxy server port
@@ -71,27 +191,25 @@ export async function POST(request: NextRequest) {
     // The inspector can be launched with: npx @modelcontextprotocol/inspector [command] [args...]
     const inspectorArgs: string[] = ["@modelcontextprotocol/inspector"];
 
-    // Add MCP server command if provided (for stdio transport)
-    if (command) {
-      inspectorArgs.push(command);
-      if (args.length > 0) {
-        inspectorArgs.push(...args);
+    // Add the SERVER-RESOLVED MCP server command (for stdio transport)
+    if (resolvedCommand) {
+      inspectorArgs.push(resolvedCommand);
+      if (resolvedArgs.length > 0) {
+        inspectorArgs.push(...resolvedArgs);
       }
     }
 
-    // Set environment variables for ports
-    const processEnv = {
-      ...process.env,
-      ...env,
+    // Explicit minimal env with only the port overrides added (#182).
+    const processEnv = buildChildEnv(resolvedEnv, {
       CLIENT_PORT: clientPort.toString(),
       SERVER_PORT: serverPort.toString(),
-    };
+    });
 
     console.log(`Launching MCP Inspector for ${mcpId} on port ${clientPort}`);
     console.log(`Command: npx ${inspectorArgs.join(" ")}`);
 
     const inspectorProcess = spawn("npx", inspectorArgs, {
-      env: processEnv,
+      env: processEnv as NodeJS.ProcessEnv,
       stdio: ["ignore", "pipe", "pipe"],
       detached: false,
     });
