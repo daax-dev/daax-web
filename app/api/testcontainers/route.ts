@@ -79,12 +79,32 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Image is required" }, { status: 400 });
     }
 
+    // `body` is only TYPED as ContainerCreateRequest — JSON.parse gives no
+    // runtime guarantee, and RegExp#test() (used by isValidDockerImageName)
+    // coerces its argument via ToString(), so a non-string `image`/`tag`
+    // (e.g. `image: 123` -> "123") could otherwise coerce into a string that
+    // passes the pattern. Reject non-string image/tag explicitly, before any
+    // validation/use, with no container created (Copilot review on #190).
+    if (typeof body.image !== "string") {
+      return NextResponse.json(
+        { error: "Image must be a string" },
+        { status: 400 },
+      );
+    }
+    if (body.tag !== undefined && typeof body.tag !== "string") {
+      return NextResponse.json(
+        { error: "Tag must be a string" },
+        { status: 400 },
+      );
+    }
+
     // Validate image name format (same pattern as app/api/docker/pull). Also
-    // validate the fully-qualified image:tag reference so a crafted tag cannot
-    // slip through.
+    // validate the fully-qualified image:tag reference (imageRef) so a
+    // crafted tag cannot slip through.
+    const imageRef = body.tag ? `${body.image}:${body.tag}` : body.image;
     if (
       !isValidDockerImageName(body.image) ||
-      (body.tag && !isValidDockerImageName(`${body.image}:${body.tag}`))
+      (body.tag && !isValidDockerImageName(imageRef))
     ) {
       return NextResponse.json(
         { error: "Invalid image name format" },

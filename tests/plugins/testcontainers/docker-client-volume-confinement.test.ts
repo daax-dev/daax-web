@@ -11,15 +11,19 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { mockCreateContainer, mockPull } = vi.hoisted(() => ({
-  mockCreateContainer: vi.fn(),
-  mockPull: vi.fn(),
-}));
+const { mockCreateContainer, mockPull, mockGetContainer, mockStart } =
+  vi.hoisted(() => ({
+    mockCreateContainer: vi.fn(),
+    mockPull: vi.fn(),
+    mockGetContainer: vi.fn(),
+    mockStart: vi.fn(),
+  }));
 
 vi.mock("dockerode", () => {
   class MockDocker {
     createContainer = mockCreateContainer;
     pull = mockPull;
+    getContainer = mockGetContainer;
     modem = { followProgress: vi.fn() };
   }
   return { default: MockDocker };
@@ -90,5 +94,41 @@ describe("DockerClient.createContainer volume confinement", () => {
     ).rejects.toThrow(/Refusing to create container/);
 
     expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("still builds the correct bind for a valid source after removing the double validation", async () => {
+    // Copilot review on #190: createContainer used to call validateVolumeSource
+    // a second time inside the `.map()` that builds `binds`, duplicating the
+    // realpath/canonicalization work already done by validateVolumes(). This
+    // asserts the single validation pass does not regress a legitimate
+    // (named-volume) mount — the reject tests above are what prove the single
+    // pass still blocks bad sources.
+    const client = new DockerClient();
+    mockPull.mockImplementation((_image: string, cb: (err: Error) => void) =>
+      cb(new Error("pull failed (test stub, ignored by createContainer)")),
+    );
+    mockCreateContainer.mockResolvedValue({ id: "abc123def456", start: mockStart });
+    mockStart.mockResolvedValue(undefined);
+    mockGetContainer.mockReturnValue({
+      inspect: vi.fn().mockResolvedValue({
+        Id: "abc123def456",
+        Name: "/test-container",
+        Config: { Image: "alpine", Labels: {}, Env: [] },
+        State: { Status: "running" },
+        NetworkSettings: { Ports: {} },
+        Mounts: [],
+      }),
+    });
+
+    await client.createContainer({
+      image: "alpine",
+      volumes: [{ source: "pgdata", target: "/var/lib/postgresql/data" }],
+    });
+
+    expect(mockCreateContainer).toHaveBeenCalledTimes(1);
+    const createArgs = mockCreateContainer.mock.calls[0][0];
+    expect(createArgs.HostConfig.Binds).toEqual([
+      "pgdata:/var/lib/postgresql/data",
+    ]);
   });
 });

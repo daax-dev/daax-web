@@ -73,6 +73,31 @@ describe("POST /api/testcontainers validation", () => {
     expect(mockCreateContainer).not.toHaveBeenCalled();
   });
 
+  it("rejects a non-string `image` (number) with 400 and no container", async () => {
+    // Copilot review on #190: a numeric `image` coerces to a string inside
+    // RegExp#test() (e.g. 123 -> "123") and could otherwise slip past
+    // isValidDockerImageName. Must be rejected explicitly as a type error.
+    const res = await POST(req({ image: 123 }));
+    const data = await res.json();
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Image must be a string");
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-string `tag` (number) with 400 and no container", async () => {
+    const res = await POST(req({ image: "alpine", tag: 456 }));
+    const data = await res.json();
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("Tag must be a string");
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("creates a container for a valid string image + tag", async () => {
+    const res = await POST(req({ image: "alpine", tag: "3.19" }));
+    expect(res.status).toBe(201);
+    expect(mockCreateContainer).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects source '/' with 400 and no container", async () => {
     const res = await POST(
       req({ image: "alpine", volumes: [{ source: "/", target: "/host" }] }),

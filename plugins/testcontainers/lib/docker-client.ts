@@ -28,7 +28,7 @@ import {
   PROJECT_LABEL,
   SENSITIVE_PATTERNS,
 } from "../constants";
-import { validateVolumes, validateVolumeSource } from "./volume-validation";
+import { validateVolumes } from "./volume-validation";
 
 /**
  * Check if a key is sensitive and should be redacted
@@ -297,17 +297,21 @@ export class DockerClient {
     // entry), aborts the whole creation (throw before any pull / createContainer)
     // rather than letting `.map` throw an uncontrolled TypeError — so no
     // container is created (#190).
+    //
+    // `validateVolumes` already calls `validateVolumeSource` once per entry
+    // (which does a realpath/canonicalization stat), and it is the sole
+    // authoritative gate at this sink — it fails closed on non-array/malformed
+    // input and remains this check even for callers (e.g. compose) that bypass
+    // the route. Once it passes, every source is already known-good, so `binds`
+    // is built directly from `request.volumes` without re-validating each
+    // source a second time (Copilot review on #190).
     const volumesCheck = validateVolumes(request.volumes);
     if (!volumesCheck.valid) {
       throw new Error(`Refusing to create container: ${volumesCheck.reason}`);
     }
-    const binds = (request.volumes || []).map((v) => {
-      const check = validateVolumeSource(v.source);
-      if (!check.valid) {
-        throw new Error(`Refusing to create container: ${check.reason}`);
-      }
-      return `${v.source}:${v.target}${v.readOnly ? ":ro" : ""}`;
-    });
+    const binds = (request.volumes || []).map(
+      (v) => `${v.source}:${v.target}${v.readOnly ? ":ro" : ""}`,
+    );
 
     const image = request.tag
       ? `${request.image}:${request.tag}`
