@@ -103,17 +103,22 @@ printf '   Pulling %s ... ' "$pinned_ref"
 # control (issue #195), so a silent failure is worse than for the tag pulls above.
 if docker pull "$pinned_ref" >/dev/null; then
   echo "✅ verified (content hash matches pin)"
-  # Advisory: has :latest drifted past the pin?
-  latest_repo_digest="$(digest_of "${REGISTRY}/daax-agents:${TAG}")"
+  # Advisory: has the mutable multi-arch `:latest` tag drifted past the pin?
+  # The pin is a multi-arch manifest-list digest, so this check is only
+  # meaningful against `:latest` (the manifest list). Arch-specific tags
+  # (${TAG}=amd64/arm64) resolve to a per-arch digest that never equals the
+  # manifest-list pin, so we always inspect `:latest` here — NOT `${TAG}`.
+  latest_tag="${REGISTRY}/daax-agents:latest"
+  latest_repo_digest="$(digest_of "$latest_tag")"
   case "$latest_repo_digest" in
     *"@${PINNED_AGENT_DIGEST}")
-      echo "   ℹ️  ${REGISTRY}/daax-agents:${TAG} still matches the pinned digest."
+      echo "   ℹ️  ${latest_tag} still matches the pinned digest."
       ;;
     "")
-      echo "   ℹ️  ${REGISTRY}/daax-agents:${TAG} not present locally; skipping drift check."
+      echo "   ℹ️  ${latest_tag} not present locally; skipping drift check."
       ;;
     *)
-      echo "   ⚠️  ${REGISTRY}/daax-agents:${TAG} has moved past the pinned digest."
+      echo "   ⚠️  ${latest_tag} has moved past the pinned digest."
       echo "       latest -> ${latest_repo_digest}"
       echo "       pinned -> ${PINNED_AGENT_DIGEST}"
       echo "       Review and bump DEFAULT_CONTAINER_IMAGE in server/config/constants.ts"
