@@ -165,7 +165,15 @@ services:
       # Code-Server URL - set to your domain
       - NEXT_PUBLIC_CODE_SERVER_URL=${CODE_SERVER_URL:-https://daax-code.${HOSTNAME}.poley.dev/?folder=/workspace}
 
-      # Container image for AI tools
+      # Container image for AI tools.
+      # DEFERRED (#195): default is a mutable :latest tag. Digest-pinning
+      # (jpoley/daax-agents@sha256:...) is pending registry access to resolve the
+      # digest offline (do not invent one — it would break the pull). The rest of
+      # #195 — mounting host Claude/OpenCode credentials read-only vs read-write,
+      # and digest-verification in refresh-agent-images.sh — lives in the spawn
+      # logic (server/handlers/connection-handler.ts, server/config/constants.ts,
+      # scripts/refresh-agent-images.sh), NOT in compose, so it belongs to the
+      # server/route lane, not this infra change.
       - CLAUDE_CONTAINER_IMAGE=${CLAUDE_CONTAINER_IMAGE:-jpoley/daax-agents:latest}
 
       # Docker network for spawned containers. Must track the real external
