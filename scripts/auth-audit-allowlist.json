@@ -16,7 +16,6 @@
     "devcontainer",
     "ec/pub/[channel]",
     "mcp/tools",
-    "plugins/mcp-inspector",
-    "settings/debug"
+    "plugins/mcp-inspector"
   ]
 }

@@ -3,6 +3,7 @@ import { readdirSync, existsSync, type Dirent } from "fs";
 import { join } from "path";
 import { getSettings } from "@/lib/settings";
 import { expandPath } from "@/lib/path-utils";
+import { requireAuth } from "@/lib/auth";
 
 interface GitProject {
   name: string;
@@ -136,6 +137,9 @@ function walk(
 }
 
 export async function GET(request: Request) {
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     // Get basePath from query param if provided (for real-time updates)
     const { searchParams } = new URL(request.url);
