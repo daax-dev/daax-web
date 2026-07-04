@@ -94,7 +94,31 @@ http:
       entryPoints:
         - websecure
 
-    # Clawdbot Gateway (no auth - has its own token auth)
+    # Clawdbot Gateway
+    #
+    # pocket-id-auth (Pocket ID passkey ForwardAuth) is INTENTIONALLY EXCLUDED
+    # from this router — unlike daax / daax-ws / daax-code above (issue #202, L5).
+    #
+    # Why excluded:
+    #   - Clawdbot is an AI agent orchestrator / bot gateway. It is reached by
+    #     NON-BROWSER clients (webhooks, API callers, service-to-service) in
+    #     addition to the daax /bot iframe. Those clients cannot perform an
+    #     interactive passkey login, so Pocket ID forward-auth would break them.
+    #   - The gateway authenticates every request with its OWN mandatory bearer
+    #     token (CLAWD_GATEWAY_TOKEN). daax's /bot page fetches that token from
+    #     /api/clawd/token (itself gated by requireAuth, #188) and hands it to
+    #     the embedded gateway iframe. Token auth — not a passkey session — is
+    #     the design's authentication primitive for this host.
+    #
+    # Compensating control (the SOLE protection for this host):
+    #   The Clawdbot gateway's own bearer-token auth. Its strength depends
+    #   entirely on that token being mandatory (no bypass) and a strong,
+    #   non-default secret.
+    #
+    # OPERATOR RESPONSIBILITY (out-of-band — cannot be verified from this repo;
+    # the gateway is a separate project, ~/clawd): confirm the Clawdbot gateway
+    # rejects requests with no/invalid token and that CLAWD_GATEWAY_TOKEN is a
+    # strong, non-default secret (#202 AC#2).
     clawd:
       rule: Host(`clawd.HOSTNAME_PLACEHOLDER.poley.dev`)
       service: clawd
