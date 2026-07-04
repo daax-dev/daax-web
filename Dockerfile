@@ -20,11 +20,11 @@
 # - ~/.mcp.json is only read by the app to discover MCP servers, so read-only (:ro)
 #   access is sufficient and recommended.
 
-# TODO(#203): digest-pin (node:22-bookworm-slim@sha256:...) so a registry-side
-# tag update cannot silently change the base. Deferred: resolving the digest
-# needs registry access; not inventing one (it would break the build). Pair with
-# a Renovate/Dependabot cadence to bump the pin and still get security patches.
-FROM node:22-bookworm-slim AS base
+# Digest-pinned base image (#203) so a registry-side tag update cannot silently
+# change the base. The digest is the multi-arch index digest (works on amd64 +
+# arm64). Bump via Renovate/Dependabot to keep getting security patches; the tag
+# is retained in the reference for readability.
+FROM node:22-bookworm-slim@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4 AS base
 
 # Install dependencies and build tools for node-pty native compilation
 RUN apt-get update && \
