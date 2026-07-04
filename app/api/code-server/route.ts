@@ -28,8 +28,17 @@ function pathNodeExists(p: string): boolean {
   try {
     lstatSync(p);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    // Only a genuine miss (ENOENT) means "this node does not exist" and lets
+    // the walk-up CONTINUE to the parent. ANY other lstat error (EACCES/EPERM/
+    // ELOOP/ENOTDIR/…) means the node is present-but-inaccessible: report it as
+    // existing so the walk STOPS here and realpathSync is forced to run — which
+    // then throws, making canonicalizeForConfine return null (reject). Treating
+    // every error as "absent" would let the walk skip past an inaccessible
+    // ancestor, re-append its segments, and canonicalize a path we could not
+    // actually verify — defeating the fail-closed intent (Copilot #183).
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    return true;
   }
 }
 

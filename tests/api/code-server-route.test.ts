@@ -20,15 +20,68 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, realpathSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-const { mockSpawn, mockExecFileSync, mockRequireAuth, mockSettings } =
-  vi.hoisted(() => ({
+const {
+  mockSpawn,
+  mockExecFileSync,
+  mockRequireAuth,
+  mockSettings,
+  fsErr,
+  fsMockModule,
+} = vi.hoisted(() => {
+  // Mutable control: a test opts in by setting `fsErr.path`, then lstatSync and
+  // realpathSync throw the (non-ENOENT) `fsErr.code` for exactly that path.
+  const fsErr = { path: null as string | null, code: "EACCES" as string };
+  // Real fs, resolved synchronously (Node 22) so the mock can delegate every
+  // other call — the symlink-escape tests below need genuine mkdtemp/symlink/
+  // realpath behavior. Built entirely inside vi.hoisted so it is available when
+  // the hoisted vi.mock factory runs.
+  const realFs = (
+    process as unknown as {
+      getBuiltinModule: (m: string) => typeof import("fs");
+    }
+  ).getBuiltinModule("fs");
+  const maybeThrow = (p: unknown) => {
+    if (fsErr.path && p === fsErr.path) {
+      const e = new Error(`simulated ${fsErr.code}`) as NodeJS.ErrnoException;
+      e.code = fsErr.code;
+      throw e;
+    }
+  };
+  const lstatSyncMock = (p: string, ...rest: unknown[]) => {
+    maybeThrow(p);
+    return (realFs.lstatSync as (...a: unknown[]) => unknown)(p, ...rest);
+  };
+  const realpathSyncMock = (p: string, ...rest: unknown[]) => {
+    maybeThrow(p);
+    return (realFs.realpathSync as (...a: unknown[]) => unknown)(p, ...rest);
+  };
+  const fsMockModule = {
+    ...realFs,
+    lstatSync: lstatSyncMock,
+    realpathSync: realpathSyncMock,
+    default: {
+      ...realFs,
+      lstatSync: lstatSyncMock,
+      realpathSync: realpathSyncMock,
+    },
+  };
+  return {
     mockSpawn: vi.fn(),
     mockExecFileSync: vi.fn(),
     mockRequireAuth: vi.fn(),
     // Mutable so a test can point the server workspace root at a real temp dir
     // (needed for the realpath / symlink-escape checks). Reset in beforeEach.
     mockSettings: { basePath: "~/prj" },
-  }));
+    fsErr,
+    fsMockModule,
+  };
+});
+
+// Wrap fs so lstatSync/realpathSync throw the configured (non-ENOENT) error for
+// one target path, delegating to the real fs for everything else. Both "fs" and
+// "node:fs" are mocked because the route may resolve to either after transform.
+vi.mock("fs", () => fsMockModule);
+vi.mock("node:fs", () => fsMockModule);
 
 vi.mock("child_process", async () => {
   const actual =
@@ -140,6 +193,9 @@ describe("/api/code-server", () => {
     });
     // Restore the default (non-existent) server root; symlink tests override it.
     mockSettings.basePath = "~/prj";
+    // No injected fs error unless a test opts in.
+    fsErr.path = null;
+    fsErr.code = "EACCES";
   });
 
   afterEach(() => {
@@ -265,6 +321,39 @@ describe("/api/code-server", () => {
       try {
         const response = await POST(
           startRequest({ action: "start", project: "escape" }),
+        );
+        const data = await response.json();
+
+        expect(response.status).toBe(400);
+        expect(data.error).toBe("Path not allowed");
+        expect(mockSpawn).not.toHaveBeenCalled();
+      } finally {
+        rmSync(tmpBase, { recursive: true, force: true });
+      }
+    });
+
+    it("fails closed (400) when an ancestor lstat/realpath errors non-ENOENT", async () => {
+      installDockerMock(true);
+
+      // Real server root so its own canonicalization succeeds; the block happens
+      // on an INTERMEDIATE ancestor of the (not-yet-existing) target dir.
+      const tmpBase = mkdtempSync(join(tmpdir(), "cs-confine-eacces-"));
+      const realRoot = join(tmpBase, "root");
+      mkdirSync(realRoot);
+      mockSettings.basePath = realRoot;
+
+      // Target = <root>/blocked/proj (proj does not exist → walk-up starts).
+      // Inject EACCES on the `blocked` ancestor for BOTH lstat and realpath,
+      // mirroring a permission-denied dir. Pre-fix, the walk-up treated this as
+      // "absent" and re-appended `blocked/proj` onto the realpath'd root,
+      // returning a NON-null canonicalization → mount allowed. Post-fix, the
+      // walk stops and realpath throws → canonicalize returns null → reject.
+      fsErr.path = join(realRoot, "blocked");
+      fsErr.code = "EACCES";
+
+      try {
+        const response = await POST(
+          startRequest({ action: "start", project: "blocked/proj" }),
         );
         const data = await response.json();
 
