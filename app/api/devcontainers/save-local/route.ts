@@ -8,6 +8,9 @@ import { NextResponse } from "next/server";
 import { writeFile, mkdir } from "fs/promises";
 import { join, dirname } from "path";
 import { existsSync } from "fs";
+import { requireAuth } from "@/lib/auth";
+import { confineToRoot, PathConfinementError } from "@/lib/path-confine";
+import { expandPath, getSettings } from "@/lib/settings";
 
 interface SaveLocalRequest {
   // Project path relative to workspace root (e.g., "ps/daax")
@@ -22,26 +25,32 @@ interface SaveLocalRequest {
   basePath?: string;
 }
 
-// Resolve workspace path (handle ~ and container paths)
-function resolveWorkspacePath(basePath: string, projectPath: string): string {
-  // In container mode, /workspace is the mount point
-  const workspaceRoot = process.env.HOST_WORKSPACE_PATH
+// Resolve the CONFIGURED workspace root (server-side settings, never the
+// request body). The untrusted `project` segment is NOT joined here — it is
+// confined separately below so a traversal payload cannot escape this root.
+//
+// Security: the root must come from server config, not the client. Deriving it
+// from a request-body `basePath` would let an attacker set the root to its own
+// target (e.g. `/etc`), making confinement a no-op in host-dev mode.
+function resolveWorkspaceRoot(): string {
+  // In container mode, /workspace is the mount point.
+  return process.env.HOST_WORKSPACE_PATH
     ? "/workspace"
-    : basePath.replace(/^~/, process.env.HOME || "");
-
-  return join(workspaceRoot, projectPath);
+    : expandPath(getSettings().basePath);
 }
 
 export async function POST(request: Request) {
+  // Require authentication before parsing the body or touching the filesystem.
+  const auth = await requireAuth();
+  if (!auth.authenticated) {
+    return auth.response;
+  }
+
   try {
     const body: SaveLocalRequest = await request.json();
-    const {
-      project,
-      name,
-      devcontainerJson,
-      destination,
-      basePath = "~/prj",
-    } = body;
+    // Note: `body.basePath` is intentionally ignored for path resolution — the
+    // confinement root is derived from server config only (see resolveWorkspaceRoot).
+    const { project, name, devcontainerJson, destination } = body;
 
     if (!project) {
       return NextResponse.json(
@@ -71,7 +80,22 @@ export async function POST(request: Request) {
       );
     }
 
-    const fullProjectPath = resolveWorkspacePath(basePath, project);
+    // Confine the client-controlled `project` to the workspace root: reject any
+    // value that resolves (after normalization) outside the root. This blocks
+    // `../../…` traversal and absolute-path escapes before any write.
+    const workspaceRoot = resolveWorkspaceRoot();
+    let fullProjectPath: string;
+    try {
+      fullProjectPath = confineToRoot(workspaceRoot, project);
+    } catch (err) {
+      if (err instanceof PathConfinementError) {
+        return NextResponse.json(
+          { error: "Project path escapes the workspace root" },
+          { status: 403 },
+        );
+      }
+      throw err;
+    }
 
     // Sanitize the name for use as a directory name
     const safeName = name

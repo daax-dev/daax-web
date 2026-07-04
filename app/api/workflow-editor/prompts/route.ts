@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
 import { expandPath, getSettings } from "@/lib/settings";
+import { confineToRoot, PathConfinementError } from "@/lib/path-confine";
+import { requireAuth } from "@/lib/auth";
 
 interface PromptInfo {
   name: string;
@@ -207,6 +209,12 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
+  // Require authentication before parsing the body or touching the filesystem.
+  const auth = await requireAuth();
+  if (!auth.authenticated) {
+    return auth.response;
+  }
+
   try {
     const body = await request.json();
     const { name, content, model, category } = body as {
@@ -229,28 +237,42 @@ export async function PUT(request: NextRequest) {
 
     let filePath: string;
     let command: string;
+    // Confine relative to the CONCRETE prompts/commands root, not the broad
+    // workspace root. Workspace-root confinement only blocks workspace ESCAPE;
+    // a `name`/`category` like `../../..` stays inside the workspace but escapes
+    // the intended prompts/commands subtree. Passing `category` and `name` as
+    // separate segments under the concrete root guarantees the resolved path
+    // stays under that root (e.g. `.claude/commands`). Note: `category` is a
+    // free, unvalidated segment, so a client can target any category by naming
+    // it directly; the confinement guarantees containment to the commands root,
+    // not isolation between sibling categories (not an enforced boundary here).
+    let promptsRoot: string;
+    let segments: string[];
 
     if (model === "copilot") {
       // Copilot prompts are in .github/prompts
-      filePath = path.join(
-        flowspecPath,
-        ".github",
-        "prompts",
-        name + ".prompt.md",
-      );
+      promptsRoot = path.join(flowspecPath, ".github", "prompts");
+      segments = [name + ".prompt.md"];
       const parsed = parseCopilotPromptName(name + ".prompt.md");
       command = parsed.command;
     } else {
       // Claude prompts - determine directory from category
       const cat = category || "flow";
-      filePath = path.join(
-        flowspecPath,
-        ".claude",
-        "commands",
-        cat,
-        name + ".md",
-      );
+      promptsRoot = path.join(flowspecPath, ".claude", "commands");
+      segments = [cat, name + ".md"];
       command = `/${cat}:${name.replace(/^_/, "")}`;
+    }
+
+    try {
+      filePath = confineToRoot(promptsRoot, ...segments);
+    } catch (err) {
+      if (err instanceof PathConfinementError) {
+        return NextResponse.json(
+          { error: "Prompt path escapes the prompts directory" },
+          { status: 403 },
+        );
+      }
+      throw err;
     }
 
     // Write the updated content
