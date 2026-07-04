@@ -5,8 +5,65 @@ import { expandPath, isValidPort } from "@/lib/path-utils";
 import { getSettings } from "@/lib/settings";
 import { requireAuth } from "@/lib/auth";
 import { confineToRoot, PathConfinementError } from "@/lib/path-confine";
+import { lstatSync, realpathSync } from "fs";
+import { basename, dirname, join, resolve, sep } from "path";
 
 const CONTAINER_NAME = "daax-code-server";
+
+// --- Realpath confinement (route-local; #183 Copilot follow-up) ---
+// The lexical `confineToRoot` used below rejects `..`/absolute-path escapes but
+// does NOT dereference symlinks: a symlink INSIDE the server root that points
+// outside it passes the lexical check yet would mount an out-of-root host dir
+// RW into the code-server container. This is the high-stakes case, so a second
+// realpath-canonicalized gate re-checks the boundary. It is kept LOCAL to this
+// route; the shared lib/path-confine.ts (used by 7 other routes) is unchanged.
+//
+// Mirrors the vetted walk-up technique in lib/worktree-manager.ts: realpath the
+// longest EXISTING ancestor (dereferencing parent symlinks), then re-append any
+// not-yet-existing trailing segments. The existence check uses lstat (no follow)
+// so a dangling symlink STOPS the walk instead of being skipped. Fails CLOSED
+// (returns null) when canonicalization is impossible; callers treat null as
+// reject rather than fall back to an un-dereferenced lexical form.
+function pathNodeExists(p: string): boolean {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function canonicalizeForConfine(p: string): string | null {
+  const resolved = resolve(p);
+  let existing = resolved;
+  const trailing: string[] = [];
+  while (!pathNodeExists(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) return null; // no existing ancestor (defensive)
+    trailing.unshift(basename(existing));
+    existing = parent;
+  }
+  try {
+    const realAncestor = realpathSync(existing);
+    return trailing.length > 0 ? join(realAncestor, ...trailing) : realAncestor;
+  } catch {
+    // realpath failure (EACCES / ELOOP / TOCTOU). Fail closed — do NOT return
+    // the lexical form, which would leave parent symlinks un-dereferenced.
+    return null;
+  }
+}
+
+// Realpath-canonicalized confinement check: true only when `target` resolves to
+// a location equal to or strictly inside the realpath'd `root`.
+function isWithinRealRoot(root: string, target: string): boolean {
+  const realRoot = canonicalizeForConfine(root);
+  const realTarget = canonicalizeForConfine(target);
+  if (realRoot === null || realTarget === null) return false;
+  // When the root canonicalizes to "/", every absolute path is inside it; the
+  // trailing-separator boundary below would build "//" and reject everything.
+  if (realRoot === sep) return true;
+  return realTarget === realRoot || realTarget.startsWith(realRoot + sep);
+}
 
 // Default VS Code settings for code-server (dark theme)
 const DEFAULT_VSCODE_SETTINGS = JSON.stringify(
@@ -235,13 +292,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   try {
     const body = await request.json();
-    const {
-      action,
-      port = 18080,
-      project,
-      projectType,
-      hostPath,
-    } = body;
+    const { action, port = 18080, project, projectType, hostPath } = body;
 
     if (action === "start") {
       // Validate the client-chosen host bind port before it reaches docker.
@@ -347,6 +398,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           );
         }
         throw err;
+      }
+
+      // Second gate (#183 Copilot follow-up): realpath-canonicalized confinement.
+      // The lexical check above cannot see symlinks; a symlink INSIDE the server
+      // root pointing outside it would otherwise mount an out-of-root host dir.
+      // Both passes must hold before spawning (belt-and-suspenders / TOCTOU-cheap
+      // lexical first, then symlink-dereferencing realpath).
+      if (!isWithinRealRoot(serverRoot, hostWorkspace)) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Path not allowed",
+          },
+          { status: 400 },
+        );
       }
       console.log(
         `code-server: project=${project}, hostWorkspace=${hostWorkspace}, containerPath=${containerPath}`,

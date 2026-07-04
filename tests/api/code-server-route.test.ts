@@ -16,12 +16,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 import { EventEmitter } from "events";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, realpathSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 
-const { mockSpawn, mockExecFileSync, mockRequireAuth } = vi.hoisted(() => ({
-  mockSpawn: vi.fn(),
-  mockExecFileSync: vi.fn(),
-  mockRequireAuth: vi.fn(),
-}));
+const { mockSpawn, mockExecFileSync, mockRequireAuth, mockSettings } =
+  vi.hoisted(() => ({
+    mockSpawn: vi.fn(),
+    mockExecFileSync: vi.fn(),
+    mockRequireAuth: vi.fn(),
+    // Mutable so a test can point the server workspace root at a real temp dir
+    // (needed for the realpath / symlink-escape checks). Reset in beforeEach.
+    mockSettings: { basePath: "~/prj" },
+  }));
 
 vi.mock("child_process", async () => {
   const actual =
@@ -42,7 +49,7 @@ vi.mock("@/lib/auth", () => ({
 // Server-side workspace root is "~/prj"; the route must use THIS, never the
 // request body's basePath.
 vi.mock("@/lib/settings", () => ({
-  getSettings: () => ({ basePath: "~/prj" }),
+  getSettings: () => ({ basePath: mockSettings.basePath }),
 }));
 
 // Deterministic ~ expansion for the security check; keep the real isValidPort.
@@ -131,6 +138,8 @@ describe("/api/code-server", () => {
       authenticated: true,
       user: { authenticated: true },
     });
+    // Restore the default (non-existent) server root; symlink tests override it.
+    mockSettings.basePath = "~/prj";
   });
 
   afterEach(() => {
@@ -232,6 +241,71 @@ describe("/api/code-server", () => {
       expect(response.status).toBe(400);
       expect(data.error).toBe("Path not allowed");
       expect(mockSpawn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("symlink-escape confinement (#183 realpath hardening)", () => {
+    it("rejects a symlink inside the root that points outside it with 400", async () => {
+      installDockerMock(true);
+
+      // Real temp dirs so realpathSync resolves the symlink for real.
+      const tmpBase = mkdtempSync(join(tmpdir(), "cs-confine-"));
+      const realRoot = join(tmpBase, "root");
+      const outside = join(tmpBase, "outside");
+      mkdirSync(realRoot);
+      mkdirSync(outside);
+      // A symlink INSIDE the server root pointing OUTSIDE it. Lexically it looks
+      // in-root (passes confineToRoot); realpath dereferences it to `outside`,
+      // so the realpath gate must reject the mount.
+      symlinkSync(outside, join(realRoot, "escape"));
+
+      // Point the server workspace root at the real temp dir.
+      mockSettings.basePath = realRoot;
+
+      try {
+        const response = await POST(
+          startRequest({ action: "start", project: "escape" }),
+        );
+        const data = await response.json();
+
+        expect(response.status).toBe(400);
+        expect(data.error).toBe("Path not allowed");
+        expect(mockSpawn).not.toHaveBeenCalled();
+      } finally {
+        rmSync(tmpBase, { recursive: true, force: true });
+      }
+    });
+
+    it("allows a real (non-symlinked) project dir inside the root", async () => {
+      installDockerMock(true);
+
+      const tmpBase = mkdtempSync(join(tmpdir(), "cs-confine-ok-"));
+      mkdirSync(join(tmpBase, "root"));
+      // realpath the root so the expected mount matches the route's realpath'd
+      // output even if os.tmpdir() itself is symlinked (e.g. /tmp -> /private/tmp).
+      const realRoot = realpathSync(join(tmpBase, "root"));
+      mkdirSync(join(realRoot, "proj"));
+      mockSettings.basePath = realRoot;
+
+      try {
+        const responsePromise = POST(
+          startRequest({ action: "start", project: "proj" }),
+        );
+        await new Promise((r) => setTimeout(r, 10));
+        mockProcess.stdout.emit("data", Buffer.from("cid\n"));
+        mockProcess.emit("close", 0);
+
+        const response = await responsePromise;
+        const data = await response.json();
+
+        expect(data.success).toBe(true);
+        expect(mockSpawn).toHaveBeenCalled();
+        const args = mockSpawn.mock.calls[0][1] as string[];
+        const mountArg = args[args.indexOf("-v") + 1];
+        expect(mountArg).toBe(`${join(realRoot, "proj")}:/workspace`);
+      } finally {
+        rmSync(tmpBase, { recursive: true, force: true });
+      }
     });
   });
 
