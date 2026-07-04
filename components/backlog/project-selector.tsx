@@ -2,7 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useBacklog } from "./backlog-context";
-import { getSettings, subscribeToSettings } from "@/lib/settings";
+import {
+  getSettings,
+  subscribeToSettings,
+  type DaaxSettings,
+} from "@/lib/settings";
 import {
   ancestorPaths,
   buildBacklogProjectTree,
@@ -23,26 +27,26 @@ import { cn } from "@/lib/utils";
 
 // Label for the container workspace root: the basename of the configured base
 // path (e.g. ~/jarvis -> "jarvis"), so the tree reflects the real workspace
-// instead of a hardcoded "prj".
-function workspaceRootLabel(): string {
-  const basePath = getSettings().basePath || "";
+// instead of a hardcoded "prj". Pure — derived from a basePath value the caller
+// holds in component state, never by reading settings during render.
+function basePathLabel(basePath: string): string {
   const name = basePath.replace(/\/+$/, "").split("/").pop();
   return name || "workspace";
 }
 
 // Extract last directory segment from a path. Handles container mode where
-// /workspace maps to the configured base path's directory name.
-function getDirectoryName(path: string): string {
+// /workspace maps to the configured workspace root label (passed in from state).
+function getDirectoryName(path: string, workspaceLabel: string): string {
   const cleaned = path.replace(/\/+$/, "");
-  if (cleaned === "/workspace") return workspaceRootLabel();
+  if (cleaned === "/workspace") return workspaceLabel;
   const segments = cleaned.split("/");
   return segments[segments.length - 1] || path;
 }
 
 // Display label for a node: the root project shows the friendly base name.
-function nodeLabel(node: BacklogTreeNode): string {
+function nodeLabel(node: BacklogTreeNode, workspaceLabel: string): string {
   if (node.name === "" && node.project)
-    return getDirectoryName(node.project.path);
+    return getDirectoryName(node.project.path, workspaceLabel);
   return node.segment;
 }
 
@@ -54,6 +58,7 @@ function BacklogTreeItem({
   depth,
   selectedPath,
   expandedFolders,
+  workspaceLabel,
   onToggle,
   onSelect,
 }: {
@@ -61,6 +66,7 @@ function BacklogTreeItem({
   depth: number;
   selectedPath: string | null;
   expandedFolders: Set<string>;
+  workspaceLabel: string;
   onToggle: (name: string) => void;
   onSelect: (path: string) => void;
 }) {
@@ -116,7 +122,7 @@ function BacklogTreeItem({
             )}
           />
           <span className={cn("flex-1 truncate", isActive && "font-medium")}>
-            {nodeLabel(node)}
+            {nodeLabel(node, workspaceLabel)}
           </span>
           {isProject && (
             <span className="shrink-0 text-xs text-muted-foreground">
@@ -135,6 +141,7 @@ function BacklogTreeItem({
               depth={depth + 1}
               selectedPath={selectedPath}
               expandedFolders={expandedFolders}
+              workspaceLabel={workspaceLabel}
               onToggle={onToggle}
               onSelect={onSelect}
             />
@@ -173,6 +180,22 @@ export function ProjectSelector() {
     setDisabledDirs(getSettings().disabledProjectDirs ?? []);
     return subscribeToSettings((s) =>
       setDisabledDirs(s.disabledProjectDirs ?? []),
+    );
+  }, []);
+
+  // Seed the container workspace-root label once from settings, then keep it in
+  // sync via subscribeToSettings. Deriving it here (not in render) keeps the
+  // tree/trigger label render-pure: getSettings() reads localStorage and can
+  // write during migrations, so it must not run per-node during a paint.
+  const [workspaceLabel, setWorkspaceLabel] = useState<string>(() =>
+    typeof window === "undefined"
+      ? "workspace"
+      : basePathLabel(getSettings().basePath ?? ""),
+  );
+  useEffect(() => {
+    setWorkspaceLabel(basePathLabel(getSettings().basePath ?? ""));
+    return subscribeToSettings((s: DaaxSettings) =>
+      setWorkspaceLabel(basePathLabel(s.basePath ?? "")),
     );
   }, []);
 
@@ -310,7 +333,7 @@ export function ProjectSelector() {
     : visibleProjects[0];
   const triggerLabel = effectiveSelectedProject
     ? effectiveSelectedProject.path === workspaceBase
-      ? getDirectoryName(effectiveSelectedProject.path)
+      ? getDirectoryName(effectiveSelectedProject.path, workspaceLabel)
       : effectiveSelectedProject.name
     : "Select a project";
 
@@ -352,6 +375,7 @@ export function ProjectSelector() {
                   depth={0}
                   selectedPath={effectiveSelectedProject?.path ?? null}
                   expandedFolders={expandedFolders}
+                  workspaceLabel={workspaceLabel}
                   onToggle={toggleFolder}
                   onSelect={selectProject}
                 />
