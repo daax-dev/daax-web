@@ -10,9 +10,15 @@ import { NextRequest } from "next/server";
 import { EventEmitter } from "events";
 
 // Create mock spawn function using vi.hoisted() so it's available when vi.mock runs
-const { mockSpawn } = vi.hoisted(() => ({
+const { mockSpawn, mockRequireAuth } = vi.hoisted(() => ({
   mockSpawn: vi.fn(),
+  mockRequireAuth: vi.fn(),
 }));
+
+// Guard added in #197: mock auth as authenticated so these streaming/validation
+// tests exercise the handler past the requireAuth() gate deterministically
+// (independent of DAAX_REQUIRE_AUTH / the host-dev LOCAL_OPERATOR bypass).
+vi.mock("@/lib/auth", () => ({ requireAuth: mockRequireAuth }));
 
 // Mock child_process.spawn (ESM requires default export)
 vi.mock("child_process", async () => {
@@ -48,6 +54,17 @@ describe("/api/docker/pull", () => {
     });
 
     mockSpawn.mockReturnValue(mockProcess as never);
+
+    mockRequireAuth.mockResolvedValue({
+      authenticated: true,
+      user: {
+        username: "tester",
+        email: null,
+        groups: [],
+        authenticated: true,
+        pictureUrl: null,
+      },
+    });
   });
 
   afterEach(() => {

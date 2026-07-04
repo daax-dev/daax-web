@@ -5,6 +5,7 @@ import {
   saveTemplate,
   deleteTemplate,
 } from "@/lib/api-tools/storage";
+import { requireAuth } from "@/lib/auth";
 
 // Valid API types for templates
 const VALID_API_TYPES = [
@@ -73,6 +74,10 @@ export async function GET(request: NextRequest) {
  * Body: { type: string, name: string, data: object }
  */
 export async function POST(request: NextRequest) {
+  // Template write requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   if (!isSubFeatureVisible("ai-coding", "api-tools")) {
     return NextResponse.json({ error: "Feature not enabled" }, { status: 404 });
   }
@@ -142,6 +147,10 @@ export async function POST(request: NextRequest) {
  * Delete a template
  */
 export async function DELETE(request: NextRequest) {
+  // Template deletion requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   if (!isSubFeatureVisible("ai-coding", "api-tools")) {
     return NextResponse.json({ error: "Feature not enabled" }, { status: 404 });
   }

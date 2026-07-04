@@ -7,6 +7,7 @@ import {
 } from "@/lib/releases-db";
 import { DEFAULT_PLUGINS } from "@/lib/settings";
 import { generateRealSbom } from "@/lib/sbom-syft";
+import { requireAuth } from "@/lib/auth";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -14,6 +15,10 @@ interface RouteContext {
 
 // POST /api/releases/[id]/build - Trigger Docker build
 export async function POST(request: NextRequest, context: RouteContext) {
+  // Docker build trigger requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { id } = await context.params;
     const release = await getRelease(id);

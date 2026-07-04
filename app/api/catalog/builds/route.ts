@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { getAllBuildSpecs, createBuildSpec } from "@/lib/catalog";
 import type { ListBuildsResponse, BuildSpec } from "@/types/catalog";
+import { requireAuth } from "@/lib/auth";
 
 export async function GET() {
   try {
@@ -28,6 +29,10 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  // Build spec creation requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const body = await request.json();
 

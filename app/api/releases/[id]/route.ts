@@ -6,6 +6,7 @@ import {
   getReleaseShares,
   getFeatureSnapshots,
 } from "@/lib/releases-db";
+import { requireAuth } from "@/lib/auth";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -40,6 +41,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
 // PUT /api/releases/[id] - Update a release
 export async function PUT(request: NextRequest, context: RouteContext) {
+  // Release update requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { id } = await context.params;
     const body = await request.json();
@@ -62,6 +67,10 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
 // DELETE /api/releases/[id] - Delete a release
 export async function DELETE(request: NextRequest, context: RouteContext) {
+  // Release deletion requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { id } = await context.params;
     const deleted = await deleteRelease(id);

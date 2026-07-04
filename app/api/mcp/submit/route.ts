@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { submitMcp, getSubmissions } from "@/lib/mcp-registry";
 import type { McpCategory } from "@/types/mcp";
+import { requireAuth } from "@/lib/auth";
 
 // GET /api/mcp/submit - List submissions
 export async function GET(request: NextRequest) {
@@ -33,6 +34,10 @@ export async function GET(request: NextRequest) {
 
 // POST /api/mcp/submit - Submit new MCP for approval
 export async function POST(request: NextRequest) {
+  // Registry submission write requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const body = await request.json();
 

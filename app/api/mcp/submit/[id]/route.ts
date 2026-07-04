@@ -4,6 +4,7 @@ import {
   rejectSubmission,
   getSubmissions,
 } from "@/lib/mcp-registry";
+import { requireAuth } from "@/lib/auth";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -38,6 +39,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
 // POST /api/mcp/submit/[id] - Approve or reject submission
 export async function POST(request: NextRequest, { params }: RouteParams) {
+  // Submission approval/rejection write requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { id } = await params;
     const body = await request.json();

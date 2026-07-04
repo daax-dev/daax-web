@@ -9,8 +9,14 @@ import {
 } from "@/lib/mcp-gateway";
 import { discoverAllMcps, type McpDiscoveryResult } from "@/lib/mcp-discovery";
 import { syncDiscoveredMcps } from "@/lib/mcp-gateway";
+import { requireAuth } from "@/lib/auth";
 
 export async function GET(request: Request) {
+  // GET mutates gateway state when ?discover=true (syncDiscoveredMcps), so it
+  // requires authentication like the write handlers (#197).
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { searchParams } = new URL(request.url);
     const view = searchParams.get("view"); // "all" | "enabled" | "recommended"
@@ -75,6 +81,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  // Gateway config mutation requires authentication (#197)
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const body = await request.json();
     const { action } = body;
