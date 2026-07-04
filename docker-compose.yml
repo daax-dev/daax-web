@@ -72,6 +72,21 @@ services:
       migrate:
         condition: service_completed_successfully
 
+    # Hardening (#185). no-new-privileges blocks setuid/setgid escalation from
+    # any process inside the container (bounds the blast radius of an in-app RCE).
+    # NOT YET done (require verification we cannot do offline, and would break
+    # functionality if applied naively):
+    #   - Non-root USER: the app needs docker.sock access to spawn agent
+    #     containers; the socket is root:docker, so a non-root USER must join the
+    #     docker group with a GID matching the HOST socket (DOCKER_GID build arg +
+    #     group_add). Applying `USER node` without that alignment breaks spawning.
+    #   - cap_drop: [ALL]: the app writes the host-owned .claude.json mounted :rw,
+    #     which a uid-0 process needs CAP_DAC_OVERRIDE for — a blanket drop would
+    #     break MCP config writes. Requires per-capability analysis + a live test.
+    # See #185 follow-up: non-root + docker-GID alignment + scoped cap_drop.
+    security_opt:
+      - no-new-privileges:true
+
     ports:
       - "4200:4200"
       - "4201:4201"
