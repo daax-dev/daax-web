@@ -16,16 +16,32 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 
-const { mockRequireAuth, mockGetSettings } = vi.hoisted(() => ({
-  mockRequireAuth: vi.fn(),
-  mockGetSettings: vi.fn(),
-}));
+const { mockRequireAuth, mockGetSettings, mockExistsSync, mockReaddirSync } =
+  vi.hoisted(() => ({
+    mockRequireAuth: vi.fn(),
+    mockGetSettings: vi.fn(),
+    mockExistsSync: vi.fn(),
+    mockReaddirSync: vi.fn(),
+  }));
 
 vi.mock("@/lib/auth", () => ({ requireAuth: mockRequireAuth }));
 vi.mock("@/lib/settings", () => ({
   getSettings: mockGetSettings,
   DEFAULT_SETTINGS: { basePath: "~/prj" },
 }));
+// Mock the filesystem so the authed happy-path for /api/workspace (which does a
+// directory walk() via existsSync/readdirSync) and /api/test-path stay hermetic.
+// Everything else on `fs` is passed through untouched. Both named and default
+// exports are overridden — the routes import named bindings, but esbuild interop
+// may resolve them via `default`.
+vi.mock("fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("fs")>();
+  const overrides = {
+    existsSync: mockExistsSync,
+    readdirSync: mockReaddirSync,
+  };
+  return { ...actual, ...overrides, default: { ...actual, ...overrides } };
+});
 
 import {
   GET as settingsDebugGET,
@@ -49,6 +65,10 @@ describe("debug/info-disclosure routes require auth (#199)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetSettings.mockReturnValue({ basePath: "~/prj" });
+    // Filesystem defaults for the authed happy-path: the workspace base exists
+    // and lists no entries, so walk() returns an empty directory set cleanly.
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue([]);
     // Default: unauthenticated. Individual tests override for the authed case.
     mockRequireAuth.mockResolvedValue(unauthResult());
   });
@@ -98,5 +118,33 @@ describe("debug/info-disclosure routes require auth (#199)", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body).toHaveProperty("environment");
+  });
+
+  it("GET /api/debug/workspace proceeds when authenticated", async () => {
+    mockRequireAuth.mockResolvedValue({ authenticated: true, user: {} });
+    const res = await debugWorkspaceGET();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveProperty("settings");
+    expect(body).toHaveProperty("environment");
+  });
+
+  it("GET /api/test-path proceeds when authenticated", async () => {
+    mockRequireAuth.mockResolvedValue({ authenticated: true, user: {} });
+    const res = await testPathGET();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(Array.isArray(body.paths)).toBe(true);
+  });
+
+  it("GET /api/workspace proceeds when authenticated", async () => {
+    mockRequireAuth.mockResolvedValue({ authenticated: true, user: {} });
+    const res = await workspaceGET(
+      new NextRequest("http://localhost/api/workspace"),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(Array.isArray(body.directories)).toBe(true);
   });
 });
