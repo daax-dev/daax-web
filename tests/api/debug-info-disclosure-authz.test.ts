@@ -10,8 +10,12 @@
  *
  * Each now calls requireAuth() before disclosing anything. Auth is mocked
  * following the established route-test pattern (vi.hoisted + vi.mock("@/lib/auth")).
- * getSettings is mocked so an authenticated request never touches the operator's
- * real settings/filesystem in the 401 path (the handlers short-circuit before it).
+ * getSettings and the filesystem (existsSync/readdirSync) are mocked for two
+ * reasons: the authenticated happy-path stays hermetic (no real settings or
+ * disk access), and the unauthenticated tests can assert those functions are
+ * NOT called on the 401 path — proving the guard short-circuits BEFORE any
+ * settings read or filesystem access, so nothing is disclosed to an
+ * unauthenticated caller.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
@@ -77,24 +81,33 @@ describe("debug/info-disclosure routes require auth (#199)", () => {
     const res = await settingsDebugGET();
     expect(res.status).toBe(401);
     expect(mockRequireAuth).toHaveBeenCalled();
+    // Guard short-circuits before any settings read (route uses getSettings only).
+    expect(mockGetSettings).not.toHaveBeenCalled();
   });
 
   it("DELETE /api/settings/debug returns 401 when unauthenticated", async () => {
     const res = await settingsDebugDELETE();
     expect(res.status).toBe(401);
     expect(mockRequireAuth).toHaveBeenCalled();
+    expect(mockGetSettings).not.toHaveBeenCalled();
   });
 
   it("GET /api/debug/workspace returns 401 when unauthenticated", async () => {
     const res = await debugWorkspaceGET();
     expect(res.status).toBe(401);
     expect(mockRequireAuth).toHaveBeenCalled();
+    // Guard short-circuits before any settings read (route uses getSettings only).
+    expect(mockGetSettings).not.toHaveBeenCalled();
   });
 
   it("GET /api/test-path returns 401 when unauthenticated", async () => {
     const res = await testPathGET();
     expect(res.status).toBe(401);
     expect(mockRequireAuth).toHaveBeenCalled();
+    // Guard short-circuits before any settings read or fs probe
+    // (route uses getSettings + existsSync).
+    expect(mockGetSettings).not.toHaveBeenCalled();
+    expect(mockExistsSync).not.toHaveBeenCalled();
   });
 
   it("GET /api/workspace returns 401 when unauthenticated", async () => {
@@ -103,6 +116,11 @@ describe("debug/info-disclosure routes require auth (#199)", () => {
     );
     expect(res.status).toBe(401);
     expect(mockRequireAuth).toHaveBeenCalled();
+    // Guard short-circuits before any settings read or directory walk
+    // (route uses getSettings + existsSync + readdirSync).
+    expect(mockGetSettings).not.toHaveBeenCalled();
+    expect(mockExistsSync).not.toHaveBeenCalled();
+    expect(mockReaddirSync).not.toHaveBeenCalled();
   });
 
   it("does not leak environment details in the 401 body (settings/debug)", async () => {
