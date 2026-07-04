@@ -20,6 +20,7 @@ vi.mock("next/server", () => ({
 
 // Import after mocks are set up
 import { getAuthUser, requireAuth, requireAuthOrThrow } from "@/lib/auth";
+import { localOperatorBypassAllowed } from "@/lib/auth-trust";
 import type { AuthUser } from "@/lib/auth-types";
 
 /**
@@ -645,6 +646,149 @@ describe("auth module", () => {
       const user = await getAuthUser();
       expect(user.authenticated).toBe(true);
     });
+  });
+});
+
+describe("LOCAL_OPERATOR bypass posture gate (F-C2, #184)", () => {
+  // The HTTP plane cannot see the TCP peer, so the uncredentialed operator
+  // bypass is gated on deployment posture. Save/restore the posture env vars so
+  // these cases never leak into the rest of the suite.
+  // HOST / DAAX_TRUST_LOCAL_OPERATOR are plain env vars; NODE_ENV is typed
+  // read-only, so it is driven via vi.stubEnv / vi.unstubAllEnvs.
+  const saved: Record<string, string | undefined> = {};
+  const POSTURE_ENV = ["HOST", "DAAX_TRUST_LOCAL_OPERATOR"];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    for (const k of POSTURE_ENV) saved[k] = process.env[k];
+    delete process.env.DAAX_REQUIRE_AUTH;
+    delete process.env.HOST;
+    delete process.env.DAAX_TRUST_LOCAL_OPERATOR;
+    // Simulate a production build (`next start`) unless a case overrides it, so
+    // the fail-safe default is exercised rather than the vitest 'test' default.
+    vi.stubEnv("NODE_ENV", "production");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    for (const k of POSTURE_ENV) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+    delete process.env.DAAX_REQUIRE_AUTH;
+  });
+
+  // Pure posture-function unit tests (no header mocking needed).
+  describe("localOperatorBypassAllowed()", () => {
+    it("honors DAAX_TRUST_LOCAL_OPERATOR=1 even when exposed (0.0.0.0)", () => {
+      process.env.HOST = "0.0.0.0";
+      process.env.DAAX_TRUST_LOCAL_OPERATOR = "1";
+      expect(localOperatorBypassAllowed()).toBe(true);
+    });
+
+    it("honors an explicit opt-out (DAAX_TRUST_LOCAL_OPERATOR=0) even on loopback", () => {
+      process.env.HOST = "127.0.0.1";
+      process.env.DAAX_TRUST_LOCAL_OPERATOR = "0";
+      expect(localOperatorBypassAllowed()).toBe(false);
+    });
+
+    it("allows a loopback bind and denies a 0.0.0.0 bind", () => {
+      process.env.HOST = "127.0.0.1";
+      expect(localOperatorBypassAllowed()).toBe(true);
+      process.env.HOST = "localhost";
+      expect(localOperatorBypassAllowed()).toBe(true);
+      process.env.HOST = "0.0.0.0";
+      expect(localOperatorBypassAllowed()).toBe(false);
+      process.env.HOST = "100.64.0.5";
+      expect(localOperatorBypassAllowed()).toBe(false);
+    });
+
+    it("with no explicit signal, allows outside production and denies in production", () => {
+      vi.stubEnv("NODE_ENV", "development");
+      expect(localOperatorBypassAllowed()).toBe(true);
+      vi.stubEnv("NODE_ENV", "test");
+      expect(localOperatorBypassAllowed()).toBe(true);
+      vi.stubEnv("NODE_ENV", "production");
+      expect(localOperatorBypassAllowed()).toBe(false);
+    });
+  });
+
+  // (a) loopback posture, no header, non-strict → LOCAL_OPERATOR.
+  it("grants LOCAL_OPERATOR on a loopback bind with no header, non-strict (host-dev unchanged)", async () => {
+    process.env.HOST = "127.0.0.1";
+    mockHeaders.mockResolvedValue(createMockHeaders({}));
+
+    const result = await requireAuth();
+
+    expect(result.authenticated).toBe(true);
+    if (result.authenticated) expect(result.user.username).toBe("local");
+  });
+
+  // (b) exposed posture, no header, non-strict → 401 (the #184 fix).
+  it("rejects (401) an exposed (HOST=0.0.0.0) request with no header, non-strict", async () => {
+    process.env.HOST = "0.0.0.0";
+    mockHeaders.mockResolvedValue(createMockHeaders({}));
+
+    const result = await requireAuth();
+
+    expect(result.authenticated).toBe(false);
+    if (!result.authenticated) {
+      expect(result.response.status).toBe(401);
+      expect(result.response.body).toEqual({
+        error: "Authentication required",
+        message: "You must be logged in to access this resource",
+      });
+    }
+  });
+
+  it("requireAuthOrThrow throws on an exposed (HOST=0.0.0.0) request with no header, non-strict", async () => {
+    process.env.HOST = "0.0.0.0";
+    mockHeaders.mockResolvedValue(createMockHeaders({}));
+
+    await expect(requireAuthOrThrow()).rejects.toThrow(
+      "Authentication required",
+    );
+  });
+
+  // Exposed + explicit opt-in → operator (proxy-less trusted-tailnet escape hatch).
+  it("grants LOCAL_OPERATOR on an exposed bind when DAAX_TRUST_LOCAL_OPERATOR=1", async () => {
+    process.env.HOST = "0.0.0.0";
+    process.env.DAAX_TRUST_LOCAL_OPERATOR = "1";
+    mockHeaders.mockResolvedValue(createMockHeaders({}));
+
+    const result = await requireAuth();
+
+    expect(result.authenticated).toBe(true);
+    if (result.authenticated) expect(result.user.username).toBe("local");
+  });
+
+  // (c) strict mode → 401 regardless of posture (already true; unchanged).
+  it("rejects (401) in strict mode even on a loopback bind", async () => {
+    process.env.DAAX_REQUIRE_AUTH = "1";
+    process.env.HOST = "127.0.0.1";
+    mockHeaders.mockResolvedValue(createMockHeaders({}));
+
+    const result = await requireAuth();
+
+    expect(result.authenticated).toBe(false);
+    if (!result.authenticated) expect(result.response.status).toBe(401);
+  });
+
+  // (d) forwarded identity is unaffected: gating the operator bypass must not
+  //     touch the forwarded-identity (Path A) branch, which resolves earlier.
+  it("still authenticates a forwarded identity on an exposed bind (Path A unaffected)", async () => {
+    process.env.HOST = "0.0.0.0";
+    mockHeaders.mockResolvedValue(
+      createMockHeaders({
+        "x-forwarded-user": "user-uuid",
+        "x-forwarded-name": "Proxied User",
+      }),
+    );
+
+    const result = await requireAuth();
+
+    expect(result.authenticated).toBe(true);
+    if (result.authenticated) expect(result.user.username).toBe("Proxied User");
   });
 });
 

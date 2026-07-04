@@ -126,6 +126,17 @@ services:
       # Generate: `openssl rand -hex 32`. Never commit it.
       - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
       - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
+      # LOCAL_OPERATOR bypass posture (F-C2, #184). The HTTP plane can't see the
+      # TCP peer (plain `next start`, no custom server), so the uncredentialed
+      # "trusted local operator" bypass is gated on deployment posture instead.
+      # HOST=0.0.0.0 marks this container as EXPOSED beyond loopback, so the
+      # bypass is DISABLED by default: an uncredentialed request gets 401 rather
+      # than being trusted as the operator (any tailnet peer could reach the port).
+      # To run proxy-less on a trusted tailnet and intentionally trust EVERY peer
+      # that can reach 4200, set DAAX_TRUST_LOCAL_OPERATOR=1. Preferred instead:
+      # front with the Pocket ID proxy and set DAAX_REQUIRE_AUTH=1.
+      - HOST=0.0.0.0
+      - DAAX_TRUST_LOCAL_OPERATOR=${DAAX_TRUST_LOCAL_OPERATOR:-}
       # HTTP proxy-secret trust boundary (F1a, #94/#191). The app must receive the
       # SAME value Traefik injects as X-Daax-Proxy-Secret, or enabling strict mode
       # (DAAX_REQUIRE_AUTH=1) fails closed and locks out all forwarded identity.

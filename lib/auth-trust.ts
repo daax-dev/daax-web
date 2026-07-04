@@ -16,6 +16,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import type { AuthUser } from "./auth-types";
 import { UNAUTHENTICATED_USER } from "./auth-types";
+import { isLoopbackAddress } from "./net/loopback";
 
 /**
  * Minimal headers-like reader satisfied by both the Web `Headers` object
@@ -111,6 +112,65 @@ export function authRequired(): boolean {
   return process.env.DAAX_REQUIRE_AUTH === "1";
 }
 
+// LOCAL_OPERATOR bypass posture gate (F-C2, issue #184).
+//
+// The absent-header bypass below treats an uncredentialed request as the trusted
+// local operator. The WS plane (server/handlers/ws-auth.ts) only does this for a
+// LOOPBACK TCP peer, so a non-loopback tailnet peer can never be the "local"
+// operator. The HTTP plane CANNOT see the TCP peer: this app runs under plain
+// `next start` / `next dev` (no custom server — package.json:6/15), so route
+// handlers (`await headers()`) and middleware (`NextRequest`) never expose
+// `socket.remoteAddress`, and `X-Forwarded-For` is spoofable/absent without a
+// trusted proxy. There is therefore no per-request peer to check.
+//
+// Instead the HTTP plane gates the bypass on DEPLOYMENT POSTURE — whether the
+// server is exposed beyond loopback — which IS knowable at runtime. Fail SAFE:
+// an exposed or ambiguous production posture DENIES the bypass (→ 401), matching
+// the WS plane's "no bypass off-host" behavior. Precedence:
+//
+//   1. DAAX_TRUST_LOCAL_OPERATOR set → honored verbatim in BOTH directions
+//      (explicit opt-in to trust every peer that can reach the port, or explicit
+//      opt-out). This is the escape hatch for the proxy-less 0.0.0.0 Tailscale
+//      container run that intentionally trusts its tailnet.
+//   2. Else HOST bind is explicit → loopback bind (127.0.0.0/8, ::1, localhost)
+//      allows the bypass; any other bind (0.0.0.0, ::, a routable address) is
+//      exposed → deny. `next start -H 0.0.0.0` deployments set HOST=0.0.0.0
+//      (package.json start:prod / dev:tailscale) so this fires deterministically.
+//      HOSTNAME is intentionally NOT consulted: Docker sets it to a random
+//      container id and shells may export the machine hostname, so it is not a
+//      reliable bind signal.
+//   3. Else no explicit signal → allow only outside production. Host-dev
+//      (`next dev`, NODE_ENV=development) and unit tests keep the bypass with
+//      zero config; a production build (`next start`, NODE_ENV=production) with
+//      no explicit trust opt-in fails safe → deny.
+//
+// A truthy value is 1/true/yes/on (case-insensitive); anything else is false.
+function envTruthy(v: string | undefined): boolean {
+  if (v === undefined) return false;
+  const s = v.trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes" || s === "on";
+}
+
+function envFalsy(v: string | undefined): boolean {
+  if (v === undefined) return false;
+  const s = v.trim().toLowerCase();
+  return s === "0" || s === "false" || s === "no" || s === "off";
+}
+
+export function localOperatorBypassAllowed(): boolean {
+  // 1. Explicit operator override wins in both directions.
+  const trust = process.env.DAAX_TRUST_LOCAL_OPERATOR;
+  if (envTruthy(trust)) return true;
+  if (envFalsy(trust)) return false;
+
+  // 2. Explicit bind host: loopback → allowed; anything else → exposed → deny.
+  const host = (process.env.HOST ?? "").trim();
+  if (host !== "") return isLoopbackAddress(host);
+
+  // 3. No explicit signal → allow only outside production (fail safe).
+  return process.env.NODE_ENV !== "production";
+}
+
 // Synthetic user representing the trusted local operator when auth is bypassed.
 export const LOCAL_OPERATOR: AuthUser = {
   username: "local",
@@ -128,6 +188,21 @@ function warnAuthBypassedOnce(): void {
     "[auth] No forward-auth header present and DAAX_REQUIRE_AUTH!=1 — " +
       "authentication is BYPASSED (treating requests as a trusted local operator). " +
       "Set DAAX_REQUIRE_AUTH=1 to enforce authentication (e.g. behind the Pocket ID proxy).",
+  );
+}
+
+let operatorBlockedWarned = false;
+function warnOperatorBypassBlockedOnce(): void {
+  if (operatorBlockedWarned) return;
+  operatorBlockedWarned = true;
+  console.warn(
+    "[auth] No forward-auth header present, but the LOCAL_OPERATOR bypass is " +
+      "DISABLED for this deployment posture (server is exposed beyond loopback " +
+      "and DAAX_TRUST_LOCAL_OPERATOR is not set) — request REJECTED (401). This " +
+      "prevents any peer that can reach the port from being trusted as the local " +
+      "operator (issue #184). To restore trust set DAAX_TRUST_LOCAL_OPERATOR=1 " +
+      "(trusts every peer that can reach the port), or put a Pocket ID proxy in " +
+      "front and set DAAX_REQUIRE_AUTH=1.",
   );
 }
 
@@ -258,12 +333,18 @@ export function evaluateAuthDecision(h: HeaderReader): AuthDecision {
   }
 
   // Bypass to a local operator only when the user header is truly absent
-  // (rawUserHeader === null → no proxy) and strict auth is not required. A
-  // present-but-empty or whitespace-only header is a malformed credential and
-  // always denies.
+  // (rawUserHeader === null → no proxy), strict auth is not required, AND the
+  // deployment posture permits it (server is not exposed beyond loopback, or the
+  // operator explicitly opted in — see localOperatorBypassAllowed / issue #184).
+  // A present-but-empty or whitespace-only header is a malformed credential and
+  // always denies. An exposed posture with no header denies too (401), matching
+  // the WS plane's "no bypass off-host" behavior instead of trusting any peer.
   if (!authRequired() && rawUserHeader === null) {
-    warnAuthBypassedOnce();
-    return { decision: "allow-operator", user: LOCAL_OPERATOR };
+    if (localOperatorBypassAllowed()) {
+      warnAuthBypassedOnce();
+      return { decision: "allow-operator", user: LOCAL_OPERATOR };
+    }
+    warnOperatorBypassBlockedOnce();
   }
 
   return { decision: "deny", status: 401 };
