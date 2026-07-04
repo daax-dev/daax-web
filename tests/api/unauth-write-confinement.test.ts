@@ -311,6 +311,41 @@ describe("POST /api/devcontainers/save (#187, AC#4 sibling)", () => {
     expect(target).toBe("/workspace/ps/daax/.devcontainer/devcontainer.json");
     assertNoEscapedWrite(WORKSPACE_ROOT);
   });
+
+  it("host mode: writes the confined devcontainer file when HOST_WORKSPACE_PATH is unset", async () => {
+    // Host-dev mode: HOST_WORKSPACE_PATH unset, so resolveWorkspaceRoot() takes
+    // the `expandPath(getSettings().basePath)` branch instead of the container
+    // "/workspace" mount-point shortcut. The mocked getSettings/expandPath
+    // ("~/prj" -> /workspace) still lands on the same deterministic root, but
+    // this exercises the other branch of resolveWorkspaceRoot(). Restored by
+    // the outer afterEach (prevHostWorkspace captured in beforeEach).
+    delete process.env.HOST_WORKSPACE_PATH;
+    authenticated();
+    mockAccess.mockResolvedValue(undefined);
+    const res = await devSavePOST(jsonReq(legit, "POST") as never);
+    expect(res.status).toBe(200);
+    expect(mockWriteFile).toHaveBeenCalledTimes(1);
+    const target = String(mockWriteFile.mock.calls[0][0]);
+    expect(target).toBe("/workspace/ps/daax/.devcontainer/devcontainer.json");
+    assertNoEscapedWrite(WORKSPACE_ROOT);
+  });
+
+  it("host mode: rejects a traversal projectPath with 403 and writes nothing (defense-in-depth)", async () => {
+    // Same HOST_WORKSPACE_PATH-unset host-mode branch as above, but with a
+    // traversal payload — confinement must still reject it even though the
+    // root is now server-derived via getSettings() instead of the container
+    // mount point.
+    delete process.env.HOST_WORKSPACE_PATH;
+    authenticated();
+    const res = await devSavePOST(
+      jsonReq(
+        { ...legit, projectPath: "../../../../etc/cron.d" },
+        "POST",
+      ) as never,
+    );
+    expect(res.status).toBe(403);
+    expect(mockWriteFile).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

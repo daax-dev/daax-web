@@ -10,7 +10,7 @@ export class PathConfinementError extends Error {
     public readonly attempted: string,
     public readonly root: string,
   ) {
-    super(`Path "${attempted}" resolves outside the workspace root`);
+    super(`Path "${attempted}" escapes the confinement root: ${root}`);
     this.name = "PathConfinementError";
   }
 }
