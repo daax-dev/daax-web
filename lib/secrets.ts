@@ -1,12 +1,17 @@
 /**
  * Server-side secrets management for Daax
- * Stores sensitive credentials in a local JSON file (gitignored)
+ * Stores sensitive credentials in a local JSON file (gitignored + dockerignored)
  */
 
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 
-// Secrets file location - in project root, gitignored
+// Secrets file location - in the process working directory (project root),
+// gitignored and dockerignored so the plaintext credentials are never
+// committed or baked into the image.
+// NOTE: This path is ephemeral in container mode - it lives inside the
+// container's writable layer and does NOT persist across redeploys. Provide
+// credentials via env vars (GITHUB_TOKEN / GH_TOKEN) for durable config.
 const SECRETS_FILE = join(process.cwd(), ".secrets.json");
 
 export interface DaaxSecrets {
