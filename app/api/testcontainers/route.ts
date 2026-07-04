@@ -15,6 +15,8 @@ import {
 } from "@/plugins/testcontainers/api";
 import type { ContainerCreateRequest } from "@/plugins/testcontainers/types";
 import { requireAuth } from "@/lib/auth";
+import { isValidDockerImageName } from "@/lib/docker-validation";
+import { validateVolumes } from "@/plugins/testcontainers/lib/volume-validation";
 
 export async function GET(request: Request) {
   try {
@@ -75,6 +77,30 @@ export async function POST(request: Request) {
     // Validate required fields
     if (!body.image) {
       return NextResponse.json({ error: "Image is required" }, { status: 400 });
+    }
+
+    // Validate image name format (same pattern as app/api/docker/pull). Also
+    // validate the fully-qualified image:tag reference so a crafted tag cannot
+    // slip through.
+    if (
+      !isValidDockerImageName(body.image) ||
+      (body.tag && !isValidDockerImageName(`${body.image}:${body.tag}`))
+    ) {
+      return NextResponse.json(
+        { error: "Invalid image name format" },
+        { status: 400 },
+      );
+    }
+
+    // Confine every volume source to the workspace root and deny sensitive host
+    // paths (Docker socket, "/", etc.). Reject the WHOLE request if any source
+    // is bad — no container is created (#190).
+    const volumeCheck = validateVolumes(body.volumes);
+    if (!volumeCheck.valid) {
+      return NextResponse.json(
+        { error: volumeCheck.reason || "Invalid volume source" },
+        { status: 400 },
+      );
     }
 
     const result = await createContainer(body);
