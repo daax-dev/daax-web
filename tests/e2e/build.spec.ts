@@ -45,17 +45,23 @@ test.describe("Build provenance page", () => {
       await expect(versionGrid.getByText(label, { exact: true })).toBeVisible();
     }
 
-    // Values, not just labels. Scope to each tile (label + value spans) so the
-    // "Version" value isn't confused with the "Node runtime" value (both vX.Y.Z).
-    const versionTile = versionGrid
-      .locator("div.flex.flex-col")
-      .filter({ hasText: "Version" });
-    await expect(versionTile.locator("span").last()).toHaveText(
-      /^v\d+\.\d+\.\d+/,
-    );
+    // Values, not just labels. Scope each assertion to the InfoTile carrying
+    // its LABEL, then read that tile's value (the last <span>). Selecting by
+    // label text — not a presentation class — keeps the "Version" value from
+    // being confused with "Node runtime" (both vX.Y.Z) and pins the Git SHA
+    // check to the "Git SHA" tile so a stray hex string elsewhere on the page
+    // can't false-positive. (InfoTile in BuildPanel.tsx = container div with a
+    // label span followed by the value span.)
+    const tileValue = (label: string) =>
+      versionGrid
+        .locator("div")
+        .filter({ has: page.getByText(label, { exact: true }) })
+        .locator("span")
+        .last();
+    await expect(tileValue("Version")).toHaveText(/^v\d+\.\d+\.\d+/);
     // Git SHA value is a hex commit (a bare dev build renders "000000"; a real
-    // build a full 40-char sha) — unambiguous against the other tiles.
-    await expect(versionGrid.getByText(/^[0-9a-f]{6,40}$/i)).toBeVisible();
+    // build a full 40-char sha), scoped to the "Git SHA" tile.
+    await expect(tileValue("Git SHA")).toHaveText(/^[0-9a-f]{6,40}$/i);
   });
 
   test("shows deployment metadata section", async ({ page }) => {
@@ -90,13 +96,13 @@ test.describe("Build provenance page", () => {
       await expect(toggle).toBeVisible();
       await toggle.click();
       await expect(page.getByTestId("sbom-panel")).toBeVisible();
-      // Either the parsed component table or the format pills confirm the SBOM
-      // document loaded (table is gated on a successful fetch).
-      await expect(
-        page
-          .getByTestId("sbom-table")
-          .or(page.getByTestId("sbom-format-select")),
-      ).toBeVisible({ timeout: 15000 });
+      // Confirm the SBOM document actually fetched+parsed. sbom-raw-toggle
+      // renders only inside BuildPanel's `{sbom && ...}` branch, so it's proof
+      // the document is truthy. (sbom-format-select renders whenever the panel
+      // is open — even on a failed fetch — so it is NOT evidence of a load.)
+      await expect(page.getByTestId("sbom-raw-toggle")).toBeVisible({
+        timeout: 15000,
+      });
     } else {
       // From-source build: explicit "no SBOM bundled" note, no download link.
       await expect(none).toBeVisible();
