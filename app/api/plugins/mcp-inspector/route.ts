@@ -56,6 +56,20 @@ function isAllowedAdHocCommand(command: string): boolean {
   return ALLOWED_LAUNCHERS.has(command);
 }
 
+// Runtime type guards (#182 Copilot): a registered MCP config is parsed from
+// on-disk JSON, so its `command`/`args`/`url` are not runtime-type-guaranteed
+// even though statically typed. Validate before spawn so a malformed config
+// yields a controlled 400 instead of a spawn TypeError → 500.
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === "string")
+    : [];
+}
+
 // Validate a remote (SSE/HTTP) target URL. Only http/https are permitted; this
 // blocks file:, data:, and other schemes. No command is ever spawned from a
 // URL — it is only handed to the inspector UI to connect its proxy — so this is
@@ -205,15 +219,28 @@ export async function POST(request: NextRequest) {
       // Registered MCP: use its own config, never the client body.
       const cfg = discovered.config;
       resolvedEnv = cfg.env;
-      if (cfg.url) {
+      if (isNonEmptyString(cfg.url)) {
         // Registered REMOTE MCP (SSE/HTTP): resolve the target URL SERVER-SIDE
         // from the registry. A client-supplied `serverUrl` is never trusted for
         // a registered id (SSRF guard).
         targetUrl = cfg.url;
-      } else {
-        // Registered stdio MCP: use its server-side command/args.
+      } else if (isNonEmptyString(cfg.command)) {
+        // Registered stdio MCP: use its server-side command/args. Validate the
+        // parsed-from-JSON values at runtime (#182 Copilot): `command` must be a
+        // non-empty string and `args` a string[] (non-strings filtered out), so
+        // a malformed config can't start a bare inspector or throw a spawn
+        // TypeError → 500.
         resolvedCommand = cfg.command;
-        resolvedArgs = cfg.args || [];
+        resolvedArgs = toStringArray(cfg.args);
+      } else {
+        // Registered MCP with neither a usable stdio command nor a URL is
+        // misconfigured — reject rather than launching a bare inspector.
+        return NextResponse.json(
+          {
+            error: `Registered MCP ${mcpId} has no usable stdio command or URL`,
+          },
+          { status: 400 },
+        );
       }
     } else if (body.transport === "sse" || body.transport === "http") {
       // Ad-hoc REMOTE launch (unregistered, SSE/HTTP): no command is ever

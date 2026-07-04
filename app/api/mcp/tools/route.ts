@@ -29,6 +29,20 @@ interface McpToolsResponse {
 // Default 30s to allow for MCPs that need to download models or initialize
 const MCP_TIMEOUT = Number(process.env.MCP_TIMEOUT_MS) || 30000;
 
+// Runtime type guards (#182 Copilot): the registered MCP config is parsed from
+// on-disk JSON, so its `command`/`args` are not runtime-type-guaranteed even
+// though they are statically typed. Validate before passing to spawn so a
+// malformed config yields a controlled 400 instead of a spawn TypeError → 500.
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === "string")
+    : [];
+}
+
 // Default project path used to scope MCP discovery: /workspace in container
 // mode, otherwise the current working directory (mirrors /api/mcp/config).
 function getDefaultProjectPath(): string {
@@ -287,18 +301,21 @@ export async function POST(request: Request) {
     if (config.url) {
       // HTTP MCP — URL comes from the registered config, not the client.
       result = await fetchToolsViaHttp(config.url);
-    } else if (config.command) {
-      // Stdio MCP — command/args/env come from the registered config.
+    } else if (isNonEmptyString(config.command)) {
+      // Stdio MCP — command/args/env come from the registered config. Validate
+      // the parsed-from-JSON values at runtime (#182 Copilot): `command` must be
+      // a non-empty string and `args` a string[] (non-strings filtered out), so
+      // a malformed config can't throw a spawn TypeError → 500.
       result = await fetchToolsViaStdio(
         config.command,
-        config.args || [],
+        toStringArray(config.args),
         config.env,
       );
     } else {
       return NextResponse.json(
         {
           success: false,
-          error: `Registered MCP ${mcpId} has no command or url`,
+          error: `Registered MCP ${mcpId} has no usable stdio command`,
         },
         { status: 400 },
       );

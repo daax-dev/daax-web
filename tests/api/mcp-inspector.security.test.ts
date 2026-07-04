@@ -266,6 +266,66 @@ describe("POST /api/plugins/mcp-inspector — security (#182)", () => {
     // env cleanup handled by afterEach (env snapshot restore).
   });
 
+  it("registered stdio with a non-string command → 400 and never spawns", async () => {
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [
+        {
+          id: "bad-cmd",
+          // Malformed config parsed from JSON: command is not a string.
+          config: { command: 12345, args: ["-y", "@scope/x"] },
+        },
+      ],
+    });
+
+    const res = await POST(makeRequest({ mcpId: "bad-cmd" }));
+
+    expect(res.status).toBe(400);
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("registered MCP with neither command nor url → 400 and never spawns", async () => {
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [
+        {
+          id: "empty-cfg",
+          // Misconfigured registered MCP: no usable command and no URL.
+          config: { env: { FOO: "bar" } },
+        },
+      ],
+    });
+
+    const res = await POST(makeRequest({ mcpId: "empty-cfg" }));
+
+    expect(res.status).toBe(400);
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("registered stdio with non-string args entries filters them before spawn", async () => {
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [
+        {
+          id: "mixed-args",
+          // Malformed config: args mixes strings and non-strings.
+          config: { command: "npx", args: ["-y", 42, "@scope/x", null, true] },
+        },
+      ],
+    });
+
+    const res = await runToCompletion(makeRequest({ mcpId: "mixed-args" }));
+
+    expect(res.status).toBe(200);
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    const [cmd, args] = mockSpawn.mock.calls[0];
+    expect(cmd).toBe("npx");
+    // Non-string entries dropped; inspector wraps only the string args.
+    expect(args).toEqual([
+      "@modelcontextprotocol/inspector",
+      "npx",
+      "-y",
+      "@scope/x",
+    ]);
+  });
+
   it("registered REMOTE mcpId resolves URL SERVER-side; client serverUrl ignored", async () => {
     mockDiscoverAllMcps.mockReturnValue({
       mcps: [

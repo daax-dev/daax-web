@@ -193,6 +193,60 @@ describe("POST /api/mcp/tools — security (#182)", () => {
     // env cleanup handled by afterEach (env snapshot restore).
   });
 
+  it("registered stdio with a non-string command → 400 and never spawns", async () => {
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [
+        {
+          id: "bad-cmd",
+          // Malformed config parsed from JSON: command is not a string.
+          config: { command: 12345, args: ["-y", "@scope/x"] },
+        },
+      ],
+    });
+
+    const res = await POST(makeRequest({ mcpId: "bad-cmd" }));
+
+    expect(res.status).toBe(400);
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("registered stdio with non-string args entries filters them before spawn", async () => {
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [
+        {
+          id: "mixed-args",
+          // Malformed config: args mixes strings and non-strings.
+          config: { command: "npx", args: ["-y", 42, "@scope/x", null, true] },
+        },
+      ],
+    });
+
+    const res = await POST(makeRequest({ mcpId: "mixed-args" }));
+
+    expect(res.status).toBe(200);
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    const [cmd, args] = mockSpawn.mock.calls[0];
+    expect(cmd).toBe("npx");
+    // Non-string entries are dropped; only strings survive.
+    expect(args).toEqual(["-y", "@scope/x"]);
+  });
+
+  it("registered stdio with a missing command and no url → 400 and never spawns", async () => {
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [
+        {
+          id: "no-cmd",
+          config: { args: ["-y", "@scope/x"] },
+        },
+      ],
+    });
+
+    const res = await POST(makeRequest({ mcpId: "no-cmd" }));
+
+    expect(res.status).toBe(400);
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
   it("registered HTTP mcpId resolves URL from registry, not the client body", async () => {
     const fetchMock = vi.fn(async (_url: unknown, _init?: unknown) => ({
       json: async () => ({ result: { tools: [{ name: "http_tool" }] } }),
