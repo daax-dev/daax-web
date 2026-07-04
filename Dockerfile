@@ -57,7 +57,7 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
 # Not done here to avoid inventing a checksum that would break the build offline.
 ENV BUN_INSTALL=/usr/local/bun
 ARG BUN_VERSION=1.3.9
-RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}"
+RUN curl -fsSL https://bun.sh/install | bash -s -- "bun-v${BUN_VERSION}"
 ENV PATH="$BUN_INSTALL/bin:$PATH"
 # Fail the build if the installed bun is not the pinned version.
 RUN bun --version | grep -qx "${BUN_VERSION}" || { echo "bun version mismatch: expected ${BUN_VERSION}, got $(bun --version)" >&2; exit 1; }

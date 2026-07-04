@@ -142,11 +142,15 @@ services:
       # same value deploy-local.sh renders into Traefik's inject-proxy-secret
       # middleware (X-Daax-Proxy-Secret), or enabling strict mode
       # (DAAX_REQUIRE_AUTH=1) per the hardening steps above fails closed and locks
-      # out ALL forwarded identity — a login lockout. Opt-in: the empty default
-      # keeps the boundary disabled and stays in sync with deploy-local.sh, which
-      # also renders an empty header (and warns) when unset. _PREVIOUS is accepted
-      # too, so the secret rotates without an auth outage (matches WS secret).
-      - DAAX_PROXY_SECRET=${DAAX_PROXY_SECRET:-}
+      # out ALL forwarded identity — a login lockout.
+      # REQUIRED here (#191): this is the hardened Traefik + Pocket ID deploy path,
+      # where the proxy secret is load-bearing. Making it :?-required fails the
+      # deploy fast at `compose up` on a misconfig, instead of silently locking out
+      # login at runtime. (The local docker-compose.yml keeps it optional so
+      # proxy-less host-dev runs are not bricked.) _PREVIOUS stays optional — key
+      # rotation is opt-in, and when set lets the secret rotate without an auth
+      # outage (matches the WS secret).
+      - DAAX_PROXY_SECRET=${DAAX_PROXY_SECRET:?required in the deploy path (Traefik + Pocket ID); must match the value deploy-local.sh injects as X-Daax-Proxy-Secret. Generate with openssl rand -hex 32; never commit it}
       - DAAX_PROXY_SECRET_PREVIOUS=${DAAX_PROXY_SECRET_PREVIOUS:-}
 
       # Postgres connection (brain2daax Phase 0 #92). Reaches the postgres

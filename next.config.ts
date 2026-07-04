@@ -72,7 +72,7 @@ const buildEnv = getBuildEnv();
 //   - The code-server iframe (daax-code.<host>) and clawd gateway iframe
 //     (clawd.<host>) plus the terminal WebSocket (wss://daax.<host>/ws) live on
 //     per-deployment subdomains not known statically here, so frame-src/
-//     connect-src use the https:/wss: schemes rather than exact origins.
+//     connect-src use the `https:` and `wss:` schemes rather than exact origins.
 // Clickjacking is still ENFORCED via X-Frame-Options: DENY below (report-only
 // CSP does not weaken that). Report-Only surfaces violations for a future
 // nonce-based, enforced policy (via middleware) without risking an outage now.
@@ -121,13 +121,14 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_BUILD_TIMESTAMP: buildEnv.timestamp,
   },
   // Security headers on every route (#192). Note: Next.js `headers()` applies to
-  // page/route responses; API routes under app/ are also covered by the `/(.*)`
-  // matcher. Middleware would additionally cover matcher-excluded assets, but no
+  // page/route responses; API routes under app/ are also covered by the `/:path*`
+  // matcher (path-to-regexp: matches zero-or-more segments, so `/` is included).
+  // Middleware would additionally cover matcher-excluded assets, but no
   // middleware.ts exists yet (see #181) and adding one is out of scope here.
   async headers() {
     return [
       {
-        source: "/(.*)",
+        source: "/:path*",
         headers: securityHeaders,
       },
     ];
