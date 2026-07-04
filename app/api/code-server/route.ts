@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { spawn, execFileSync } from "child_process";
 import { getProjectInfo } from "@/lib/project-utils";
-import { expandPath } from "@/lib/path-utils";
+import { expandPath, isValidPort } from "@/lib/path-utils";
+import { getSettings } from "@/lib/settings";
+import { requireAuth } from "@/lib/auth";
+import { confineToRoot, PathConfinementError } from "@/lib/path-confine";
 
 const CONTAINER_NAME = "daax-code-server";
 
@@ -223,6 +226,13 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  // Defense-in-depth: this route spawns a host-mounting container, so it must
+  // never be reachable unauthenticated (#183). In host-dev with no proxy the
+  // shared bypass returns the local operator; a present-but-empty forwarded
+  // identity or strict mode (DAAX_REQUIRE_AUTH=1) fails closed with 401.
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const body = await request.json();
     const {
@@ -230,11 +240,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       port = 18080,
       project,
       projectType,
-      basePath = "~/prj",
       hostPath,
     } = body;
 
     if (action === "start") {
+      // Validate the client-chosen host bind port before it reaches docker.
+      if (!isValidPort(port)) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Invalid port (must be an integer in 1024-65535)",
+          },
+          { status: 400 },
+        );
+      }
+
       // Pre-flight: ensure the image exists locally before doing anything.
       // `docker run` would otherwise try to pull a non-public image and fail
       // with an opaque error after we've already torn down any prior container.
@@ -269,16 +289,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Initialize default settings (dark theme) in the volume if not present
       initializeCodeServerSettings();
 
+      // The workspace root is a SERVER-side constant, never derived from the
+      // request body (#183). Container mode: the host dir mounted at /workspace
+      // (HOST_WORKSPACE_PATH). Host-dev mode: the operator-configured root from
+      // server settings. The client `basePath` is intentionally ignored; only
+      // `project` / `hostPath` select a subpath, confined below.
+      const serverBasePath = getSettings().basePath;
+      const serverRoot = HOST_WORKSPACE_PATH || expandPath(serverBasePath);
+
       let hostWorkspace: string;
       let containerPath: string;
       let displayName: string;
 
       if (project) {
-        // Use project utilities for consistent mounting
-        // Pass HOST_WORKSPACE_PATH for correct mount paths in container mode
+        // Use project utilities for consistent mounting.
+        // Base the mount on the SERVER root (serverBasePath), not the request.
         const projectInfo = getProjectInfo(
           project,
-          basePath,
+          serverBasePath,
           projectType as "git" | "planning" | undefined,
           HOST_WORKSPACE_PATH || undefined,
         );
@@ -286,8 +314,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         containerPath = projectInfo.containerPath;
         displayName = project.replace(/[^a-zA-Z0-9_-]/g, "_");
       } else if (hostPath) {
-        // Legacy path handling - pass basePath for proper translation
-        hostWorkspace = getHostMountPath(hostPath, basePath);
+        // Legacy path handling - translate against the SERVER root.
+        hostWorkspace = getHostMountPath(hostPath, serverBasePath);
         const rawProjectName = hostWorkspace.split("/").pop() || "workspace";
         displayName = rawProjectName.replace(/[^a-zA-Z0-9_-]/g, "_");
         containerPath = `/${displayName}`;
@@ -301,17 +329,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
-      // Security: Ensure final path is within allowed base
-      // Use HOST_WORKSPACE_PATH in container mode, otherwise expand basePath
-      const securityBasePath = HOST_WORKSPACE_PATH || expandPath(basePath);
-      if (!hostWorkspace.startsWith(securityBasePath)) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Path not allowed",
-          },
-          { status: 400 },
-        );
+      // Security: confine the resolved mount to the server-side workspace root.
+      // Canonicalized (lexical) confinement with a trailing-separator boundary
+      // (lib/path-confine, reused from #186/#189) rejects absolute-path escapes
+      // (e.g. basePath:"/"), `..` traversal, and prefix-sibling directories —
+      // replacing the former self-referential `startsWith` check.
+      try {
+        hostWorkspace = confineToRoot(serverRoot, hostWorkspace);
+      } catch (err) {
+        if (err instanceof PathConfinementError) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: "Path not allowed",
+            },
+            { status: 400 },
+          );
+        }
+        throw err;
       }
       console.log(
         `code-server: project=${project}, hostWorkspace=${hostWorkspace}, containerPath=${containerPath}`,
