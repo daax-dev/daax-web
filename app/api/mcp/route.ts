@@ -39,7 +39,8 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/mcp - Add new MCP directly (admin only in production)
+// POST /api/mcp - Add new MCP directly (requires authentication via requireAuth().
+// No admin/group scoping — RBAC follow-up tracked in issue #101 / #197 AC#2.)
 export async function POST(request: NextRequest) {
   // Registry mutation requires authentication (#197)
   const auth = await requireAuth();
