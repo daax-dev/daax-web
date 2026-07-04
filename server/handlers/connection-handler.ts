@@ -37,10 +37,7 @@ import {
 } from "../recording/recorder";
 import { handleMessage, MessageHandlerContext } from "./message-handler";
 import { scheduleCommand } from "./command-handler";
-import {
-  resolveWorkspaceRoot,
-  isValidPath,
-} from "../../lib/worktree-manager";
+import { resolveWorkspaceRoot, isValidPath } from "../../lib/worktree-manager";
 
 // Auth paths are initialized in terminal-server.ts and passed here
 let claudeAuthHostPath: string;
@@ -600,16 +597,47 @@ function buildShellCommand(
         "--rm",
         "--name",
         `daax-${sessionId.slice(0, 8)}`,
+        // SECURITY / issue #195 (Fable M5): agent containers reach `postgres`
+        // via daax-net. Evaluated for segregation and DEFERRED, not fixed here:
+        // daax-net is the shared plane for daax's own services (code-server, the
+        // MCP gateway, etc.) that agent sessions legitimately use, so moving
+        // agents to an isolated network risks breaking those integrations. The
+        // Postgres exposure is mitigated separately by requiring a real
+        // DAAX_PG_PASSWORD in the deploy compose (the `daax` default is
+        // local-throwaway only). A dedicated agent network with an explicit
+        // allow-list to just the services agents need is the follow-up.
         "--network",
         DOCKER_NETWORK,
         "-u",
         "vscode",
         "-v",
         `${mountPath}:${containerPath}`,
+        // SECURITY / issue #195 (Fable M5): credential mounts are read-WRITE by
+        // necessity, documented accepted risk. Write-back is REQUIRED and `:ro`
+        // would break auth persistence (AC#4):
+        //   - Claude Code performs OAuth token refresh and rewrites
+        //     `.claude/.credentials.json`; a read-only mount breaks auth over
+        //     time as the access token expires.
+        //   - Both tools persist the INITIAL login here — the dir is created
+        //     empty (see server/docker/auth-paths.ts) and populated by
+        //     `claude login` / `opencode auth login` INSIDE the container; a
+        //     read-only mount would discard that, so no session could ever
+        //     authenticate.
+        // Mitigation already in place: these are NOT the operator's global
+        // `~/.claude`. Claude auth is a daax-dedicated store (`~/.daax-claude`
+        // in host mode, `${workspace}/.daax/claude` in container mode). OpenCode
+        // in host mode still maps the real `~/.local/share/opencode` (or
+        // $XDG_DATA_HOME/opencode); container mode isolates it to
+        // `${workspace}/.daax/opencode`.
+        // Residual risk: untrusted agent code can read/exfiltrate the long-lived
+        // token in the mounted store, and the store is shared across daax agent
+        // sessions. Follow-up (tracked in the #195 decision log): per-session,
+        // short-lived scoped tokens so a compromised session cannot exfiltrate a
+        // durable credential or read another session's token.
         "-v",
-        `${claudeAuthHostPath}:/home/vscode/.claude`, // Persist Claude auth
+        `${claudeAuthHostPath}:/home/vscode/.claude`, // Persist Claude auth (RW required — see note above)
         "-v",
-        `${openCodeAuthHostPath}:/home/vscode/.local/share/opencode`, // Persist OpenCode auth
+        `${openCodeAuthHostPath}:/home/vscode/.local/share/opencode`, // Persist OpenCode auth (RW required — see note above)
         "-w",
         containerPath,
         "-e",
