@@ -98,7 +98,10 @@ echo "── Verifying pinned default agent digest ───"
 pinned_ref="${REGISTRY}/daax-agents@${PINNED_AGENT_DIGEST}"
 digest_ok=1
 printf '   Pulling %s ... ' "$pinned_ref"
-if docker pull "$pinned_ref" >/dev/null 2>&1; then
+# Suppress the noisy progress on stdout but keep stderr, so a failed digest pull
+# (auth/registry/DNS) surfaces its concrete Docker error — this is a security
+# control (issue #195), so a silent failure is worse than for the tag pulls above.
+if docker pull "$pinned_ref" >/dev/null; then
   echo "✅ verified (content hash matches pin)"
   # Advisory: has :latest drifted past the pin?
   latest_repo_digest="$(digest_of "${REGISTRY}/daax-agents:${TAG}")"
