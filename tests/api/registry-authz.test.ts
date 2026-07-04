@@ -6,12 +6,19 @@
  * real resource usage (`docker pull` / `docker build`) previously had NO
  * `requireAuth` call. This suite is the regression guard: for EVERY guarded
  * route+method it asserts that an UNAUTHENTICATED request
- *   (a) returns 401, and
+ *   (a) returns 401,
  *   (b) fires NO state mutation / side effect (the underlying DB/registry/docker
- *       layer is mocked and asserted NOT to have been called — the guard is the
- *       first statement, ahead of any body parse / param await / spawn).
+ *       layer is mocked and asserted NOT to have been called), and — for the two
+ *       routes that read before they mutate (build-start, release-build) — that
+ *       the pre-mutation read (`getBuildSpecById` / `getRelease`) also never
+ *       fires, and
+ *   (c) that `requireAuth` itself was invoked.
+ * These assertions confirm the mutation/side-effect layer is unreachable without
+ * auth; they do not assert where in the handler body the guard call sits
+ * relative to body parsing or `params` resolution.
  * A representative authenticated subset asserts the request passes the guard and
- * reaches the mutation layer.
+ * reaches the mutation layer. A separate case below covers `GET /api/mcp/gateway`
+ * without `?discover=true`, which is read-only and intentionally stays public.
  *
  * `@/lib/auth` is mocked so the real host-dev LOCAL_OPERATOR bypass never runs —
  * the guard mechanism is asserted deterministically, independent of
@@ -490,5 +497,34 @@ describe("registry/catalog/release mutation routes require auth (#197)", () => {
         expect(c.sideEffects[c.sideEffects.length - 1]()).toHaveBeenCalled();
       });
     }
+  });
+
+  describe("GET /api/mcp/gateway read-only view stays public", () => {
+    // Only ?discover=true mutates gateway state; the plain read view returns
+    // non-sensitive state (enabled flags, priority, config) and must remain
+    // reachable without authentication.
+    it("unauthenticated plain GET is not blocked and never calls requireAuth", async () => {
+      setUnauthenticated();
+
+      const res = await gatewayGET(
+        new Request("http://localhost/api/mcp/gateway"),
+      );
+
+      expect(res.status).not.toBe(401);
+      expect(m.requireAuth).not.toHaveBeenCalled();
+      expect(m.syncDiscoveredMcps).not.toHaveBeenCalled();
+    });
+
+    it("unauthenticated ?discover=true is still guarded and mutates nothing", async () => {
+      setUnauthenticated();
+
+      const res = await gatewayGET(
+        new Request("http://localhost/api/mcp/gateway?discover=true"),
+      );
+
+      expect(res.status).toBe(401);
+      expect(m.requireAuth).toHaveBeenCalled();
+      expect(m.syncDiscoveredMcps).not.toHaveBeenCalled();
+    });
   });
 });

@@ -12,11 +12,11 @@ import { syncDiscoveredMcps } from "@/lib/mcp-gateway";
 import { requireAuth } from "@/lib/auth";
 
 export async function GET(request: Request) {
-  // GET mutates gateway state when ?discover=true (syncDiscoveredMcps), so it
-  // requires authentication like the write handlers (#197).
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
-
+  // The read-only view (default / ?view=...) returns only non-sensitive
+  // gateway state (enabled flags, priority, config) and stays public,
+  // consistent with the other read-only GETs left public in #197.
+  // ?discover=true mutates gateway state (syncDiscoveredMcps), so auth is
+  // required only for that branch, immediately before the mutation.
   try {
     const { searchParams } = new URL(request.url);
     const view = searchParams.get("view"); // "all" | "enabled" | "recommended"
@@ -27,6 +27,9 @@ export async function GET(request: Request) {
 
     // Optionally discover MCPs from system
     if (discover) {
+      const auth = await requireAuth();
+      if (!auth.authenticated) return auth.response;
+
       const discoveryPaths = [
         process.cwd(), // Current project
         process.env.HOME || "", // Home directory for .mcp.json
