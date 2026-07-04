@@ -1,13 +1,20 @@
 // MCP Inspector launch API.
 //
-// SECURITY (#182): This route NEVER launches an arbitrary client-supplied
-// command. The MCP server command/args/env are resolved SERVER-SIDE from the
-// registered MCP configuration (looked up by `mcpId`). For a genuinely ad-hoc
-// / custom launch (the "custom" flow in InspectorPanel that has no registered
-// id) the command must match an explicit allowlist of known MCP launchers —
-// shells and arbitrary binaries/paths are rejected before any spawn. The child
-// receives an explicit minimal env (never the full process.env), and
-// requireAuth() is enforced as defense-in-depth.
+// SECURITY (#182): This route requires requireAuth() and never trusts a
+// client-supplied command for a REGISTERED mcpId — the command/args/env are
+// resolved SERVER-SIDE from the registered MCP configuration. For a genuinely
+// ad-hoc / custom launch (the "custom" flow in InspectorPanel that has no
+// registered id), the launcher BINARY is constrained to an explicit allowlist
+// of known MCP launchers (a shell like /bin/sh or an absolute/relative path is
+// rejected before spawn). NOTE: the allowlist restricts only the launcher
+// binary, NOT what that launcher goes on to execute — an authenticated caller
+// can still run arbitrary code via a permitted launcher's own arguments (e.g.
+// `npx <pkg>`, `node -e`, `python3 -c`), which is the intentional function of
+// the Inspector's free-text command UI and is no greater than the capability
+// that same authenticated operator already has via /shell. This route's job is
+// to remove the UNAUTHENTICATED command-injection primitive, not to sandbox an
+// authenticated operator. The child receives an explicit minimal env (never the
+// full process.env).
 
 import { existsSync } from "fs";
 import { NextRequest, NextResponse } from "next/server";
