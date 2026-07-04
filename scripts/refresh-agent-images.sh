@@ -25,6 +25,14 @@ cd "$(dirname "$0")/.."
 REGISTRY="${DAAX_AGENT_REGISTRY:-jpoley}"
 TAG="${DAAX_AGENT_TAG:-latest}"
 
+# Digest the default agent image is pinned to (issue #195, Fable M5). MUST stay
+# in sync with DEFAULT_CONTAINER_IMAGE in server/config/constants.ts. The server
+# resolves the agent image by this exact digest reference, so we pull it by
+# digest here (content-addressed, immutable) and verify the mutable `:latest`
+# tag still resolves to it — a mismatch means an upstream push has moved
+# `:latest` ahead of the pin and constants.ts should be reviewed/bumped.
+PINNED_AGENT_DIGEST="${DAAX_PINNED_AGENT_DIGEST:-sha256:2153f137b3f47de007698d1e5f0d31a684cb45a7e1ebc1326f668ee458f55bc5}"
+
 # Authoritative variant list — keep in sync with CONTAINER_VARIANTS in
 # lib/settings.ts. Every AI-coding image variant is pulled on every run.
 VARIANTS=(
@@ -79,6 +87,43 @@ if [ "${#failed[@]}" -gt 0 ]; then
   printf '   ⚠️  Could not pull: %s\n' "${failed[@]}"
 fi
 
+# ── Verify the digest-pinned default agent image (issue #195) ────────────────
+# The server runs the default agent by digest, not by tag. Pull that exact
+# immutable reference so it is present locally, then confirm the mutable
+# `:latest` tag still resolves to the same digest. Docker verifies the content
+# hash on pull, so a pull-by-digest that succeeds IS the verification that the
+# bytes match the pin; the tag comparison is an advisory drift check.
+echo
+echo "── Verifying pinned default agent digest ───"
+pinned_ref="${REGISTRY}/daax-agents@${PINNED_AGENT_DIGEST}"
+digest_ok=1
+printf '   Pulling %s ... ' "$pinned_ref"
+if docker pull "$pinned_ref" >/dev/null 2>&1; then
+  echo "✅ verified (content hash matches pin)"
+  # Advisory: has :latest drifted past the pin?
+  latest_repo_digest="$(digest_of "${REGISTRY}/daax-agents:${TAG}")"
+  case "$latest_repo_digest" in
+    *"@${PINNED_AGENT_DIGEST}")
+      echo "   ℹ️  ${REGISTRY}/daax-agents:${TAG} still matches the pinned digest."
+      ;;
+    "")
+      echo "   ℹ️  ${REGISTRY}/daax-agents:${TAG} not present locally; skipping drift check."
+      ;;
+    *)
+      echo "   ⚠️  ${REGISTRY}/daax-agents:${TAG} has moved past the pinned digest."
+      echo "       latest -> ${latest_repo_digest}"
+      echo "       pinned -> ${PINNED_AGENT_DIGEST}"
+      echo "       Review and bump DEFAULT_CONTAINER_IMAGE in server/config/constants.ts"
+      echo "       (and PINNED_AGENT_DIGEST here) if the new image is trusted."
+      ;;
+  esac
+else
+  echo "❌ FAILED"
+  echo "   ⚠️  Could not pull the pinned digest ${pinned_ref}."
+  echo "       The registry may be unreachable or the pin may be invalid."
+  digest_ok=0
+fi
+
 # The terminal server caches image *availability* (existence) in memory, not the
 # digest, so a re-pulled :latest is picked up by the next `docker run` without a
 # restart. Restart only if explicitly opted in — gate on specific truthy values
@@ -91,5 +136,7 @@ case "${RESTART_DAAX:-}" in
     ;;
 esac
 
-# Fail the script if anything failed to pull.
-[ "${#failed[@]}" -eq 0 ]
+# Fail the script if anything failed to pull OR the pinned digest verification
+# failed. Verifying the digest is a security control (issue #195), so a failure
+# here is treated the same as a failed pull.
+[ "${#failed[@]}" -eq 0 ] && [ "${digest_ok}" -eq 1 ]
