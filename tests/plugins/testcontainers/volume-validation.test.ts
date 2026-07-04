@@ -16,6 +16,7 @@ import {
   validateVolumes,
   isDeniedSource,
 } from "@/plugins/testcontainers/lib/volume-validation";
+import type { VolumeMount } from "@/plugins/testcontainers/types";
 
 describe("validateVolumeSource", () => {
   let root: string; // canonicalized workspace root
@@ -114,5 +115,58 @@ describe("validateVolumes", () => {
     );
     expect(result.valid).toBe(false);
     expect(result.reason).toMatch(/denied sensitive host path/);
+  });
+
+  it("accepts an array of otherwise-valid volumes (happy path)", () => {
+    const result = validateVolumes(
+      [
+        { source: "pgdata", target: "/data" },
+        { source: "my_data-1", target: "/data2", readOnly: true },
+      ],
+      "/",
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  it("rejects (never throws) when volumes is a non-array object", () => {
+    // Malformed request body: `volumes` sent as an object instead of an array
+    // (Copilot review on #190/#229) — must fail CLOSED with a validation
+    // failure, not throw a TypeError out of a `for...of` over a non-iterable.
+    expect(() =>
+      validateVolumes(
+        { source: "/", target: "/host" } as unknown as VolumeMount[],
+        "/",
+      ),
+    ).not.toThrow();
+    const result = validateVolumes(
+      { source: "/", target: "/host" } as unknown as VolumeMount[],
+      "/",
+    );
+    expect(result.valid).toBe(false);
+    expect(result.reason).toMatch(/must be an array/);
+  });
+
+  it("rejects (never throws) when volumes is a string or number", () => {
+    expect(
+      validateVolumes("not-an-array" as unknown as VolumeMount[], "/").valid,
+    ).toBe(false);
+    expect(validateVolumes(42 as unknown as VolumeMount[], "/").valid).toBe(false);
+  });
+
+  it("rejects (never throws) a null entry inside the array", () => {
+    expect(() =>
+      validateVolumes([null] as unknown as VolumeMount[], "/"),
+    ).not.toThrow();
+    const result = validateVolumes([null] as unknown as VolumeMount[], "/");
+    expect(result.valid).toBe(false);
+  });
+
+  it("rejects (never throws) an entry with a non-string source", () => {
+    const result = validateVolumes(
+      [{ source: 123, target: "/data" }] as unknown as VolumeMount[],
+      "/",
+    );
+    expect(result.valid).toBe(false);
+    expect(result.reason).toMatch(/non-empty string/);
   });
 });

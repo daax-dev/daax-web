@@ -145,13 +145,40 @@ export function validateVolumeSource(
 /**
  * Validate every volume source in a request. Rejects the WHOLE set on the first
  * bad source (no partial acceptance / no partial container creation).
+ *
+ * Fails CLOSED on malformed input rather than throwing: `volumes` is caller
+ * (request-body) supplied and its shape is not guaranteed at runtime despite the
+ * `VolumeMount[]` type. A non-array `volumes` (e.g. a JSON object) is not
+ * iterable and would otherwise throw a TypeError out of the `for...of` loop,
+ * which callers (the API route) would surface as a 500 instead of a 400 (#190
+ * Copilot review). A malformed individual entry (`null`, a non-object, or an
+ * object with a non-string `source`) is likewise rejected — never thrown —
+ * because `validateVolumeSource` already treats a non-string source as invalid.
  */
 export function validateVolumes(
   volumes: VolumeMount[] | undefined,
   workspaceRoot: string = resolveWorkspaceRoot(),
 ): VolumeSourceValidation {
-  for (const volume of volumes || []) {
-    const result = validateVolumeSource(volume?.source, workspaceRoot);
+  if (volumes === undefined || volumes === null) {
+    return { valid: true };
+  }
+
+  if (!Array.isArray(volumes)) {
+    return {
+      valid: false,
+      reason: "Volumes must be an array of volume mounts",
+    };
+  }
+
+  for (const volume of volumes) {
+    // Optional chaining is safe here even when `volume` is `null` or a
+    // non-object primitive (e.g. a bare number/string entry) — it never
+    // throws, it simply yields `undefined`, which `validateVolumeSource`
+    // already rejects as a non-string source.
+    const result = validateVolumeSource(
+      (volume as VolumeMount | null | undefined)?.source as string,
+      workspaceRoot,
+    );
     if (!result.valid) {
       return result;
     }

@@ -28,7 +28,7 @@ import {
   PROJECT_LABEL,
   SENSITIVE_PATTERNS,
 } from "../constants";
-import { validateVolumeSource } from "./volume-validation";
+import { validateVolumes, validateVolumeSource } from "./volume-validation";
 
 /**
  * Check if a key is sensitive and should be redacted
@@ -290,10 +290,17 @@ export class DockerClient {
 
     // Build volume bindings. Defense-in-depth: even though the API route
     // validates volume sources, re-check here so a bad source can never become
-    // a bind mount via any code path (e.g. compose). The source is preserved
-    // VERBATIM in the bind spec — in container mode the host daemon resolves it.
-    // A single bad source aborts the whole creation (throw before any pull /
-    // createContainer), so no container is created (#190).
+    // a bind mount via any code path (e.g. compose, which never goes through
+    // the route's validateVolumes call). The source is preserved VERBATIM in
+    // the bind spec — in container mode the host daemon resolves it. A single
+    // bad source, or a malformed `volumes` shape (non-array, or a non-object
+    // entry), aborts the whole creation (throw before any pull / createContainer)
+    // rather than letting `.map` throw an uncontrolled TypeError — so no
+    // container is created (#190).
+    const volumesCheck = validateVolumes(request.volumes);
+    if (!volumesCheck.valid) {
+      throw new Error(`Refusing to create container: ${volumesCheck.reason}`);
+    }
     const binds = (request.volumes || []).map((v) => {
       const check = validateVolumeSource(v.source);
       if (!check.valid) {

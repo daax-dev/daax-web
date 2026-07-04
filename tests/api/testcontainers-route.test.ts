@@ -110,4 +110,37 @@ describe("POST /api/testcontainers validation", () => {
     expect(res.status).toBe(201);
     expect(mockCreateContainer).toHaveBeenCalledTimes(1);
   });
+
+  it("rejects a non-array `volumes` (object) with 400, not 500, and no container", async () => {
+    // Copilot review on #190/#229: `validateVolumes` used to assume `volumes`
+    // was iterable and threw a TypeError on a malformed object body, which the
+    // route's catch turned into a 500. It must fail closed with a 400.
+    const res = await POST(
+      req({
+        image: "alpine",
+        volumes: { source: "/", target: "/host" },
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("rejects a null volume entry with 400 and no container", async () => {
+    const res = await POST(
+      req({ image: "alpine", volumes: [null] }),
+    );
+    expect(res.status).toBe(400);
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("rejects a volume entry with a non-string source with 400 and no container", async () => {
+    const res = await POST(
+      req({
+        image: "alpine",
+        volumes: [{ source: 123, target: "/data" }],
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
 });

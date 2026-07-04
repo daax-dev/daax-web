@@ -60,4 +60,35 @@ describe("DockerClient.createContainer volume confinement", () => {
 
     expect(mockCreateContainer).not.toHaveBeenCalled();
   });
+
+  it("throws a controlled error (never a raw TypeError) for a non-array `volumes`", async () => {
+    // Compose and template-driven creation call this sink directly, bypassing
+    // the route's validateVolumes check — a malformed `volumes` shape here
+    // must not throw an uncontrolled ".map is not a function" TypeError.
+    const client = new DockerClient();
+
+    await expect(
+      client.createContainer({
+        image: "alpine",
+        // @ts-expect-error intentional malformed input (object, not an array)
+        volumes: { source: "/", target: "/host" },
+      }),
+    ).rejects.toThrow(/Refusing to create container/);
+
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("throws a controlled error for a null volume entry", async () => {
+    const client = new DockerClient();
+
+    await expect(
+      client.createContainer({
+        image: "alpine",
+        // @ts-expect-error intentional malformed input (null entry)
+        volumes: [null],
+      }),
+    ).rejects.toThrow(/Refusing to create container/);
+
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
 });
