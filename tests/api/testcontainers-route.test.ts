@@ -126,6 +126,12 @@ describe("POST /api/testcontainers validation", () => {
   });
 
   it("accepts a Docker named volume (not a host path)", async () => {
+    // `image: "postgres:16"` (embedded tag, no separate `tag` field) is the
+    // corrected-contract real-usage form (#190): a full reference passes
+    // isValidDockerImageName and is later pulled AS-IS (not "postgres:16:latest").
+    // The pull-ref construction itself is verified in the docker-client tests —
+    // createContainer is mocked here, so this route test only asserts the
+    // reference is accepted and a container is created.
     const res = await POST(
       req({
         image: "postgres:16",

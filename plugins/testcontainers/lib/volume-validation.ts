@@ -63,10 +63,13 @@ const DENIED_PREFIXES = [
  * macOS: `/etc` -> `/private/etc`, `/var` -> `/private/var`), a canonicalized
  * source under `/etc` becomes `/private/etc/...` and would silently miss the
  * literal `/etc` prefix — reopening the defense-in-depth gap this module
- * exists to close (#190 Copilot review). Adding the realpath variant to the
- * set closes that gap while staying OS-agnostic: on hosts with no such alias
- * (prod is Linux, where none of these are symlinks) the realpath equals the
- * literal and the union is a no-op.
+ * exists to close (#190 Copilot review). This aliasing is NOT macOS-only: on
+ * Linux `/var/run` is commonly a symlink to `/run` (systemd), so a
+ * canonicalized source under `/var/run` becomes `/run/...` and would likewise
+ * miss the literal `/var/run` prefix (both `/var/run` and `/run` are in the
+ * denylist, and the tests assert this pairing). Adding the realpath variant to
+ * the set closes the gap on every OS and stays a no-op only where a prefix is
+ * not itself a symlink (its realpath equals the literal).
  *
  * Exported (pure, no I/O side effects beyond the realpath lookup) so tests can
  * exercise the union logic directly with synthetic symlinks, independent of

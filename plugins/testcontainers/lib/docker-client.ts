@@ -29,6 +29,7 @@ import {
   SENSITIVE_PATTERNS,
 } from "../constants";
 import { validateVolumes } from "./volume-validation";
+import { buildImageRef } from "@/lib/docker-validation";
 
 /**
  * Check if a key is sensitive and should be redacted
@@ -313,13 +314,17 @@ export class DockerClient {
       (v) => `${v.source}:${v.target}${v.readOnly ? ":ro" : ""}`,
     );
 
-    const image = request.tag
-      ? `${request.image}:${request.tag}`
-      : request.image;
+    // Single source of truth for the image reference: the SAME ref is pulled
+    // and passed to createContainer (pull ref ≡ create ref). buildImageRef
+    // respects an embedded tag/digest in `request.image` (e.g. `postgres:16`,
+    // `alpine@sha256:...`) so it is never mangled into `postgres:16:latest`,
+    // and only appends `:${tag || "latest"}` when there is no embedded
+    // tag/digest — correctly leaving a registry-host port untouched (#190).
+    const imageRef = buildImageRef(request.image, request.tag);
 
     // Pull image if not available locally
     try {
-      await this.pullImage(request.image, request.tag || "latest");
+      await this.pullImage(imageRef);
     } catch (pullErr) {
       // Image might already exist, continue and let createContainer handle it
       console.warn(`[DockerClient] Image pull warning: ${pullErr}`);
@@ -327,7 +332,7 @@ export class DockerClient {
 
     // Create container
     const container = await this.docker.createContainer({
-      Image: image,
+      Image: imageRef,
       name: request.name,
       Labels: labels,
       Env: env,
@@ -477,14 +482,18 @@ export class DockerClient {
   }
 
   /**
-   * Pull an image
+   * Pull an image by its full reference.
+   *
+   * The caller passes a complete reference (built via buildImageRef) — including
+   * any tag or digest. This method does NOT append a tag: appending `:latest` to
+   * an already-tagged/digested ref (`postgres:16` -> `postgres:16:latest`) is the
+   * exact bug #190 fixes. A bare repo with no tag must already be normalized to
+   * `<repo>:latest` by the caller.
    */
-  async pullImage(image: string, tag = "latest"): Promise<void> {
-    const fullImage = `${image}:${tag}`;
-
+  async pullImage(imageRef: string): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       this.docker.pull(
-        fullImage,
+        imageRef,
         (err: Error | null, stream: NodeJS.ReadableStream) => {
           if (err) {
             reject(err);
