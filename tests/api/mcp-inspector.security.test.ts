@@ -448,6 +448,63 @@ describe("POST /api/plugins/mcp-inspector — security (#182)", () => {
     expect(data.url).not.toContain("attacker.example");
   });
 
+  it("registered REMOTE mcpId does NOT leak cfg.env secrets to the inspector child", async () => {
+    process.env.GITHUB_TOKEN = "super-secret";
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [
+        {
+          id: "remote-secret",
+          // A registered remote (HTTP/SSE) MCP declares an env secret. No stdio
+          // server is spawned for a remote target — the inspector only proxies
+          // to the URL — so cfg.env must NOT reach the child (#182 Copilot).
+          config: {
+            type: "http",
+            url: "http://localhost:9999/mcp",
+            env: { SECRET_TOKEN: "leak-me" },
+          },
+        },
+      ],
+    });
+
+    const res = await runToCompletion(
+      makeRequest({ mcpId: "remote-secret", transport: "http" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    const opts = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    // The MCP's declared env is NOT passed to a remote inspector child.
+    expect(opts.env.SECRET_TOKEN).toBeUndefined();
+    // App secrets remain excluded too.
+    expect(opts.env.GITHUB_TOKEN).toBeUndefined();
+    // Only PATH/HOME + port overrides are present.
+    expect(opts.env.CLIENT_PORT).toBeDefined();
+    expect(opts.env.SERVER_PORT).toBeDefined();
+    // env cleanup handled by afterEach (env snapshot restore).
+  });
+
+  it("registered STDIO mcpId DOES pass cfg.env to the inspector child", async () => {
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [
+        {
+          id: "stdio-env",
+          // A registered stdio MCP genuinely needs its declared env — a real
+          // child process is spawned — so cfg.env IS included (#182 Copilot).
+          config: { command: "npx", args: [], env: { STDIO_KEY: "keep-me" } },
+        },
+      ],
+    });
+
+    const res = await runToCompletion(makeRequest({ mcpId: "stdio-env" }));
+
+    expect(res.status).toBe(200);
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    const opts = mockSpawn.mock.calls[0][2] as { env: Record<string, string> };
+    expect(opts.env.STDIO_KEY).toBe("keep-me");
+    expect(opts.env.CLIENT_PORT).toBeDefined();
+    expect(opts.env.SERVER_PORT).toBeDefined();
+  });
+
   it("registered REMOTE mcpId with a file: url → 400 and never spawns", async () => {
     mockDiscoverAllMcps.mockReturnValue({
       mcps: [

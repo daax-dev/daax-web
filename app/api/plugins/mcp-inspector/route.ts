@@ -213,7 +213,6 @@ export async function POST(request: NextRequest) {
     if (discovered && discovered.config) {
       // Registered MCP: use its own config, never the client body.
       const cfg = discovered.config;
-      resolvedEnv = cfg.env;
       if (isNonEmptyString(cfg.url)) {
         // Registered REMOTE MCP (SSE/HTTP): resolve the target URL SERVER-SIDE
         // from the registry. A client-supplied `serverUrl` is never trusted for
@@ -229,14 +228,21 @@ export async function POST(request: NextRequest) {
           );
         }
         targetUrl = cfg.url;
+        // Registered REMOTE (SSE/HTTP) target: no stdio server is spawned — the
+        // inspector only proxies to the URL. Do NOT hand the MCP's declared env
+        // (potentially secrets) to the inspector child; a remote child needs
+        // only PATH/HOME + the port overrides. Leave resolvedEnv undefined so
+        // buildChildEnv receives no config env (#182 Copilot).
       } else if (isNonEmptyString(cfg.command)) {
         // Registered stdio MCP: use its server-side command/args. Validate the
         // parsed-from-JSON values at runtime (#182 Copilot): `command` must be a
         // non-empty string and `args` a string[] (non-strings filtered out), so
         // a malformed config can't start a bare inspector or throw a spawn
-        // TypeError → 500.
+        // TypeError → 500. A stdio server genuinely needs its declared env, so
+        // pass cfg.env to the child here (only on the stdio path).
         resolvedCommand = cfg.command;
         resolvedArgs = toStringArray(cfg.args);
+        resolvedEnv = cfg.env;
       } else {
         // Registered MCP with neither a usable stdio command nor a URL is
         // misconfigured — reject rather than launching a bare inspector.
