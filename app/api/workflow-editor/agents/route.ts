@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
 import { expandPath, getSettings } from "@/lib/settings";
+import { confineToRoot, PathConfinementError } from "@/lib/path-confine";
+import { requireAuth } from "@/lib/auth";
 
 interface AgentInfo {
   name: string;
@@ -152,6 +154,12 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
+  // Require authentication before parsing the body or touching the filesystem.
+  const auth = await requireAuth();
+  if (!auth.authenticated) {
+    return auth.response;
+  }
+
   try {
     const body = await request.json();
     const { name, content, model } = body as {
@@ -173,13 +181,32 @@ export async function PUT(request: NextRequest) {
 
     let filePath: string;
     let filename: string;
+    let agentDir: string;
 
     if (model === "copilot") {
       filename = name + ".agent.md";
-      filePath = path.join(flowspecPath, ".github", "agents", filename);
+      agentDir = path.join(flowspecPath, ".github", "agents");
     } else {
       filename = name + ".md";
-      filePath = path.join(flowspecPath, ".agents", filename);
+      agentDir = path.join(flowspecPath, ".agents");
+    }
+
+    // Confine the client-controlled `name` to the CONCRETE agent directory it
+    // is written to (`.agents` or `.github/agents`), not the broad workspace
+    // root. Confining to the workspace root only blocks workspace ESCAPE; a
+    // `name` like `../../other-project/.git/config` stays inside the workspace
+    // but escapes the intended agent directory. Confining to `agentDir` stops
+    // `..` from leaving that leaf directory.
+    try {
+      filePath = confineToRoot(agentDir, filename);
+    } catch (err) {
+      if (err instanceof PathConfinementError) {
+        return NextResponse.json(
+          { error: "Agent path escapes the agent directory" },
+          { status: 403 },
+        );
+      }
+      throw err;
     }
 
     // Write the updated content

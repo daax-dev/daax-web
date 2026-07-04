@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
+import { confineToRoot, PathConfinementError } from "@/lib/path-confine";
+import { requireAuth } from "@/lib/auth";
 
 // Base paths for skill files (relative to project root)
 const CLAUDE_COMMANDS_PATH = ".claude/commands";
@@ -316,6 +318,12 @@ export async function GET(request: NextRequest) {
 
 // PUT - Save skill content
 export async function PUT(request: NextRequest) {
+  // Require authentication before parsing the body or touching the filesystem.
+  const auth = await requireAuth();
+  if (!auth.authenticated) {
+    return auth.response;
+  }
+
   try {
     const body = await request.json();
     const {
@@ -338,17 +346,20 @@ export async function PUT(request: NextRequest) {
     // Determine target path
     const targetPath = saveAs || filePath;
 
-    // Security check - ensure path is within project
+    // Security check - confine to the project directory with a canonicalized,
+    // trailing-separator boundary (rejects `..` traversal and absolute escapes).
     const projectRoot = getProjectRoot();
-    // Resolve relative paths from project root
-    const resolvedPath = path.isAbsolute(targetPath)
-      ? path.resolve(targetPath)
-      : path.resolve(projectRoot, targetPath);
-    if (!resolvedPath.startsWith(projectRoot)) {
-      return NextResponse.json(
-        { error: "Path must be within project directory" },
-        { status: 403 },
-      );
+    let resolvedPath: string;
+    try {
+      resolvedPath = confineToRoot(projectRoot, targetPath);
+    } catch (err) {
+      if (err instanceof PathConfinementError) {
+        return NextResponse.json(
+          { error: "Path must be within project directory" },
+          { status: 403 },
+        );
+      }
+      throw err;
     }
 
     // Ensure directory exists
@@ -377,6 +388,12 @@ export async function PUT(request: NextRequest) {
 
 // POST - Create new skill/config file
 export async function POST(request: NextRequest) {
+  // Require authentication before parsing the body or touching the filesystem.
+  const auth = await requireAuth();
+  if (!auth.authenticated) {
+    return auth.response;
+  }
+
   try {
     const body = await request.json();
     const { name, type, phase, content } = body as {
@@ -394,33 +411,44 @@ export async function POST(request: NextRequest) {
     }
 
     const projectRoot = getProjectRoot();
-    let targetPath: string;
+    // Confine the client-controlled `name`/`phase` relative to the CONCRETE
+    // per-type root, not the broad project root. Project-root confinement only
+    // blocks project ESCAPE; a `name` like `../pwn` (with a legit `phase`) stays
+    // inside the project but escapes the intended skills/commands directory.
+    // Passing the client components as separate segments under the concrete root
+    // guarantees the resolved path stays under that root. Note: for commands,
+    // `phase` is a free, unvalidated segment, so a client can target any
+    // category by naming it directly; confinement guarantees containment to the
+    // commands root, not isolation between sibling categories.
+    let confineRoot: string;
+    let segments: string[];
 
     if (type === "config") {
       // Save as workflow config
-      targetPath = path.join(
-        projectRoot,
-        ".flowspec",
-        "workflow-configs",
-        `${name}.json`,
-      );
+      confineRoot = path.join(projectRoot, ".flowspec", "workflow-configs");
+      segments = [`${name}.json`];
     } else if (type === "agent") {
       // Save as agent skill
-      targetPath = path.join(
-        projectRoot,
-        FLOWSPEC_SKILLS_PATH,
-        name,
-        "SKILL.md",
-      );
+      confineRoot = path.join(projectRoot, FLOWSPEC_SKILLS_PATH);
+      segments = [name, "SKILL.md"];
     } else {
       // Save as command
       const category = phase || "custom";
-      targetPath = path.join(
-        projectRoot,
-        CLAUDE_COMMANDS_PATH,
-        category,
-        `${name}.md`,
-      );
+      confineRoot = path.join(projectRoot, CLAUDE_COMMANDS_PATH);
+      segments = [category, `${name}.md`];
+    }
+
+    let targetPath: string;
+    try {
+      targetPath = confineToRoot(confineRoot, ...segments);
+    } catch (err) {
+      if (err instanceof PathConfinementError) {
+        return NextResponse.json(
+          { error: "Path must be within project directory" },
+          { status: 403 },
+        );
+      }
+      throw err;
     }
 
     // Ensure directory exists

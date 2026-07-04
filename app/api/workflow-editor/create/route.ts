@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
 import yaml from "js-yaml";
-import { expandPath } from "@/lib/settings";
+import { expandPath, getSettings } from "@/lib/settings";
+import { confineToRoot, PathConfinementError } from "@/lib/path-confine";
 import { requireAuth } from "@/lib/auth";
 
 interface WorkflowTemplate {
@@ -246,7 +247,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const expandedPath = expandPath(projectPath);
+    // Confine the client-controlled projectPath to the configured workspace
+    // root. Root and target go through the SAME resolver (expandPath) so both
+    // land in the same namespace — mixing resolvers would mis-confine.
+    const workspaceRoot = expandPath(getSettings().basePath);
+    let expandedPath: string;
+    try {
+      expandedPath = confineToRoot(workspaceRoot, expandPath(projectPath));
+    } catch (err) {
+      if (err instanceof PathConfinementError) {
+        return NextResponse.json(
+          { error: "projectPath escapes the workspace root" },
+          { status: 403 },
+        );
+      }
+      throw err;
+    }
     const workflowPath = path.join(expandedPath, "flowspec_workflow.yml");
 
     // Check if file exists
