@@ -1,0 +1,22 @@
+# Helm values for the daax-dev org-wide ARC runner scale set.
+# Chart: oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
+# Installed into namespace arc-runners as release "daax-arc".
+# See docs/building/self-hosted-runners-runbook.md STEP 2.
+
+# Org-level registration → runners available to every daax-dev repo.
+githubConfigUrl: https://github.com/daax-dev
+
+# Name of the pre-created k8s secret holding the GitHub App credentials
+# (github_app_id / github_app_installation_id / github_app_private_key).
+# Created by install-scale-set.sh from APP_ID / INSTALLATION_ID / APP_PEM.
+githubConfigSecret: daax-arc-github-app
+
+# Docker-in-Docker sidecar (privileged) so jobs get Docker for
+# buildx (multi-arch publish), service containers (Postgres in e2e),
+# and Trivy. Required by both ci.yml and publish-images.yml.
+containerMode:
+  type: dind
+
+# Scale-to-zero when idle (no pods, no cost); burst to 4 concurrent jobs.
+minRunners: 0
+maxRunners: 4
