@@ -61,6 +61,7 @@ import {
   getSubFeatureMaturity,
   getOrderedPlugins,
   getOrderedHomepageCards,
+  getEffectiveDefaults,
   normalizeAgentOrder,
   type DaaxSettings,
   type DeploymentMode,
@@ -542,7 +543,7 @@ function SettingsInner() {
                       id="basePath"
                       value={settings.basePath}
                       onChange={(e) => handleBasePathChange(e.target.value)}
-                      placeholder="~/prj"
+                      placeholder={getEffectiveDefaults().basePath}
                       className={basePathError ? "border-red-500" : ""}
                     />
                     <Button
@@ -569,7 +570,7 @@ function SettingsInner() {
                   )}
                   <p className="text-xs text-muted-foreground">
                     The root directory for workspaces. Use ~ for home directory.
-                    Default: ~/prj
+                    Default: {getEffectiveDefaults().basePath}
                   </p>
                   {directories.length > 0 &&
                     (() => {
