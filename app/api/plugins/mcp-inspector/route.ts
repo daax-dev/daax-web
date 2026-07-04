@@ -27,11 +27,15 @@
 // command-injection primitive, not to sandbox an authenticated operator. The
 // child receives an explicit minimal env (never the full process.env).
 
-import { existsSync } from "fs";
 import { NextRequest, NextResponse } from "next/server";
 import { spawn, ChildProcess } from "child_process";
 import { requireAuth } from "@/lib/auth";
 import { discoverAllMcps } from "@/lib/mcp-config";
+import {
+  getDefaultProjectPath,
+  isAllowedRemoteUrl,
+  buildChildEnv,
+} from "@/lib/mcp-route-helpers";
 
 // Allowlist of executables permitted for an ad-hoc (unregistered) inspector
 // launch. These are the standard MCP launchers; a bare basename resolved via
@@ -70,20 +74,6 @@ function toStringArray(value: unknown): string[] {
     : [];
 }
 
-// Validate a remote (SSE/HTTP) target URL. Only http/https are permitted; this
-// blocks file:, data:, and other schemes. No command is ever spawned from a
-// URL — it is only handed to the inspector UI to connect its proxy — so this is
-// a scheme guard, not a command guard.
-function isAllowedRemoteUrl(raw: unknown): raw is string {
-  if (typeof raw !== "string" || raw.length === 0) return false;
-  try {
-    const u = new URL(raw);
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 // Map the client transport hint (and the target URL) to the inspector UI's
 // transport query value. This only pre-selects a dropdown in the inspector UI;
 // it has no security effect (the operator can change it in the UI).
@@ -95,33 +85,6 @@ function inferUiTransport(
   if (clientTransport === "http") return "streamable-http";
   // Registered remote MCPs carry no explicit sse/http hint — infer from the URL.
   return url.includes("/sse") ? "sse" : "streamable-http";
-}
-
-// Default project path used to scope MCP discovery: /workspace in container
-// mode, otherwise the current working directory (mirrors /api/mcp/config).
-function getDefaultProjectPath(): string {
-  if (process.env.CLAUDE_CODE_CONFIG || existsSync("/workspace")) {
-    return "/workspace";
-  }
-  return process.cwd();
-}
-
-// Build an explicit, minimal env for the spawned inspector (#182). Only PATH
-// and HOME from the app environment, plus the registered MCP's own declared
-// env. The full process.env is never spread in, so app secrets are not leaked.
-function buildChildEnv(
-  configEnv: Record<string, string> | undefined,
-  extra: Record<string, string>,
-): Record<string, string> {
-  const env: Record<string, string> = {};
-  if (process.env.PATH) env.PATH = process.env.PATH;
-  if (process.env.HOME) env.HOME = process.env.HOME;
-  if (configEnv) {
-    for (const [key, value] of Object.entries(configEnv)) {
-      if (typeof value === "string") env[key] = value;
-    }
-  }
-  return { ...env, ...extra };
 }
 
 // Track running inspector processes. `url` is the full launch URL the POST

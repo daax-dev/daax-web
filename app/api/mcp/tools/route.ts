@@ -9,11 +9,15 @@
 // MCP's own declared env) so app secrets (GITHUB_TOKEN, DATABASE_URL, ...) are
 // never leaked into it. requireAuth() is enforced as defense-in-depth.
 
-import { existsSync } from "fs";
 import { NextResponse } from "next/server";
 import { spawn } from "child_process";
 import { requireAuth } from "@/lib/auth";
 import { discoverAllMcps } from "@/lib/mcp-config";
+import {
+  getDefaultProjectPath,
+  isAllowedRemoteUrl,
+  buildChildEnv,
+} from "@/lib/mcp-route-helpers";
 
 interface McpTool {
   name: string;
@@ -41,48 +45,6 @@ function toStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((v): v is string => typeof v === "string")
     : [];
-}
-
-// Validate a registered remote MCP URL before fetching. Only http/https are
-// permitted (#182 Copilot): this mirrors the ad-hoc remote allowlist in the
-// mcp-inspector route so registered and ad-hoc remote URLs are validated the
-// same way, and blocks file:/data:/other schemes up-front with a controlled
-// 400 instead of letting fetchToolsViaHttp throw into the generic catch → 500.
-function isAllowedRemoteUrl(raw: unknown): raw is string {
-  if (typeof raw !== "string" || raw.length === 0) return false;
-  try {
-    const u = new URL(raw);
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-// Default project path used to scope MCP discovery: /workspace in container
-// mode, otherwise the current working directory (mirrors /api/mcp/config).
-function getDefaultProjectPath(): string {
-  if (process.env.CLAUDE_CODE_CONFIG || existsSync("/workspace")) {
-    return "/workspace";
-  }
-  return process.cwd();
-}
-
-// Build an explicit, minimal env for a spawned MCP process (#182). Only PATH
-// and HOME from the app environment (so the launcher is resolvable), plus the
-// registered MCP's own declared env. The full process.env is never spread in,
-// so app secrets are not leaked into the child.
-function buildChildEnv(
-  configEnv?: Record<string, string>,
-): Record<string, string> {
-  const env: Record<string, string> = {};
-  if (process.env.PATH) env.PATH = process.env.PATH;
-  if (process.env.HOME) env.HOME = process.env.HOME;
-  if (configEnv) {
-    for (const [key, value] of Object.entries(configEnv)) {
-      if (typeof value === "string") env[key] = value;
-    }
-  }
-  return env;
 }
 
 // Send a JSON-RPC request to an MCP server via stdio
@@ -305,7 +267,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           success: false,
-          error: `Unknown MCP: ${mcpId}. Only registered MCPs can be inspected.`,
+          error: `Unknown MCP: ${mcpId}. Only registered MCPs can be queried for tools.`,
         },
         { status: 403 },
       );
