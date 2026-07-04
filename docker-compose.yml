@@ -4,17 +4,27 @@
 #   ./rebuild.sh              # Build and run via docker compose
 #   docker compose logs -f    # View logs
 #   docker compose down       # Stop
+#
+# Required: DAAX_PG_PASSWORD must be set (no weak default). For throwaway local
+# dev, export a value first (e.g. `export DAAX_PG_PASSWORD=$(openssl rand -hex 16)`
+# or any local-only value). NEVER reuse a local value for a network-reachable
+# deployment. `docker compose up` fails fast with a clear error if it is unset.
 
 services:
   # Postgres — daax's single data engine (brain2daax Phase 0 #92).
   # Persistent named volume so data survives `docker compose restart`/`down`.
   postgres:
+    # TODO(#203): digest-pin (postgres:18-alpine@sha256:...); deferred pending
+    # registry access to resolve the digest (do not invent one).
     image: postgres:18-alpine
     container_name: daax-postgres
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${DAAX_PG_USER:-daax}
-      - POSTGRES_PASSWORD=${DAAX_PG_PASSWORD:-daax}
+      # Fail-closed: no weak default (matches deploy/docker-compose.yml). Even on
+      # loopback, any container on daax-net (incl. spawned agent containers) can
+      # reach postgres:5432, so a guessable shared default is unsafe. See #196.
+      - POSTGRES_PASSWORD=${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required (set a strong secret; never commit it)}
       - POSTGRES_DB=${DAAX_PG_DB:-daax}
     ports:
       # Loopback-only: app reaches it via the daax-net hostname `postgres`.
@@ -45,7 +55,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:-daax}@postgres:5432/${DAAX_PG_DB:-daax}
+      - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required}@postgres:5432/${DAAX_PG_DB:-daax}
     command: ["bun", "run", "db:migrate"]
     networks:
       - daax-net
@@ -63,6 +73,21 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+
+    # Hardening (#185). no-new-privileges blocks setuid/setgid escalation from
+    # any process inside the container (bounds the blast radius of an in-app RCE).
+    # NOT YET done (require verification we cannot do offline, and would break
+    # functionality if applied naively):
+    #   - Non-root USER: the app needs docker.sock access to spawn agent
+    #     containers; the socket is root:docker, so a non-root USER must join the
+    #     docker group with a GID matching the HOST socket (DOCKER_GID build arg +
+    #     group_add). Applying `USER node` without that alignment breaks spawning.
+    #   - cap_drop: [ALL]: the app writes the host-owned .claude.json mounted :rw,
+    #     which a uid-0 process needs CAP_DAC_OVERRIDE for — a blanket drop would
+    #     break MCP config writes. Requires per-capability analysis + a live test.
+    # See #185 follow-up: non-root + docker-GID alignment + scoped cap_drop.
+    security_opt:
+      - no-new-privileges:true
 
     ports:
       - "4200:4200"
@@ -101,7 +126,15 @@ services:
       # Generate: `openssl rand -hex 32`. Never commit it.
       - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
       - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
-      - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:-daax}@postgres:5432/${DAAX_PG_DB:-daax}
+      # HTTP proxy-secret trust boundary (F1a, #94/#191). The app must receive the
+      # SAME value Traefik injects as X-Daax-Proxy-Secret, or enabling strict mode
+      # (DAAX_REQUIRE_AUTH=1) fails closed and locks out all forwarded identity.
+      # Opt-in: empty default keeps the boundary disabled (legacy behavior) and in
+      # sync with deploy-local.sh, which also renders an empty header when unset.
+      # _PREVIOUS is accepted too, so the secret can be rotated without an outage.
+      - DAAX_PROXY_SECRET=${DAAX_PROXY_SECRET:-}
+      - DAAX_PROXY_SECRET_PREVIOUS=${DAAX_PROXY_SECRET_PREVIOUS:-}
+      - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required}@postgres:5432/${DAAX_PG_DB:-daax}
       - HOME_MCP_JSON=${HOME_MCP_PATH:+/host-config/.mcp.json}
 
       # Clawd Gateway (optional, for Bot feature)
