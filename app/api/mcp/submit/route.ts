@@ -38,17 +38,16 @@ export async function POST(request: NextRequest) {
   const auth = await requireAuth();
   if (!auth.authenticated) return auth.response;
 
+  // Attribution is derived from the authenticated user, never from the client
+  // body — an authenticated caller must not be able to spoof `submittedBy`
+  // (#197). Any `submittedBy` in the request body is ignored.
+  const submittedBy = auth.user.username ?? "anonymous";
+
   try {
     const body = await request.json();
 
     // Validate required fields
-    const required = [
-      "name",
-      "description",
-      "version",
-      "category",
-      "submittedBy",
-    ];
+    const required = ["name", "description", "version", "category"];
     for (const field of required) {
       if (!body[field]) {
         return NextResponse.json(
@@ -88,7 +87,7 @@ export async function POST(request: NextRequest) {
         resources: body.resources || [],
         source: body.source,
       },
-      body.submittedBy,
+      submittedBy,
     );
 
     return NextResponse.json({

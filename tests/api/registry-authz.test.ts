@@ -26,7 +26,7 @@
  * DB, filesystem, or Docker daemon.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { EventEmitter } from "events";
 
 // ---------------------------------------------------------------------------
@@ -497,6 +497,85 @@ describe("registry/catalog/release mutation routes require auth (#197)", () => {
         expect(c.sideEffects[c.sideEffects.length - 1]()).toHaveBeenCalled();
       });
     }
+  });
+
+  describe("actor attribution is derived from auth.user, not the client body (#197)", () => {
+    // An authenticated caller must not be able to spoof who performed the
+    // action. Each handler derives the actor from auth.user.username; any
+    // actor-like field in the request body is ignored. auth.user.username is
+    // "tester" (setAuthenticated); the body sets a DIFFERENT value ("attacker")
+    // and we assert the persisted actor is "tester", never "attacker".
+    it("POST /api/catalog/builds stores createdBy from auth, ignoring body", async () => {
+      setAuthenticated();
+
+      const res = await buildsPOST(
+        new Request("http://localhost/api/catalog/builds", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: "b",
+            base: "x",
+            output: "y",
+            createdBy: "attacker",
+          }),
+        }),
+      );
+
+      expect(res.status).not.toBe(401);
+      expect(m.createBuildSpec).toHaveBeenCalledWith(
+        expect.objectContaining({ createdBy: "tester" }),
+      );
+      // The spoofed body value never reaches storage.
+      expect(m.createBuildSpec).not.toHaveBeenCalledWith(
+        expect.objectContaining({ createdBy: "attacker" }),
+      );
+    });
+
+    it("POST /api/mcp/submit stores submittedBy from auth, ignoring body", async () => {
+      setAuthenticated();
+
+      const res = await submitPOST(
+        new Request("http://localhost/api/mcp/submit", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: "n",
+            description: "d",
+            version: "1",
+            category: "tools",
+            submittedBy: "attacker",
+          }),
+        }) as unknown as NextRequest,
+      );
+
+      expect(res.status).not.toBe(401);
+      // submitMcp(mcp, submittedBy) — 2nd positional arg is the actor.
+      expect(m.submitMcp).toHaveBeenCalledWith(expect.anything(), "tester");
+      expect(m.submitMcp.mock.calls[0]?.[1]).toBe("tester");
+      expect(m.submitMcp.mock.calls[0]?.[1]).not.toBe("attacker");
+    });
+
+    it("POST /api/mcp/submit/[id] stores reviewedBy from auth, ignoring body", async () => {
+      setAuthenticated();
+
+      const res = await submitIdPOST(
+        new Request("http://localhost/api/mcp/submit/x", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            action: "approve",
+            reviewedBy: "attacker",
+          }),
+        }) as unknown as NextRequest,
+        { params: Promise.resolve({ id: "x" }) },
+      );
+
+      expect(res.status).not.toBe(401);
+      // approveSubmission(id, reviewedBy, reviewNotes) — 2nd arg is the actor.
+      expect(m.approveSubmission).toHaveBeenCalledWith("x", "tester", undefined);
+      expect(m.approveSubmission.mock.calls[0]?.[1]).toBe("tester");
+      expect(m.approveSubmission.mock.calls[0]?.[1]).not.toBe("attacker");
+    });
   });
 
   describe("GET /api/mcp/gateway read-only view stays public", () => {
