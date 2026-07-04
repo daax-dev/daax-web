@@ -109,6 +109,14 @@ services:
       # Generate: `openssl rand -hex 32`. Never commit it.
       - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
       - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
+      # HTTP proxy-secret trust boundary (F1a, #94/#191). The app must receive the
+      # SAME value Traefik injects as X-Daax-Proxy-Secret, or enabling strict mode
+      # (DAAX_REQUIRE_AUTH=1) fails closed and locks out all forwarded identity.
+      # Opt-in: empty default keeps the boundary disabled (legacy behavior) and in
+      # sync with deploy-local.sh, which also renders an empty header when unset.
+      # _PREVIOUS is accepted too, so the secret can be rotated without an outage.
+      - DAAX_PROXY_SECRET=${DAAX_PROXY_SECRET:-}
+      - DAAX_PROXY_SECRET_PREVIOUS=${DAAX_PROXY_SECRET_PREVIOUS:-}
       - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required}@postgres:5432/${DAAX_PG_DB:-daax}
       - HOME_MCP_JSON=${HOME_MCP_PATH:+/host-config/.mcp.json}
 

@@ -117,6 +117,17 @@ services:
       - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
       - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
 
+      # HTTP proxy-secret trust boundary (F1a, #94/#191). The app MUST receive the
+      # same value deploy-local.sh renders into Traefik's inject-proxy-secret
+      # middleware (X-Daax-Proxy-Secret), or enabling strict mode
+      # (DAAX_REQUIRE_AUTH=1) per the hardening steps above fails closed and locks
+      # out ALL forwarded identity — a login lockout. Opt-in: the empty default
+      # keeps the boundary disabled and stays in sync with deploy-local.sh, which
+      # also renders an empty header (and warns) when unset. _PREVIOUS is accepted
+      # too, so the secret rotates without an auth outage (matches WS secret).
+      - DAAX_PROXY_SECRET=${DAAX_PROXY_SECRET:-}
+      - DAAX_PROXY_SECRET_PREVIOUS=${DAAX_PROXY_SECRET_PREVIOUS:-}
+
       # Postgres connection (brain2daax Phase 0 #92). Reaches the postgres
       # service over daax-net; password sourced from env/secret, never committed.
       - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required}@postgres:5432/${DAAX_PG_DB:-daax}
