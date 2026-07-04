@@ -43,6 +43,14 @@ daax-web/
   - **Clawd Gateway:** optional Bot feature (`CLAWD_GATEWAY_URL` / `CLAWD_GATEWAY_TOKEN`).
 - Container mode mounts the Docker socket and host config (`~/.claude.json` rw, `~/.mcp.json` ro) — treat these as trusted, Tailscale-only surfaces. Do not broaden socket exposure without a logged decision.
 
+## API Authorization: default-deny middleware (#181)
+- `middleware.ts` gates **every** `/api/*` request (`config.matcher`, `runtime = "nodejs"`). The default is **deny**: a request must pass the SAME trust evaluator that backs `requireAuth()` (`evaluateAuthDecision` in `lib/auth-trust.ts`) unless its path is on an explicit public allowlist. This replaces the previous per-route-only model where any handler that forgot to call `requireAuth()` shipped unauthenticated.
+- **Public allowlist** (matched exactly, no prefix widening): `/api/health`, `/api/health/backlog` (readiness probes must reach them without credentials), and `/api/auth/user` (app shell reads identity pre-login; returns only the possibly-unauthenticated `AuthUser`, no secrets).
+- **CSRF / Origin check** applies to mutating methods only (`POST`, `PUT`, `PATCH`, `DELETE`). A request is blocked (403) only when an `Origin` header is present AND not on the allowlist (localhost / `*.localhost` / Tailscale `100.64.0.0/10` / `https://daax.*.poley.dev`); a missing `Origin` (non-browser client) is left to the auth check, not blocked on Origin alone. The allowlist lives in `server/config/origin-allowlist.ts` (dependency-free so it does not bloat the middleware bundle).
+- **Denied bodies match `requireAuth()`**: the 401 payload is byte-identical (`{ error: "Authentication required", message: "You must be logged in to access this resource" }`); the 403 uses the same `{ error, message }` shape, so a request denied by the middleware is indistinguishable from one denied by a per-route guard.
+- **`DAAX_API_GUARD` rollout switch** (read per request): `enforce` (default) blocks denied/cross-site requests; `report` logs what WOULD be blocked but allows it through; `off` makes the middleware a no-op. Any unrecognized value falls back to `enforce`. **Roll out in `report` mode first**, review the `[api-guard][report]` warnings, then switch to `enforce`.
+- **Strict-mode note**: in strict mode (`DAAX_REQUIRE_AUTH=1`) service-to-service callers that lack forwarded identity (no trusted `X-Forwarded-User` / proxy secret) are now **denied** — previously such calls could reach handlers that never called `requireAuth()`. Grant them identity via the proxy, or add narrowly-scoped allowlist entries with a logged decision.
+
 ## Anti-Patterns (refuse these)
 - Breaking one of the two deployment modes (host dev / container) to make the other work.
 - Hardcoded colors or non-semantic styling.

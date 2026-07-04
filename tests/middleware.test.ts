@@ -67,6 +67,16 @@ describe("default-deny /api middleware (#181)", () => {
       expect(res.status).toBe(401);
     });
 
+    it("401 body matches requireAuth()'s { error, message } shape", async () => {
+      process.env.DAAX_REQUIRE_AUTH = "1";
+      const res = middleware(req("http://localhost/api/config"));
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({
+        error: "Authentication required",
+        message: "You must be logged in to access this resource",
+      });
+    });
+
     it("valid proxied identity (matching secret) → allow", () => {
       process.env.DAAX_REQUIRE_AUTH = "1";
       process.env.DAAX_PROXY_SECRET = "s3cr3t";
@@ -102,6 +112,19 @@ describe("default-deny /api middleware (#181)", () => {
         }),
       );
       expect(res.status).toBe(403);
+    });
+
+    it("403 body uses the same { error, message } shape", async () => {
+      const res = middleware(
+        req("http://localhost/api/config", {
+          method: "POST",
+          headers: { origin: "https://evil.example" },
+        }),
+      );
+      expect(res.status).toBe(403);
+      const body = await res.json();
+      expect(body).toHaveProperty("error", "Cross-site request blocked");
+      expect(typeof body.message).toBe("string");
     });
 
     it("same-origin mutating POST (allowed Origin) → allowed (operator)", () => {

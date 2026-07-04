@@ -2,12 +2,13 @@
  * Default-deny authorization gate for /api/* (issue #181).
  *
  * daax-web previously enforced auth per-route: each handler had to call
- * `requireAuth()` itself, so any route that forgot to shipped UNauthenticated
- * (89/133 routes never called it — see fable-revew.md §1/§3, incl. three RCE
- * sinks). This middleware inverts the default: every /api request must pass the
- * SAME trust evaluator that backs `requireAuth()` (lib/auth-trust) unless it is
- * on a short, explicit public allowlist. It also closes the host-dev drive-by
- * CSRF vector by rejecting cross-site mutating requests before any handler runs.
+ * `requireAuth()` itself, so any route that forgot to call it shipped
+ * UNauthenticated (89/133 routes never called it — see fable-revew.md §1/§3,
+ * incl. three RCE sinks). This middleware inverts the default: every /api
+ * request must pass the SAME trust evaluator that backs `requireAuth()`
+ * (lib/auth-trust) unless it is on a short, explicit public allowlist. It also
+ * closes the host-dev drive-by CSRF vector by rejecting cross-site mutating
+ * requests before any handler runs.
  *
  * Trust logic is NOT duplicated here: `evaluateAuthDecision` is the single
  * source of truth shared with lib/auth.ts, so middleware and per-route guards
@@ -24,7 +25,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { evaluateAuthDecision } from "@/lib/auth-trust";
-import { isAllowedOrigin } from "@/server/config/constants";
+import { isAllowedOrigin } from "@/server/config/origin-allowlist";
 
 export const config = { matcher: ["/api/:path*"] };
 export const runtime = "nodejs";
@@ -66,8 +67,18 @@ function guardMode(): GuardMode {
   return "enforce";
 }
 
-function jsonError(message: string, status: number): NextResponse {
-  return NextResponse.json({ error: message }, { status });
+/**
+ * Build an error response whose JSON body MATCHES the `{ error, message }` shape
+ * that `requireAuth()` (lib/auth.ts) returns, so a request denied here is
+ * indistinguishable from one denied by a per-route guard. The 401 body below is
+ * byte-identical to `requireAuth()`'s 401 payload.
+ */
+function jsonError(
+  error: string,
+  message: string,
+  status: number,
+): NextResponse {
+  return NextResponse.json({ error, message }, { status });
 }
 
 export function middleware(request: NextRequest): NextResponse {
@@ -89,7 +100,11 @@ export function middleware(request: NextRequest): NextResponse {
     const origin = request.headers.get("origin");
     if (origin && !isAllowedOrigin(origin)) {
       if (mode === "enforce") {
-        return jsonError("Cross-site request blocked", 403);
+        return jsonError(
+          "Cross-site request blocked",
+          "This request was blocked because its Origin is not on the trusted allowlist",
+          403,
+        );
       }
       console.warn(
         `[api-guard][report] would 403 (cross-site Origin) ${request.method} ${pathname} origin=${origin}`,
@@ -101,7 +116,11 @@ export function middleware(request: NextRequest): NextResponse {
   const decision = evaluateAuthDecision(request.headers);
   if (decision.decision === "deny") {
     if (mode === "enforce") {
-      return jsonError("Authentication required", 401);
+      return jsonError(
+        "Authentication required",
+        "You must be logged in to access this resource",
+        401,
+      );
     }
     console.warn(
       `[api-guard][report] would 401 (unauthenticated) ${request.method} ${pathname}`,
