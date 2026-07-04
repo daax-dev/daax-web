@@ -51,13 +51,37 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
 # curl|bash": the version is pinned to match package.json
 # "packageManager": "bun@1.3.9", so a build is reproducible and a compromise of
 # the moving latest release does not silently land here.
-# TODO(#200): add checksum/signature verification of the bun release artifact
-# (mirroring the syft/Go pattern elsewhere in this repo) once network/registry
-# access is available to resolve the published SHA256 for this pinned version.
-# Not done here to avoid inventing a checksum that would break the build offline.
+#
+# Checksum-verified (#200): instead of piping bun.sh/install into a shell, the
+# release artifact is downloaded explicitly from GitHub and verified against the
+# published SHA256 (bun-v1.3.9 SHASUMS256.txt) before it is installed, mirroring
+# the syft pattern below. A swapped/compromised artifact fails the build.
+# Per-arch checksums (from
+# https://github.com/oven-sh/bun/releases/download/bun-v1.3.9/SHASUMS256.txt):
+#   bun-linux-x64.zip      -> 4680e80e44e32aa718560ceae85d22ecfbf2efb8f3641782e35e4b7efd65a1aa
+#   bun-linux-aarch64.zip  -> a2c2862bcc1fd1c0b3a8dcdc8c7efb5e2acd871eb20ed2f17617884ede81c844
+# Bump both the version and these checksums together (e.g. via Renovate).
 ENV BUN_INSTALL=/usr/local/bun
 ARG BUN_VERSION=1.3.9
-RUN curl -fsSL https://bun.sh/install | bash -s -- "bun-v${BUN_VERSION}"
+ARG TARGETARCH
+ARG BUN_SHA256_amd64=4680e80e44e32aa718560ceae85d22ecfbf2efb8f3641782e35e4b7efd65a1aa
+ARG BUN_SHA256_arm64=a2c2862bcc1fd1c0b3a8dcdc8c7efb5e2acd871eb20ed2f17617884ede81c844
+RUN set -eu; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) bun_arch=x64;     bun_sha="${BUN_SHA256_amd64}" ;; \
+      arm64) bun_arch=aarch64; bun_sha="${BUN_SHA256_arm64}" ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    zip="bun-linux-${bun_arch}.zip"; \
+    url="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/${zip}"; \
+    cd /tmp; \
+    curl -fsSL -o "$zip" "$url"; \
+    echo "${bun_sha}  ${zip}" | sha256sum -c -; \
+    unzip -q "$zip"; \
+    mkdir -p "${BUN_INSTALL}/bin"; \
+    install -m 0755 "bun-linux-${bun_arch}/bun" "${BUN_INSTALL}/bin/bun"; \
+    ln -sf "${BUN_INSTALL}/bin/bun" "${BUN_INSTALL}/bin/bunx"; \
+    rm -rf "$zip" "bun-linux-${bun_arch}"
 ENV PATH="$BUN_INSTALL/bin:$PATH"
 # Fail the build if the installed bun is not the pinned version.
 RUN bun --version | grep -qx "${BUN_VERSION}" || { echo "bun version mismatch: expected ${BUN_VERSION}, got $(bun --version)" >&2; exit 1; }
