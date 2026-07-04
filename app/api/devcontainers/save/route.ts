@@ -2,6 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { requireAuth } from "@/lib/auth";
+import { confineToRoot, PathConfinementError } from "@/lib/path-confine";
+import { expandPath, getSettings } from "@/lib/settings";
+
+/**
+ * Resolve the CONFIGURED workspace root (server-side settings, never the
+ * request body). Deriving the root from a client value would make confinement
+ * a no-op, so it is intentionally server-derived — matching the sibling route
+ * `devcontainers/save-local`.
+ */
+function resolveWorkspaceRoot(): string {
+  // In container mode, /workspace is the mount point.
+  return process.env.HOST_WORKSPACE_PATH
+    ? "/workspace"
+    : expandPath(getSettings().basePath);
+}
 
 /**
  * API to save devcontainer files to a project
@@ -34,18 +49,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Resolve the full project path
-    // Support relative paths from basePath or absolute paths
+    // Confine the client-controlled `projectPath` to the server-derived
+    // workspace root (never a body value). Blocks `../../…` traversal and
+    // absolute-path escapes before any filesystem access.
+    const workspaceRoot = resolveWorkspaceRoot();
     let fullProjectPath: string;
-    if (path.isAbsolute(projectPath)) {
-      fullProjectPath = projectPath;
-    } else {
-      // Get basePath from environment or default
-      const basePath =
-        process.env.DAAX_BASE_PATH || process.env.HOME
-          ? path.join(process.env.HOME || "", "prj")
-          : "/workspace";
-      fullProjectPath = path.join(basePath, projectPath);
+    try {
+      fullProjectPath = confineToRoot(workspaceRoot, projectPath);
+    } catch (err) {
+      if (err instanceof PathConfinementError) {
+        return NextResponse.json(
+          { error: "projectPath escapes the workspace root" },
+          { status: 403 },
+        );
+      }
+      throw err;
     }
 
     // Ensure project directory exists
@@ -58,16 +76,42 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create .devcontainer directory
+    // Pre-pass: confine EVERY client-supplied filename under the concrete
+    // `.devcontainer` directory before writing anything. The `files` object
+    // keys are attacker-controlled, so a key like `../../authorized_keys` OR a
+    // key like `../pwn.txt` (which stays inside the project but escapes
+    // `.devcontainer/`) must be rejected. Confining against `devcontainerDir`
+    // (the actual write target) — not the broader project path — is what stops
+    // a `..` from leaving the intended leaf directory. Resolving all targets
+    // first keeps the batch atomic: one bad key rejects the whole request with
+    // no partial writes.
     const devcontainerDir = path.join(fullProjectPath, ".devcontainer");
-    await fs.mkdir(devcontainerDir, { recursive: true });
-
-    // Write each file
-    const writtenFiles: string[] = [];
+    const targets: { filename: string; filePath: string; content: string }[] =
+      [];
     for (const [filename, content] of Object.entries(files)) {
       if (typeof content !== "string") continue;
 
-      const filePath = path.join(devcontainerDir, filename);
+      let filePath: string;
+      try {
+        filePath = confineToRoot(devcontainerDir, filename);
+      } catch (err) {
+        if (err instanceof PathConfinementError) {
+          return NextResponse.json(
+            { error: "filename escapes the .devcontainer directory" },
+            { status: 403 },
+          );
+        }
+        throw err;
+      }
+      targets.push({ filename, filePath, content });
+    }
+
+    // Create .devcontainer directory
+    await fs.mkdir(devcontainerDir, { recursive: true });
+
+    // Write each confined file
+    const writtenFiles: string[] = [];
+    for (const { filename, filePath, content } of targets) {
       await fs.writeFile(filePath, content, "utf-8");
       writtenFiles.push(filename);
     }
