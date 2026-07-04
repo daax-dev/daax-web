@@ -1,30 +1,48 @@
-import { describe, it, expect } from "vitest";
-import {
-  isAllowedOrigin,
-  DEFAULT_CONTAINER_IMAGE,
-} from "@/server/config/constants";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { isAllowedOrigin } from "@/server/config/constants";
 
 describe("DEFAULT_CONTAINER_IMAGE digest pin (issue #195, Fable M5)", () => {
   // Guard against a silent regression back to a mutable `:latest` tag. A
   // compromised/typosquatted upstream push must not be able to land arbitrary
-  // code in every future agent session, so the default must always be pinned
-  // by a sha256 digest. This test runs with no CLAUDE_CONTAINER_IMAGE override
-  // in the environment (the CI/test default), asserting the built-in default.
-  const isOverridden = Boolean(process.env.CLAUDE_CONTAINER_IMAGE);
+  // code in every future agent session, so the BUILT-IN DEFAULT must always be
+  // pinned by a sha256 digest.
+  //
+  // The guard targets the module default ONLY. Operators MAY override the image
+  // via CLAUDE_CONTAINER_IMAGE with a tag OR a digest (a supported config — see
+  // server/config/constants.ts, e.g. local debugging), so an ambient override
+  // must not make this test fail. We clear that env var and re-import the module
+  // fresh before reading DEFAULT_CONTAINER_IMAGE, asserting the module's default
+  // is digest-pinned regardless of the ambient environment. We deliberately make
+  // no assertion about an operator override's format.
+  const savedOverride = process.env.CLAUDE_CONTAINER_IMAGE;
 
-  it("references a sha256 digest, not just a tag", () => {
-    if (isOverridden) {
-      // If an operator overrides the image, we still require a digest pin.
-      expect(DEFAULT_CONTAINER_IMAGE).toMatch(/@sha256:[0-9a-f]{64}$/);
-      return;
-    }
-    expect(DEFAULT_CONTAINER_IMAGE).toMatch(/@sha256:[0-9a-f]{64}$/);
+  beforeEach(() => {
+    delete process.env.CLAUDE_CONTAINER_IMAGE;
+    vi.resetModules();
   });
 
-  it("does not use the mutable :latest tag by default", () => {
-    if (isOverridden) return;
-    expect(DEFAULT_CONTAINER_IMAGE).not.toMatch(/:latest$/);
-    expect(DEFAULT_CONTAINER_IMAGE.endsWith(":latest")).toBe(false);
+  afterEach(() => {
+    if (savedOverride === undefined) {
+      delete process.env.CLAUDE_CONTAINER_IMAGE;
+    } else {
+      process.env.CLAUDE_CONTAINER_IMAGE = savedOverride;
+    }
+    vi.resetModules();
+  });
+
+  async function loadDefault(): Promise<string> {
+    const mod = await import("@/server/config/constants");
+    return mod.DEFAULT_CONTAINER_IMAGE;
+  }
+
+  it("references a sha256 digest, not just a tag", async () => {
+    expect(await loadDefault()).toMatch(/@sha256:[0-9a-f]{64}$/);
+  });
+
+  it("does not use the mutable :latest tag by default", async () => {
+    const def = await loadDefault();
+    expect(def).not.toMatch(/:latest$/);
+    expect(def.endsWith(":latest")).toBe(false);
   });
 });
 
