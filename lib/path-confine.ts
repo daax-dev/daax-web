@@ -19,10 +19,12 @@ export class PathConfinementError extends Error {
  * Canonicalized (lexical) path confinement.
  *
  * Joins `segments` under `root`, resolves the result with `path.resolve`
- * (lexical `.`/`..` normalization; absolute segments replace the root, which is
- * then caught by the containment check), and verifies the resolved path stays
- * within `root`. A trailing-separator boundary is used so a sibling directory
- * such as `/workspace-evil` cannot masquerade as inside `/workspace`.
+ * (lexical `.`/`..` normalization; an absolute segment replaces the root and is
+ * then subject to the containment check — allowed only if it still resolves
+ * within `root`, e.g. root `/workspace` + segment `/workspace/proj`, and
+ * rejected otherwise), and verifies the resolved path stays within `root`. A
+ * trailing-separator boundary is used so a sibling directory such as
+ * `/workspace-evil` cannot masquerade as inside `/workspace`.
  *
  * Lexical resolution (not `fs.realpath`) is deliberate: write targets may not
  * exist yet, and this avoids any filesystem race / TOCTOU. Symlink resolution
