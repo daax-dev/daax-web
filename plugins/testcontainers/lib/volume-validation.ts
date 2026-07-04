@@ -265,6 +265,16 @@ export function validateVolumeSource(
  * Copilot review). A malformed individual entry (`null`, a non-object, or an
  * object with a non-string `source`) is likewise rejected — never thrown —
  * because `validateVolumeSource` already treats a non-string source as invalid.
+ *
+ * The `target` (in-container mount path) is validated too: it must be a present,
+ * non-empty string. This is required for BOTH host-path binds and Docker named
+ * volumes — the source/named-volume distinction does not exempt an entry from
+ * needing a target. An entry with a valid source but a missing/empty `target`
+ * (e.g. `{ source: "pgdata" }`) would otherwise pass here yet let `docker-client`
+ * build a bind like `pgdata:undefined`, which the Docker daemon rejects with a
+ * 500 — contradicting this module's fail-closed intent. Rejecting it here returns
+ * the same controlled validation failure as a bad source, so the route surfaces a
+ * 400 (#190 Copilot review). When present, `readOnly` must be a boolean.
  */
 export function validateVolumes(
   volumes: VolumeMount[] | undefined,
@@ -282,16 +292,33 @@ export function validateVolumes(
   }
 
   for (const volume of volumes) {
+    const entry = volume as VolumeMount | null | undefined;
+
     // Optional chaining is safe here even when `volume` is `null` or a
     // non-object primitive (e.g. a bare number/string entry) — it never
     // throws, it simply yields `undefined`, which `validateVolumeSource`
     // already rejects as a non-string source.
-    const result = validateVolumeSource(
-      (volume as VolumeMount | null | undefined)?.source as string,
-      workspaceRoot,
-    );
+    const result = validateVolumeSource(entry?.source as string, workspaceRoot);
     if (!result.valid) {
       return result;
+    }
+
+    // `target` is the in-container mount path; it is required for host-path
+    // binds AND named volumes. A missing/empty target would form a
+    // `source:undefined` bind downstream — reject via the same controlled path.
+    if (typeof entry?.target !== "string" || entry.target.length === 0) {
+      return {
+        valid: false,
+        reason: "Volume target must be a non-empty string",
+      };
+    }
+
+    // `readOnly` is optional, but if supplied it must be a boolean flag.
+    if (entry.readOnly !== undefined && typeof entry.readOnly !== "boolean") {
+      return {
+        valid: false,
+        reason: "Volume readOnly must be a boolean",
+      };
     }
   }
   return { valid: true };

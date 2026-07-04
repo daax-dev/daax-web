@@ -175,4 +175,30 @@ describe("POST /api/testcontainers validation", () => {
     expect(res.status).toBe(400);
     expect(mockCreateContainer).not.toHaveBeenCalled();
   });
+
+  it("rejects a volume entry with a valid source but MISSING target with 400 and no container", async () => {
+    // Copilot review on #190: a valid (named-volume) source with no target
+    // would form a `pgdata:undefined` bind downstream and fail at the daemon
+    // (500). It must be rejected up front as a validation error (400).
+    const res = await POST(
+      req({ image: "alpine", volumes: [{ source: "pgdata" }] }),
+    );
+    expect(res.status).toBe(400);
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed JSON body with 400, not 500, and no container", async () => {
+    // Copilot review on #190: `request.json()` throws on a malformed body and
+    // the outer catch used to turn that into a 500. An input-validation
+    // endpoint must return a 400 (matching app/api/docker/pull).
+    const res = await POST(
+      new Request("http://localhost/api/testcontainers", {
+        method: "POST",
+        body: "{ not valid json",
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
 });

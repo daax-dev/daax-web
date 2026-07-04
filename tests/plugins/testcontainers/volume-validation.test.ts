@@ -309,4 +309,46 @@ describe("validateVolumes", () => {
     expect(result.valid).toBe(false);
     expect(result.reason).toMatch(/non-empty string/);
   });
+
+  it("rejects an entry with a valid source but a MISSING target", () => {
+    // Copilot review on #190: `{ source: "pgdata" }` has a valid (named-volume)
+    // source but no target. It used to pass, then `docker-client` built a
+    // `pgdata:undefined` bind that the daemon rejects with a 500. It must fail
+    // closed here with a controlled validation failure (→ 400 at the route).
+    const result = validateVolumes(
+      [{ source: "pgdata" }] as unknown as VolumeMount[],
+      "/",
+    );
+    expect(result.valid).toBe(false);
+    expect(result.reason).toMatch(/target must be a non-empty string/);
+  });
+
+  it("rejects an entry whose target is an empty string", () => {
+    const result = validateVolumes(
+      [{ source: "pgdata", target: "" }] as unknown as VolumeMount[],
+      "/",
+    );
+    expect(result.valid).toBe(false);
+    expect(result.reason).toMatch(/target must be a non-empty string/);
+  });
+
+  it("rejects an entry whose target is present but not a string", () => {
+    const result = validateVolumes(
+      [{ source: "pgdata", target: 123 }] as unknown as VolumeMount[],
+      "/",
+    );
+    expect(result.valid).toBe(false);
+    expect(result.reason).toMatch(/target must be a non-empty string/);
+  });
+
+  it("rejects an entry whose readOnly is present but not a boolean", () => {
+    const result = validateVolumes(
+      [
+        { source: "pgdata", target: "/data", readOnly: "yes" },
+      ] as unknown as VolumeMount[],
+      "/",
+    );
+    expect(result.valid).toBe(false);
+    expect(result.reason).toMatch(/readOnly must be a boolean/);
+  });
 });

@@ -72,7 +72,19 @@ export async function POST(request: Request) {
       );
     }
 
-    const body: ContainerCreateRequest = await request.json();
+    // `request.json()` throws on a malformed body. For an input-validation
+    // endpoint that is a client error, not a server fault — return a 400
+    // (matching app/api/docker/pull) instead of letting the outer catch turn
+    // it into a 500 (#190 Copilot review).
+    let body: ContainerCreateRequest;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid JSON in request body" },
+        { status: 400 },
+      );
+    }
 
     // Validate required fields
     if (!body.image) {
