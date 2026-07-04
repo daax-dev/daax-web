@@ -1,7 +1,8 @@
 // MCP Config API - REAL Claude Code config integration
 // Reads/writes ~/.claude.json to actually control MCPs
 //
-// SECURITY: POST operations require authentication via requireAuth()
+// SECURITY: GET (config disclosure) and POST (config mutation) both require
+// authentication via requireAuth() (#182).
 
 import { NextResponse } from "next/server";
 import {
@@ -72,6 +73,13 @@ function validateMcpConfig(config: unknown): string | null {
 }
 
 export async function GET(request: Request) {
+  // Require authentication for config reads (#182 Copilot): the response
+  // discloses registered MCP server commands/URLs/env — an info-disclosure
+  // surface reachable directly on the tailnet / from a sibling container,
+  // bypassing Traefik. Host-dev keeps working via the LOCAL_OPERATOR bypass.
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   const { searchParams } = new URL(request.url);
   const projectPath = searchParams.get("project") || getDefaultProjectPath();
 

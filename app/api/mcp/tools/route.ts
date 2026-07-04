@@ -239,9 +239,27 @@ export async function POST(request: Request) {
   const auth = await requireAuth();
   if (!auth.authenticated) return auth.response;
 
+  // Guard the request body BEFORE any work (#182 Copilot): invalid JSON must be
+  // a controlled 400 (not a 500 bubbled from the outer catch), and a non-object
+  // body (null/array/number/string) must be rejected before destructuring.
+  let body: unknown;
   try {
-    const body = await request.json();
-    const { mcpId } = body;
+    body = await request.json();
+  } catch {
+    return NextResponse.json(
+      { success: false, error: "Invalid JSON in request body" },
+      { status: 400 },
+    );
+  }
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json(
+      { success: false, error: "Request body must be a JSON object" },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const { mcpId } = body as { mcpId?: unknown };
     // Discovery is ALWAYS scoped to the SERVER-DEFAULT project path (#182
     // Copilot): a client-supplied `projectPath` is deliberately NOT read.
     // Honoring it would let a caller who can write a `.mcp.json` under an

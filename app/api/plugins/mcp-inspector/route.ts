@@ -142,8 +142,33 @@ export async function POST(request: NextRequest) {
   const auth = await requireAuth();
   if (!auth.authenticated) return auth.response;
 
+  // Guard the request body BEFORE any work (#182 Copilot): invalid JSON must be
+  // a controlled 400 (not a 500 bubbled from the outer catch), and a non-object
+  // body (null/array/number/string) must be rejected before destructuring.
+  let parsed: unknown;
   try {
-    const body = await request.json();
+    parsed = await request.json();
+  } catch {
+    return NextResponse.json(
+      { error: "Invalid JSON in request body" },
+      { status: 400 },
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return NextResponse.json(
+      { error: "Request body must be a JSON object" },
+      { status: 400 },
+    );
+  }
+  const body = parsed as {
+    mcpId?: unknown;
+    transport?: unknown;
+    serverUrl?: unknown;
+    command?: unknown;
+    args?: unknown;
+  };
+
+  try {
     const { mcpId } = body;
     // Discovery is ALWAYS scoped to the SERVER-DEFAULT project path (#182
     // Copilot): a client-supplied `projectPath` is deliberately NOT read, so a
@@ -249,7 +274,10 @@ export async function POST(request: NextRequest) {
           { status: 403 },
         );
       }
-      if (!isAllowedAdHocCommand(adHocCommand)) {
+      if (
+        typeof adHocCommand !== "string" ||
+        !isAllowedAdHocCommand(adHocCommand)
+      ) {
         return NextResponse.json(
           {
             error: `Command not permitted for ad-hoc launch. Allowed launchers: ${Array.from(

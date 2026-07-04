@@ -73,6 +73,15 @@ function makeRequest(body: unknown): Request {
   });
 }
 
+// Sends a raw (already-serialized) body so we can exercise the invalid-JSON path.
+function makeRawRequest(raw: string): Request {
+  return new Request("http://localhost/api/mcp/tools", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: raw,
+  });
+}
+
 const EXPLOIT = { command: "/bin/sh", args: ["-c", "id"] };
 
 describe("POST /api/mcp/tools — security (#182)", () => {
@@ -122,6 +131,27 @@ describe("POST /api/mcp/tools — security (#182)", () => {
 
     expect(res.status).toBe(401);
     expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("malformed JSON body → 400 (not 500) and never spawns", async () => {
+    const res = await POST(makeRawRequest("{ not valid json"));
+
+    expect(res.status).toBe(400);
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(mockDiscoverAllMcps).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["null", "null"],
+    ["array", "[]"],
+    ["number", "42"],
+    ["string", '"hi"'],
+  ])("non-object body (%s) → 400 and never spawns", async (_label, raw) => {
+    const res = await POST(makeRawRequest(raw));
+
+    expect(res.status).toBe(400);
+    expect(mockSpawn).not.toHaveBeenCalled();
+    expect(mockDiscoverAllMcps).not.toHaveBeenCalled();
   });
 
   it("unknown mcpId → 403 and never spawns", async () => {
