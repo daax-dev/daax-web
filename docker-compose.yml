@@ -4,6 +4,11 @@
 #   ./rebuild.sh              # Build and run via docker compose
 #   docker compose logs -f    # View logs
 #   docker compose down       # Stop
+#
+# Required: DAAX_PG_PASSWORD must be set (no weak default). For throwaway local
+# dev, export a value first (e.g. `export DAAX_PG_PASSWORD=$(openssl rand -hex 16)`
+# or any local-only value). NEVER reuse a local value for a network-reachable
+# deployment. `docker compose up` fails fast with a clear error if it is unset.
 
 services:
   # Postgres — daax's single data engine (brain2daax Phase 0 #92).
@@ -14,7 +19,10 @@ services:
     restart: unless-stopped
     environment:
       - POSTGRES_USER=${DAAX_PG_USER:-daax}
-      - POSTGRES_PASSWORD=${DAAX_PG_PASSWORD:-daax}
+      # Fail-closed: no weak default (matches deploy/docker-compose.yml). Even on
+      # loopback, any container on daax-net (incl. spawned agent containers) can
+      # reach postgres:5432, so a guessable shared default is unsafe. See #196.
+      - POSTGRES_PASSWORD=${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required (set a strong secret; never commit it)}
       - POSTGRES_DB=${DAAX_PG_DB:-daax}
     ports:
       # Loopback-only: app reaches it via the daax-net hostname `postgres`.
@@ -45,7 +53,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:-daax}@postgres:5432/${DAAX_PG_DB:-daax}
+      - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required}@postgres:5432/${DAAX_PG_DB:-daax}
     command: ["bun", "run", "db:migrate"]
     networks:
       - daax-net
@@ -101,7 +109,7 @@ services:
       # Generate: `openssl rand -hex 32`. Never commit it.
       - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
       - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
-      - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:-daax}@postgres:5432/${DAAX_PG_DB:-daax}
+      - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required}@postgres:5432/${DAAX_PG_DB:-daax}
       - HOME_MCP_JSON=${HOME_MCP_PATH:+/host-config/.mcp.json}
 
       # Clawd Gateway (optional, for Bot feature)
