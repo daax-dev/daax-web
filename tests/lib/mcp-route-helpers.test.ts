@@ -32,8 +32,12 @@ describe("buildChildEnv (#182)", () => {
   });
 
   afterEach(() => {
-    process.env.PATH = savedPath;
-    process.env.HOME = savedHome;
+    // Restore by deleting when the value was originally absent — assigning
+    // `undefined` would coerce to the string "undefined" and leak into later tests.
+    if (savedPath === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPath;
+    if (savedHome === undefined) delete process.env.HOME;
+    else process.env.HOME = savedHome;
   });
 
   it("includes PATH and HOME plus the config env, not arbitrary process.env", () => {
