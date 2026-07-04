@@ -82,7 +82,12 @@ const EXPLOIT_CMD = "/bin/sh";
 const EXPLOIT_ARGS = ["-c", "touch /tmp/pwned"];
 
 describe("POST /api/plugins/mcp-inspector — security (#182)", () => {
+  // Snapshot env so per-test mutations are always restored in afterEach, even
+  // if an assertion throws early (prevents order-dependent leakage).
+  let envSnapshot: NodeJS.ProcessEnv;
+
   beforeEach(() => {
+    envSnapshot = { ...process.env };
     mockSpawn.mockReturnValue(makeFakeProc() as never);
     mockRequireAuth.mockResolvedValue({
       authenticated: true,
@@ -101,7 +106,13 @@ describe("POST /api/plugins/mcp-inspector — security (#182)", () => {
   afterEach(() => {
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
     vi.clearAllMocks();
+    // Restore env: drop keys added during the test, reset any modified values.
+    for (const key of Object.keys(process.env)) {
+      if (!(key in envSnapshot)) delete process.env[key];
+    }
+    Object.assign(process.env, envSnapshot);
   });
 
   // Drives a handler call that reaches the post-spawn 2s startup wait.
@@ -252,8 +263,98 @@ describe("POST /api/plugins/mcp-inspector — security (#182)", () => {
     // Port overrides are still injected.
     expect(opts.env.CLIENT_PORT).toBeDefined();
     expect(opts.env.SERVER_PORT).toBeDefined();
+    // env cleanup handled by afterEach (env snapshot restore).
+  });
 
-    delete process.env.GITHUB_TOKEN;
-    delete process.env.DATABASE_URL;
+  it("registered REMOTE mcpId resolves URL SERVER-side; client serverUrl ignored", async () => {
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [
+        {
+          id: "remote-mcp",
+          config: { type: "http", url: "http://localhost:9999/mcp" },
+        },
+      ],
+    });
+
+    const res = await runToCompletion(
+      makeRequest({
+        mcpId: "remote-mcp",
+        transport: "http",
+        command: undefined,
+        // Attacker tries to point the inspector at their URL — must be ignored.
+        serverUrl: "http://attacker.example/steal",
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    // Remote launch never spawns a command from the URL: the inspector is
+    // launched BARE (no positional command/args after the inspector package).
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    const [cmd, args] = mockSpawn.mock.calls[0];
+    expect(cmd).toBe("npx");
+    expect(args).toEqual(["@modelcontextprotocol/inspector"]);
+
+    // The returned UI URL carries the SERVER-resolved target, not the client's.
+    const data = (await res.json()) as { url: string };
+    expect(data.url).toContain(
+      `serverUrl=${encodeURIComponent("http://localhost:9999/mcp")}`,
+    );
+    expect(data.url).toContain("transport=streamable-http");
+    expect(data.url).not.toContain("attacker.example");
+  });
+
+  it("ad-hoc SSE launch with a valid http(s) serverUrl is permitted (bare inspector)", async () => {
+    mockDiscoverAllMcps.mockReturnValue({ mcps: [] });
+
+    const res = await runToCompletion(
+      makeRequest({
+        mcpId: "custom-remote",
+        transport: "sse",
+        command: undefined,
+        serverUrl: "http://localhost:3000/sse",
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    const [, args] = mockSpawn.mock.calls[0];
+    // No command spawned from the URL — inspector launched bare.
+    expect(args).toEqual(["@modelcontextprotocol/inspector"]);
+    const data = (await res.json()) as { url: string };
+    expect(data.url).toContain("transport=sse");
+    expect(data.url).toContain(
+      `serverUrl=${encodeURIComponent("http://localhost:3000/sse")}`,
+    );
+  });
+
+  it("ad-hoc SSE/HTTP launch with a non-http serverUrl is rejected (400) and never spawns", async () => {
+    mockDiscoverAllMcps.mockReturnValue({ mcps: [] });
+
+    const res = await POST(
+      makeRequest({
+        mcpId: "custom-bad-url",
+        transport: "http",
+        command: undefined,
+        serverUrl: "file:///etc/passwd",
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("ad-hoc SSE/HTTP launch with a missing serverUrl is rejected (400) and never spawns", async () => {
+    mockDiscoverAllMcps.mockReturnValue({ mcps: [] });
+
+    const res = await POST(
+      makeRequest({
+        mcpId: "custom-no-url",
+        transport: "sse",
+        command: undefined,
+      }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 });

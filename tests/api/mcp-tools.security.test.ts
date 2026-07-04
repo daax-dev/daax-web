@@ -76,7 +76,12 @@ function makeRequest(body: unknown): Request {
 const EXPLOIT = { command: "/bin/sh", args: ["-c", "id"] };
 
 describe("POST /api/mcp/tools — security (#182)", () => {
+  // Snapshot env so per-test mutations are always restored in afterEach, even
+  // if an assertion throws early (prevents order-dependent leakage).
+  let envSnapshot: NodeJS.ProcessEnv;
+
   beforeEach(() => {
+    envSnapshot = { ...process.env };
     mockSpawn.mockReturnValue(makeFakeProc() as never);
     mockRequireAuth.mockResolvedValue({
       authenticated: true,
@@ -92,7 +97,14 @@ describe("POST /api/mcp/tools — security (#182)", () => {
   });
 
   afterEach(() => {
+    // Always restore stubbed globals (e.g. fetch) and env, even if a prior
+    // assertion threw — inline cleanup would otherwise leak into later tests.
+    vi.unstubAllGlobals();
     vi.clearAllMocks();
+    for (const key of Object.keys(process.env)) {
+      if (!(key in envSnapshot)) delete process.env[key];
+    }
+    Object.assign(process.env, envSnapshot);
   });
 
   it("unauthenticated → 401 and never spawns", async () => {
@@ -178,9 +190,7 @@ describe("POST /api/mcp/tools — security (#182)", () => {
     expect(opts.env.GITHUB_TOKEN).toBeUndefined();
     expect(opts.env.DATABASE_URL).toBeUndefined();
     expect(opts.env.MY_MCP_KEY).toBe("v"); // registered MCP's own env kept
-
-    delete process.env.GITHUB_TOKEN;
-    delete process.env.DATABASE_URL;
+    // env cleanup handled by afterEach (env snapshot restore).
   });
 
   it("registered HTTP mcpId resolves URL from registry, not the client body", async () => {
@@ -206,7 +216,6 @@ describe("POST /api/mcp/tools — security (#182)", () => {
     for (const call of fetchMock.mock.calls) {
       expect(call[0]).toBe("http://localhost:9999/mcp");
     }
-
-    vi.unstubAllGlobals();
+    // fetch stub cleanup handled by afterEach (vi.unstubAllGlobals()).
   });
 });

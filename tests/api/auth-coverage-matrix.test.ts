@@ -351,6 +351,22 @@ const PROTECTED_ROUTES: ProtectedRoute[] = [
       body: JSON.stringify({ mcpId: "x" }),
     },
   },
+  {
+    // #182: GET/DELETE are management ops (list/stop inspectors) — also authed.
+    label: "GET /api/plugins/mcp-inspector",
+    method: "GET",
+    url: "http://localhost/api/plugins/mcp-inspector",
+    importPath: "@/app/api/plugins/mcp-inspector/route",
+    handlerExport: "GET",
+  },
+  {
+    label: "DELETE /api/plugins/mcp-inspector",
+    method: "DELETE",
+    url: "http://localhost/api/plugins/mcp-inspector?mcpId=x",
+    importPath: "@/app/api/plugins/mcp-inspector/route",
+    handlerExport: "DELETE",
+    requestInit: { method: "DELETE" },
+  },
 ];
 
 // ---------------------------------------------------------------------------
