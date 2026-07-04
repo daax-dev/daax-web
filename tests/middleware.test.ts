@@ -23,13 +23,13 @@ function isPassThrough(res: { headers: Headers }): boolean {
 
 describe("default-deny /api middleware (#181)", () => {
   beforeEach(() => {
-    delete process.env.DAAX_REQUIRE_AUTH;
-    delete process.env.DAAX_PROXY_SECRET;
-    delete process.env.DAAX_PROXY_SECRET_PREVIOUS;
-    delete process.env.DAAX_API_GUARD;
-    // Posture env via vi.stubEnv so vi.unstubAllEnvs() restores the runner's
-    // originals (Copilot #184) — a bare delete would permanently clear vars the
-    // runner may have set, leaking into later tests in this worker.
+    // All mutated env goes through vi.stubEnv so vi.unstubAllEnvs() restores the
+    // runner's originals (Copilot #184) — a bare delete would permanently clear
+    // vars the runner may have set, leaking into later tests in this worker.
+    vi.stubEnv("DAAX_REQUIRE_AUTH", undefined);
+    vi.stubEnv("DAAX_PROXY_SECRET", undefined);
+    vi.stubEnv("DAAX_PROXY_SECRET_PREVIOUS", undefined);
+    vi.stubEnv("DAAX_API_GUARD", undefined);
     vi.stubEnv("DAAX_TRUST_LOCAL_OPERATOR", undefined);
     // Default host-dev loopback posture (Copilot #184): under vitest
     // NODE_ENV="test", so the operator bypass now requires an explicit safe
