@@ -132,3 +132,101 @@ describe("DockerClient.createContainer volume confinement", () => {
     ]);
   });
 });
+
+describe("DockerClient.createContainer image/tag type guard", () => {
+  // The compose parser assigns `raw.image || ""` without validating the
+  // TYPE — a non-string `image` (or a non-string `tag`) survives that
+  // fallback unchanged and would otherwise reach buildImageRef, whose
+  // `image.includes(...)` throws an uncontrolled TypeError instead of a
+  // controlled rejection. These tests exercise the sink-level guard added
+  // to createContainer (Copilot review on #190), asserting pull/create are
+  // never invoked for a bad image/tag type.
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("throws and never pulls/creates for a non-string image (number)", async () => {
+    const client = new DockerClient();
+
+    await expect(
+      client.createContainer({
+        // @ts-expect-error intentional malformed input (number, not a string)
+        image: 123,
+      }),
+    ).rejects.toThrow(/Refusing to create container/);
+
+    expect(mockPull).not.toHaveBeenCalled();
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("throws and never pulls/creates for an undefined image", async () => {
+    const client = new DockerClient();
+
+    await expect(
+      client.createContainer({
+        // @ts-expect-error intentional malformed input (missing image)
+        image: undefined,
+      }),
+    ).rejects.toThrow(/Refusing to create container/);
+
+    expect(mockPull).not.toHaveBeenCalled();
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("throws and never pulls/creates for an empty-string image", async () => {
+    const client = new DockerClient();
+
+    await expect(
+      client.createContainer({
+        image: "",
+      }),
+    ).rejects.toThrow(/Refusing to create container/);
+
+    expect(mockPull).not.toHaveBeenCalled();
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("throws and never pulls/creates for a non-string tag (number)", async () => {
+    const client = new DockerClient();
+
+    await expect(
+      client.createContainer({
+        image: "alpine",
+        // @ts-expect-error intentional malformed input (number, not a string)
+        tag: 456,
+      }),
+    ).rejects.toThrow(/Refusing to create container/);
+
+    expect(mockPull).not.toHaveBeenCalled();
+    expect(mockCreateContainer).not.toHaveBeenCalled();
+  });
+
+  it("still creates a container for a valid string image (no regression)", async () => {
+    const client = new DockerClient();
+    mockPull.mockImplementation((_image: string, cb: (err: Error) => void) =>
+      cb(new Error("pull failed (test stub, ignored by createContainer)")),
+    );
+    mockCreateContainer.mockResolvedValue({
+      id: "abc123def456",
+      start: mockStart,
+    });
+    mockStart.mockResolvedValue(undefined);
+    mockGetContainer.mockReturnValue({
+      inspect: vi.fn().mockResolvedValue({
+        Id: "abc123def456",
+        Name: "/test-container",
+        Config: { Image: "alpine:latest", Labels: {}, Env: [] },
+        State: { Status: "running" },
+        NetworkSettings: { Ports: {} },
+        Mounts: [],
+      }),
+    });
+
+    await client.createContainer({ image: "alpine" });
+
+    expect(mockPull).toHaveBeenCalledTimes(1);
+    expect(mockCreateContainer).toHaveBeenCalledTimes(1);
+    expect(mockCreateContainer.mock.calls[0][0].Image).toBe("alpine:latest");
+  });
+});

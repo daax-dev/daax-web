@@ -314,6 +314,24 @@ export class DockerClient {
       (v) => `${v.source}:${v.target}${v.readOnly ? ":ro" : ""}`,
     );
 
+    // Defense-in-depth: even though the API route validates that `image` is a
+    // non-empty string and `tag` (when present) is a string, re-check here so
+    // a bad type can never reach buildImageRef via any code path (e.g.
+    // compose, whose parser assigns `raw.image || ""` without validating the
+    // TYPE — a non-string `image` survives that fallback unchanged). Without
+    // this guard, buildImageRef's `image.includes(...)` would throw an
+    // uncontrolled TypeError instead of the controlled rejection below. This
+    // sink is the sole authoritative gate for the compose path, mirroring the
+    // validateVolumes guard above (Copilot review on #190).
+    if (typeof request.image !== "string" || request.image.length === 0) {
+      throw new Error(
+        "Refusing to create container: image must be a non-empty string",
+      );
+    }
+    if (request.tag !== undefined && typeof request.tag !== "string") {
+      throw new Error("Refusing to create container: tag must be a string");
+    }
+
     // Single source of truth for the image reference: the SAME ref is pulled
     // and passed to createContainer (pull ref ≡ create ref). buildImageRef
     // respects an embedded tag/digest in `request.image` (e.g. `postgres:16`,
