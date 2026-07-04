@@ -67,10 +67,11 @@ ARG TARGETARCH
 ARG BUN_SHA256_amd64=4680e80e44e32aa718560ceae85d22ecfbf2efb8f3641782e35e4b7efd65a1aa
 ARG BUN_SHA256_arm64=a2c2862bcc1fd1c0b3a8dcdc8c7efb5e2acd871eb20ed2f17617884ede81c844
 RUN set -eu; \
-    case "${TARGETARCH:-amd64}" in \
+    arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+    case "$arch" in \
       amd64) bun_arch=x64;     bun_sha="${BUN_SHA256_amd64}" ;; \
       arm64) bun_arch=aarch64; bun_sha="${BUN_SHA256_arm64}" ;; \
-      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+      *) echo "unsupported arch: ${arch} (TARGETARCH=${TARGETARCH:-unset})" >&2; exit 1 ;; \
     esac; \
     zip="bun-linux-${bun_arch}.zip"; \
     url="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/${zip}"; \
