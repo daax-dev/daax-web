@@ -41,13 +41,18 @@ describe("buildChildEnv (#182)", () => {
   });
 
   it("includes PATH and HOME plus the config env, not arbitrary process.env", () => {
+    const savedToken = process.env.GITHUB_TOKEN;
     process.env.GITHUB_TOKEN = "secret-should-not-leak";
-    const env = buildChildEnv({ MCP_KEY: "value" });
-    expect(env.PATH).toBe("/usr/bin");
-    expect(env.HOME).toBe("/home/tester");
-    expect(env.MCP_KEY).toBe("value");
-    expect(env.GITHUB_TOKEN).toBeUndefined();
-    delete process.env.GITHUB_TOKEN;
+    try {
+      const env = buildChildEnv({ MCP_KEY: "value" });
+      expect(env.PATH).toBe("/usr/bin");
+      expect(env.HOME).toBe("/home/tester");
+      expect(env.MCP_KEY).toBe("value");
+      expect(env.GITHUB_TOKEN).toBeUndefined();
+    } finally {
+      if (savedToken === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = savedToken;
+    }
   });
 
   it("merges explicit extra overrides on top of the base env", () => {

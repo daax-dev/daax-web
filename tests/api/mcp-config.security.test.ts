@@ -86,7 +86,7 @@ describe("GET /api/mcp/config — security (#182)", () => {
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       success: boolean;
-      mcps: { id: string }[];
+      mcps: { id: string; config: { command: string; args: string[] } }[];
     };
     expect(data.success).toBe(true);
     expect(data.mcps).toEqual([
