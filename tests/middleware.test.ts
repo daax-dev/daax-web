@@ -7,7 +7,7 @@
  * DAAX_API_GUARD escape hatch. Env is reset per test (mirrors
  * tests/lib/auth.test.ts) so DAAX_* state never leaks between cases.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 
 import { middleware } from "@/middleware";
@@ -27,6 +27,16 @@ describe("default-deny /api middleware (#181)", () => {
     delete process.env.DAAX_PROXY_SECRET;
     delete process.env.DAAX_PROXY_SECRET_PREVIOUS;
     delete process.env.DAAX_API_GUARD;
+    delete process.env.DAAX_TRUST_LOCAL_OPERATOR;
+    // Default host-dev loopback posture (Copilot #184): under vitest
+    // NODE_ENV="test", so the operator bypass now requires an explicit safe
+    // posture. These non-strict cases model host-dev, which binds loopback.
+    process.env.HOST = "127.0.0.1";
+  });
+
+  afterEach(() => {
+    delete process.env.HOST;
+    delete process.env.DAAX_TRUST_LOCAL_OPERATOR;
   });
 
   describe("public allowlist", () => {

@@ -139,10 +139,13 @@ export function authRequired(): boolean {
 //      HOSTNAME is intentionally NOT consulted: Docker sets it to a random
 //      container id and shells may export the machine hostname, so it is not a
 //      reliable bind signal.
-//   3. Else no explicit signal → allow only outside production. Host-dev
-//      (`next dev`, NODE_ENV=development) and unit tests keep the bypass with
-//      zero config; a production build (`next start`, NODE_ENV=production) with
-//      no explicit trust opt-in fails safe → deny.
+//   3. Else no explicit signal → allow ONLY when NODE_ENV is explicitly
+//      "development" (host-dev `next dev` sets NODE_ENV=development at runtime).
+//      An UNSET or ambiguous NODE_ENV, "test", and "production" all fail SAFE →
+//      deny (Copilot #184): an unset value carries NO posture signal, so it must
+//      not enable the bypass — "ambiguous → deny". Unit tests that want the
+//      bypass set the posture explicitly (HOST loopback or
+//      DAAX_TRUST_LOCAL_OPERATOR=1), never relying on a non-production NODE_ENV.
 //
 // A truthy value is 1/true/yes/on (case-insensitive); anything else is false.
 function envTruthy(v: string | undefined): boolean {
@@ -157,18 +160,40 @@ function envFalsy(v: string | undefined): boolean {
   return s === "0" || s === "false" || s === "no" || s === "off";
 }
 
-export function localOperatorBypassAllowed(): boolean {
+// Why the LOCAL_OPERATOR bypass was denied, so the one-time warning can name the
+// ACTUAL cause instead of always blaming exposure (Copilot #184).
+export type OperatorBypassDenyReason =
+  | "explicit-opt-out" // DAAX_TRUST_LOCAL_OPERATOR set to a falsy value
+  | "exposed-beyond-loopback" // explicit non-loopback HOST bind (e.g. 0.0.0.0)
+  | "production-or-ambiguous"; // no signal + NODE_ENV not "development"
+
+export type OperatorBypassEvaluation =
+  | { allowed: true }
+  | { allowed: false; reason: OperatorBypassDenyReason };
+
+// Single evaluation of the posture gate that also reports WHY a bypass is denied.
+function evaluateLocalOperatorBypass(): OperatorBypassEvaluation {
   // 1. Explicit operator override wins in both directions.
   const trust = process.env.DAAX_TRUST_LOCAL_OPERATOR;
-  if (envTruthy(trust)) return true;
-  if (envFalsy(trust)) return false;
+  if (envTruthy(trust)) return { allowed: true };
+  if (envFalsy(trust)) return { allowed: false, reason: "explicit-opt-out" };
 
   // 2. Explicit bind host: loopback → allowed; anything else → exposed → deny.
   const host = (process.env.HOST ?? "").trim();
-  if (host !== "") return isLoopbackAddress(host);
+  if (host !== "") {
+    return isLoopbackAddress(host)
+      ? { allowed: true }
+      : { allowed: false, reason: "exposed-beyond-loopback" };
+  }
 
-  // 3. No explicit signal → allow only outside production (fail safe).
-  return process.env.NODE_ENV !== "production";
+  // 3. No explicit signal → allow ONLY in explicit development (fail safe).
+  //    Unset/ambiguous NODE_ENV, "test", and "production" all deny.
+  if (process.env.NODE_ENV === "development") return { allowed: true };
+  return { allowed: false, reason: "production-or-ambiguous" };
+}
+
+export function localOperatorBypassAllowed(): boolean {
+  return evaluateLocalOperatorBypass().allowed;
 }
 
 // Synthetic user representing the trusted local operator when auth is bypassed.
@@ -192,17 +217,28 @@ function warnAuthBypassedOnce(): void {
 }
 
 let operatorBlockedWarned = false;
-function warnOperatorBypassBlockedOnce(): void {
+function warnOperatorBypassBlockedOnce(reason: OperatorBypassDenyReason): void {
   if (operatorBlockedWarned) return;
   operatorBlockedWarned = true;
+  // State the ACTUAL deny reason (Copilot #184): the deny is not always caused by
+  // exposure — it can be an explicit opt-out or a production/ambiguous posture.
+  const cause: Record<OperatorBypassDenyReason, string> = {
+    "explicit-opt-out":
+      "DAAX_TRUST_LOCAL_OPERATOR is set to a falsy value (explicit opt-out)",
+    "exposed-beyond-loopback":
+      "the server is bound beyond loopback (HOST is not a loopback address) " +
+      "and DAAX_TRUST_LOCAL_OPERATOR is not set",
+    "production-or-ambiguous":
+      "the deployment posture is production or ambiguous (no loopback HOST " +
+      "bind, no DAAX_TRUST_LOCAL_OPERATOR, and NODE_ENV is not 'development')",
+  };
   console.warn(
     "[auth] No forward-auth header present, but the LOCAL_OPERATOR bypass is " +
-      "DISABLED for this deployment posture (server is exposed beyond loopback " +
-      "and DAAX_TRUST_LOCAL_OPERATOR is not set) — request REJECTED (401). This " +
-      "prevents any peer that can reach the port from being trusted as the local " +
-      "operator (issue #184). To restore trust set DAAX_TRUST_LOCAL_OPERATOR=1 " +
-      "(trusts every peer that can reach the port), or put a Pocket ID proxy in " +
-      "front and set DAAX_REQUIRE_AUTH=1.",
+      `DISABLED — ${cause[reason]} — request REJECTED (401). This prevents any ` +
+      "peer that can reach the port from being trusted as the local operator " +
+      "(issue #184). To restore trust set DAAX_TRUST_LOCAL_OPERATOR=1 (trusts " +
+      "every peer that can reach the port), or put a Pocket ID proxy in front " +
+      "and set DAAX_REQUIRE_AUTH=1.",
   );
 }
 
@@ -340,11 +376,12 @@ export function evaluateAuthDecision(h: HeaderReader): AuthDecision {
   // always denies. An exposed posture with no header denies too (401), matching
   // the WS plane's "no bypass off-host" behavior instead of trusting any peer.
   if (!authRequired() && rawUserHeader === null) {
-    if (localOperatorBypassAllowed()) {
+    const bypass = evaluateLocalOperatorBypass();
+    if (bypass.allowed) {
       warnAuthBypassedOnce();
       return { decision: "allow-operator", user: LOCAL_OPERATOR };
     }
-    warnOperatorBypassBlockedOnce();
+    warnOperatorBypassBlockedOnce(bypass.reason);
   }
 
   return { decision: "deny", status: 401 };

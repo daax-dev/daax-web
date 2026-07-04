@@ -52,6 +52,11 @@ describe("auth module", () => {
     delete process.env.DAAX_PROXY_SECRET;
     delete process.env.DAAX_PROXY_SECRET_PREVIOUS;
     delete process.env.DAAX_AUTH_PROXY_SECRET_HEADER;
+    // Posture env (Copilot #184): under vitest NODE_ENV="test", so the operator
+    // bypass now DENIES unless a case sets an explicit posture (HOST loopback or
+    // DAAX_TRUST_LOCAL_OPERATOR). Clear both so a case never inherits leaked state.
+    delete process.env.HOST;
+    delete process.env.DAAX_TRUST_LOCAL_OPERATOR;
   });
 
   afterEach(() => {
@@ -60,6 +65,8 @@ describe("auth module", () => {
     delete process.env.DAAX_PROXY_SECRET;
     delete process.env.DAAX_PROXY_SECRET_PREVIOUS;
     delete process.env.DAAX_AUTH_PROXY_SECRET_HEADER;
+    delete process.env.HOST;
+    delete process.env.DAAX_TRUST_LOCAL_OPERATOR;
   });
 
   describe("getAuthUser", () => {
@@ -321,6 +328,9 @@ describe("auth module", () => {
     });
 
     it("should bypass to a local operator when no header and DAAX_REQUIRE_AUTH unset", async () => {
+      // Explicit host-dev loopback posture (Copilot #184): the operator bypass
+      // requires an explicit safe posture, not merely a non-production NODE_ENV.
+      process.env.HOST = "127.0.0.1";
       mockHeaders.mockResolvedValue(createMockHeaders({}));
 
       const result = await requireAuth();
@@ -411,6 +421,8 @@ describe("auth module", () => {
     });
 
     it("should return local operator when not authenticated and DAAX_REQUIRE_AUTH unset", async () => {
+      // Explicit host-dev loopback posture (Copilot #184).
+      process.env.HOST = "127.0.0.1";
       mockHeaders.mockResolvedValue(createMockHeaders({}));
 
       const user = await requireAuthOrThrow();
@@ -538,6 +550,8 @@ describe("auth module", () => {
 
     it("bypasses to LOCAL_OPERATOR when no header is present (non-strict), even with a secret configured", async () => {
       process.env.DAAX_PROXY_SECRET = SECRET;
+      // Explicit host-dev loopback posture (Copilot #184).
+      process.env.HOST = "127.0.0.1";
       mockHeaders.mockResolvedValue(createMockHeaders({}));
 
       const result = await requireAuth();
@@ -703,12 +717,23 @@ describe("LOCAL_OPERATOR bypass posture gate (F-C2, #184)", () => {
       expect(localOperatorBypassAllowed()).toBe(false);
     });
 
-    it("with no explicit signal, allows outside production and denies in production", () => {
+    it("with no explicit signal, allows ONLY in explicit development; denies test and production (Copilot #184)", () => {
       vi.stubEnv("NODE_ENV", "development");
       expect(localOperatorBypassAllowed()).toBe(true);
+      // "test" now DENIES: only an explicit NODE_ENV=development enables the
+      // bypass. A non-production value is no longer sufficient (fail safe).
       vi.stubEnv("NODE_ENV", "test");
-      expect(localOperatorBypassAllowed()).toBe(true);
+      expect(localOperatorBypassAllowed()).toBe(false);
       vi.stubEnv("NODE_ENV", "production");
+      expect(localOperatorBypassAllowed()).toBe(false);
+    });
+
+    it("denies when NODE_ENV is unset (ambiguous posture, no other signal) — fail safe (Copilot #184)", () => {
+      // An UNSET NODE_ENV carries no posture signal, so the fallback must DENY.
+      // Deleting it via stubEnv proves "ambiguous → deny" rather than the old
+      // "!= production → allow" behavior that treated unset as non-production.
+      vi.stubEnv("NODE_ENV", undefined);
+      expect(process.env.NODE_ENV).toBeUndefined();
       expect(localOperatorBypassAllowed()).toBe(false);
     });
   });
