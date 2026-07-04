@@ -363,6 +363,44 @@ describe("POST /api/plugins/mcp-inspector — security (#182)", () => {
     expect(data.url).not.toContain("attacker.example");
   });
 
+  it("registered REMOTE mcpId with a file: url → 400 and never spawns", async () => {
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [
+        {
+          id: "remote-bad",
+          // Malformed registry entry parsed from JSON: a non-http(s) URL must
+          // not be handed to the inspector — reject with a controlled 400.
+          config: { type: "http", url: "file:///etc/passwd" },
+        },
+      ],
+    });
+
+    const res = await POST(
+      makeRequest({ mcpId: "remote-bad", transport: "http" }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("registered REMOTE mcpId with a data: url → 400 and never spawns", async () => {
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [
+        {
+          id: "remote-bad",
+          config: { type: "http", url: "data:text/plain;base64,aGk=" },
+        },
+      ],
+    });
+
+    const res = await POST(
+      makeRequest({ mcpId: "remote-bad", transport: "http" }),
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
   it("ad-hoc SSE launch with a valid http(s) serverUrl is permitted (bare inspector)", async () => {
     mockDiscoverAllMcps.mockReturnValue({ mcps: [] });
 

@@ -247,6 +247,64 @@ describe("POST /api/mcp/tools — security (#182)", () => {
     expect(mockSpawn).not.toHaveBeenCalled();
   });
 
+  it("registered MCP with a file: url → 400, never fetches or spawns", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock as never);
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [{ id: "bad-url", config: { url: "file:///etc/passwd" } }],
+    });
+
+    const res = await POST(makeRequest({ mcpId: "bad-url" }));
+
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("registered MCP with a data: url → 400, never fetches or spawns", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock as never);
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [{ id: "bad-url", config: { url: "data:text/plain;base64,aGk=" } }],
+    });
+
+    const res = await POST(makeRequest({ mcpId: "bad-url" }));
+
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("registered MCP with a non-string url → 400, never fetches or spawns", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock as never);
+    mockDiscoverAllMcps.mockReturnValue({
+      // Malformed config parsed from JSON: url is not a string, and there is no
+      // usable stdio command to fall back to.
+      mcps: [{ id: "bad-url", config: { url: 12345 } }],
+    });
+
+    const res = await POST(makeRequest({ mcpId: "bad-url" }));
+
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("registered MCP with an empty-string url → 400, never fetches or spawns", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock as never);
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [{ id: "bad-url", config: { url: "" } }],
+    });
+
+    const res = await POST(makeRequest({ mcpId: "bad-url" }));
+
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
   it("registered HTTP mcpId resolves URL from registry, not the client body", async () => {
     const fetchMock = vi.fn(async (_url: unknown, _init?: unknown) => ({
       json: async () => ({ result: { tools: [{ name: "http_tool" }] } }),

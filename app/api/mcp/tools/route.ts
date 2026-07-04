@@ -43,6 +43,21 @@ function toStringArray(value: unknown): string[] {
     : [];
 }
 
+// Validate a registered remote MCP URL before fetching. Only http/https are
+// permitted (#182 Copilot): this mirrors the ad-hoc remote allowlist in the
+// mcp-inspector route so registered and ad-hoc remote URLs are validated the
+// same way, and blocks file:/data:/other schemes up-front with a controlled
+// 400 instead of letting fetchToolsViaHttp throw into the generic catch → 500.
+function isAllowedRemoteUrl(raw: unknown): raw is string {
+  if (typeof raw !== "string" || raw.length === 0) return false;
+  try {
+    const u = new URL(raw);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 // Default project path used to scope MCP discovery: /workspace in container
 // mode, otherwise the current working directory (mirrors /api/mcp/config).
 function getDefaultProjectPath(): string {
@@ -298,8 +313,21 @@ export async function POST(request: Request) {
     const config = discovered.config;
     let result: McpToolsResponse;
 
-    if (config.url) {
-      // HTTP MCP — URL comes from the registered config, not the client.
+    if (isNonEmptyString(config.url)) {
+      // HTTP MCP — URL comes from the registered config, not the client. The
+      // config is parsed from on-disk JSON, so validate the URL's type + scheme
+      // up-front (#182 Copilot): a present-but-invalid remote URL (non-http(s)
+      // scheme like file:/data:, unparseable) is a deterministic misconfig →
+      // controlled 400, NOT a 500 bubbled up from fetchToolsViaHttp's throw.
+      if (!isAllowedRemoteUrl(config.url)) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Registered MCP ${mcpId} has an invalid remote URL`,
+          },
+          { status: 400 },
+        );
+      }
       result = await fetchToolsViaHttp(config.url);
     } else if (isNonEmptyString(config.command)) {
       // Stdio MCP — command/args/env come from the registered config. Validate
@@ -315,7 +343,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           success: false,
-          error: `Registered MCP ${mcpId} has no usable stdio command`,
+          error: `Registered MCP ${mcpId} has no usable stdio command or URL`,
         },
         { status: 400 },
       );

@@ -222,7 +222,17 @@ export async function POST(request: NextRequest) {
       if (isNonEmptyString(cfg.url)) {
         // Registered REMOTE MCP (SSE/HTTP): resolve the target URL SERVER-SIDE
         // from the registry. A client-supplied `serverUrl` is never trusted for
-        // a registered id (SSRF guard).
+        // a registered id (SSRF guard). Validate the parsed-from-JSON URL with
+        // the SAME http/https allowlist used for ad-hoc remote launches (#182
+        // Copilot): a non-http(s) scheme (file:/data:/…) is rejected with a
+        // controlled 400 rather than being handed to the inspector UI — this
+        // makes the code match this route's "http/https only" claim.
+        if (!isAllowedRemoteUrl(cfg.url)) {
+          return NextResponse.json(
+            { error: `Registered MCP ${mcpId} has an invalid remote URL` },
+            { status: 400 },
+          );
+        }
         targetUrl = cfg.url;
       } else if (isNonEmptyString(cfg.command)) {
         // Registered stdio MCP: use its server-side command/args. Validate the
