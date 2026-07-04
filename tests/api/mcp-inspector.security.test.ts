@@ -59,7 +59,7 @@ vi.mock("net", () => {
 });
 
 // Import route AFTER mocks are set up
-import { POST } from "@/app/api/plugins/mcp-inspector/route";
+import { POST, GET } from "@/app/api/plugins/mcp-inspector/route";
 
 function makeFakeProc() {
   return Object.assign(new EventEmitter(), {
@@ -178,6 +178,61 @@ describe("POST /api/plugins/mcp-inspector — security (#182)", () => {
 
     expect(res.status).toBe(403);
     expect(mockSpawn).not.toHaveBeenCalled();
+  });
+
+  it("discovery uses the SERVER-default path; a client-supplied projectPath is ignored", async () => {
+    // Force a deterministic server default: with CLAUDE_CODE_CONFIG set,
+    // getDefaultProjectPath() short-circuits to "/workspace" (no fs probe).
+    process.env.CLAUDE_CODE_CONFIG = "/some/claude/config";
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [{ id: "default-path-mcp", config: { command: "npx", args: [] } }],
+    });
+
+    const res = await runToCompletion(
+      // Attacker tries to redirect registry discovery at a path they control
+      // (e.g. one with an attacker-authored .mcp.json) — must be ignored.
+      makeRequest({
+        mcpId: "default-path-mcp",
+        projectPath: "/attacker/writable",
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockDiscoverAllMcps).toHaveBeenCalledTimes(1);
+    // Discovery scoped to the SERVER default, NOT the client-supplied path.
+    expect(mockDiscoverAllMcps.mock.calls[0][0]).toBe("/workspace");
+    expect(mockDiscoverAllMcps.mock.calls[0][0]).not.toBe("/attacker/writable");
+    // env restored by afterEach (env snapshot restore).
+  });
+
+  it("GET reflects the full remote inspector url (transport/serverUrl), not just localhost:port", async () => {
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [
+        {
+          id: "get-remote",
+          config: { type: "http", url: "http://localhost:9999/mcp" },
+        },
+      ],
+    });
+
+    // Launch a registered REMOTE (SSE/HTTP) inspector, then read the mgmt list.
+    await runToCompletion(
+      makeRequest({ mcpId: "get-remote", transport: "http" }),
+    );
+
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      running: { id: string; url: string }[];
+    };
+    const entry = data.running.find((r) => r.id === "get-remote");
+    expect(entry).toBeDefined();
+    // GET surfaces the stored launch URL with the server-resolved target, not a
+    // bare http://localhost:<port>.
+    expect(entry!.url).toContain(
+      `serverUrl=${encodeURIComponent("http://localhost:9999/mcp")}`,
+    );
+    expect(entry!.url).toContain("transport=streamable-http");
   });
 
   it("registered mcpId resolves command SERVER-side; client command ignored", async () => {

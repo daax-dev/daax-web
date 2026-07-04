@@ -142,6 +142,28 @@ describe("POST /api/mcp/tools — security (#182)", () => {
     expect(mockSpawn).not.toHaveBeenCalled();
   });
 
+  it("discovery uses the SERVER-default path; a client-supplied projectPath is ignored", async () => {
+    // Force a deterministic server default: with CLAUDE_CODE_CONFIG set,
+    // getDefaultProjectPath() short-circuits to "/workspace" (no fs probe).
+    process.env.CLAUDE_CODE_CONFIG = "/some/claude/config";
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [{ id: "my-mcp", config: { command: "npx", args: [] } }],
+    });
+
+    const res = await POST(
+      // Attacker tries to redirect registry discovery at a path they control
+      // (e.g. one with an attacker-authored .mcp.json) — must be ignored.
+      makeRequest({ mcpId: "my-mcp", projectPath: "/attacker/writable" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockDiscoverAllMcps).toHaveBeenCalledTimes(1);
+    // Discovery scoped to the SERVER default, NOT the client-supplied path.
+    expect(mockDiscoverAllMcps.mock.calls[0][0]).toBe("/workspace");
+    expect(mockDiscoverAllMcps.mock.calls[0][0]).not.toBe("/attacker/writable");
+    // env restored by afterEach (env snapshot restore).
+  });
+
   it("registered stdio mcpId resolves SERVER-side; client command is ignored", async () => {
     mockDiscoverAllMcps.mockReturnValue({
       mcps: [

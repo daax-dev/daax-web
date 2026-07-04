@@ -124,10 +124,13 @@ function buildChildEnv(
   return { ...env, ...extra };
 }
 
-// Track running inspector processes
+// Track running inspector processes. `url` is the full launch URL the POST
+// returned (including any ?transport=&serverUrl= query params for a remote
+// SSE/HTTP inspector); the GET management list surfaces it verbatim so remote
+// entries reflect their actual server-resolved target, not just localhost:port.
 const inspectorProcesses: Map<
   string,
-  { process: ChildProcess; port: number; startedAt: Date }
+  { process: ChildProcess; port: number; startedAt: Date; url: string }
 > = new Map();
 
 // Find an available port starting from base
@@ -158,7 +161,9 @@ export async function GET() {
       id,
       port: info.port,
       startedAt: info.startedAt.toISOString(),
-      url: `http://localhost:${info.port}`,
+      // Reflect the actual launch URL (carries transport/serverUrl for remote
+      // inspectors); fall back to localhost:port for stdio/legacy entries.
+      url: info.url || `http://localhost:${info.port}`,
     }),
   );
 
@@ -177,13 +182,13 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { mcpId } = body;
-    // `projectPath` only scopes server-side discovery lookup; it is never a
-    // command. Client-supplied command/args/env on the body are only consulted
-    // via the allowlisted ad-hoc path below — never for a registered mcpId.
-    const projectPath =
-      typeof body.projectPath === "string" && body.projectPath.length > 0
-        ? body.projectPath
-        : getDefaultProjectPath();
+    // Discovery is ALWAYS scoped to the SERVER-DEFAULT project path (#182
+    // Copilot): a client-supplied `projectPath` is deliberately NOT read, so a
+    // caller cannot point registry resolution at an attacker-writable
+    // `.mcp.json` to define a new "registered" MCP command this route would then
+    // spawn. Client-supplied command/args/env are only consulted via the
+    // allowlisted ad-hoc path below — never for a registered mcpId.
+    const projectPath = getDefaultProjectPath();
 
     if (!mcpId || typeof mcpId !== "string") {
       return NextResponse.json({ error: "mcpId is required" }, { status: 400 });
@@ -196,7 +201,9 @@ export async function POST(request: NextRequest) {
         status: "already_running",
         mcpId,
         port: existing.port,
-        url: `http://localhost:${existing.port}`,
+        // Return the stored launch URL (transport/serverUrl for remote entries);
+        // fall back to localhost:port for stdio/legacy entries.
+        url: existing.url || `http://localhost:${existing.port}`,
         startedAt: existing.startedAt.toISOString(),
       });
     }
@@ -363,11 +370,13 @@ export async function POST(request: NextRequest) {
       inspectorProcesses.delete(mcpId);
     });
 
-    // Store the process
+    // Store the process along with its full launch URL so the GET management
+    // list can surface the actual server-resolved target for remote inspectors.
     inspectorProcesses.set(mcpId, {
       process: inspectorProcess,
       port: clientPort,
       startedAt: new Date(),
+      url: inspectorUrl,
     });
 
     // Wait a moment for the server to start

@@ -280,13 +280,14 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const { mcpId } = body;
-    // `projectPath` only scopes server-side discovery lookup; it is never a
-    // command. Any client-supplied `config`/`command`/`args`/`env`/`url` on the
-    // body is deliberately IGNORED — the command/URL is resolved server-side.
-    const projectPath =
-      typeof body.projectPath === "string" && body.projectPath.length > 0
-        ? body.projectPath
-        : getDefaultProjectPath();
+    // Discovery is ALWAYS scoped to the SERVER-DEFAULT project path (#182
+    // Copilot): a client-supplied `projectPath` is deliberately NOT read.
+    // Honoring it would let a caller who can write a `.mcp.json` under an
+    // attacker-chosen path define a new "registered" MCP command this route
+    // would then spawn, weakening the registry-only guarantee. Any
+    // client-supplied `config`/`command`/`args`/`env`/`url` on the body is
+    // likewise IGNORED — the command/URL is resolved server-side.
+    const projectPath = getDefaultProjectPath();
 
     if (!mcpId || typeof mcpId !== "string") {
       return NextResponse.json(
