@@ -28,6 +28,9 @@ yarn-error.log*
 .env
 .env*.local
 
+# Secrets (plaintext credential store written by lib/secrets.ts)
+.secrets.json
+
 # Vercel
 .vercel
 
