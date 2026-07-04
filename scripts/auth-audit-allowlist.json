@@ -14,7 +14,6 @@
     "cyber/safe-mcp/rules/[id]/test",
     "cyber/safe-mcp/scan",
     "devcontainer",
-    "ec/pub/[channel]",
-    "settings/debug"
+    "ec/pub/[channel]"
   ]
 }

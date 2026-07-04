@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSettings } from "@/lib/settings";
+import { requireAuth } from "@/lib/auth";
 
 export async function GET() {
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   const settings = getSettings();
 
   // Log what we're getting

@@ -3,8 +3,12 @@ import { homedir } from "os";
 import { join } from "path";
 import { existsSync } from "fs";
 import { getSettings } from "@/lib/settings";
+import { requireAuth } from "@/lib/auth";
 
 export async function GET() {
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   const settings = getSettings();
   const home = homedir();
 
