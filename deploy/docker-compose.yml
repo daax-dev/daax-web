@@ -49,7 +49,10 @@ services:
   # service waits for this to complete successfully, so a bad/failed migration
   # blocks the rollout (fail-closed) without coupling the app process to PG.
   migrate:
-    image: daax:latest
+    # GHCR-published web image (#100): deploy:kinsale/muckross `docker compose
+    # pull` fetches the published image, not a local `daax:latest` (which would
+    # resolve to Docker Hub and fail). Same image as the daax web service.
+    image: ghcr.io/daax-dev/daax-web:latest
     container_name: daax-migrate
     restart: "no"
     depends_on:
@@ -68,7 +71,12 @@ services:
       # Explicit target (F3 #100): the Dockerfile's last stage is `terminal`, so
       # the web plane must pin `runner` or it would build the terminal image.
       target: runner
-    image: daax:latest
+    # GHCR-published web image (#100): the deploy path is pull-based
+    # (deploy:kinsale/muckross run `docker compose pull daax terminal`), so this
+    # must name the published GHCR ref. A local `daax:latest` would resolve to
+    # Docker Hub and fail the pull. `docker compose up --build` still builds
+    # locally and tags this same ref.
+    image: ghcr.io/daax-dev/daax-web:latest
     container_name: daax
     restart: unless-stopped
 
@@ -264,7 +272,11 @@ services:
       context: ..
       dockerfile: Dockerfile
       target: terminal
-    image: daax-terminal:latest
+    # GHCR-published terminal image (#100): deploy:kinsale/muckross `docker
+    # compose pull daax terminal` fetches this published ref. A local
+    # `daax-terminal:latest` would resolve to Docker Hub and fail the pull.
+    # `docker compose up --build` still builds locally and tags this same ref.
+    image: ghcr.io/daax-dev/daax-terminal:latest
     container_name: daax-terminal
     restart: unless-stopped
 
