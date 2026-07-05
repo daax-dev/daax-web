@@ -79,6 +79,19 @@ describe("default-deny /api middleware (#181)", () => {
       expect(res.status).toBe(401);
     });
 
+    it("exposed posture (HOST=0.0.0.0) + no operator header → 401 (default-deny)", () => {
+      // Drive the exposed posture through middleware() itself (issue #184): a
+      // non-loopback bind with no DAAX_TRUST_LOCAL_OPERATOR opt-in must DENY the
+      // LOCAL_OPERATOR bypass even when strict mode is OFF, matching the WS
+      // plane's "no bypass off-host" behavior. POST with NO Origin bypasses the
+      // CSRF gate so the request falls through to the posture-gated auth check.
+      vi.stubEnv("HOST", "0.0.0.0");
+      const res = middleware(
+        req("http://localhost/api/config", { method: "POST" }),
+      );
+      expect(res.status).toBe(401);
+    });
+
     it("401 body matches requireAuth()'s { error, message } shape", async () => {
       process.env.DAAX_REQUIRE_AUTH = "1";
       const res = middleware(req("http://localhost/api/config"));

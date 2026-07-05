@@ -808,6 +808,41 @@ describe("LOCAL_OPERATOR bypass posture gate (F-C2, #184)", () => {
     expect(result.authenticated).toBe(true);
     if (result.authenticated) expect(result.user.username).toBe("Proxied User");
   });
+
+  // The deny-reason → warning-message mapping must name the ACTUAL cause, not
+  // always blame exposure (Copilot #184). A fresh module import per case resets
+  // the module-level once-flag so the warning is actually emitted each time.
+  describe("deny-reason warning names the actual cause (#184)", () => {
+    it("emits the exposed-host reason for a non-loopback HOST bind", async () => {
+      vi.stubEnv("HOST", "0.0.0.0");
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.resetModules();
+      const { evaluateAuthDecision } = await import("@/lib/auth-trust");
+
+      const decision = evaluateAuthDecision(createMockHeaders({}));
+
+      expect(decision.decision).toBe("deny");
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("bound beyond loopback"),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("emits the explicit-opt-out reason for a falsy DAAX_TRUST_LOCAL_OPERATOR", async () => {
+      vi.stubEnv("DAAX_TRUST_LOCAL_OPERATOR", "0");
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.resetModules();
+      const { evaluateAuthDecision } = await import("@/lib/auth-trust");
+
+      const decision = evaluateAuthDecision(createMockHeaders({}));
+
+      expect(decision.decision).toBe("deny");
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("explicit opt-out"),
+      );
+      warnSpy.mockRestore();
+    });
+  });
 });
 
 describe("auth module with custom headers", () => {
