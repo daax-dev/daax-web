@@ -16,7 +16,7 @@ permissions:
 jobs:
   quality:
     name: Lint / typecheck / test / build / auth-audit
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
 
@@ -49,7 +49,7 @@ jobs:
 
   vuln-scan:
     name: Dependency vulnerability scan (Trivy fs)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
 
@@ -72,7 +72,7 @@ jobs:
     # Only on a labeled PR. Guard event_name so a workflow_dispatch run (no
     # pull_request payload) cleanly skips instead of erroring on the expression.
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e')
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     services:
       postgres:
         image: postgres:18-alpine
