@@ -30,7 +30,7 @@ describe("code-server --auth none accepted-risk invariant (#201)", () => {
   it("publishes code-server ONLY on the loopback interface", () => {
     // The mitigation that makes `--auth none` acceptable: the port is never
     // exposed on 0.0.0.0. External access is only via Traefik forward-auth.
-    const ports = codeServer.ports ?? [];
+    const ports = codeServer?.ports ?? [];
     expect(ports.length).toBeGreaterThan(0);
     for (const p of ports) {
       expect(p.startsWith("127.0.0.1:")).toBe(true);
@@ -38,7 +38,7 @@ describe("code-server --auth none accepted-risk invariant (#201)", () => {
   });
 
   it("runs code-server with --auth none (the documented tradeoff)", () => {
-    const cmd = codeServer.command ?? [];
+    const cmd = codeServer?.command ?? [];
     const cmdArr = Array.isArray(cmd) ? cmd : [cmd];
     const authIdx = cmdArr.indexOf("--auth");
     expect(authIdx).toBeGreaterThanOrEqual(0);

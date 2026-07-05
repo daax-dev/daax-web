@@ -101,10 +101,18 @@ const HOST_WORKSPACE_PATH = process.env.HOST_WORKSPACE_PATH || "";
 // reach it. Default is loopback; widening (a Tailscale IP, or 0.0.0.0) is an
 // explicit operator opt-in via DAAX_CODE_SERVER_BIND. Fails closed to
 // loopback on a malformed value.
-const BIND_ADDR_PATTERN = /^\d{1,3}(\.\d{1,3}){3}$/;
-function getPublishBindAddr(): string {
+// A dotted-quad shape check is NOT enough: /^\d{1,3}(\.\d{1,3}){3}$/ accepts
+// 999.999.999.999 and 256.0.0.1, which would emit a broken
+// `docker run -p 999.999.999.999:PORT:8080` spec. Validate each octet
+// numerically (0-255) so anything malformed fails closed to loopback.
+export function isValidIPv4BindAddr(addr: string): boolean {
+  const parts = addr.split(".");
+  if (parts.length !== 4) return false;
+  return parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255);
+}
+export function getPublishBindAddr(): string {
   const bind = process.env.DAAX_CODE_SERVER_BIND?.trim();
-  if (!bind || !BIND_ADDR_PATTERN.test(bind)) return "127.0.0.1";
+  if (!bind || !isValidIPv4BindAddr(bind)) return "127.0.0.1";
   return bind;
 }
 
