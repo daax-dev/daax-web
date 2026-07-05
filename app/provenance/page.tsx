@@ -15,6 +15,7 @@ import {
   Zap,
   Container,
   Code,
+  HardDrive,
 } from "lucide-react";
 import {
   Card,
@@ -39,13 +40,18 @@ import ProvenanceAdminActions from "@/components/provenance/admin-actions";
 import DevcontainerAdmin from "@/components/provenance/devcontainer-admin";
 import QuickstartPicker from "@/components/provenance/quickstart-picker";
 import DevcontainerBuilder from "@/components/provenance/devcontainer-builder";
+import DbConsole from "@/components/db-console/db-console";
 import { useAdminAccess } from "@/hooks/use-admin-access";
+import { useSuperAdminAccess } from "@/hooks/use-superadmin-access";
 
 function ProvenanceDashboardContent() {
   const searchParams = useSearchParams();
   // Admin visibility resolves server-side (F5, #101), retiring the build-time
   // NEXT_PUBLIC_ADMIN_MODE so UI gating and API authorization share one source.
   const { isAdmin: isAdminMode } = useAdminAccess();
+  // Super-admin (env allow-list) gates the read-first DB console (F6, #102),
+  // resolved server-side so a normal admin cannot self-escalate into it.
+  const { isSuperAdmin } = useSuperAdminAccess();
   const tabParam = searchParams.get("tab");
   const defaultTab = tabParam === "builder" ? "builder" : "dashboard";
 
@@ -386,6 +392,12 @@ function ProvenanceDashboardContent() {
                   <Code className="h-4 w-4" />
                   DevContainers
                 </TabsTrigger>
+                {isSuperAdmin && (
+                  <TabsTrigger value="data" className="gap-2">
+                    <HardDrive className="h-4 w-4" />
+                    Data
+                  </TabsTrigger>
+                )}
               </TabsList>
 
               {/* Containers Admin - DHI images, actions, database */}
@@ -461,6 +473,13 @@ function ProvenanceDashboardContent() {
                   </CardContent>
                 </Card>
               </TabsContent>
+
+              {/* Data — read-first, SQLi-safe DB console (F6, #102). Super-admin only. */}
+              {isSuperAdmin && (
+                <TabsContent value="data" className="mt-0">
+                  <DbConsole />
+                </TabsContent>
+              )}
             </Tabs>
           </TabsContent>
         )}

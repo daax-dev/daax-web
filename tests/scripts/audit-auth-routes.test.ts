@@ -123,6 +123,23 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
       expect(protectedMethods).toEqual(["POST"]);
     });
 
+    it("treats a requireSuperAdmin-guarded write method as guarded (F6 #102)", () => {
+      const requireSuperAdminRoute = `
+        import { requireSuperAdmin } from "@/lib/db-console/super-admin";
+        export async function POST() {
+          const gate = await requireSuperAdmin("admin:db:write");
+          if (!gate.authorized) return gate.response;
+          return new Response();
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        requireSuperAdminRoute,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(true);
+      expect(protectedMethods).toEqual(["POST"]);
+    });
+
     it("recognises a mix of GET(requireRole) + POST(requireRole) per method", () => {
       const mixed = `
         import { requireRole } from "@/lib/auth";

@@ -8,15 +8,24 @@ export const WRITE_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
 
 /**
  * A real auth-guard CALL site. Recognises `requireAuth(`, `requireAuthOrThrow(`,
- * and `requireRole(` (F5, #101). `requireRole` is STRONGER than `requireAuth` —
- * it requires authentication AND a role — so a route guarded by it is guarded.
- * No `g` flag, so `.test()` is stateless and safe to reuse.
+ * `requireRole(` (F5, #101), and `requireSuperAdmin(` (F6, #102).
+ * `requireRole`/`requireSuperAdmin` are STRONGER than `requireAuth` — they
+ * require authentication AND a role (and, for super-admin, env allow-list
+ * membership) — so a route guarded by either is guarded. No `g` flag, so
+ * `.test()` is stateless and safe to reuse.
  */
 export const AUTH_GUARD_CALL_RE =
-  /(?:requireAuth(?:OrThrow)?|requireRole)\s*\(/;
+  /(?:requireAuth(?:OrThrow)?|requireRole|requireSuperAdmin)\s*\(/;
 
-/** An import line that brings in an auth guard (`requireAuth*` or `requireRole`). */
-export const AUTH_GUARD_IMPORT_RE = /import\s+.*require(?:Auth|Role).*from/;
+/**
+ * An import statement that brings in an auth guard (`requireAuth*`, `requireRole`,
+ * or `requireSuperAdmin`). `[^;]` (rather than `.`) lets the match span a
+ * MULTI-LINE named import — `import {\n  requireSuperAdmin,\n  ...\n} from "…"` —
+ * while the `;`-exclusion keeps it bounded to a single import statement so it
+ * never leaks a guard name across unrelated statements.
+ */
+export const AUTH_GUARD_IMPORT_RE =
+  /import[^;]*require(?:Auth|Role|SuperAdmin)[^;]*from/;
 
 export interface RouteInfo {
   path: string;
