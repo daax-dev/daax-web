@@ -120,11 +120,26 @@ export function initializeClaudeAuthDir(): {
       }
     }
   } catch (error) {
+    const runningNonRoot = !process.getuid || process.getuid() !== 0;
     console.error(
-      `[Terminal Server] Failed to create Claude auth directory at ${localPath}. ` +
-        "Please check directory permissions and available disk space.",
+      `[Terminal Server] FATAL: cannot create the Claude auth directory at ${localPath}.`,
       error,
     );
+    if (runningNonRoot) {
+      // #185: the container now runs as the non-root `node` user (UID 1000) with
+      // cap_drop:[ALL], so it can only write host mounts owned by / writable by
+      // UID 1000. A root-owned /workspace mount is the usual cause here.
+      console.error(
+        "[Terminal Server] This container runs as the non-root 'node' user (UID 1000). " +
+          "The mounted /workspace (and /host-config/.claude.json) MUST be writable by UID 1000.\n" +
+          "  Fix on the HOST: chown -R 1000:1000 <your DAAX_WORKSPACE dir>  " +
+          "(and ensure ~/.claude.json is owned by / writable by UID 1000).",
+      );
+    } else {
+      console.error(
+        "[Terminal Server] Please check directory permissions and available disk space.",
+      );
+    }
     // Fail fast: this directory is required for Claude containers to work correctly
     process.exit(1);
   }

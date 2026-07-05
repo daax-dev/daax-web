@@ -58,6 +58,22 @@ echo "🧩 Ensuring code-server image..."
 echo "🌐 Ensuring network exists..."
 docker network create "$NETWORK_NAME" 2>/dev/null || true
 
+# Non-root data-volume ownership (#185). rebuild.sh keeps /app/data on the image
+# layer (ephemeral, already node-owned), so it does NOT itself use a daax-data
+# volume. But if a compose-based run previously created a persistent daax-data
+# volume as the OLD root image, node(1000) would EACCES on it. Fix it here too so
+# alternating between rebuild.sh and compose on the same host is safe.
+# Idempotent + cheap: no-op unless such a volume exists and is stale (uid != 1000).
+for __vol in daax_daax-data daax-data; do
+  if docker volume inspect "$__vol" >/dev/null 2>&1; then
+    __owner="$(docker run --rm -v "$__vol:/d" "$IMAGE_NAME" stat -c '%u' /d 2>/dev/null || echo unknown)"
+    if [ "$__owner" != "1000" ]; then
+      echo "🔧 Fixing ownership of volume $__vol -> 1000:1000 (was uid=$__owner)..."
+      docker run --rm -v "$__vol:/d" "$IMAGE_NAME" chown -R 1000:1000 /d >/dev/null
+    fi
+  fi
+done
+
 echo "🚀 Starting container..."
 echo "   Workspace: $WORKSPACE_PATH"
 echo "   Claude config: $CLAUDE_CONFIG"

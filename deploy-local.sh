@@ -235,8 +235,14 @@ compose() {
     || die "DAAX_ENV_FILE not found: $env_file"
 
   local docker_gid
-  docker_gid="$(getent group docker | awk -F: '{print $3}')"
-  [[ -n "$docker_gid" ]] || die "cannot resolve docker group GID"
+  docker_gid="$(getent group docker 2>/dev/null | awk -F: '{print $3}')"
+  # Fallback (#185, M3): snap/rootless/custom-socket hosts may have no `docker`
+  # group entry; use the GID that actually owns the socket so group_add still
+  # grants access. DOCKER_SOCKET is a unix:// URL — strip the scheme for stat.
+  if [[ -z "$docker_gid" ]]; then
+    docker_gid="$(stat -c '%g' "${DOCKER_SOCKET#unix://}" 2>/dev/null)"
+  fi
+  [[ -n "$docker_gid" ]] || die "cannot resolve docker group GID (set DOCKER_GID explicitly)"
 
   # Explicitly export every variable the compose file interpolates, so the
   # caller's environment doesn't leak in unexpected values.
@@ -361,11 +367,37 @@ cmd_deploy() {
 
   log "building daax image..."
   compose build --pull daax
+  ensure_daax_data_owner
   log "starting daax (force-recreate)..."
   compose up -d --force-recreate --wait --wait-timeout 120 daax
   ok "daax is up"
   printf '    local  : http://localhost:4200\n'
   printf '    traefik: https://daax.%s.poley.dev (requires install-traefik-config)\n' "$DAAX_HOSTNAME"
+}
+
+# Idempotently fix ownership of the persistent app-data volume (#185, H1).
+# The app now runs as the non-root `node` user (UID 1000). A daax-data volume
+# first populated by the OLD root image stays root:root across an upgrade, so
+# node(1000) writing mcp-registry.json / releases backups would EACCES — and
+# boot/health never touch those, so it looks healthy until the first /api/mcp
+# POST. This chowns the volume to 1000:1000 BEFORE `compose up`.
+# Idempotent + cheap: no-op when the volume is absent (fresh deploy — compose
+# seeds it node-owned from the image) or already owned by 1000; only chowns when
+# actually stale. Uses the just-built daax image (present, has chown/stat).
+ensure_daax_data_owner() {
+  local vol="${PROJECT_NAME}_daax-data"
+  docker volume inspect "$vol" >/dev/null 2>&1 || return 0
+
+  local img="daax:latest"
+  docker image inspect "$img" >/dev/null 2>&1 || img="alpine"
+
+  local owner
+  owner="$(docker run --rm -v "$vol:/d" "$img" stat -c '%u' /d 2>/dev/null || echo unknown)"
+  if [[ "$owner" == "1000" ]]; then
+    return 0
+  fi
+  log "chowning volume $vol to 1000:1000 (was uid=$owner) for non-root app (#185)..."
+  docker run --rm -v "$vol:/d" "$img" chown -R 1000:1000 /d >/dev/null
 }
 
 # Idempotently create the external docker network the compose file expects.
@@ -476,6 +508,7 @@ cmd_migrate_daax() {
   # Bring up daax on native
   log "building daax on native daemon..."
   compose build --pull daax
+  ensure_daax_data_owner
   log "starting daax on native daemon..."
   compose up -d --force-recreate --wait --wait-timeout 120 daax
 

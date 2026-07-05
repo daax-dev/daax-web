@@ -49,6 +49,36 @@ describe("#185 Dockerfile runs as a non-root user", () => {
     expect(effective).not.toBe("0");
     expect(effective).not.toMatch(/^0(:|$)/);
   });
+
+  it("pre-creates node-owned write dirs before dropping privileges (#185 H1/M2)", () => {
+    // Deleting the mkdir/chown block would leave /app root-owned and break the
+    // non-root app's process.cwd() writes (data, .logs, .secrets.json) and the
+    // named-volume seed. Guard that it stays present in the final stage.
+    const finalStage = lines.slice(lastFromIdx + 1).join("\n");
+    expect(finalStage).toMatch(/RUN\s+mkdir\s+-p[^\n]*\/app\/data/);
+    expect(finalStage).toMatch(/chown\s+node:node\s+\/app(\s|\/|$)/m);
+  });
+});
+
+describe("#185 rebuild.sh (docker run path) applies non-root hardening", () => {
+  const rebuild = readFileSync(resolve(repoRoot, "rebuild.sh"), "utf8");
+
+  it("passes --group-add for group-based socket access", () => {
+    expect(rebuild).toMatch(/--group-add\s+"?\$DOCKER_GID/);
+  });
+
+  it("passes --cap-drop ALL", () => {
+    expect(rebuild).toMatch(/--cap-drop\s+ALL/);
+  });
+
+  it("passes --security-opt no-new-privileges", () => {
+    expect(rebuild).toMatch(/--security-opt\s+no-new-privileges:true/);
+  });
+
+  it("derives DOCKER_GID from the docker group with a socket-stat fallback", () => {
+    expect(rebuild).toContain("getent group docker");
+    expect(rebuild).toContain("stat -c '%g' /var/run/docker.sock");
+  });
 });
 
 describe("#185 compose daax service keeps non-root hardening", () => {

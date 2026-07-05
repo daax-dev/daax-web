@@ -3,11 +3,22 @@
 #
 # Build: docker build -t daax .
 #
+# The image runs as the non-root `node` user (#185), so Docker-socket access is by
+# GROUP membership: pass --group-add with the HOST socket's GID (NOT uid 0), or
+# spawning fails with a socket permission-denied. Resolve it with:
+#     stat -c '%g' /var/run/docker.sock
+# --security-opt no-new-privileges and --cap-drop ALL match the compose hardening.
+#
 # Run (minimal):
-#   docker run -p 4200:4200 -p 4201:4201 -v /var/run/docker.sock:/var/run/docker.sock daax
+#   docker run -p 4200:4200 -p 4201:4201 \
+#     --group-add "$(stat -c '%g' /var/run/docker.sock)" \
+#     --security-opt no-new-privileges:true --cap-drop ALL \
+#     -v /var/run/docker.sock:/var/run/docker.sock daax
 #
 # Run (with MCP config access - required for /mcp page):
 #   docker run -p 4200:4200 -p 4201:4201 \
+#     --group-add "$(stat -c '%g' /var/run/docker.sock)" \
+#     --security-opt no-new-privileges:true --cap-drop ALL \
 #     -v /var/run/docker.sock:/var/run/docker.sock \
 #     -v ~/.claude.json:/host-config/.claude.json:rw \
 #     -v ~/.mcp.json:/host-config/.mcp.json:ro \
@@ -16,7 +27,9 @@
 #     daax
 # Notes:
 # - ~/.claude.json must be mounted read-write (:rw) because the app updates this file
-#   to enable/disable tools and persist configuration changes.
+#   to enable/disable tools and persist configuration changes. As the container runs
+#   as UID 1000, ~/.claude.json and any mounted workspace must be writable by UID 1000
+#   (chown to 1000:1000 if needed).
 # - ~/.mcp.json is only read by the app to discover MCP servers, so read-only (:ro)
 #   access is sufficient and recommended.
 

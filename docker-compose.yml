@@ -9,6 +9,13 @@
 # dev, export a value first (e.g. `export DAAX_PG_PASSWORD=$(openssl rand -hex 16)`
 # or any local-only value). NEVER reuse a local value for a network-reachable
 # deployment. `docker compose up` fails fast with a clear error if it is unset.
+#
+# DOCKER_GID (#185): the app runs as the non-root `node` user and reaches the
+# Docker socket by group membership. For a bare `docker compose up` (not via
+# ./rebuild.sh, which derives it), export the HOST socket GID first or spawning
+# fails — and the terminal server FAILS LOUD at boot if it is wrong:
+#   export DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+# The compose default (999) is only correct on hosts whose docker GID is 999.
 
 services:
   # Postgres — daax's single data engine (brain2daax Phase 0 #92).

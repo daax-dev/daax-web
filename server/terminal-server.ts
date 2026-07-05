@@ -12,9 +12,10 @@
  */
 
 import { WebSocketServer } from "ws";
+import { existsSync, accessSync, statSync, constants as fsConstants } from "fs";
 
 // Configuration
-import { PORT, HOST } from "./config/constants";
+import { PORT, HOST, HOST_WORKSPACE_PATH } from "./config/constants";
 import { WS_TICKET_SUBPROTOCOL } from "../lib/ws-ticket-protocol";
 
 // Docker/Auth initialization
@@ -41,6 +42,68 @@ import "./startup";
 
 // Register global error handlers first (catches startup errors too)
 registerGlobalErrorHandlers();
+
+/**
+ * Boot-time Docker-socket reachability preflight (#185).
+ *
+ * The container runs as the non-root `node` user and reaches the Docker socket
+ * by GROUP membership (compose `group_add: ${DOCKER_GID}`). If DOCKER_GID is
+ * wrong (e.g. a bare `docker compose up` with it unset on a host whose socket
+ * GID != the 999 default), the socket is mounted but inaccessible — spawns would
+ * fail only when first triggered, with no boot signal. Fail LOUD at boot instead.
+ *
+ * Cannot false-positive a healthy host: it only enforces in container mode
+ * (HOST_WORKSPACE_PATH set) — host-dev may legitimately use `sudo docker` — it
+ * skips remote (tcp) daemons, and it uses access(2) which honors the process's
+ * real uid/gid + supplementary groups exactly as the kernel does. A socket that
+ * is simply not mounted is a tolerated (non-spawning) config: warn, don't crash.
+ */
+function preflightDockerSocket(): void {
+  if (!HOST_WORKSPACE_PATH) return; // host-dev / non-container: skip
+
+  const dockerHost = process.env.DOCKER_HOST || "/var/run/docker.sock";
+  if (/^(tcp|https?):\/\//.test(dockerHost)) return; // remote daemon: not group-gated
+  const socketPath = dockerHost.startsWith("unix://")
+    ? dockerHost.slice("unix://".length)
+    : dockerHost;
+
+  if (!existsSync(socketPath)) {
+    console.warn(
+      `[Terminal Server] Docker socket ${socketPath} is not present; container ` +
+        "spawning will be unavailable. Mount /var/run/docker.sock to enable it.",
+    );
+    return;
+  }
+
+  try {
+    accessSync(socketPath, fsConstants.R_OK | fsConstants.W_OK);
+  } catch {
+    let requiredGid: string;
+    try {
+      requiredGid = String(statSync(socketPath).gid);
+    } catch {
+      requiredGid = `<run: stat -c '%g' ${socketPath}>`;
+    }
+    const groups =
+      typeof process.getgroups === "function"
+        ? process.getgroups().join(",")
+        : "unknown";
+    console.error(
+      `[Terminal Server] FATAL: the Docker socket ${socketPath} exists but is NOT ` +
+        `accessible by this process (uid=${process.getuid?.() ?? "?"}, ` +
+        `gid=${process.getgid?.() ?? "?"}, groups=${groups}).\n` +
+        "This container runs as the non-root 'node' user (UID 1000) and reaches the " +
+        "socket by GROUP membership, so DOCKER_GID must equal the host socket's group.\n" +
+        `  Required: DOCKER_GID=${requiredGid}   (host: stat -c '%g' ${socketPath})\n` +
+        "  A bare `docker compose up` needs `export DOCKER_GID=$(stat -c '%g' " +
+        "/var/run/docker.sock)` first; rebuild.sh and deploy-local.sh derive it automatically.",
+    );
+    process.exit(1);
+  }
+}
+
+// Fail loud at boot if the socket is mounted but unreachable (wrong DOCKER_GID).
+preflightDockerSocket();
 
 // Initialize Claude auth directory (exits on failure - required)
 const claudeAuth = initializeClaudeAuthDir();
