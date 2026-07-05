@@ -437,6 +437,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Start code-server container
       // Persist user data so theme preference is saved after first manual set
       // Add label to track which project was mounted (for status checks)
+      //
+      // ACCEPTED RISK (#201): `--auth none` (mirrors deploy/docker-compose.yml).
+      // code-server has no credential of its own here; access control is by
+      // network + the app's own auth gate:
+      //   - Starting the container requires an authenticated request (requireAuth
+      //     above) — an unauthenticated caller cannot spawn or reach this flow.
+      //   - The IDE is opened in a new browser tab pointed straight at code-server
+      //     (window.open in app/code-server/page.tsx); the daax app is NOT in that
+      //     HTTP path, so it cannot transparently inject a code-server session
+      //     cookie. A PASSWORD/HASHED_PASSWORD would therefore force a manual
+      //     login page (broken UX) with no app-side way to auto-authenticate.
+      //   - Deploy/Tailscale mode fronts code-server with Traefik + Pocket ID
+      //     forward-auth on the daax-code.* subdomain (see the compose stanza);
+      //     host-dev binds it on the developer's own machine / Tailscale network.
+      // `PASSWORD=` (empty) is set explicitly so a stray host PASSWORD env cannot
+      // leak in and unexpectedly enable a login prompt. Revisit if code-server is
+      // ever reachable from an untrusted network without the forward-auth chain.
       const args = [
         "run",
         "-d",
