@@ -1,0 +1,171 @@
+"use client";
+
+/**
+ * Terminal-WS session hook for the mobile unblock view (issue #156).
+ *
+ * Connects to the SAME terminal WebSocket (:4201) the desktop terminal uses,
+ * through the SAME ticket-aware connector (openTerminalWebSocket) and the SAME
+ * `{ type: "input", data }` message protocol — so mobile input is authenticated
+ * and handled by exactly the existing, audited server path. Output is
+ * accumulated into a capped buffer for the plain-text prompt view; xterm is not
+ * loaded on mobile.
+ *
+ * HONESTY NOTE (shared-pty limitation): the terminal server spawns a FRESH pty
+ * per WebSocket (server/handlers/connection-handler.ts assigns a new sessionId
+ * every connection — there is no attach-by-id). This hook therefore drives the
+ * pty of the session it opens; it does not (and cannot today) share the pty of
+ * an already-running desktop agent. Truly attaching to a running agent needs
+ * server-side pty multiplexing or tmux-wrapping AI sessions — deferred, same
+ * wall as the auto-trigger. See the #156 report.
+ */
+
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import {
+  buildTerminalWsUrl,
+  openTerminalWebSocket,
+} from "@/lib/websocket-utils";
+
+export type UnblockStatus =
+  | "connecting"
+  | "open"
+  | "closed"
+  | "error"
+  | "unauthorized";
+
+export interface UnblockParams {
+  /** "local" | "container" | "shell-tmux" — mirrors desktop semantics. */
+  mode: string;
+  /** Existing docker container to exec into (opens a new shell in it). */
+  containerName?: string;
+  /** Initial command to run (e.g. reserved; usually empty for unblock). */
+  command?: string;
+  cwd?: string;
+}
+
+const MAX_BUFFER = 64 * 1024; // cap retained output so a chatty pty can't grow unbounded
+
+export interface UnblockSession {
+  status: UnblockStatus;
+  sessionId: string | null;
+  /** Accumulated (capped) raw pty output. */
+  output: string;
+  /** Send raw bytes to the pty. Returns false if the socket isn't open. */
+  send: (data: string) => boolean;
+  /** Force a reconnect. */
+  reconnect: () => void;
+}
+
+export function useUnblockSession(params: UnblockParams): UnblockSession {
+  const [status, setStatus] = useState<UnblockStatus>("connecting");
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [output, setOutput] = useState("");
+  const wsRef = useRef<WebSocket | null>(null);
+  const disposedRef = useRef(false);
+  const [nonce, setNonce] = useState(0);
+
+  // Stable key so the effect only re-runs when connection params truly change.
+  const paramKey = JSON.stringify([
+    params.mode,
+    params.containerName ?? "",
+    params.command ?? "",
+    params.cwd ?? "",
+    nonce,
+  ]);
+
+  useEffect(() => {
+    disposedRef.current = false;
+    setStatus("connecting");
+    setOutput("");
+    setSessionId(null);
+
+    const qs = new URLSearchParams();
+    qs.set("mode", params.mode);
+    if (params.containerName) qs.set("containerName", params.containerName);
+    if (params.command) qs.set("command", params.command);
+    if (params.cwd) qs.set("cwd", params.cwd);
+    const wsUrl = buildTerminalWsUrl(qs);
+
+    let ws: WebSocket | null = null;
+    (async () => {
+      try {
+        ws = await openTerminalWebSocket(wsUrl);
+      } catch {
+        if (!disposedRef.current) setStatus("error");
+        return;
+      }
+      if (disposedRef.current) {
+        try {
+          ws.close();
+        } catch {
+          /* already closing */
+        }
+        return;
+      }
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (disposedRef.current) return;
+        setStatus("open");
+      };
+
+      ws.onmessage = (event) => {
+        if (disposedRef.current) return;
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === "output" && typeof msg.data === "string") {
+            setOutput((prev) => {
+              const next = prev + msg.data;
+              return next.length > MAX_BUFFER
+                ? next.slice(next.length - MAX_BUFFER)
+                : next;
+            });
+          } else if (msg.type === "session" && typeof msg.id === "string") {
+            setSessionId(msg.id);
+          } else if (msg.type === "exit") {
+            setStatus("closed");
+          }
+        } catch {
+          /* ignore non-JSON frames */
+        }
+      };
+
+      ws.onclose = (event) => {
+        if (disposedRef.current) return;
+        // 1008 = policy violation (auth/ticket rejection): non-recoverable.
+        setStatus(event.code === 1008 ? "unauthorized" : "closed");
+      };
+
+      ws.onerror = () => {
+        if (!disposedRef.current) setStatus("error");
+      };
+    })();
+
+    return () => {
+      disposedRef.current = true;
+      const sock = wsRef.current;
+      wsRef.current = null;
+      if (sock) {
+        try {
+          sock.close();
+        } catch {
+          /* already closing */
+        }
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paramKey]);
+
+  const send = useCallback((data: string): boolean => {
+    const sock = wsRef.current;
+    if (!sock || sock.readyState !== WebSocket.OPEN || data.length === 0) {
+      return false;
+    }
+    sock.send(JSON.stringify({ type: "input", data }));
+    return true;
+  }, []);
+
+  const reconnect = useCallback(() => setNonce((n) => n + 1), []);
+
+  return { status, sessionId, output, send, reconnect };
+}
