@@ -74,7 +74,7 @@ jobs:
   # dependency SBOM equals daax-web's and is not regenerated separately below.
   daax-terminal:
     name: Publish daax-terminal
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v5

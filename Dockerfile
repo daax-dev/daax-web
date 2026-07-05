@@ -1,7 +1,12 @@
 # Daax Container Image
 # Supports Docker-in-Docker for spawning AI coding containers
 #
-# Build: docker build -t daax .
+# Build (combined/default web+terminal image — matches rebuild.sh / package.json):
+#   docker build --target runner -t daax .
+# The final stage is `terminal`, so an untargeted `docker build .` yields a
+# terminal-only image; pass `--target runner` for the app image.
+# Build the terminal-only image explicitly with:
+#   docker build --target terminal -t daax-terminal .
 #
 # The image runs as the non-root `node` user (#185), so Docker-socket access is by
 # GROUP membership: pass --group-add with the HOST socket's GID (NOT uid 0), or

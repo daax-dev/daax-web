@@ -53,7 +53,7 @@ jobs:
 
   container-build:
     name: Container image build (web + terminal targets)
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     # F3 split (#100): smoke-build BOTH Dockerfile targets on every PR so a
     # broken `terminal` stage (or `runner`) fails CI instead of only surfacing
     # at deploy time. No push — this only proves the images build. SBOM is
