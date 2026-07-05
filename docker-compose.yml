@@ -69,8 +69,15 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # Discrete PG* vars (not DATABASE_URL): pg_dump reads them natively from the
+    # environment, so the password never appears on argv, where any local user
+    # could read it via `ps` / /proc/*/cmdline for the whole dump.
     environment:
-      - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required}@postgres:5432/${DAAX_PG_DB:-daax}
+      - PGHOST=postgres
+      - PGPORT=5432
+      - PGDATABASE=${DAAX_PG_DB:-daax}
+      - PGUSER=${DAAX_PG_USER:-daax}
+      - PGPASSWORD=${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required}
       - DAAX_BACKUP_RETENTION_DAYS=${DAAX_BACKUP_RETENTION_DAYS:-14}
     volumes:
       - daax-pg-backups:/backups
@@ -86,11 +93,11 @@ services:
         out="/backups/daax-$${stamp}.dump"
         trap 'rm -f "$${out}.partial"' EXIT
         echo "[pg-backup] dumping -> $$out"
-        pg_dump -Fc --no-owner --no-privileges -f "$${out}.partial" "$$DATABASE_URL"
+        pg_dump -Fc --no-owner --no-privileges -f "$${out}.partial"
         mv "$${out}.partial" "$$out"
         echo "[pg-backup] wrote $$out"
         if [ "$${DAAX_BACKUP_RETENTION_DAYS}" -gt 0 ]; then
-          find /backups -maxdepth 1 -name 'daax-*.dump' -mtime "+$${DAAX_BACKUP_RETENTION_DAYS}" -delete || true
+          find /backups -maxdepth 1 \( -name 'daax-*.dump' -o -name 'daax-*.dump.partial' \) -mtime "+$${DAAX_BACKUP_RETENTION_DAYS}" -delete || true
         fi
     networks:
       - daax-net

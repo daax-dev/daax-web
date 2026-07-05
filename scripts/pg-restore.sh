@@ -66,10 +66,32 @@ if ! command -v pg_restore >/dev/null 2>&1; then
   exit 1
 fi
 
+# Strip the `:password` from a libpq URI's userinfo and hand it to libpq via
+# PGPASSWORD instead (same helper as pg-backup.sh). SECURITY: a password-bearing
+# URI on argv is readable by any local user via `ps` / /proc/*/cmdline for the
+# entire (multi-minute) run; environment variables are not. The password is
+# percent-decoded (%XX), which mirrors libpq's own URI userinfo parsing.
+strip_url_password() {
+  # $1 = URI. Sets conn_uri (password-free) and exports PGPASSWORD if present.
+  conn_uri="$1"
+  rest="${conn_uri#*://}"
+  userinfo=""
+  case "$rest" in *@*) userinfo="${rest%%@*}" ;; esac
+  # An '@' after the first '/' is in the path/query, not userinfo.
+  case "$userinfo" in */*) userinfo="" ;; esac
+  if [ -n "$userinfo" ] && [ "${userinfo#*:}" != "$userinfo" ]; then
+    PGPASSWORD="$(printf '%b' "$(printf '%s' "${userinfo#*:}" \
+      | sed -e 's/\\/\\\\/g' -e 's/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')")"
+    export PGPASSWORD
+    conn_uri="${1%%://*}://${userinfo%%:*}@${rest#*@}"
+  fi
+}
+
 # Resolve connection, mirroring lib/db/config.ts fail-closed semantics.
 conn_args=()
 if [ -n "${DATABASE_URL:-}" ]; then
-  conn_args=(--dbname "$DATABASE_URL")
+  strip_url_password "$DATABASE_URL"
+  conn_args=(--dbname "$conn_uri")
   # Redact the password before printing: the documented cron/drill usage pipes
   # stderr to a log file, so the raw URI (which carries the password) must never
   # be echoed. Strip the `user:pass@` userinfo down to `***@`.

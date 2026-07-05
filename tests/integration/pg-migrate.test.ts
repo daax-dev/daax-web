@@ -15,6 +15,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import fs from "node:fs";
 import path from "node:path";
 import { Client } from "pg";
 import { runner, type RunnerOption } from "node-pg-migrate";
@@ -144,22 +145,36 @@ describe.skipIf(!configured)("Postgres migration round-trip", () => {
 
   // Non-vacuously exercise the add/drop-COLUMN down step in isolation. Reverting
   // ALL migrations drops built_images wholesale, which would mask a broken/no-op
-  // `down` on the sbom_json column migration. Revert exactly ONE step: the column
-  // must disappear while its table survives, then re-apply and re-assert. This is
-  // the concrete evidence the column down-step works, not just table create/drop.
-  it("reverts only the last migration: sbom_json column drops, built_images survives", async () => {
+  // `down` on the sbom_json column migration. Revert back through the sbom
+  // migration (step count derived from migrations/, so migrations added AFTER it
+  // don't break this test): the column must disappear while its table survives,
+  // then re-apply and re-assert. This is the concrete evidence the column
+  // down-step works, not just table create/drop.
+  it("reverts back through the sbom migration: sbom_json column drops, built_images survives", async () => {
     // Precondition: full schema is present (from the previous round-trip case).
     expect(await columnExists("built_images", "sbom_json")).toBe(true);
 
-    const reverted = await migrate("down", 1);
+    // Derive how many steps separate the sbom migration from the end of the
+    // ordered migration list (node-pg-migrate applies files in name order).
+    const migrations = fs
+      .readdirSync(MIGRATIONS_DIR)
+      .filter((f) => f.endsWith(".js"))
+      .sort();
+    const sbomIndex = migrations.findIndex((n) => n.includes("sbom"));
+    expect(sbomIndex).toBeGreaterThanOrEqual(0);
+    const steps = migrations.length - sbomIndex;
+
+    const reverted = await migrate("down", steps);
+    expect(reverted).toHaveLength(steps);
     expect(reverted.some((n) => n.includes("sbom"))).toBe(true);
 
     // The column is gone; the table it hangs off of is NOT dropped.
     expect(await columnExists("built_images", "sbom_json")).toBe(false);
     expect(await tableExists("built_images")).toBe(true);
 
-    // Re-apply just that step: the column comes back.
-    const reapplied = await migrate("up", 1);
+    // Re-apply the same steps: everything reverted comes back, incl. the column.
+    const reapplied = await migrate("up", steps);
+    expect(reapplied).toHaveLength(steps);
     expect(reapplied.some((n) => n.includes("sbom"))).toBe(true);
     expect(await columnExists("built_images", "sbom_json")).toBe(true);
   });
