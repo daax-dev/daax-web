@@ -12,6 +12,7 @@ import { ProjectProvider, useProject } from "@/lib/project-context";
 import { PluginProvider } from "@/components/plugins/PluginProvider";
 import { ScreenRecorderProvider } from "@/plugins/screen-recorder";
 import { ConfigProvider } from "@/lib/config-provider";
+import { PresentationModeToggle } from "@/components/presentation/PresentationModeToggle";
 
 /**
  * Registers TerminalManager's stopAllAISessions with ProjectContext
@@ -50,6 +51,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
                 {children}
                 <Toaster position="bottom-right" richColors />
                 <ScreenRecorderProvider />
+                <PresentationModeToggle />
               </TerminalManagerProvider>
             </ProjectProvider>
           </PluginProvider>
