@@ -32,9 +32,22 @@ export interface AttentionPollResult {
   refresh: () => void;
 }
 
+export interface AttentionPollOptions {
+  /**
+   * Pause polling while the tab is hidden (default true — preserves the board's
+   * original behaviour: a backgrounded board does no work). The app-wide bell
+   * (issue #154) passes false so blocked-agent alerts still surface while the
+   * user is away, which is the whole point of a desktop notification. Browsers
+   * throttle (but do not stop) background-tab timers, so this remains cheap.
+   */
+  pauseWhenHidden?: boolean;
+}
+
 export function useAttentionPoll(
   pollMs: number = DEFAULT_POLL_MS,
+  options: AttentionPollOptions = {},
 ): AttentionPollResult {
+  const { pauseWhenHidden = true } = options;
   const [cards, setCards] = useState<AttentionCard[]>([]);
   const [conn, setConn] = useState<ConnState>("loading");
   const [truncated, setTruncated] = useState(false);
@@ -77,6 +90,7 @@ export function useAttentionPoll(
     load();
     const id = setInterval(() => {
       if (
+        !pauseWhenHidden ||
         typeof document === "undefined" ||
         document.visibilityState === "visible"
       ) {
@@ -87,7 +101,7 @@ export function useAttentionPoll(
       clearInterval(id);
       abortRef.current?.abort();
     };
-  }, [load, pollMs]);
+  }, [load, pollMs, pauseWhenHidden]);
 
   return { cards, conn, truncated, refresh: load };
 }
