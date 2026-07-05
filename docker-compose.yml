@@ -96,7 +96,7 @@ services:
         pg_dump -Fc --no-owner --no-privileges -f "$${out}.partial"
         mv "$${out}.partial" "$$out"
         echo "[pg-backup] wrote $$out"
-        if [ "$${DAAX_BACKUP_RETENTION_DAYS}" -gt 0 ]; then
+        if [ "$${DAAX_BACKUP_RETENTION_DAYS}" -gt 0 ] 2>/dev/null; then
           find /backups -maxdepth 1 \( -name 'daax-*.dump' -o -name 'daax-*.dump.partial' \) -mtime "+$${DAAX_BACKUP_RETENTION_DAYS}" -delete || true
         fi
     networks:
