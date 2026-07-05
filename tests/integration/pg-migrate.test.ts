@@ -61,6 +61,17 @@ async function tableExists(name: string): Promise<boolean> {
   return res.rows[0]?.exists === true;
 }
 
+async function columnExists(table: string, column: string): Promise<boolean> {
+  const res = await query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2
+     ) AS exists`,
+    [table, column],
+  );
+  return res.rows[0]?.exists === true;
+}
+
 describe.skipIf(!configured)("Postgres migration round-trip", () => {
   beforeAll(async () => {
     // Start from a truly empty schema regardless of test-file order (one shared
@@ -107,10 +118,9 @@ describe.skipIf(!configured)("Postgres migration round-trip", () => {
   });
 
   // Operational-resilience gate (#103, brain2daax §4): every migration ships a
-  // WORKING `down`. The prior cases establish up (build) then down (teardown to
-  // empty); this re-applies to complete a full up→down→up round-trip and asserts
-  // the schema returns to the expected state — the concrete evidence that the
-  // down steps leave the DB in a state a subsequent up can rebuild cleanly.
+  // WORKING `down`. The prior cases establish up (build) then down-all (teardown
+  // to empty); this re-applies to complete a full up→down→up round-trip and
+  // asserts the schema returns to the expected state.
   it("migrate up again after down completes an up→down→up round-trip", async () => {
     // Precondition from the previous case: schema is empty.
     expect(await tableExists("schema_meta")).toBe(false);
@@ -119,27 +129,39 @@ describe.skipIf(!configured)("Postgres migration round-trip", () => {
     // Every migration that was reverted is re-applied (all of them).
     expect(reapplied.some((n) => n.includes("baseline"))).toBe(true);
 
-    // Expected end-state: the domain tables and the baseline marker exist again.
+    // Expected end-state: the domain tables, the baseline marker, and the F2
+    // column all exist again.
     expect(await tableExists("schema_meta")).toBe(true);
     expect(await tableExists("built_images")).toBe(true);
     expect(await tableExists("releases")).toBe(true);
-
-    // The F2 column reverts and re-applies with its migration (proves the
-    // add/drop-column down step round-trips, not just table create/drop).
-    const col = await query<{ exists: boolean }>(
-      `SELECT EXISTS (
-         SELECT 1 FROM information_schema.columns
-         WHERE table_schema = 'public'
-           AND table_name = 'built_images'
-           AND column_name = 'sbom_json'
-       ) AS exists`,
-    );
-    expect(col.rows[0]?.exists).toBe(true);
+    expect(await columnExists("built_images", "sbom_json")).toBe(true);
 
     const meta = await query<{ value: string }>(
       "SELECT value FROM schema_meta WHERE key = 'baseline'",
     );
     expect(meta.rows[0]?.value).toBe("phase-0");
+  });
+
+  // Non-vacuously exercise the add/drop-COLUMN down step in isolation. Reverting
+  // ALL migrations drops built_images wholesale, which would mask a broken/no-op
+  // `down` on the sbom_json column migration. Revert exactly ONE step: the column
+  // must disappear while its table survives, then re-apply and re-assert. This is
+  // the concrete evidence the column down-step works, not just table create/drop.
+  it("reverts only the last migration: sbom_json column drops, built_images survives", async () => {
+    // Precondition: full schema is present (from the previous round-trip case).
+    expect(await columnExists("built_images", "sbom_json")).toBe(true);
+
+    const reverted = await migrate("down", 1);
+    expect(reverted.some((n) => n.includes("sbom"))).toBe(true);
+
+    // The column is gone; the table it hangs off of is NOT dropped.
+    expect(await columnExists("built_images", "sbom_json")).toBe(false);
+    expect(await tableExists("built_images")).toBe(true);
+
+    // Re-apply just that step: the column comes back.
+    const reapplied = await migrate("up", 1);
+    expect(reapplied.some((n) => n.includes("sbom"))).toBe(true);
+    expect(await columnExists("built_images", "sbom_json")).toBe(true);
   });
 });
 

@@ -116,6 +116,21 @@ describe("ws-ticket dual-secret rotation (#103)", () => {
     if (!result.valid) expect(result.reason).toBe("bad-signature");
   });
 
+  it("mints with the CURRENT secret (not previous): token survives dropping _PREVIOUS", () => {
+    // During rotation both are set. Mint here, then remove _PREVIOUS so only the
+    // current secret can verify — if mint had (wrongly) used the previous
+    // secret, this verify would fail. Proves the mint-uses-current invariant
+    // non-vacuously (verifyTicket alone would accept either secret).
+    process.env.DAAX_WS_TOKEN_SECRET = NEW_SECRET;
+    process.env.DAAX_WS_TOKEN_SECRET_PREVIOUS = SECRET;
+    const { token } = mintTicket("user-123");
+
+    delete process.env.DAAX_WS_TOKEN_SECRET_PREVIOUS;
+    const result = verifyTicket(token);
+    expect(result.valid).toBe(true);
+    if (result.valid) expect(result.payload.sub).toBe("user-123");
+  });
+
   it("current-only (no weakening) when _PREVIOUS is unset: an old-secret ticket is rejected", () => {
     process.env.DAAX_WS_TOKEN_SECRET = SECRET;
     const { token } = mintTicket("user-123");

@@ -56,6 +56,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # Hardening (matches the gh-185 posture). no-new-privileges + cap_drop:[ALL]
+    # bound the blast radius (it mounts only the backups volume + reaches postgres
+    # on daax-net; pg_dump as a TCP client writing to a root-owned volume needs no
+    # Linux capability). A non-root USER is intentionally NOT set: the fresh named
+    # volume mounts root:root:0755, so `user: postgres` (uid 999) cannot write to
+    # /backups.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     environment:
       - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required}@postgres:5432/${DAAX_PG_DB:-daax}
       - DAAX_BACKUP_RETENTION_DAYS=${DAAX_BACKUP_RETENTION_DAYS:-14}
@@ -64,12 +74,14 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     # `$$` escapes compose interpolation so the container shell expands these at
     # runtime. Dump to a .partial then rename so a crash never leaves a truncated
-    # file that looks like a good backup.
+    # file that looks like a good backup; the trap removes a half-written .partial
+    # on any failure exit so no orphaned junk accumulates in the volume.
     command:
       - |
         set -eu
         stamp=$$(date -u +%Y%m%dT%H%M%SZ)
         out="/backups/daax-$${stamp}.dump"
+        trap 'rm -f "$${out}.partial"' EXIT
         echo "[pg-backup] dumping -> $$out"
         pg_dump -Fc --no-owner --no-privileges -f "$${out}.partial" "$$DATABASE_URL"
         mv "$${out}.partial" "$$out"

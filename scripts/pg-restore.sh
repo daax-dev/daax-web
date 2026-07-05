@@ -70,7 +70,10 @@ fi
 conn_args=()
 if [ -n "${DATABASE_URL:-}" ]; then
   conn_args=(--dbname "$DATABASE_URL")
-  target_label="$DATABASE_URL"
+  # Redact the password before printing: the documented cron/drill usage pipes
+  # stderr to a log file, so the raw URI (which carries the password) must never
+  # be echoed. Strip the `user:pass@` userinfo down to `***@`.
+  target_label="$(printf '%s' "$DATABASE_URL" | sed 's#://[^@/]*@#://***@#')"
 else
   missing=()
   [ -z "${PGHOST:-}" ] && missing+=("PGHOST")
@@ -99,11 +102,15 @@ if [ "$force" != "1" ]; then
 fi
 
 # --clean --if-exists: drop each object before recreating (idempotent restore).
+# --single-transaction: wrap the whole restore (drops + recreates) in ONE
+#   transaction, so a mid-restore failure (bad dump, disk full, perms) rolls back
+#   to the pre-restore state instead of leaving objects dropped-but-not-recreated
+#   — the tool never causes the data loss it exists to prevent. Implies
+#   --exit-on-error. No `-j` here, so there is no parallel/txn conflict.
 # --no-owner: assign ownership to the connecting role (portable across role names).
-# --exit-on-error surfaces a partial/failed restore as a non-zero exit.
-if ! pg_restore --clean --if-exists --no-owner --exit-on-error "${conn_args[@]}" "$dumpfile"; then
-  echo "[pg-restore] pg_restore FAILED — the database may be partially restored." >&2
-  echo "             Investigate before serving traffic." >&2
+if ! pg_restore --clean --if-exists --no-owner --single-transaction "${conn_args[@]}" "$dumpfile"; then
+  echo "[pg-restore] pg_restore FAILED — the restore transaction rolled back;" >&2
+  echo "             the database is unchanged from before the restore. Investigate." >&2
   exit 1
 fi
 

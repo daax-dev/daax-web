@@ -121,6 +121,11 @@ export function verifyTicket(
   // previous branch runs only when `DAAX_WS_TOKEN_SECRET_PREVIOUS` is set, so an
   // unset previous is byte-for-byte the pre-rotation current-only behavior and
   // does not weaken verification. Minting always uses the current secret.
+  //
+  // The short-circuit means total verify time reveals WHICH of the two valid
+  // secrets matched — but only while a previous secret is configured (a bounded
+  // rotation window) and only to a holder of an already-valid ticket; it never
+  // leaks either secret's bytes (each compare is timingSafeEqual). Accepted.
   const previous = getWsTokenSecretPrevious();
   let signatureOk = signatureMatches(provided, sign(encoded, secret));
   if (!signatureOk && previous) {
