@@ -134,6 +134,17 @@ else
     echo "             discrete env vars (missing: ${missing[*]}). See CLAUDE.md > Database." >&2
     exit 1
   fi
+  # PGPORT, when set, must be an integer — mirror lib/db/config.ts
+  # resolveDbConfig(), which throws (fails closed) on a non-integer PGPORT
+  # rather than letting pg_restore/libpq fail later with a less actionable error.
+  # Unset/empty keeps libpq's default port (5432). Trim first (config.ts trims).
+  port_raw="${PGPORT-}"
+  port_trimmed="${port_raw#"${port_raw%%[![:space:]]*}"}"
+  port_trimmed="${port_trimmed%"${port_trimmed##*[![:space:]]}"}"
+  if [ -n "$port_trimmed" ] && ! [[ "$port_trimmed" =~ ^[0-9]+$ ]]; then
+    echo "[pg-restore] PGPORT is not a valid integer: \"${port_trimmed}\"." >&2
+    exit 1
+  fi
   conn_args=(--dbname "$PGDATABASE")
   target_label="${PGUSER}@${PGHOST}:${PGPORT:-5432}/${PGDATABASE}"
 fi
