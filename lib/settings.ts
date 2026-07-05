@@ -581,6 +581,38 @@ export const DEFAULT_AI_CODING_SETTINGS: AICodingSettings = {
   usePrebuiltImage: true,
 };
 
+// Known variants pinned to an immutable manifest-list digest (issue #195).
+// Selecting or pulling one of these must write/pull the DIGEST reference, never
+// `${registry}/${id}:latest` — a click in Settings must not silently un-pin the
+// agent image. Unpinned known variants (core/flowspec/openspec) and custom
+// images keep the existing tag-based behavior.
+const PINNED_VARIANT_DIGESTS: Record<string, string> = {
+  "daax-agents": DEFAULT_AGENT_IMAGE,
+  "daax-agents-gsd": DEFAULT_AGENT_IMAGE_GSD,
+};
+
+// Build the image reference for a known variant id. Shared by the Settings
+// selector (select/pull) and /api/docker/images (availability check) so all
+// three always resolve the SAME reference for a variant.
+//
+// Pinning rule (issue #195): digests are pinned ONLY for the default `jpoley`
+// registry — the pinned digests identify jpoley-built manifests, which cannot
+// exist under a third-party namespace, so `${registry}/${id}@<jpoley-digest>`
+// would be a dead reference there. A custom registry therefore keeps the
+// previous `${registry}/${id}:latest` behavior (the operator's own builds);
+// that mutable tag is a deliberate, operator-owned exposure. Unpinned known
+// variants fall back to `:latest` everywhere.
+export function imageRefForVariant(registry: string, id: string): string {
+  const pinned =
+    registry === DEFAULT_AI_CODING_SETTINGS.containerRegistry
+      ? PINNED_VARIANT_DIGESTS[id]
+      : undefined;
+  if (pinned) {
+    return pinned;
+  }
+  return `${registry}/${id}:latest`;
+}
+
 // Backlog.md initialization defaults
 export type BacklogIntegrationMode = "mcp" | "cli" | "none";
 export type BacklogAgentInstructions =
@@ -918,6 +950,20 @@ export function getSettings(): DaaxSettings {
         needsMigration = true;
       }
 
+      // Migrate the previously shipped `:latest` default to the digest-pinned
+      // default (issue #195). Without this, existing installs keep the mutable
+      // tag forever — TerminalManager sends the persisted value as the WS image
+      // param, which wins over the pinned default. Scoped to the exact
+      // old-default string only; a deliberately chosen custom image is left
+      // untouched.
+      if (parsed.containerImage === "jpoley/daax-agents:latest") {
+        console.log(
+          "[Settings] Migrating old default containerImage to pinned digest",
+        );
+        parsed.containerImage = DEFAULT_AGENT_IMAGE;
+        needsMigration = true;
+      }
+
       // Fix any invalid container images (node:20-alpine, etc.) - reset to default.
       // Accepts the digest-pinned default (issue #195) as valid so it is not
       // needlessly reset (and rewritten) on every load.
@@ -989,6 +1035,21 @@ export function getSettings(): DaaxSettings {
         );
         parsed.aiCoding.defaultContainerImage =
           DEFAULT_AI_CODING_SETTINGS.defaultContainerImage;
+        needsMigration = true;
+      }
+
+      // Migrate the previously shipped -gsd `:latest` default to the digest-
+      // pinned default (issue #195). Same exact-match scoping as above: only
+      // the old shipped default is rewritten, never a user-chosen image.
+      if (
+        parsed.aiCoding &&
+        parsed.aiCoding.defaultContainerImage ===
+          "jpoley/daax-agents-gsd:latest"
+      ) {
+        console.log(
+          "[Settings] Migrating old AI Coding default image to pinned digest (migration)",
+        );
+        parsed.aiCoding.defaultContainerImage = DEFAULT_AGENT_IMAGE_GSD;
         needsMigration = true;
       }
 
