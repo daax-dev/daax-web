@@ -16,9 +16,9 @@ permissions:
 jobs:
   quality:
     name: Lint / typecheck / test / build / auth-audit
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -49,9 +49,9 @@ jobs:
 
   vuln-scan:
     name: Dependency vulnerability scan (Trivy fs)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Filesystem scan of dependencies/lockfile. Image scanning runs in
       # publish-images.yml where the image is already built. Report-mode
@@ -72,7 +72,7 @@ jobs:
     # Only on a labeled PR. Guard event_name so a workflow_dispatch run (no
     # pull_request payload) cleanly skips instead of erroring on the expression.
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e')
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     services:
       postgres:
         image: postgres:18-alpine
@@ -93,7 +93,7 @@ jobs:
       # starts the app itself (below) and points the tests at it.
       DAAX_BASE_URL: http://localhost:4200
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
