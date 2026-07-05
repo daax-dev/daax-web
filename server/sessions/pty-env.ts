@@ -10,8 +10,8 @@
  */
 export function buildPtyEnv(
   base: NodeJS.ProcessEnv = process.env,
-): Record<string, string> {
+): NodeJS.ProcessEnv {
   const env = { ...base };
   delete env.HOST;
-  return env as Record<string, string>;
+  return env;
 }
