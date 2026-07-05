@@ -26,6 +26,8 @@ export const DEFAULT_POLL_MS = 2000;
 export interface AttentionPollResult {
   cards: AttentionCard[];
   conn: ConnState;
+  /** True when the server capped the session list (not every session shown). */
+  truncated: boolean;
   /** Force an immediate refresh (e.g. a retry button). */
   refresh: () => void;
 }
@@ -35,6 +37,7 @@ export function useAttentionPoll(
 ): AttentionPollResult {
   const [cards, setCards] = useState<AttentionCard[]>([]);
   const [conn, setConn] = useState<ConnState>("loading");
+  const [truncated, setTruncated] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
@@ -56,9 +59,11 @@ export function useAttentionPoll(
       const data = (await res.json()) as AttentionResponse;
       if (data && data.ok && Array.isArray(data.sessions)) {
         setCards(data.sessions);
+        setTruncated(data.truncated === true);
         setConn("connected");
       } else {
         setCards([]);
+        setTruncated(false);
         setConn("disconnected");
       }
     } catch (err) {
@@ -84,5 +89,5 @@ export function useAttentionPoll(
     };
   }, [load, pollMs]);
 
-  return { cards, conn, refresh: load };
+  return { cards, conn, truncated, refresh: load };
 }

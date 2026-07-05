@@ -13,7 +13,7 @@ import { useAttentionPoll } from "@/hooks/useAttentionPoll";
 import { AttentionCard } from "./AttentionCard";
 
 export function AttentionBoard() {
-  const { cards, conn, refresh } = useAttentionPoll();
+  const { cards, conn, truncated, refresh } = useAttentionPoll();
 
   // A 1s ticker keeps "time-in-state" ages live between the (2s) data polls.
   const [now, setNow] = useState(() => Date.now());
@@ -47,6 +47,16 @@ export function AttentionBoard() {
           Refresh
         </Button>
       </div>
+
+      {truncated && (
+        <p
+          className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-muted-foreground"
+          data-testid="truncated-note"
+        >
+          Showing the first {cards.length} active sessions; additional sessions
+          are not displayed.
+        </p>
+      )}
 
       {conn === "loading" && cards.length === 0 ? (
         <div className="flex items-center justify-center py-20 text-muted-foreground">

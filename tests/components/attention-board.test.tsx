@@ -47,6 +47,7 @@ import { AttentionBoard } from "@/components/attention/AttentionBoard";
 interface FetchBody {
   ok: boolean;
   sessions: AttentionCardData[];
+  truncated?: boolean;
 }
 
 function stubFetch(
@@ -126,5 +127,13 @@ describe("AttentionBoard", () => {
       .find((a) => a.getAttribute("href")?.includes("/ai-coding/sessions/"));
     expect(link).toBeTruthy();
     expect(link).toHaveAttribute("href", "/ai-coding/sessions/sess-abc123");
+  });
+
+  it("surfaces a truncation note when the server capped the list", async () => {
+    stubFetch({ ok: true, sessions: [sampleCard], truncated: true });
+    render(<AttentionBoard />);
+    await waitFor(() =>
+      expect(screen.getByTestId("truncated-note")).toBeInTheDocument(),
+    );
   });
 });

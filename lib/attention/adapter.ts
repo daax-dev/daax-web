@@ -69,6 +69,12 @@ export interface AttentionCard {
 export interface AttentionResponse {
   ok: boolean;
   sessions: AttentionCard[];
+  /**
+   * True when the active-session list exceeded the server cap and was
+   * truncated, so the UI can surface that not every session is shown (no silent
+   * cap). Absent/false means the full set is present.
+   */
+  truncated?: boolean;
 }
 
 /** Parses an RFC-3339 timestamp to epoch ms, or null if unusable. */
@@ -123,10 +129,21 @@ export function buildCard(
   tools: readonly RestTool[],
   opts: BuildCardOptions,
 ): AttentionCard {
-  const events = buildEvents(session, tools);
+  // Clamp future (clock-skewed) tool timestamps to `now` so status and
+  // sparkline stay consistent: without this a skewed agent could read as
+  // "working" (status treats at>now as recent) while the sparkline — which
+  // drops ts>now — renders empty and the age shows "—". Clamping keeps all
+  // three in agreement (working, populated sparkline, ~0s age).
+  const normalized: RestTool[] = tools.map((t) =>
+    Number.isFinite(t.startedAt) && t.startedAt > opts.now
+      ? { ...t, startedAt: opts.now }
+      : t,
+  );
+
+  const events = buildEvents(session, normalized);
   const derived = deriveStatus(events, opts.now, opts.derive);
 
-  const toolTimestamps = tools
+  const toolTimestamps = normalized
     .map((t) => t.startedAt)
     .filter((n) => Number.isFinite(n));
   const sparkline = bucketTimestamps(toolTimestamps, opts.now, opts.sparkline);
@@ -134,7 +151,7 @@ export function buildCard(
   // Last tool by start time (tools are typically pre-sorted ascending, but do
   // not assume it).
   let last: RestTool | null = null;
-  for (const t of tools) {
+  for (const t of normalized) {
     if (!Number.isFinite(t.startedAt)) continue;
     if (last === null || t.startedAt >= last.startedAt) last = t;
   }

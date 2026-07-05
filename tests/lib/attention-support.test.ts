@@ -3,13 +3,15 @@
  * sparkline bucketing, the REST→card adapter, and age formatting.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { bucketTimestamps } from "@/lib/attention/sparkline";
 import {
   buildEvents,
   buildCard,
   type RestSession,
+  type AttentionResponse,
 } from "@/lib/attention/adapter";
+import { getFresh, store, reset, CACHE_TTL_MS } from "@/lib/attention/cache";
 import { formatAge } from "@/lib/attention/format";
 
 const T0 = 1_000_000_000_000;
@@ -147,6 +149,18 @@ describe("buildCard", () => {
     );
     expect(card.lastTool).toBe("Bash");
   });
+
+  it("clamps a future (clock-skewed) tool so status and sparkline agree", () => {
+    const now = T0 + 10_000;
+    // Tool timestamped 1 minute in the future.
+    const card = buildCard(base, [{ startedAt: now + 60_000, name: "Bash" }], {
+      now,
+    });
+    // Status reads working (clamped to now = recent activity) AND the sparkline
+    // is populated — not the inconsistent "working with empty sparkline".
+    expect(card.status).toBe("working");
+    expect(card.sparkline.reduce((a, b) => a + b, 0)).toBe(1);
+  });
 });
 
 describe("formatAge", () => {
@@ -162,5 +176,27 @@ describe("formatAge", () => {
   it("guards against negative / non-finite", () => {
     expect(formatAge(-1)).toBe("—");
     expect(formatAge(Number.NaN)).toBe("—");
+  });
+});
+
+describe("attention TTL cache", () => {
+  const body: AttentionResponse = { ok: true, sessions: [], truncated: false };
+
+  beforeEach(() => reset());
+
+  it("returns null on a cold cache", () => {
+    expect(getFresh(T0)).toBeNull();
+  });
+
+  it("serves a stored body within the TTL and expires after it", () => {
+    store(T0, body);
+    expect(getFresh(T0 + CACHE_TTL_MS - 1)).toBe(body);
+    expect(getFresh(T0 + CACHE_TTL_MS)).toBeNull();
+  });
+
+  it("reset() clears the entry", () => {
+    store(T0, body);
+    reset();
+    expect(getFresh(T0)).toBeNull();
   });
 });

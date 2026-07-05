@@ -14,8 +14,13 @@
 
 import type { RestSession, RestTool } from "@/lib/attention/adapter";
 
-/** Max ms to wait for Watchtower before aborting a request. */
-const FETCH_TIMEOUT_MS = 5_000;
+/**
+ * Max ms to wait for Watchtower before aborting a request. Deliberately below
+ * the board's 2s poll interval so a slow upstream can't keep a handler running
+ * past the point the client has already re-polled (avoids overlapping
+ * executions stacking up server-side).
+ */
+const FETCH_TIMEOUT_MS = 1_500;
 
 export function watchtowerBaseUrl(): string {
   const fallback = process.env.HOST_WORKSPACE_PATH
@@ -26,6 +31,34 @@ export function watchtowerBaseUrl(): string {
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+/**
+ * Combines an optional caller signal (e.g. the incoming request's AbortSignal,
+ * so a client disconnect cancels in-flight server work) with a fresh timeout
+ * into a single signal. Returns a `cleanup` that MUST run in `finally` to clear
+ * the timer and detach the listener — otherwise a long-lived caller signal
+ * would accumulate listeners/timers (leak). Scoped per call: it never aborts
+ * anything beyond this request's own fetch.
+ */
+function withTimeout(
+  external: AbortSignal | undefined,
+  timeoutMs: number,
+): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  const timer = setTimeout(onAbort, timeoutMs);
+
+  if (external) {
+    if (external.aborted) controller.abort();
+    else external.addEventListener("abort", onAbort, { once: true });
+  }
+
+  const cleanup = () => {
+    clearTimeout(timer);
+    external?.removeEventListener("abort", onAbort);
+  };
+  return { signal: controller.signal, cleanup };
 }
 
 export interface ActiveSessionsResult {
@@ -39,11 +72,13 @@ export interface ActiveSessionsResult {
  */
 export async function fetchActiveSessions(
   baseUrl: string = watchtowerBaseUrl(),
+  external?: AbortSignal,
 ): Promise<ActiveSessionsResult> {
+  const { signal, cleanup } = withTimeout(external, FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(`${baseUrl}/api/sessions/active`, {
       cache: "no-store",
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      signal,
     });
     if (!res.ok) {
       console.warn(`[watchtower] /api/sessions/active → HTTP ${res.status}`);
@@ -61,6 +96,8 @@ export async function fetchActiveSessions(
   } catch (err) {
     console.warn("[watchtower] active sessions fetch failed:", err);
     return { reachable: false, sessions: [] };
+  } finally {
+    cleanup();
   }
 }
 
@@ -79,11 +116,13 @@ interface WatchtowerToolRow {
 export async function fetchSessionTools(
   id: string,
   baseUrl: string = watchtowerBaseUrl(),
+  external?: AbortSignal,
 ): Promise<RestTool[]> {
+  const { signal, cleanup } = withTimeout(external, FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(
       `${baseUrl}/api/sessions/${encodeURIComponent(id)}/tools`,
-      { cache: "no-store", signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) },
+      { cache: "no-store", signal },
     );
     if (!res.ok) return [];
     const raw: unknown = await res.json();
@@ -101,5 +140,7 @@ export async function fetchSessionTools(
   } catch (err) {
     console.warn(`[watchtower] tools fetch failed for ${id}:`, err);
     return [];
+  } finally {
+    cleanup();
   }
 }
