@@ -39,6 +39,13 @@ export const DEFAULT_PAGE_SIZE = 50;
 export const MAX_PAGE_SIZE = 200;
 /** Upper bound on the bounded row count (keeps COUNT fast on huge tables). */
 export const COUNT_CAP = 100_000;
+/**
+ * Upper bound on the paging offset. Keeps the bound `$N::bigint` param a safe
+ * integer — an unbounded digits-only offset parses to a float (e.g. `1e+30`)
+ * that node-postgres serialises in exponential notation, which Postgres
+ * rejects at the bigint cast.
+ */
+export const MAX_OFFSET = 10_000_000;
 
 function toInt(raw: unknown): number | null {
   if (typeof raw === "number")
@@ -54,11 +61,11 @@ export function clampLimit(raw: unknown): number {
   return Math.min(n, MAX_PAGE_SIZE);
 }
 
-/** Clamp a requested offset to a non-negative integer. */
+/** Clamp a requested offset into `[0, MAX_OFFSET]`. */
 export function clampOffset(raw: unknown): number {
   const n = toInt(raw);
   if (n === null || n <= 0) return 0;
-  return n;
+  return Math.min(n, MAX_OFFSET);
 }
 
 export type SortDirection = "asc" | "desc";

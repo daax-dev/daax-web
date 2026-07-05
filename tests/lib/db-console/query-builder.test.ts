@@ -11,6 +11,7 @@ import {
   WriteValidationError,
   DEFAULT_PAGE_SIZE,
   MAX_PAGE_SIZE,
+  MAX_OFFSET,
 } from "@/lib/db-console/query-builder";
 
 const users: TableSchema = {
@@ -34,11 +35,17 @@ describe("db-console query builder (F6 #102)", () => {
       expect(clampLimit("99999")).toBe(MAX_PAGE_SIZE);
     });
 
-    it("clamps offset to a non-negative integer", () => {
+    it("clamps offset into [0, MAX_OFFSET]", () => {
       expect(clampOffset(undefined)).toBe(0);
       expect(clampOffset("-1")).toBe(0);
       expect(clampOffset("bad")).toBe(0);
       expect(clampOffset("25")).toBe(25);
+      expect(clampOffset(String(MAX_OFFSET + 1))).toBe(MAX_OFFSET);
+      // A digits-only value beyond 2^53 parses to a float (e.g. 1e+30) that
+      // node-postgres would serialise in exponential notation — must be capped
+      // so the $N::bigint bind stays a safe integer.
+      expect(clampOffset("9".repeat(30))).toBe(MAX_OFFSET);
+      expect(clampOffset(Number.MAX_SAFE_INTEGER)).toBe(MAX_OFFSET);
     });
 
     it("normalises direction to a fixed whitelist", () => {
