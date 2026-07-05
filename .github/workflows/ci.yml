@@ -4,6 +4,10 @@ name: CI
 # gate, and a dependency vulnerability scan. Runs on every PR to main. Playwright
 # E2E is opt-in behind the `e2e` label to bound cost. Wire these as required
 # checks in branch protection (operator-only — see the PR description).
+#
+# Runners: ubuntu-latest (GitHub-hosted). The repo is public, so hosted minutes
+# are free — and a self-hosted runner MUST NOT serve pull_request events here:
+# fork PRs would execute arbitrary code on the runner host.
 
 on:
   pull_request:
@@ -16,7 +20,7 @@ permissions:
 jobs:
   quality:
     name: Lint / typecheck / test / build / auth-audit
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
@@ -57,7 +61,7 @@ jobs:
 
   vuln-scan:
     name: Dependency vulnerability scan (Trivy fs)
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
@@ -80,7 +84,7 @@ jobs:
     # Only on a labeled PR. Guard event_name so a workflow_dispatch run (no
     # pull_request payload) cleanly skips instead of erroring on the expression.
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e')
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:18-alpine
