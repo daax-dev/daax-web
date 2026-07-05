@@ -5,22 +5,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 
-// These routes are now gated by requireAuth (F4, #96). Mock it as authenticated
-// so these tests exercise the proxy behavior (auth is covered separately).
+// The tables LIST route is now gated by requireRole('admin:db:read') (F5, #101);
+// the tables/[...path] CRUD routes remain on requireAuth (F4, #96). Mock BOTH as
+// authorized/authenticated so these tests exercise the proxy behavior (authz is
+// covered by the RBAC unit + Postgres integration suites).
+const MOCK_USER = {
+  username: "test",
+  email: null,
+  groups: [],
+  authenticated: true,
+  pictureUrl: null,
+};
 vi.mock("@/lib/auth", () => ({
-  requireAuth: vi.fn(async () => ({
-    authenticated: true,
-    user: {
-      username: "test",
-      email: null,
-      groups: [],
-      authenticated: true,
-      pictureUrl: null,
-    },
+  requireAuth: vi.fn(async () => ({ authenticated: true, user: MOCK_USER })),
+  requireRole: vi.fn(async () => ({
+    authorized: true,
+    user: MOCK_USER,
+    subject: "test-subject",
   })),
 }));
 
-import { requireAuth } from "@/lib/auth";
+import { requireRole } from "@/lib/auth";
 import { GET as listTables } from "@/app/api/provenance-admin/tables/route";
 import {
   GET as getTableData,
@@ -37,9 +42,9 @@ global.fetch = mockFetch as unknown as typeof fetch;
 describe("provenance-admin auth gate (F4, #96)", () => {
   afterEach(() => vi.clearAllMocks());
 
-  it("returns the requireAuth 401 response when unauthenticated", async () => {
-    vi.mocked(requireAuth).mockResolvedValueOnce({
-      authenticated: false,
+  it("returns the requireRole 401 response when unauthenticated", async () => {
+    vi.mocked(requireRole).mockResolvedValueOnce({
+      authorized: false,
       response: NextResponse.json(
         { error: "Authentication required" },
         { status: 401 },
@@ -47,7 +52,7 @@ describe("provenance-admin auth gate (F4, #96)", () => {
     });
     const response = await listTables();
     expect(response.status).toBe(401);
-    // The proxy fetch must never run for an unauthenticated request.
+    // The proxy fetch must never run for an unauthorized request.
     expect(mockFetch).not.toHaveBeenCalled();
   });
 });

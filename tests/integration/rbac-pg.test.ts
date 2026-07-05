@@ -1,0 +1,231 @@
+/**
+ * RBAC integration test against a real throwaway Postgres (F5 — issue #101).
+ *
+ * Run via `bun run test:integration` (spins a disposable PG via
+ * `scripts/with-test-postgres.sh`). Exercises the security-load-bearing
+ * mechanisms that CANNOT be proven without a real database:
+ *   - JIT insert-vs-update detection via `RETURNING (xmax = 0)`;
+ *   - revoked-user-NO-regrant (the deauthorised-user regrant bug is NOT present);
+ *   - first-admin bootstrap on a fresh DB (pending grant → materialised on login);
+ *   - reconcile prunes ONLY its own ('reconcile') grants, never UI grants.
+ *
+ * Self-skips when Postgres is not configured (Docker unavailable) so it never
+ * hard-fails CI, mirroring the Phase 0 integration suites.
+ */
+
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
+import path from "node:path";
+import { Client } from "pg";
+import { runner } from "node-pg-migrate";
+import { resolveDbConfig, isDbConfigured } from "@/lib/db/config";
+import { query, closePool } from "@/lib/db/pg";
+import {
+  jitProvision,
+  getUserRoles,
+  grantRole,
+  revokeAllRoles,
+  reconcile,
+} from "@/lib/rbac/store";
+import { resetSchema } from "./helpers";
+
+const MIGRATIONS_DIR = path.resolve(process.cwd(), "migrations");
+const configured = isDbConfigured();
+
+async function migrateUp(): Promise<void> {
+  const client = new Client(resolveDbConfig().poolConfig);
+  await client.connect();
+  try {
+    await runner({
+      dbClient: client,
+      migrationsTable: "pgmigrations",
+      dir: MIGRATIONS_DIR,
+      direction: "up",
+      count: Infinity,
+      createMigrationsSchema: false,
+      singleTransaction: true,
+      log: () => {},
+    });
+  } finally {
+    await client.end();
+  }
+}
+
+function identity(
+  subject: string,
+  email: string | null,
+  username: string | null,
+) {
+  return { subject, email, username, name: null, idp: "test", groups: [] };
+}
+
+/** A full ProcessEnv with an overridden allow-list (avoids a partial-object cast). */
+function envWith(adminUsers: string): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    DAAX_ADMIN_USERS: adminUsers,
+    DAAX_GROUP_ROLE_MAP: "",
+  };
+}
+
+describe.skipIf(!configured)("RBAC on Postgres (F5 #101)", () => {
+  beforeAll(async () => {
+    await resetSchema();
+    await migrateUp();
+  });
+
+  beforeEach(async () => {
+    // Fresh identity state each test; roles (admin/user) stay seeded.
+    await query(
+      "TRUNCATE user_roles, pending_grants, auth_audit, users RESTART IDENTITY CASCADE",
+    );
+  });
+
+  afterAll(async () => {
+    await closePool();
+  });
+
+  it("seeds the system roles", async () => {
+    const res = await query<{ name: string }>(
+      "SELECT name FROM roles ORDER BY name",
+    );
+    expect(res.rows.map((r) => r.name)).toEqual(["admin", "user"]);
+  });
+
+  it("JIT: first call INSERTs (xmax=0 → is_new) and grants the default role", async () => {
+    const s = "11111111-0000-0000-0000-000000000001";
+    const first = await jitProvision(identity(s, "u1@x.z", "u1"));
+    expect(first.isNew).toBe(true);
+    expect(first.roles).toEqual(["user"]);
+
+    // Second call is an UPDATE (xmax != 0 → is_new false); roles unchanged.
+    const second = await jitProvision(identity(s, "u1@x.z", "u1"));
+    expect(second.isNew).toBe(false);
+    expect(second.roles).toEqual(["user"]);
+
+    // Exactly one grant row (no duplicate default).
+    const roles = await getUserRoles(s);
+    expect(roles).toEqual(["user"]);
+  });
+
+  it("REVOKED user is NOT re-granted the default on a later request", async () => {
+    const s = "22222222-0000-0000-0000-000000000002";
+    await jitProvision(identity(s, "u2@x.z", "u2"));
+    expect(await getUserRoles(s)).toEqual(["user"]);
+
+    // Operator revokes all roles (deauthorise).
+    await revokeAllRoles(s);
+    expect(await getUserRoles(s)).toEqual([]);
+
+    // Next request JIT-updates the user but MUST NOT re-grant the default role.
+    const again = await jitProvision(identity(s, "u2@x.z", "u2"));
+    expect(again.isNew).toBe(false);
+    expect(again.roles).toEqual([]);
+    expect(await getUserRoles(s)).toEqual([]);
+  });
+
+  it("first-admin bootstrap: reconcile pre-creates a pending grant, materialised on first login", async () => {
+    // Fresh DB, admin allow-listed by EMAIL, has never logged in.
+    const env = envWith("boss@example.com");
+    const plan = await reconcile(env);
+    expect(plan.pendingGrantsToAdd).toEqual([
+      { identifier: "boss@example.com", role: "admin" },
+    ]);
+
+    // Pending row exists; no user_roles yet (no user).
+    const pend = await query<{ identifier: string; role: string }>(
+      "SELECT identifier, role FROM pending_grants",
+    );
+    expect(pend.rows).toEqual([
+      { identifier: "boss@example.com", role: "admin" },
+    ]);
+
+    // The admin logs in for the first time → pending materialised into admin role.
+    const s = "33333333-0000-0000-0000-000000000003";
+    const jit = await jitProvision(identity(s, "boss@example.com", "boss"));
+    expect(jit.isNew).toBe(true);
+    expect(jit.roles.sort()).toEqual(["admin", "user"]);
+
+    // Pending row consumed.
+    const pendAfter = await query("SELECT 1 FROM pending_grants");
+    expect(pendAfter.rowCount).toBe(0);
+  });
+
+  it("first-admin bootstrap also works when the allow-list uses the subject", async () => {
+    const s = "44444444-0000-0000-0000-000000000004";
+    const env = envWith(s);
+    await reconcile(env);
+    const jit = await jitProvision(identity(s, "sub@example.com", "sub"));
+    expect(jit.roles.sort()).toEqual(["admin", "user"]);
+  });
+
+  it("reconcile prunes ONLY reconcile grants, never UI grants", async () => {
+    // User A: admin granted by reconcile (via allow-list).
+    const sA = "55555555-0000-0000-0000-00000000000a";
+    await jitProvision(identity(sA, "a@x.z", "a"));
+    await reconcile(envWith("a@x.z"));
+    expect((await getUserRoles(sA)).sort()).toEqual(["admin", "user"]);
+
+    // User B: admin granted by the UI (granted_by='ui').
+    const sB = "66666666-0000-0000-0000-00000000000b";
+    await jitProvision(identity(sB, "b@x.z", "b"));
+    await grantRole(sB, "admin"); // defaults to granted_by='ui'
+    expect((await getUserRoles(sB)).sort()).toEqual(["admin", "user"]);
+
+    // Allow-list emptied → reconcile prunes A's reconcile admin, leaves B's UI admin.
+    await reconcile(envWith(""));
+    expect(await getUserRoles(sA)).toEqual(["user"]); // reconcile admin pruned
+    expect((await getUserRoles(sB)).sort()).toEqual(["admin", "user"]); // UI admin survives
+  });
+
+  it("maps Pocket-ID groups to roles at login and refreshes them (group-sync)", async () => {
+    const s = "77777777-0000-0000-0000-00000000000c";
+    const map = new Map([["daax-admins", new Set(["admin"])]]);
+
+    // First login WITH the admin group → admin granted via group-sync.
+    const jit = await jitProvision(
+      {
+        subject: s,
+        email: null,
+        username: null,
+        name: null,
+        idp: "test",
+        groups: ["daax-admins"],
+      },
+      map,
+    );
+    expect(jit.roles.sort()).toEqual(["admin", "user"]);
+
+    // Later login WITHOUT the group → the group-sync admin grant is revoked;
+    // the jit-default 'user' grant (a different provenance) survives.
+    const jit2 = await jitProvision(
+      {
+        subject: s,
+        email: null,
+        username: null,
+        name: null,
+        idp: "test",
+        groups: [],
+      },
+      map,
+    );
+    expect(jit2.roles).toEqual(["user"]);
+  });
+
+  it("writes an auth_audit row on reconcile", async () => {
+    await reconcile(envWith(""));
+    const res = await query<{ event: string; outcome: string }>(
+      "SELECT event, outcome FROM auth_audit WHERE event = 'reconcile' ORDER BY ts DESC LIMIT 1",
+    );
+    expect(res.rows[0]?.event).toBe("reconcile");
+    expect(res.rows[0]?.outcome).toBe("applied");
+  });
+});
+
+describe.skipIf(configured)(
+  "RBAC on Postgres (skipped — no PG configured)",
+  () => {
+    it("is skipped because Postgres is not configured", () => {
+      expect(configured).toBe(false);
+    });
+  },
+);
