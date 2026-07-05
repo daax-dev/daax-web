@@ -19,6 +19,15 @@ CLAUDE_CONFIG="${CLAUDE_CONFIG_PATH:-$HOME/.claude.json}"
 # HOME_MCP_PATH is optional - only mount if it exists as a file
 HOME_MCP="${HOME_MCP_PATH:-}"
 
+# Docker-socket group GID (#185). The image now runs as the non-root `node`
+# user, so socket access is by GROUP membership (--group-add), not uid 0. Resolve
+# the HOST docker GID that owns /var/run/docker.sock; a wrong GID makes the Docker
+# SDK EACCES and breaks container spawning. Match deploy-local.sh: prefer the
+# docker group, fall back to the socket's own GID, then a common default.
+DOCKER_GID="${DOCKER_GID:-$(getent group docker 2>/dev/null | awk -F: '{print $3}')}"
+DOCKER_GID="${DOCKER_GID:-$(stat -c '%g' /var/run/docker.sock 2>/dev/null)}"
+DOCKER_GID="${DOCKER_GID:-999}"
+
 echo "🛑 Stopping existing container..."
 docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
 
@@ -68,6 +77,12 @@ DOCKER_ARGS=(
   --name "$CONTAINER_NAME"
   --network "$NETWORK_NAME"
   --add-host=host.docker.internal:host-gateway
+  # Non-root hardening (#185), parity with the compose files: run as the
+  # unprivileged `node` user (Dockerfile USER) with group-based socket access,
+  # no privilege escalation, and no Linux capabilities.
+  --group-add "$DOCKER_GID"
+  --security-opt no-new-privileges:true
+  --cap-drop ALL
   -p 4200:4200
   -p 4201:4201
   -v /var/run/docker.sock:/var/run/docker.sock
