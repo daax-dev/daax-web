@@ -406,8 +406,18 @@ ensure_daax_data_owner() {
   local vol="${PROJECT_NAME}_daax-data"
   docker volume inspect "$vol" >/dev/null 2>&1 || return 0
 
-  local img="daax:latest"
-  docker image inspect "$img" >/dev/null 2>&1 || img="alpine"
+  # Prefer the just-built web image (compose tags it ghcr.io/daax-dev/daax-web:latest
+  # in deploy/docker-compose.yml — see the daax service `image:`). `compose build`
+  # above tags this locally, so it's present and needs no pull. Fall back to a
+  # legacy daax:latest tag, then alpine (last resort; may pull from Docker Hub).
+  local img
+  for candidate in "ghcr.io/daax-dev/daax-web:latest" "daax:latest" "alpine"; do
+    if docker image inspect "$candidate" >/dev/null 2>&1; then
+      img="$candidate"
+      break
+    fi
+  done
+  img="${img:-alpine}"
 
   local owner
   owner="$(docker run --rm -v "$vol:/d" "$img" stat -c '%u' /d 2>/dev/null || echo unknown)"
