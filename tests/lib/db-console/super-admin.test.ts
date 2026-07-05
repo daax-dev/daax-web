@@ -28,22 +28,40 @@ describe("db-console super-admin gate (F6 #102)", () => {
       );
     });
 
-    it("matches by subject (exact)", () => {
+    it("matches by subject UUID (the ONLY accepted entry kind)", () => {
       expect(
         identityIsSuperAdmin(alice, env({ [SUPERADMIN_ENV]: alice.subject })),
       ).toBe(true);
     });
 
-    it("matches by email/username (case-insensitive)", () => {
+    it("IGNORES email/username entries (subject-only hardening)", () => {
+      // Email/username are IdP-forwarded, mutable, and spoofable — for the
+      // highest-privilege gate they must NOT grant super-admin. Only the
+      // immutable subject UUID does.
       expect(
         identityIsSuperAdmin(
           alice,
           env({ [SUPERADMIN_ENV]: "ALICE@EXAMPLE.COM" }),
         ),
-      ).toBe(true);
+      ).toBe(false);
       expect(
         identityIsSuperAdmin(alice, env({ [SUPERADMIN_ENV]: "alice" })),
+      ).toBe(false);
+    });
+
+    it("mixed list grants only via the subject UUID, never the attr", () => {
+      expect(
+        identityIsSuperAdmin(
+          alice,
+          env({ [SUPERADMIN_ENV]: `alice@example.com, ${alice.subject}` }),
+        ),
       ).toBe(true);
+      expect(
+        identityIsSuperAdmin(
+          alice,
+          env({ [SUPERADMIN_ENV]: "alice@example.com, alice" }),
+        ),
+      ).toBe(false);
     });
 
     it("does NOT match an admin who is not on the allow-list", () => {

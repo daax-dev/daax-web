@@ -47,18 +47,42 @@ export function dbConsoleWritesEnabled(
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
 
+let attrEntriesWarned = false;
+function warnAttrSuperadminOnce(count: number): void {
+  if (attrEntriesWarned) return;
+  attrEntriesWarned = true;
+  const plural = count === 1 ? "entry" : "entries";
+  console.warn(
+    `[db-console] ${SUPERADMIN_ENV} contains ${count} email/username ${plural} that ` +
+      `${count === 1 ? "is" : "are"} IGNORED. The super-admin gate accepts SUBJECT ` +
+      `(immutable OIDC UUID) entries ONLY: email/username are IdP-forwarded and ` +
+      `mutable/spoofable, and this is the highest-privilege gate (raw writes to every ` +
+      `table, incl. the RBAC tables). Configure the subject UUID instead.`,
+  );
+}
+
 /**
- * PURE: is this identity in the super-admin allow-list? Reuses the RBAC
- * allow-list matcher (subject-exact, or case-insensitive email/username). An
- * empty/unset allow-list matches no one (fail-closed).
+ * PURE: is this identity a super-admin per the allow-list?
+ *
+ * SUBJECT-ONLY (hardening): unlike the RBAC admin allow-list, the super-admin
+ * gate matches ONLY subject-kind (UUID) entries. Email/username entries are
+ * IdP-forwarded, mutable, and spoofable (see lib/rbac/allowlist.ts §SECURITY);
+ * against an IdP that does not verify email + a forged identity header they
+ * would let an attacker claim super-admin — the highest-privilege gate, which
+ * can raw-write every table. Such attr entries are IGNORED (with a one-time
+ * operator warning) so this gate cannot be reached via a spoofable attribute.
+ * An empty/unset or subject-free allow-list matches no one (fail-closed).
  */
 export function identityIsSuperAdmin(
   user: UserIdentity,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   const entries = parseAdminAllowlist(env[SUPERADMIN_ENV]);
-  if (entries.length === 0) return false;
-  return isUserAllowlisted(entries, user);
+  const subjectEntries = entries.filter((e) => e.kind === "subject");
+  const attrCount = entries.length - subjectEntries.length;
+  if (attrCount > 0) warnAttrSuperadminOnce(attrCount);
+  if (subjectEntries.length === 0) return false;
+  return isUserAllowlisted(subjectEntries, user);
 }
 
 /** Best-effort client IP / UA for an audit row. */
