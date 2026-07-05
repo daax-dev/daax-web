@@ -118,10 +118,11 @@ verify_pinned_digest() {
   # the pinned digests identify jpoley-built manifests, which cannot exist under a
   # third-party namespace, so `${REGISTRY}/${repo}@<jpoley-digest>` would be a dead
   # reference there. Verify the immutable digest pin ONLY for the default `jpoley`
-  # registry; a custom DAAX_AGENT_REGISTRY falls back to the mutable `:latest` tag
-  # (the operator's own builds). The fail-closed gate applies to BOTH paths.
+  # registry; a custom DAAX_AGENT_REGISTRY falls back to the mutable `${TAG}` tag
+  # (the operator's own builds; TAG defaults to `latest`). The fail-closed gate
+  # applies to BOTH paths.
   if [ "$REGISTRY" != "$DEFAULT_REGISTRY" ]; then
-    local tag_ref="${REGISTRY}/${repo}:latest"
+    local tag_ref="${REGISTRY}/${repo}:${TAG}"
     printf '   Pulling %s ... ' "$tag_ref"
     if docker pull "$tag_ref" >/dev/null; then
       echo "✅ pulled (custom registry: tag-based, jpoley digest pin not applicable)"

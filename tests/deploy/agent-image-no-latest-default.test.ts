@@ -82,4 +82,14 @@ describe("#195 F1: refresh script digest-pins BOTH -agents and -gsd", () => {
     // Script still exits non-zero if any digest verification failed.
     expect(script).toContain('[ "${digest_ok}" -eq 1 ]');
   });
+
+  it("custom-registry verification uses the configurable ${TAG}, not hardcoded :latest", () => {
+    // Copilot round-2 finding: the custom-registry path must verify with the
+    // same tag it pulls variants with (${TAG}, DAAX_AGENT_TAG). A hardcoded
+    // :latest fails closed on registries that publish only arch tags.
+    expect(script).toContain('local tag_ref="${REGISTRY}/${repo}:${TAG}"');
+    expect(script).not.toContain('local tag_ref="${REGISTRY}/${repo}:latest"');
+    // TAG default keeps default behavior unchanged.
+    expect(script).toContain('TAG="${DAAX_AGENT_TAG:-latest}"');
+  });
 });
