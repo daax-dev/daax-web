@@ -141,11 +141,17 @@ async function materializePendingGrants(
     [id.subject, email, username],
   );
   for (const row of res.rows) {
+    // Provenance precedence (ui > reconcile > group-sync): a reconcile-owned
+    // pending grant must UPGRADE an existing group-sync row to 'reconcile' so a
+    // later group-sync prune (user leaves the IdP group) cannot revoke an
+    // allow-listed admin. Never downgrade a 'ui' row, never touch an existing
+    // 'reconcile' row.
     await client.query(
       `INSERT INTO user_roles (subject, role, granted_by)
        VALUES ($1, $2, $3)
-       ON CONFLICT (subject, role) DO NOTHING`,
-      [id.subject, row.role, row.granted_by],
+       ON CONFLICT (subject, role) DO UPDATE SET granted_by = EXCLUDED.granted_by
+         WHERE EXCLUDED.granted_by = $4 AND user_roles.granted_by = $5`,
+      [id.subject, row.role, row.granted_by, GRANT_RECONCILE, GRANT_GROUP_SYNC],
     );
   }
   // Consume the pending rows we just matched.
@@ -366,11 +372,16 @@ export async function reconcile(
     if (dryRun) return computed;
 
     for (const g of computed.userRoleGrantsToAdd) {
+      // Provenance precedence (ui > reconcile > group-sync): UPGRADE an existing
+      // group-sync row to 'reconcile' so a later group-sync prune (user leaves
+      // the IdP group) cannot revoke an allow-listed admin. Never downgrade a
+      // 'ui' row, never touch an existing 'reconcile' row.
       await client.query(
         `INSERT INTO user_roles (subject, role, granted_by)
          VALUES ($1, $2, $3)
-         ON CONFLICT (subject, role) DO NOTHING`,
-        [g.subject, g.role, GRANT_RECONCILE],
+         ON CONFLICT (subject, role) DO UPDATE SET granted_by = $3
+           WHERE user_roles.granted_by = $4`,
+        [g.subject, g.role, GRANT_RECONCILE, GRANT_GROUP_SYNC],
       );
     }
     // Prune ONLY reconcile-owned user_roles — UI / default / group grants survive.
