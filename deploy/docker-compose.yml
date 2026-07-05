@@ -305,14 +305,16 @@ services:
       - daax-net
 
     # TCP-connect probe: the terminal speaks WebSocket, not HTTP. Confirms the
-    # listener is up without tripping the F1b (#95) WS upgrade auth.
+    # listener is up without tripping the F1b (#95) WS upgrade auth. Honors
+    # TERMINAL_PORT (like the server + the Dockerfile healthcheck), defaulting to
+    # 4201, so a port override probes the right socket.
     healthcheck:
       test:
         [
           "CMD",
           "node",
           "-e",
-          "require('net').connect({port:4201,host:'127.0.0.1'}).on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))",
+          "require('net').connect({port:parseInt(process.env.TERMINAL_PORT||'4201',10),host:'127.0.0.1'}).on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))",
         ]
       interval: 30s
       timeout: 10s

@@ -109,6 +109,27 @@ interface ComposeService {
   cap_drop?: string[];
   group_add?: (string | number)[];
   volumes?: string[];
+  environment?: string[] | Record<string, string>;
+  command?: string[] | string;
+}
+
+/**
+ * Raw (un-interpolated) value of an env var in a compose service's
+ * `environment` (supports both the list `KEY=val` and the map form).
+ */
+function envValue(svc: ComposeService, key: string): string | undefined {
+  const env = svc.environment;
+  if (!env) return undefined;
+  if (Array.isArray(env)) {
+    const entry = env.find((e) => e.startsWith(`${key}=`));
+    return entry?.slice(key.length + 1);
+  }
+  return env[key];
+}
+
+/** The `${VARNAME...}` interpolation variable a raw value references, if any. */
+function interpolatedVar(raw: string | undefined): string | undefined {
+  return raw?.match(/\$\{([A-Za-z_][A-Za-z0-9_]*)/)?.[1];
 }
 
 function loadServices(file: string): Record<string, ComposeService> {
@@ -170,5 +191,32 @@ describe("#100 deploy/docker-compose.yml split: socket only on the terminal plan
     expect(daax.cap_drop ?? []).toContain("ALL");
     // No socket → no docker-group membership required.
     expect(daax.group_add ?? []).toHaveLength(0);
+  });
+
+  it("the daax (web) service runs the web plane only (start:web, never the terminal)", () => {
+    const cmd = Array.isArray(daax.command)
+      ? daax.command.join(" ")
+      : (daax.command ?? "");
+    expect(cmd).toContain("start:web");
+    // Must NOT run the terminal plane (start:terminal) or the combined default
+    // (start:prod) — those would re-couple the socket-free web tier to the
+    // terminal server.
+    expect(cmd).not.toContain("start:terminal");
+    expect(cmd).not.toContain("start:prod");
+  });
+
+  it("both services wire DAAX_WS_TOKEN_SECRET from the SAME variable (cross-container ticket auth)", () => {
+    // The web plane mints WS tickets, the terminal plane verifies them; the
+    // HMAC only matches if BOTH read the same secret. Guard that a future edit
+    // can't silently point them at different variables while tests stay green.
+    const webRaw = envValue(daax, "DAAX_WS_TOKEN_SECRET");
+    const termRaw = envValue(terminal, "DAAX_WS_TOKEN_SECRET");
+    expect(webRaw, "daax must set DAAX_WS_TOKEN_SECRET").toBeDefined();
+    expect(termRaw, "terminal must set DAAX_WS_TOKEN_SECRET").toBeDefined();
+    const webVar = interpolatedVar(webRaw);
+    const termVar = interpolatedVar(termRaw);
+    expect(webVar).toBe("DAAX_WS_TOKEN_SECRET");
+    expect(termVar).toBe("DAAX_WS_TOKEN_SECRET");
+    expect(webVar).toBe(termVar);
   });
 });

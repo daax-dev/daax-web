@@ -67,6 +67,60 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # F3 split (#100): the terminal plane ships as its own image so registry-pull
+  # deploys (e.g. deploy:kinsale/muckross, which `docker compose pull`) can fetch
+  # it. It is the same Dockerfile context/base as daax-web (the `terminal` target
+  # is FROM `runner`), differing only in its CMD (start:terminal) — so its
+  # dependency SBOM equals daax-web's and is not regenerated separately below.
+  daax-terminal:
+    name: Publish daax-terminal
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/daax-dev/daax-terminal
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: terminal
+          # amd64 only, same rationale as daax-web (node-pty native compile).
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp || github.event.repository.updated_at }}
+            BUILD_HOST=github-actions
+            BUILD_BRANCH=${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   code-server:
     name: Publish code-server
     runs-on: self-hosted

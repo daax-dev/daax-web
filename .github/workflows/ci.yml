@@ -47,6 +47,44 @@ jobs:
           DATABASE_URL: postgres://ci:ci@localhost:5432/ci
         run: bun run build
 
+  container-build:
+    name: Container image build (web + terminal targets)
+    runs-on: self-hosted
+    # F3 split (#100): smoke-build BOTH Dockerfile targets on every PR so a
+    # broken `terminal` stage (or `runner`) fails CI instead of only surfacing
+    # at deploy time. No push — this only proves the images build. SBOM is
+    # skipped (DAAX_SKIP_SBOM=1) to keep the smoke build hermetic (no syft
+    # download) and fast; the real SBOM is generated in publish-images.yml.
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build web image (runner target)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: runner
+          push: false
+          platforms: linux/amd64
+          build-args: |
+            DAAX_SKIP_SBOM=1
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build terminal image (terminal target)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: terminal
+          push: false
+          platforms: linux/amd64
+          build-args: |
+            DAAX_SKIP_SBOM=1
+          # Reuses the runner layers from the step above via the shared gha cache.
+          cache-from: type=gha
+
   vuln-scan:
     name: Dependency vulnerability scan (Trivy fs)
     runs-on: self-hosted
