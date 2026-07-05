@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { spawn, type ChildProcess } from "child_process";
 import { isValidDockerImageName } from "@/lib/docker-validation";
 import { requireAuth } from "@/lib/auth";
+import {
+  defaultDockerExec,
+  dockerUnavailableResponse,
+  isDockerUnavailableError,
+} from "@/lib/docker-exec";
 
 /**
  * POST /api/docker/pull
@@ -43,6 +48,19 @@ export async function POST(request: NextRequest) {
       { error: "Invalid image name format" },
       { status: 400 },
     );
+  }
+
+  // Split deploy (F3 #100): the web plane may hold no Docker socket. Preflight
+  // the daemon so the client gets the same structured 503 as /api/containers —
+  // once the stream below starts, the response status can no longer change.
+  try {
+    await defaultDockerExec(["version", "--format", "{{.Server.Version}}"], {
+      timeout: 5000,
+    });
+  } catch (error) {
+    if (isDockerUnavailableError(error))
+      return dockerUnavailableResponse(error);
+    // Any other probe failure: fall through and let the pull surface it.
   }
 
   // Track the child process so we can terminate it if the client disconnects

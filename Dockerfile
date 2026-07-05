@@ -239,8 +239,12 @@ COPY --from=builder /app/config.toml ./config.toml
 # chown of /app is non-recursive: node only needs to CREATE entries in /app;
 # the root-owned copied assets (node_modules, .next server/static) stay
 # read-only, which is all the runtime needs.
-RUN mkdir -p /app/data /app/.logs/decisions /app/.data /app/.next/cache && \
-    chown node:node /app /app/data /app/.logs /app/.logs/decisions /app/.data && \
+# /home/node/.daax is pre-created node-owned for the same reason as /app/data:
+# the F3 split deploy (#100) mounts a shared named volume there
+# (daax-recordings) so the terminal plane's recordings reach the web plane; a
+# fresh named-volume mount inherits this ownership instead of root:root.
+RUN mkdir -p /app/data /app/.logs/decisions /app/.data /app/.next/cache /home/node/.daax && \
+    chown node:node /app /app/data /app/.logs /app/.logs/decisions /app/.data /home/node/.daax && \
     chown -R node:node /app/.next/cache
 
 # Drop to the unprivileged user for the app runtime (#185). Docker-socket access

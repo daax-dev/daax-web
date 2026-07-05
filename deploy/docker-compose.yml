@@ -28,7 +28,11 @@ services:
       # PGDATA off-volume and the image refuses to start.
       - daax-pg-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DAAX_PG_USER:-daax} -d ${DAAX_PG_DB:-daax}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DAAX_PG_USER:-daax} -d ${DAAX_PG_DB:-daax}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -123,6 +127,13 @@ services:
 
       # Persist application data
       - daax-data:/app/data
+
+      # Terminal recordings (F3 #100): the recorder runs in the `terminal`
+      # service and writes ~/.daax/recordings (= /home/node/.daax); this web
+      # plane serves GET /api/terminal-recordings from the SAME path. Share one
+      # named volume on BOTH services or the web API silently returns an empty
+      # list — it also persists recordings across terminal-container recreates.
+      - daax-recordings:/home/node/.daax
 
       # Environment file for secrets (optional). If DAAX_ENV_FILE is not set,
       # /dev/null is mounted and no .env.local file will be loaded.
@@ -282,6 +293,9 @@ services:
       # Same workspace as the web plane — the terminal writes agent auth under
       # /workspace/.daax and mounts subpaths into spawned containers.
       - ${DAAX_WORKSPACE:?DAAX_WORKSPACE env var required (absolute path, e.g. $HOME/prj — Compose does not expand ~)}:/workspace
+      # Shared with the `daax` (web) service: the recorder here writes
+      # ~/.daax/recordings; the web plane reads it (see daax service above).
+      - daax-recordings:/home/node/.daax
 
     environment:
       # Bind to all interfaces so the web container / Traefik reach it over daax-net.
@@ -400,6 +414,8 @@ networks:
 
 volumes:
   daax-data:
+    driver: local
+  daax-recordings:
     driver: local
   daax-code-server-data:
     driver: local

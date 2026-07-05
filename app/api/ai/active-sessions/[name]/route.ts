@@ -13,7 +13,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { isAiSessionName } from "@/lib/ai-session-name";
-import { defaultDockerExec, type DockerExec } from "@/lib/docker-exec";
+import {
+  defaultDockerExec,
+  dockerUnavailableResponse,
+  isDockerUnavailableError,
+  type DockerExec,
+} from "@/lib/docker-exec";
 
 /**
  * Force-remove a single AI session container. Takes an injectable `exec`
@@ -47,6 +52,10 @@ export async function DELETE(
     await removeSession(name);
     return NextResponse.json({ success: true, removed: name });
   } catch (error) {
+    // Split deploy (F3 #100): no Docker socket on the web plane — same
+    // structured 503 as /api/containers. Manual fallback: `docker rm -f <name>`.
+    if (isDockerUnavailableError(error))
+      return dockerUnavailableResponse(error);
     return NextResponse.json(
       {
         success: false,
