@@ -48,6 +48,11 @@ export function PresentationModeToggle() {
         onClick={toggle}
         whileTap={{ scale: 0.95 }}
         aria-pressed={enabled}
+        aria-label={
+          enabled
+            ? "Presentation mode on — secrets visually masked. Click to turn off."
+            : "Presentation mode off — click to visually mask secrets for screen-sharing."
+        }
         title={
           enabled
             ? "Presentation mode ON — secrets are visually masked (best-effort, not a security guarantee). Click to turn off."
