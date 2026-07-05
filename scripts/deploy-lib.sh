@@ -69,7 +69,9 @@ assert_required_secrets() {
   for name in $names; do
     # Indirect expansion; treat unset and empty identically (fail-closed).
     val="${!name-}"
-    if [[ -z "${val// /}" ]]; then
+    # Strip ALL whitespace (spaces, tabs, newlines): a tab/newline-only value is
+    # not a real secret and must fail this fail-closed gate.
+    if [[ -z "${val//[[:space:]]/}" ]]; then
       missing+=("$name")
     fi
   done

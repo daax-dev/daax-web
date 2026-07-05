@@ -109,19 +109,39 @@ fail() {
 }
 
 # --- rollback ------------------------------------------------------------------
-# Restore the app plane to its captured prior images and force-recreate; if this
-# was a fresh deploy (no prior running containers) tear the partial stack down so
-# the host is left in a KNOWN state rather than half-up.
+# Rollback strategy, gated on TWO facts recorded before/during the deploy:
+#   CAPTURED               — did phase_capture run? (else we touched nothing)
+#   STACK_EXISTED_AT_CAPTURE — did a stack POSITIVELY exist before we mutated
+#                            anything? (a `compose ps` check, NOT inferred from a
+#                            single image inspect that can transiently miss)
+#   SWITCHED               — did phase_up begin recreating the app plane?
+#
+# The teardown path (compose down) fires ONLY when the stack positively did not
+# exist at capture — so a temporarily-down/restarting/hiccuping prod stack is
+# never torn down. A pre-up failure never force-recreates (nothing was switched).
 ROLLED_BACK=0
 CAPTURED=0
+SWITCHED=0
+STACK_EXISTED_AT_CAPTURE=0
+
+# stack_present — POSITIVE check: returns 0 (present-or-UNKNOWN) unless a
+# `compose ps` SUCCEEDS and reports NO containers for the app services. A failed
+# ps (docker unreachable) returns 0 so uncertainty never authorizes a teardown.
+stack_present() {
+  local out rc
+  out="$(compose ps -aq daax terminal 2>/dev/null)"; rc=$?
+  if ((rc != 0)); then
+    return 0 # uncertain -> treat as present (never tear down on doubt)
+  fi
+  [[ -n "${out//[[:space:]]/}" ]]
+}
+
 do_rollback() {
   local from_phase="$1"
   [[ "$ROLLED_BACK" == 1 ]] && return 0
   ROLLED_BACK=1
-  # CRITICAL: if capture never ran (a failure in preflight, before we touched
-  # anything), do NOTHING. The current stack is still the prior stack — tearing
-  # it down here would take a running production deploy offline on, e.g., a
-  # missing-secret preflight failure. Leave it untouched.
+  # CRITICAL: if capture never ran (failure in preflight, before we touched
+  # anything), do NOTHING — the current stack is still the prior stack.
   if [[ "$CAPTURED" != 1 ]]; then
     log "no rollback (failed before capture) — current stack left untouched"
     return 0
@@ -129,7 +149,20 @@ do_rollback() {
 
   log "rolling back (failure in phase: $from_phase)…"
   deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "start" "restoring prior state after $from_phase failure"
+
+  # M1: a PRE-UP failure (build/db/migrate) never switched the app plane — the
+  # running stack (if any) is untouched on its prior images. Restore the :latest
+  # tags for hygiene, but do NOT force-recreate (no needless downtime).
+  if [[ "$SWITCHED" != 1 ]]; then
+    had_prior_state "$STATEFILE" && restore_rollback_state "$STATEFILE"
+    log "pre-switch failure — running stack left in place (no recreate)"
+    deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "pre-switch failure; running stack untouched, tags restored"
+    return 0
+  fi
+
+  # SWITCHED: the app plane was (partially) recreated onto new images.
   if had_prior_state "$STATEFILE"; then
+    # Known baseline → restore prior images and force-recreate.
     restore_rollback_state "$STATEFILE"
     if compose up -d --force-recreate --wait --wait-timeout 120 daax terminal >&2; then
       ok "rolled back to prior running images"
@@ -138,10 +171,18 @@ do_rollback() {
       err "rollback restore did not converge; manual intervention required"
       deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "prior images restored but stack did not become healthy"
     fi
+  elif [[ "$STACK_EXISTED_AT_CAPTURE" == 1 ]]; then
+    # H1: a stack existed before we started, but we captured no baseline image id
+    # (a transient inspect miss on an upgrade). Do NOT tear it down — leaving the
+    # running stack in place is strictly safer than removing it. Flag for review.
+    err "prior stack existed but no baseline image was captured; NOT tearing it down — verify the stack manually"
+    deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "existing stack, no captured baseline; left in place (no teardown)"
   else
-    log "fresh deploy — no prior state; tearing down the partial stack"
+    # Positively fresh at capture (compose ps reported no stack) → tear down the
+    # partial deploy so the host is left in a KNOWN state.
+    log "no stack existed at capture — tearing down the partial fresh deploy"
     compose down --remove-orphans >&2 || true
-    deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "fresh deploy torn down (no prior state)"
+    deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "fresh deploy torn down (no stack at capture)"
   fi
 }
 
@@ -175,11 +216,21 @@ phase_preflight() {
 
 phase_capture() {
   log "phase: capture (rollback baseline)"
-  capture_rollback_state "$STATEFILE" "daax=daax:latest" "daax-terminal=daax-terminal:latest"
+  # Capture rollback tags using the ACTUAL deployed image refs (so the :rollback
+  # pin matches ghcr refs in pull mode, not a hardcoded local tag).
+  capture_rollback_state "$STATEFILE" \
+    "daax=${DAAX_IMAGE:-daax:latest}" \
+    "daax-terminal=${DAAX_TERMINAL_IMAGE:-daax-terminal:latest}"
   CAPTURED=1
+  # POSITIVE pre-mutation check (H1): did a stack exist BEFORE we touched
+  # anything? This — not a per-container image inspect — decides fresh vs upgrade,
+  # so a momentarily-absent/restarting prod container is never misread as "fresh"
+  # and torn down on a later failure.
+  if stack_present; then STACK_EXISTED_AT_CAPTURE=1; else STACK_EXISTED_AT_CAPTURE=0; fi
   local prior="fresh"
   had_prior_state "$STATEFILE" && prior="upgrade"
-  deploy_log "$LOGFILE" "$ENV_NAME" "capture" "ok" "captured rollback baseline ($prior)"
+  [[ "$STACK_EXISTED_AT_CAPTURE" == 1 ]] && prior="upgrade"
+  deploy_log "$LOGFILE" "$ENV_NAME" "capture" "ok" "captured rollback baseline ($prior, stack_existed=$STACK_EXISTED_AT_CAPTURE)"
 }
 
 phase_build() {
@@ -236,6 +287,10 @@ phase_migrate() {
 
 phase_up() {
   log "phase: up (web + terminal planes)"
+  # Mark the app plane as SWITCHED before the recreate: from here on a failure
+  # means the running stack was (partially) replaced, so rollback must actively
+  # restore+recreate (M1) rather than leave it in place.
+  SWITCHED=1
   compose up -d --force-recreate --wait --wait-timeout 120 daax terminal >&2 \
     || fail up "web/terminal stack did not become healthy"
   # code-server is best-effort: its image may be operator-supplied and the
@@ -304,9 +359,14 @@ main() {
 
   # Serialize deploys: concurrent runs would corrupt the shared rollback baseline
   # (the global :rollback image tag) and race on :latest. A non-blocking flock
-  # fails fast if another deploy holds the lock. Best-effort: skipped when flock
-  # is unavailable or DAAX_DEPLOY_NO_LOCK=1 (tests).
-  if [[ "${DAAX_DEPLOY_NO_LOCK:-0}" != "1" ]] && command -v flock >/dev/null 2>&1; then
+  # fails fast if another deploy holds the lock. When the guard CANNOT engage the
+  # serialization purpose is defeated, so warn LOUDLY (M2) rather than fail open
+  # silently — the operator must know two concurrent deploys can corrupt state.
+  if [[ "${DAAX_DEPLOY_NO_LOCK:-0}" == "1" ]]; then
+    err "WARNING: deploy serialization DISABLED (DAAX_DEPLOY_NO_LOCK=1) — a concurrent deploy can corrupt rollback tags. Proceeding without a lock."
+  elif ! command -v flock >/dev/null 2>&1; then
+    err "WARNING: 'flock' not found — deploy serialization DISABLED. Install util-linux/flock; a concurrent deploy can corrupt rollback tags. Proceeding without a lock."
+  else
     local lock="${DAAX_DEPLOY_LOCK:-/tmp/daax-deploy-$PROJECT_NAME.lock}"
     exec 9>"$lock" || { err "cannot open deploy lock: $lock"; exit 3; }
     if ! flock -n 9; then

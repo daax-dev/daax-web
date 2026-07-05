@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -15,11 +15,14 @@ import { join, resolve } from "node:path";
 /**
  * End-to-end script tests for the phased, fail-closed, rollback-capable deploy
  * model (brain2daax F9, issue #104). These exercise the REAL scripts/deploy.sh
- * + scripts/deploy-lib.sh, substituting fake `docker`/`curl` binaries (via the
- * DOCKER_BIN/CURL_BIN overrides the scripts honor) so the phases run without a
- * real cluster. They are non-vacuous: the negative preflight test asserts NO
- * mutation happened, and the rollback tests assert the restore/teardown commands
- * were actually issued.
+ * + scripts/deploy-lib.sh, substituting fake `docker`/`curl`/tcp binaries (via
+ * the DOCKER_BIN/CURL_BIN/TCP_CHECK overrides the scripts honor) so the phases
+ * run without a real cluster.
+ *
+ * They are non-vacuous: the negative preflight test asserts NO mutation happened;
+ * the rollback tests assert the exact restore/teardown/recreate commands issued;
+ * and the prod-safety test proves a stack that EXISTS but has no captured
+ * baseline is NEVER torn down.
  */
 
 const REPO = resolve(__dirname, "../..");
@@ -31,8 +34,10 @@ let binDir: string;
 let dockerLog: string;
 
 // A programmable fake `docker` (also handles `docker compose …`). It logs every
-// invocation, forces failure when the joined args match FAKE_FAIL_PATTERN, and
-// returns a prior image id for `inspect --format` when FAKE_PRIOR=1.
+// invocation, forces failure when the joined args match FAKE_FAIL_PATTERN, and:
+//   FAKE_PRIOR=1        -> `inspect --format` returns a prior image id (baseline)
+//   FAKE_PS_NONEMPTY=1  -> `compose ps -aq` reports a container (stack present)
+//   FAKE_PS_FAIL=1      -> `compose ps -aq` fails (docker unreachable / uncertain)
 const FAKE_DOCKER = `#!/usr/bin/env bash
 echo "$*" >> "$FAKE_DOCKER_LOG"
 args="$*"
@@ -46,7 +51,13 @@ case "$1" in
   inspect)                             # inspect --format {{.Image}} <name>
     if [[ "\${FAKE_PRIOR:-0}" == "1" ]]; then echo "prior-\${@: -1}"; exit 0; else exit 1; fi ;;
   tag) exit 0 ;;
-  compose) exit 0 ;;
+  compose)
+    if grep -q 'ps -aq' <<<"$args"; then
+      [[ "\${FAKE_PS_FAIL:-0}" == "1" ]] && exit 1
+      [[ "\${FAKE_PS_NONEMPTY:-0}" == "1" ]] && echo "cid-abcdef"
+      exit 0
+    fi
+    exit 0 ;;
   *) exit 0 ;;
 esac
 `;
@@ -138,21 +149,15 @@ function runDeploy(
     DAAX_DEPLOY_NO_LOCK: "1",
     ...env,
   };
-  try {
-    const stdout = execFileSync("bash", [DEPLOY_SH, target], {
-      env: fullEnv,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { status: 0, stdout, stderr: "" };
-  } catch (e) {
-    const err = e as { status?: number; stdout?: string; stderr?: string };
-    return {
-      status: err.status ?? 1,
-      stdout: err.stdout ?? "",
-      stderr: err.stderr ?? "",
-    };
-  }
+  const r = spawnSync("bash", [DEPLOY_SH, target], {
+    env: fullEnv,
+    encoding: "utf8",
+  });
+  return {
+    status: r.status ?? 1,
+    stdout: r.stdout ?? "",
+    stderr: r.stderr ?? "",
+  };
 }
 
 function freshLog(name: string): string {
@@ -185,7 +190,7 @@ describe("scripts/deploy-lib.sh unit helpers", () => {
   });
 
   it("assert_required_secrets fails on a present-but-EMPTY secret (fail-closed)", () => {
-    const status = execFileSync(
+    const out = execFileSync(
       "bash",
       [
         "-c",
@@ -193,36 +198,51 @@ describe("scripts/deploy-lib.sh unit helpers", () => {
       ],
       { encoding: "utf8" },
     );
-    expect(status).toContain("rc=1");
+    expect(out).toContain("rc=1");
+  });
+
+  it("assert_required_secrets fails on a WHITESPACE-only secret (L1: tab/newline)", () => {
+    const out = execFileSync(
+      "bash",
+      [
+        "-c",
+        `source "${LIB_SH}"; export DAAX_REQUIRED_SECRETS="A"; printf -v A '\\t\\n '; export A; assert_required_secrets; echo "rc=$?"`,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(out).toContain("rc=1");
   });
 });
 
 describe("deploy.sh preflight — fail-closed", () => {
-  it("FAILS when a required secret is MISSING, before any build/up", () => {
+  it("FAILS when a required secret is MISSING, before any build/up/down", () => {
     const log = freshLog("missing-secret");
     resetDockerLog();
-    // Only one of the two required secrets is set.
     const res = runDeploy("test", { TEST_SECRET_A: "x" }, log);
     expect(res.status).not.toBe(0);
     expect(res.stderr).toMatch(/TEST_SECRET_B/);
-    // Fail-closed: no image build and no `up` happened.
     const dl = readFileSync(dockerLog, "utf8");
-    expect(dl).not.toMatch(/compose build/);
+    expect(dl).not.toMatch(/compose .*build/);
     expect(dl).not.toMatch(/up -d --force-recreate/);
     // CRITICAL: a preflight failure must NOT tear down the running stack —
     // capture never ran, so no `compose down` (or any mutating op) may fire.
     expect(dl).not.toMatch(/compose .*down/);
-    // Deploy log recorded a preflight failure.
-    expect(readFileSync(log, "utf8")).toMatch(/"phase":"preflight","status":"fail"/);
+    expect(readFileSync(log, "utf8")).toMatch(
+      /"phase":"preflight","status":"fail"/,
+    );
   });
 
   it("FAILS when a required secret is present but EMPTY", () => {
     const log = freshLog("empty-secret");
     resetDockerLog();
-    const res = runDeploy("test", { TEST_SECRET_A: "x", TEST_SECRET_B: "" }, log);
+    const res = runDeploy(
+      "test",
+      { TEST_SECRET_A: "x", TEST_SECRET_B: "" },
+      log,
+    );
     expect(res.status).not.toBe(0);
     expect(res.stderr).toMatch(/TEST_SECRET_B/);
-    expect(readFileSync(dockerLog, "utf8")).not.toMatch(/compose build/);
+    expect(readFileSync(dockerLog, "utf8")).not.toMatch(/compose .*build/);
   });
 
   it("managed Postgres: FAILS closed when the DB is unreachable", () => {
@@ -239,12 +259,12 @@ describe("deploy.sh preflight — fail-closed", () => {
     );
     expect(res.status).not.toBe(0);
     expect(res.stderr).toMatch(/unreachable/i);
-    expect(readFileSync(dockerLog, "utf8")).not.toMatch(/compose build/);
+    expect(readFileSync(dockerLog, "utf8")).not.toMatch(/compose .*build/);
   });
 });
 
 describe("deploy.sh happy path", () => {
-  it("runs all phases in order and succeeds", () => {
+  it("runs phases in the correct ORDER and succeeds (M3)", () => {
     const log = freshLog("happy");
     resetDockerLog();
     const res = runDeploy(
@@ -254,42 +274,73 @@ describe("deploy.sh happy path", () => {
     );
     expect(res.status).toBe(0);
     const dl = readFileSync(dockerLog, "utf8");
-    expect(dl).toMatch(/compose .*build --pull daax terminal/);
-    expect(dl).toMatch(/compose .*up -d --wait --wait-timeout 120 postgres/);
-    expect(dl).toMatch(/compose .*run --rm migrate/);
-    expect(dl).toMatch(/compose .*up -d --force-recreate .*daax terminal/);
+    // Relative ordering via match indices — not just presence.
+    const iBuild = dl.search(/compose .*build --pull daax terminal/);
+    const iDb = dl.search(/compose .*up -d --wait --wait-timeout 120 postgres/);
+    const iMigrate = dl.search(/compose .*run --rm migrate/);
+    const iUp = dl.search(/compose .*up -d --force-recreate .*daax terminal/);
+    expect(iBuild).toBeGreaterThanOrEqual(0);
+    expect(iDb).toBeGreaterThan(iBuild);
+    expect(iMigrate).toBeGreaterThan(iDb);
+    expect(iUp).toBeGreaterThan(iMigrate);
     const jl = readFileSync(log, "utf8");
     expect(jl).toMatch(/"phase":"health","status":"ok"/);
     expect(jl).toMatch(/"phase":"done","status":"ok"/);
+    // M2: the disabled-serialization guard warns loudly.
+    expect(res.stderr).toMatch(/serialization DISABLED/);
   });
 });
 
-describe("deploy.sh mid-flight failure triggers rollback", () => {
-  it("restores prior images on a migrate failure (upgrade case)", () => {
-    const log = freshLog("rollback-upgrade");
+describe("deploy.sh rollback — mid-flight failure", () => {
+  it("PRE-UP failure (migrate) on an upgrade: restores tags but does NOT force-recreate (M1)", () => {
+    const log = freshLog("rollback-preup");
     resetDockerLog();
     const res = runDeploy(
       "test",
       {
         TEST_SECRET_A: "x",
         TEST_SECRET_B: "y",
-        FAKE_PRIOR: "1", // prior containers exist -> restore path
+        FAKE_PRIOR: "1",
+        FAKE_PS_NONEMPTY: "1",
         FAKE_FAIL_PATTERN: "run --rm migrate",
       },
       log,
     );
     expect(res.status).not.toBe(0);
     const dl = readFileSync(dockerLog, "utf8");
-    // Restore re-tagged the captured prior image back to :latest…
-    expect(dl).toMatch(/tag prior-daax daax:latest/);
-    // …and force-recreated the prior stack.
-    expect(dl).toMatch(/up -d --force-recreate .*daax terminal/);
+    expect(dl).toMatch(/tag prior-daax daax:latest/); // tags restored
+    // Nothing was switched, so the app plane is NEVER force-recreated.
+    expect(dl).not.toMatch(/up -d --force-recreate .*daax terminal/);
+    expect(dl).not.toMatch(/compose .*down/); // and never torn down
     const jl = readFileSync(log, "utf8");
     expect(jl).toMatch(/"phase":"migrate","status":"fail"/);
     expect(jl).toMatch(/"phase":"rollback","status":"ok"/);
   });
 
-  it("tears down the partial stack on failure when there was no prior state (fresh case)", () => {
+  it("POST-UP failure (health) on an upgrade: restores prior images AND force-recreates", () => {
+    const log = freshLog("rollback-postup");
+    resetDockerLog();
+    const res = runDeploy(
+      "test",
+      {
+        TEST_SECRET_A: "x",
+        TEST_SECRET_B: "y",
+        FAKE_PRIOR: "1",
+        FAKE_PS_NONEMPTY: "1",
+        FAKE_HTTP_CODE: "500", // health never returns 200
+      },
+      log,
+    );
+    expect(res.status).not.toBe(0);
+    const dl = readFileSync(dockerLog, "utf8");
+    expect(dl).toMatch(/tag prior-daax daax:latest/);
+    expect(dl).toMatch(/up -d --force-recreate .*daax terminal/);
+    const jl = readFileSync(log, "utf8");
+    expect(jl).toMatch(/"phase":"health","status":"fail"/);
+    expect(jl).toMatch(/"phase":"rollback","status":"ok"/);
+  });
+
+  it("POST-UP failure on a genuinely FRESH deploy (no stack at capture): tears down", () => {
     const log = freshLog("rollback-fresh");
     resetDockerLog();
     const res = runDeploy(
@@ -297,13 +348,41 @@ describe("deploy.sh mid-flight failure triggers rollback", () => {
       {
         TEST_SECRET_A: "x",
         TEST_SECRET_B: "y",
-        FAKE_PRIOR: "0", // no prior containers -> teardown path
-        FAKE_FAIL_PATTERN: "run --rm migrate",
+        FAKE_PRIOR: "0",
+        FAKE_PS_NONEMPTY: "0", // compose ps reports NO stack -> positively fresh
+        FAKE_HTTP_CODE: "500",
       },
       log,
     );
     expect(res.status).not.toBe(0);
-    expect(readFileSync(dockerLog, "utf8")).toMatch(/compose .*down --remove-orphans/);
-    expect(readFileSync(log, "utf8")).toMatch(/"phase":"rollback","status":"ok"/);
+    expect(readFileSync(dockerLog, "utf8")).toMatch(
+      /compose .*down --remove-orphans/,
+    );
+    expect(readFileSync(log, "utf8")).toMatch(
+      /"phase":"rollback","status":"ok"/,
+    );
+  });
+
+  it("H1: stack PRESENT at capture but NO baseline image -> a later failure must NOT tear it down", () => {
+    const log = freshLog("rollback-present-nobaseline");
+    resetDockerLog();
+    const res = runDeploy(
+      "test",
+      {
+        TEST_SECRET_A: "x",
+        TEST_SECRET_B: "y",
+        FAKE_PRIOR: "0", // inspect returns no image id (transient miss)
+        FAKE_PS_NONEMPTY: "1", // …but the stack positively EXISTS
+        FAKE_HTTP_CODE: "500", // post-up health failure
+      },
+      log,
+    );
+    expect(res.status).not.toBe(0);
+    const dl = readFileSync(dockerLog, "utf8");
+    // The running prod stack must be LEFT ALONE, never torn down.
+    expect(dl).not.toMatch(/compose .*down/);
+    expect(readFileSync(log, "utf8")).toMatch(
+      /"phase":"rollback","status":"degraded"/,
+    );
   });
 });

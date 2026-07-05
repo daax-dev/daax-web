@@ -45,7 +45,7 @@ services:
   # service waits for this to complete successfully, so a bad/failed migration
   # blocks the rollout (fail-closed) without coupling the app process to PG.
   migrate:
-    image: daax:latest
+    image: ${DAAX_IMAGE:-daax:latest}
     container_name: daax-migrate
     restart: "no"
     depends_on:
@@ -64,7 +64,7 @@ services:
       # Explicit target (F3 #100): the Dockerfile's last stage is `terminal`, so
       # the web plane must pin `runner` or it would build the terminal image.
       target: runner
-    image: daax:latest
+    image: ${DAAX_IMAGE:-daax:latest}
     container_name: daax
     restart: unless-stopped
 
@@ -262,7 +262,7 @@ services:
       context: ..
       dockerfile: Dockerfile
       target: terminal
-    image: daax-terminal:latest
+    image: ${DAAX_TERMINAL_IMAGE:-daax-terminal:latest}
     container_name: daax-terminal
     restart: unless-stopped
 
