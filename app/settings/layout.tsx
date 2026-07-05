@@ -15,10 +15,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-
-// Admin mode: show admin features. Set NEXT_PUBLIC_ADMIN_MODE=false in release
-// builds to hide (mirrors the guard in page.tsx).
-const isAdminMode = process.env.NEXT_PUBLIC_ADMIN_MODE !== "false";
+import { useAdminAccess } from "@/hooks/use-admin-access";
 
 interface SettingsTab {
   href: string;
@@ -65,6 +62,9 @@ const SETTINGS_TABS: SettingsTab[] = [
 function SettingsSubNav() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  // Admin visibility now resolves server-side (F5, #101) — retires the
+  // build-time NEXT_PUBLIC_ADMIN_MODE so UI and API authz cannot diverge.
+  const { isAdmin: isAdminMode } = useAdminAccess();
   const rawTab = searchParams.get("tab");
   const allowedTabs = new Set(["user", "projects", "admin"]);
   const requestedTab = rawTab && allowedTabs.has(rawTab) ? rawTab : "user";

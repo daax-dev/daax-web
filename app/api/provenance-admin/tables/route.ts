@@ -6,18 +6,20 @@
 
 import { NextResponse } from "next/server";
 
-import { requireAuth } from "@/lib/auth";
+import { requireRole } from "@/lib/auth";
 
 const PROVENANCE_API_URL =
   process.env.PROVENANCE_API_URL || "http://host.docker.internal:8080";
 
-// Gated by requireAuth (F4, #96): admin proxy to the provenance backend, now
-// authenticated. requireAuth bypasses to a trusted LOCAL_OPERATOR when no
-// forwarded identity is present and DAAX_REQUIRE_AUTH!=1 (host-dev/proxy-less);
-// set DAAX_REQUIRE_AUTH=1 for strict auth in production. RBAC (requireRole) in F5 (#101).
+// Gated by requireRole('admin:db:read') (F5, #101): admin proxy to the
+// provenance backend, now authorization-checked (not just authenticated). The
+// local-operator bypass still applies for host-dev/proxy-less runs; an
+// authenticated non-admin is 403'd and the decision is written to auth_audit.
 export async function GET() {
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requireRole("admin:db:read", {
+    route: "/api/provenance-admin/tables",
+  });
+  if (!auth.authorized) return auth.response;
   try {
     const response = await fetch(`${PROVENANCE_API_URL}/api/v1/admin/tables`, {
       method: "GET",

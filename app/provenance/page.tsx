@@ -39,12 +39,13 @@ import ProvenanceAdminActions from "@/components/provenance/admin-actions";
 import DevcontainerAdmin from "@/components/provenance/devcontainer-admin";
 import QuickstartPicker from "@/components/provenance/quickstart-picker";
 import DevcontainerBuilder from "@/components/provenance/devcontainer-builder";
-
-// Only show admin tab in admin mode
-const isAdminMode = process.env.NEXT_PUBLIC_ADMIN_MODE !== "false";
+import { useAdminAccess } from "@/hooks/use-admin-access";
 
 function ProvenanceDashboardContent() {
   const searchParams = useSearchParams();
+  // Admin visibility resolves server-side (F5, #101), retiring the build-time
+  // NEXT_PUBLIC_ADMIN_MODE so UI gating and API authorization share one source.
+  const { isAdmin: isAdminMode } = useAdminAccess();
   const tabParam = searchParams.get("tab");
   const defaultTab = tabParam === "builder" ? "builder" : "dashboard";
 

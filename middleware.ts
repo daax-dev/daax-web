@@ -46,6 +46,11 @@ const PUBLIC_API_ROUTES = new Set<string>([
   "/api/health",
   "/api/health/backlog",
   "/api/auth/user",
+  // Server-resolved admin/permission summary for UI gating (F5, #101). Returns
+  // only a boolean + permission list from already-trusted headers / the
+  // operator bypass — no secrets — and must be readable pre-login so the app
+  // shell can render the correct (non-)admin surface.
+  "/api/auth/access",
 ]);
 
 // State-changing methods get an Origin/CSRF check; safe methods do not.

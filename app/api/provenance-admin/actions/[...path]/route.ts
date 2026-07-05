@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { requireAuth } from "@/lib/auth";
+import { requireRole } from "@/lib/auth";
 
 const PROVENANCE_API_URL =
   process.env.PROVENANCE_API_URL || "http://host.docker.internal:8080";
@@ -70,8 +70,10 @@ async function proxyRequest(
  * Proxy GET requests (e.g., /actions/jobs, /actions/jobs/123)
  */
 export async function GET(request: NextRequest, context: RouteContext) {
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requireRole("admin:db:read", {
+    route: "/api/provenance-admin/actions",
+  });
+  if (!auth.authorized) return auth.response;
   const { path } = await context.params;
   return proxyRequest(request, path, "GET");
 }
@@ -81,8 +83,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
  * Proxy POST requests (e.g., /actions/fetch, /actions/sbom)
  */
 export async function POST(request: NextRequest, context: RouteContext) {
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requireRole("admin:users:write", {
+    route: "/api/provenance-admin/actions",
+  });
+  if (!auth.authorized) return auth.response;
   const { path } = await context.params;
   return proxyRequest(request, path, "POST");
 }
@@ -92,8 +96,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
  * Proxy PATCH requests (e.g., /actions/images/123/approval)
  */
 export async function PATCH(request: NextRequest, context: RouteContext) {
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requireRole("admin:users:write", {
+    route: "/api/provenance-admin/actions",
+  });
+  if (!auth.authorized) return auth.response;
   const { path } = await context.params;
   return proxyRequest(request, path, "PATCH");
 }
