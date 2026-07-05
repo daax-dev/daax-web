@@ -15,8 +15,15 @@ export const WRITE_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
 export const AUTH_GUARD_CALL_RE =
   /(?:requireAuth(?:OrThrow)?|requireRole)\s*\(/;
 
-/** An import line that brings in an auth guard (`requireAuth*` or `requireRole`). */
-export const AUTH_GUARD_IMPORT_RE = /import\s+.*require(?:Auth|Role).*from/;
+/**
+ * An import statement that brings in an auth guard (`requireAuth*` or
+ * `requireRole`). Uses `[^;]*?` (not `.`) between `import` and `from` so it
+ * spans NEWLINES — a multiline `import {\n  requireAuth,\n} from "..."` block is
+ * matched — while the negated `;` keeps it bounded to a single import statement,
+ * so it cannot greedily swallow across an intervening statement terminator.
+ */
+export const AUTH_GUARD_IMPORT_RE =
+  /import\s+[^;]*?require(?:Auth|Role)[^;]*?from/;
 
 /**
  * Strip line comments, block comments, and string/template literal CONTENT from

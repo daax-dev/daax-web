@@ -215,6 +215,36 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
       expect(protectedMethods).toEqual(["POST"]);
     });
 
+    it("detects a MULTILINE import of requireAuth as a real guard (not a false unguarded)", () => {
+      // Regression: AUTH_GUARD_IMPORT_RE used `.` which does not match newlines,
+      // so a multiline import block was misdetected as having no guard import,
+      // producing a false-positive "unguarded route" in the audit gate.
+      const multilineImport = `
+        import {
+          requireAuth,
+        } from "@/lib/auth";
+        export async function POST() {
+          const auth = await requireAuth();
+          if (!auth.authenticated) return auth.response;
+          return new Response();
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        multilineImport,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(true);
+      expect(protectedMethods).toEqual(["POST"]);
+      expect(
+        isUnprotectedWriteRoute({
+          path: "x",
+          methods: ["POST"],
+          hasRequireAuth: hasAuthGuard,
+          protectedMethods,
+        }),
+      ).toBe(false);
+    });
+
     it("flags a partially-guarded route (GET requireRole, POST open)", () => {
       const partial = `
         import { requireRole } from "@/lib/auth";
