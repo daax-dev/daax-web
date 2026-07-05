@@ -1,9 +1,9 @@
 // MCP Config API - REAL Claude Code config integration
 // Reads/writes ~/.claude.json to actually control MCPs
 //
-// SECURITY: POST operations require authentication via requireAuth()
+// SECURITY: GET (config disclosure) and POST (config mutation) both require
+// authentication via requireAuth() (#182).
 
-import { existsSync } from "fs";
 import { NextResponse } from "next/server";
 import {
   discoverAllMcps,
@@ -17,6 +17,7 @@ import {
   type McpServerConfig,
 } from "@/lib/mcp-config";
 import { requireAuth } from "@/lib/auth";
+import { getDefaultProjectPath } from "@/lib/mcp-route-helpers";
 
 /**
  * Validate MCP server config structure at runtime.
@@ -71,16 +72,14 @@ function validateMcpConfig(config: unknown): string | null {
   return null;
 }
 
-// Default project path: /workspace in container mode, otherwise cwd
-function getDefaultProjectPath(): string {
-  // Check for container mode indicators
-  if (process.env.CLAUDE_CODE_CONFIG || existsSync("/workspace")) {
-    return "/workspace";
-  }
-  return process.cwd();
-}
-
 export async function GET(request: Request) {
+  // Require authentication for config reads (#182 Copilot): the response
+  // discloses registered MCP server commands/URLs/env — an info-disclosure
+  // surface reachable directly on the tailnet / from a sibling container,
+  // bypassing Traefik. Host-dev keeps working via the LOCAL_OPERATOR bypass.
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   const { searchParams } = new URL(request.url);
   const projectPath = searchParams.get("project") || getDefaultProjectPath();
 

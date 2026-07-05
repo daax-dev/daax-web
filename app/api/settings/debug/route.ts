@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSettings, DEFAULT_SETTINGS } from "@/lib/settings";
+import { requireAuth } from "@/lib/auth";
 
 export async function GET() {
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   const settings = getSettings();
 
   return NextResponse.json({
@@ -23,6 +27,9 @@ export async function GET() {
 }
 
 export async function DELETE() {
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   // This would need to be done client-side
   return NextResponse.json({
     message:

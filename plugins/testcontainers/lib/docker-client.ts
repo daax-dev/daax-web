@@ -28,6 +28,12 @@ import {
   PROJECT_LABEL,
   SENSITIVE_PATTERNS,
 } from "../constants";
+import { validateVolumes } from "./volume-validation";
+import {
+  buildImageRef,
+  hasEmbeddedTagOrDigest,
+  isValidDockerImageName,
+} from "@/lib/docker-validation";
 
 /**
  * Check if a key is sensitive and should be redacted
@@ -287,18 +293,94 @@ export class DockerClient {
       ([k, v]) => `${k}=${v}`,
     );
 
-    // Build volume bindings
+    // Build volume bindings. Defense-in-depth: even though the API route
+    // validates volume sources, re-check here so a bad source can never become
+    // a bind mount via any code path (e.g. compose, which never goes through
+    // the route's validateVolumes call). The source is preserved VERBATIM in
+    // the bind spec — in container mode the host daemon resolves it. A single
+    // bad source, or a malformed `volumes` shape (non-array, or a non-object
+    // entry), aborts the whole creation (throw before any pull / createContainer)
+    // rather than letting `.map` throw an uncontrolled TypeError — so no
+    // container is created (#190).
+    //
+    // `validateVolumes` already calls `validateVolumeSource` once per entry
+    // (which does a realpath/canonicalization stat), and it is the sole
+    // authoritative gate at this sink — it fails closed on non-array/malformed
+    // input and remains this check even for callers (e.g. compose) that bypass
+    // the route. Once it passes, every source is already known-good, so `binds`
+    // is built directly from `request.volumes` without re-validating each
+    // source a second time (Copilot review on #190).
+    const volumesCheck = validateVolumes(request.volumes);
+    if (!volumesCheck.valid) {
+      throw new Error(`Refusing to create container: ${volumesCheck.reason}`);
+    }
     const binds = (request.volumes || []).map(
       (v) => `${v.source}:${v.target}${v.readOnly ? ":ro" : ""}`,
     );
 
-    const image = request.tag
-      ? `${request.image}:${request.tag}`
-      : request.image;
+    // Defense-in-depth: even though the API route validates that `image` is a
+    // non-empty string and `tag` (when present) is a string, re-check here so
+    // a bad type can never reach buildImageRef via any code path (e.g.
+    // compose, whose parser assigns `raw.image || ""` without validating the
+    // TYPE — a non-string `image` survives that fallback unchanged). Without
+    // this guard, buildImageRef's `image.includes(...)` would throw an
+    // uncontrolled TypeError instead of the controlled rejection below. This
+    // sink is the sole authoritative gate for the compose path, mirroring the
+    // validateVolumes guard above (Copilot review on #190).
+    if (typeof request.image !== "string" || request.image.length === 0) {
+      throw new Error(
+        "Refusing to create container: image must be a non-empty string",
+      );
+    }
+    if (request.tag !== undefined && typeof request.tag !== "string") {
+      throw new Error("Refusing to create container: tag must be a string");
+    }
+    // Treat `tag` by PRESENCE (`!== undefined`), not truthiness: an explicitly
+    // provided empty-string tag `""` is INVALID and must be rejected, not
+    // silently treated as "no tag" and defaulted to `latest` by buildImageRef.
+    // Only an omitted (`undefined`) tag means "no tag provided" (Copilot review
+    // on #190).
+    if (request.tag !== undefined && request.tag.trim() === "") {
+      throw new Error(
+        "Refusing to create container: tag must be a non-empty string",
+      );
+    }
+
+    // Reject the ambiguous "embedded tag/digest + separate tag field"
+    // combination at the sink. buildImageRef silently DROPS `tag` when `image`
+    // already carries a tag/digest (to avoid producing an invalid
+    // `postgres:16:latest`). The API route rejects this combination up front,
+    // but the compose/template path bypasses the route — so reject it here too
+    // rather than silently ignoring the caller's `tag` (Copilot review on
+    // #190).
+    if (request.tag !== undefined && hasEmbeddedTagOrDigest(request.image)) {
+      throw new Error(
+        "Refusing to create container: image already carries an embedded tag or digest; do not also supply a separate tag",
+      );
+    }
+
+    // Single source of truth for the image reference: the SAME ref is pulled
+    // and passed to createContainer (pull ref ≡ create ref). buildImageRef
+    // respects an embedded tag/digest in `request.image` (e.g. `postgres:16`,
+    // `alpine@sha256:...`) so it is never mangled into `postgres:16:latest`,
+    // and only appends `:${tag || "latest"}` when there is no embedded
+    // tag/digest — correctly leaving a registry-host port untouched (#190).
+    const imageRef = buildImageRef(request.image, request.tag);
+
+    // Validate the FINAL resolved reference with the SAME shared validator the
+    // API routes use (isValidDockerImageName). The route validates its own
+    // inputs, but the compose/template path reaches this sink WITHOUT that
+    // check — so a malformed image/tag must never reach pull/create via any
+    // code path. Fail closed here before any pull/createContainer (#190).
+    if (!isValidDockerImageName(imageRef)) {
+      throw new Error(
+        `Refusing to create container: invalid image reference "${imageRef}"`,
+      );
+    }
 
     // Pull image if not available locally
     try {
-      await this.pullImage(request.image, request.tag || "latest");
+      await this.pullImage(imageRef);
     } catch (pullErr) {
       // Image might already exist, continue and let createContainer handle it
       console.warn(`[DockerClient] Image pull warning: ${pullErr}`);
@@ -306,7 +388,7 @@ export class DockerClient {
 
     // Create container
     const container = await this.docker.createContainer({
-      Image: image,
+      Image: imageRef,
       name: request.name,
       Labels: labels,
       Env: env,
@@ -456,14 +538,18 @@ export class DockerClient {
   }
 
   /**
-   * Pull an image
+   * Pull an image by its full reference.
+   *
+   * The caller passes a complete reference (built via buildImageRef) — including
+   * any tag or digest. This method does NOT append a tag: appending `:latest` to
+   * an already-tagged/digested ref (`postgres:16` -> `postgres:16:latest`) is the
+   * exact bug #190 fixes. A bare repo with no tag must already be normalized to
+   * `<repo>:latest` by the caller.
    */
-  async pullImage(image: string, tag = "latest"): Promise<void> {
-    const fullImage = `${image}:${tag}`;
-
+  async pullImage(imageRef: string): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       this.docker.pull(
-        fullImage,
+        imageRef,
         (err: Error | null, stream: NodeJS.ReadableStream) => {
           if (err) {
             reject(err);

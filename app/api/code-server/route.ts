@@ -1,9 +1,78 @@
 import { NextRequest, NextResponse } from "next/server";
 import { spawn, execFileSync } from "child_process";
 import { getProjectInfo } from "@/lib/project-utils";
-import { expandPath } from "@/lib/path-utils";
+import { expandPath, isValidPort } from "@/lib/path-utils";
+import { getSettings } from "@/lib/settings";
+import { requireAuth } from "@/lib/auth";
+import { confineToRoot, PathConfinementError } from "@/lib/path-confine";
+import { lstatSync, realpathSync } from "fs";
+import { basename, dirname, join, resolve, sep } from "path";
 
 const CONTAINER_NAME = "daax-code-server";
+
+// --- Realpath confinement (route-local; #183 Copilot follow-up) ---
+// The lexical `confineToRoot` used below rejects `..`/absolute-path escapes but
+// does NOT dereference symlinks: a symlink INSIDE the server root that points
+// outside it passes the lexical check yet would mount an out-of-root host dir
+// RW into the code-server container. This is the high-stakes case, so a second
+// realpath-canonicalized gate re-checks the boundary. It is kept LOCAL to this
+// route; the shared lib/path-confine.ts (used by 7 other routes) is unchanged.
+//
+// Mirrors the vetted walk-up technique in lib/worktree-manager.ts: realpath the
+// longest EXISTING ancestor (dereferencing parent symlinks), then re-append any
+// not-yet-existing trailing segments. The existence check uses lstat (no follow)
+// so a dangling symlink STOPS the walk instead of being skipped. Fails CLOSED
+// (returns null) when canonicalization is impossible; callers treat null as
+// reject rather than fall back to an un-dereferenced lexical form.
+function pathNodeExists(p: string): boolean {
+  try {
+    lstatSync(p);
+    return true;
+  } catch (err) {
+    // Only a genuine miss (ENOENT) means "this node does not exist" and lets
+    // the walk-up CONTINUE to the parent. ANY other lstat error (EACCES/EPERM/
+    // ELOOP/ENOTDIR/…) means the node is present-but-inaccessible: report it as
+    // existing so the walk STOPS here and realpathSync is forced to run — which
+    // then throws, making canonicalizeForConfine return null (reject). Treating
+    // every error as "absent" would let the walk skip past an inaccessible
+    // ancestor, re-append its segments, and canonicalize a path we could not
+    // actually verify — defeating the fail-closed intent (Copilot #183).
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    return true;
+  }
+}
+
+function canonicalizeForConfine(p: string): string | null {
+  const resolved = resolve(p);
+  let existing = resolved;
+  const trailing: string[] = [];
+  while (!pathNodeExists(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) return null; // no existing ancestor (defensive)
+    trailing.unshift(basename(existing));
+    existing = parent;
+  }
+  try {
+    const realAncestor = realpathSync(existing);
+    return trailing.length > 0 ? join(realAncestor, ...trailing) : realAncestor;
+  } catch {
+    // realpath failure (EACCES / ELOOP / TOCTOU). Fail closed — do NOT return
+    // the lexical form, which would leave parent symlinks un-dereferenced.
+    return null;
+  }
+}
+
+// Realpath-canonicalized confinement check: true only when `target` resolves to
+// a location equal to or strictly inside the realpath'd `root`.
+function isWithinRealRoot(root: string, target: string): boolean {
+  const realRoot = canonicalizeForConfine(root);
+  const realTarget = canonicalizeForConfine(target);
+  if (realRoot === null || realTarget === null) return false;
+  // When the root canonicalizes to "/", every absolute path is inside it; the
+  // trailing-separator boundary below would build "//" and reject everything.
+  if (realRoot === sep) return true;
+  return realTarget === realRoot || realTarget.startsWith(realRoot + sep);
+}
 
 // Default VS Code settings for code-server (dark theme)
 const DEFAULT_VSCODE_SETTINGS = JSON.stringify(
@@ -223,18 +292,29 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  // Defense-in-depth: this route spawns a host-mounting container, so it must
+  // never be reachable unauthenticated (#183). In host-dev with no proxy the
+  // shared bypass returns the local operator; a present-but-empty forwarded
+  // identity or strict mode (DAAX_REQUIRE_AUTH=1) fails closed with 401.
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const body = await request.json();
-    const {
-      action,
-      port = 18080,
-      project,
-      projectType,
-      basePath = "~/prj",
-      hostPath,
-    } = body;
+    const { action, port = 18080, project, projectType, hostPath } = body;
 
     if (action === "start") {
+      // Validate the client-chosen host bind port before it reaches docker.
+      if (!isValidPort(port)) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Invalid port (must be an integer in 1024-65535)",
+          },
+          { status: 400 },
+        );
+      }
+
       // Pre-flight: ensure the image exists locally before doing anything.
       // `docker run` would otherwise try to pull a non-public image and fail
       // with an opaque error after we've already torn down any prior container.
@@ -261,24 +341,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
-      // Remove existing container if it exists (running or stopped)
-      if (containerExists()) {
-        removeContainer();
-      }
-
-      // Initialize default settings (dark theme) in the volume if not present
-      initializeCodeServerSettings();
+      // The workspace root is a SERVER-side constant, never derived from the
+      // request body (#183). Container mode: the host dir mounted at /workspace
+      // (HOST_WORKSPACE_PATH). Host-dev mode: the operator-configured root from
+      // server settings. The client `basePath` is intentionally ignored; only
+      // `project` / `hostPath` select a subpath, confined below.
+      const serverBasePath = getSettings().basePath;
+      const serverRoot = HOST_WORKSPACE_PATH || expandPath(serverBasePath);
 
       let hostWorkspace: string;
       let containerPath: string;
       let displayName: string;
 
       if (project) {
-        // Use project utilities for consistent mounting
-        // Pass HOST_WORKSPACE_PATH for correct mount paths in container mode
+        // Use project utilities for consistent mounting.
+        // Base the mount on the SERVER root (serverBasePath), not the request.
         const projectInfo = getProjectInfo(
           project,
-          basePath,
+          serverBasePath,
           projectType as "git" | "planning" | undefined,
           HOST_WORKSPACE_PATH || undefined,
         );
@@ -286,8 +366,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         containerPath = projectInfo.containerPath;
         displayName = project.replace(/[^a-zA-Z0-9_-]/g, "_");
       } else if (hostPath) {
-        // Legacy path handling - pass basePath for proper translation
-        hostWorkspace = getHostMountPath(hostPath, basePath);
+        // Legacy path handling - translate against the SERVER root.
+        hostWorkspace = getHostMountPath(hostPath, serverBasePath);
         const rawProjectName = hostWorkspace.split("/").pop() || "workspace";
         displayName = rawProjectName.replace(/[^a-zA-Z0-9_-]/g, "_");
         containerPath = `/${displayName}`;
@@ -301,10 +381,32 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         );
       }
 
-      // Security: Ensure final path is within allowed base
-      // Use HOST_WORKSPACE_PATH in container mode, otherwise expand basePath
-      const securityBasePath = HOST_WORKSPACE_PATH || expandPath(basePath);
-      if (!hostWorkspace.startsWith(securityBasePath)) {
+      // Security: confine the resolved mount to the server-side workspace root.
+      // Canonicalized (lexical) confinement with a trailing-separator boundary
+      // (lib/path-confine, reused from #186/#189) rejects absolute-path escapes
+      // (e.g. basePath:"/"), `..` traversal, and prefix-sibling directories —
+      // replacing the former self-referential `startsWith` check.
+      try {
+        hostWorkspace = confineToRoot(serverRoot, hostWorkspace);
+      } catch (err) {
+        if (err instanceof PathConfinementError) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: "Path not allowed",
+            },
+            { status: 400 },
+          );
+        }
+        throw err;
+      }
+
+      // Second gate (#183 Copilot follow-up): realpath-canonicalized confinement.
+      // The lexical check above cannot see symlinks; a symlink INSIDE the server
+      // root pointing outside it would otherwise mount an out-of-root host dir.
+      // Both passes must hold before spawning (belt-and-suspenders / TOCTOU-cheap
+      // lexical first, then symlink-dereferencing realpath).
+      if (!isWithinRealRoot(serverRoot, hostWorkspace)) {
         return NextResponse.json(
           {
             success: false,
@@ -316,6 +418,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       console.log(
         `code-server: project=${project}, hostWorkspace=${hostWorkspace}, containerPath=${containerPath}`,
       );
+
+      // Side effects only run AFTER all validation + confinement passes (#183
+      // Copilot follow-up). Previously these ran before the confinement gates,
+      // so an authenticated request that was ultimately rejected with 400
+      // ("Path not allowed" / invalid port) could still tear down an existing
+      // code-server container and mutate the settings volume — a DoS / unintended
+      // side effect on invalid input. Confinement is now a strict gate.
+
+      // Remove existing container if it exists (running or stopped)
+      if (containerExists()) {
+        removeContainer();
+      }
+
+      // Initialize default settings (dark theme) in the volume if not present
+      initializeCodeServerSettings();
 
       // Start code-server container
       // Persist user data so theme preference is saved after first manual set
