@@ -37,7 +37,11 @@ if command -v lsof >/dev/null 2>&1; then
 fi
 
 echo "🔨 Building image..."
-docker build -t "$IMAGE_NAME" .
+# --target runner (F3 #100): the Dockerfile's last stage is now `terminal`, so an
+# untargeted build would produce the terminal-only image. rebuild.sh runs a
+# single combined container (default CMD start:prod = web + terminal), so it
+# needs the `runner` image explicitly.
+docker build --target runner -t "$IMAGE_NAME" .
 
 # Force-refresh ALL AI agent images (every variant, every run) so a stale local
 # :latest never wins over a newer registry image. Non-fatal: a pull failure only

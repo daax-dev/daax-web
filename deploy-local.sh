@@ -43,6 +43,9 @@ readonly SCRIPT_DIR SCRIPT_PATH
 readonly COMPOSE_FILE="$SCRIPT_DIR/deploy/docker-compose.yml"
 readonly TRAEFIK_TEMPLATE="$SCRIPT_DIR/deploy/traefik-daax.yml.tpl"
 readonly CONTAINER_NAME="daax"
+# F3 split (#100): the terminal plane is a separate service/container that owns
+# port 4201. deploy/status/stop/logs act on both planes.
+readonly TERMINAL_CONTAINER_NAME="daax-terminal"
 readonly PROJECT_NAME="daax"
 
 # Ensure sudo/root can find binaries in common locations even with secure_path.
@@ -164,10 +167,12 @@ list_docker_proxies() {
 # force-recreate will replace it) before allowing port reuse — matching the
 # full host binding, not just the port number, so a different container
 # publishing the same port on another host IP is not mistaken for daax.
-daax_published_bindings() {
+published_bindings() {
+  # $1 = container name. F3 (#100): 4200 is published by daax, 4201 by
+  # daax-terminal, so callers pass the container that owns the port being checked.
   docker inspect --format \
     '{{range $cp, $b := .NetworkSettings.Ports}}{{range $b}}{{.HostIp}}:{{.HostPort}}{{"\n"}}{{end}}{{end}}' \
-    "$CONTAINER_NAME" 2>/dev/null || true
+    "$1" 2>/dev/null || true
 }
 
 port_owner_daemon() {
@@ -288,7 +293,10 @@ cmd_check() {
   docker info --format '  id={{.ID}} ver={{.ServerVersion}} root={{.DockerRootDir}} containers={{.Containers}}/{{.ContainersRunning}}'
   local st
   st="$(docker inspect --format '{{.State.Status}} (id {{slice .Id 0 12}})' "$CONTAINER_NAME" 2>/dev/null || true)"
-  printf '  daax container  : %s\n' "${st:-absent}"
+  printf '  daax (web)      : %s\n' "${st:-absent}"
+  local st_term
+  st_term="$(docker inspect --format '{{.State.Status}} (id {{slice .Id 0 12}})' "$TERMINAL_CONTAINER_NAME" 2>/dev/null || true)"
+  printf '  daax-terminal   : %s\n' "${st_term:-absent}"
 
   printf '\n%s-- snap daemon --%s\n' "$BOLD" "$RST"
   if snap_docker_active; then
@@ -344,19 +352,27 @@ cmd_deploy() {
   # both surface as `0.0.0.0`), but a rare specific-IP binding whose canonical
   # form differs between the two sources would not match — in which case this
   # fails closed (die), the safe direction.
-  local daax_bindings
-  daax_bindings="$(daax_published_bindings)"
+  # F3 (#100): 4200 belongs to the daax (web) container, 4201 to the
+  # daax-terminal container. A native proxy on a port may stay only if the
+  # container we are about to force-recreate publishes that exact binding.
+  local daax_bindings terminal_bindings
+  daax_bindings="$(published_bindings "$CONTAINER_NAME")"
+  terminal_bindings="$(published_bindings "$TERMINAL_CONTAINER_NAME")"
   for p in 4200 4201; do
-    local owner owner_ip
+    local owner owner_ip owner_container own_bindings
+    if [[ "$p" == 4201 ]]; then
+      owner_container="$TERMINAL_CONTAINER_NAME"; own_bindings="$terminal_bindings"
+    else
+      owner_container="$CONTAINER_NAME"; own_bindings="$daax_bindings"
+    fi
     owner="$(port_owner_daemon "$p")"
     if [[ "$owner" == snap ]]; then
       die "port $p is held by the SNAP docker daemon. Run once: $0 migrate-daax"
     fi
     if [[ "$owner" == native ]]; then
-      # The native proxy may stay only if daax publishes this exact binding.
       owner_ip="$(list_docker_proxies | awk -v p="$p" '$3==p {print $2; exit}')"
-      if ! grep -qxF "${owner_ip}:${p}" <<<"$daax_bindings"; then
-        die "port $p is held by a native docker-proxy (bound ${owner_ip}:${p}) that the daax container does not publish. Identify it: ss -ltnp 'sport = :$p'"
+      if ! grep -qxF "${owner_ip}:${p}" <<<"$own_bindings"; then
+        die "port $p is held by a native docker-proxy (bound ${owner_ip}:${p}) that the ${owner_container} container does not publish. Identify it: ss -ltnp 'sport = :$p'"
       fi
     elif port_has_listener "$p"; then
       die "port $p is already in use by a non-docker process. Identify it: ss -ltnp 'sport = :$p'"
@@ -365,11 +381,13 @@ cmd_deploy() {
 
   ensure_network
 
-  log "building daax image..."
-  compose build --pull daax
+  log "building daax web + terminal images..."
+  compose build --pull daax terminal
   ensure_daax_data_owner
-  log "starting daax (force-recreate)..."
-  compose up -d --force-recreate --wait --wait-timeout 120 daax
+  log "starting daax web + terminal (force-recreate)..."
+  # --wait blocks until both are healthy. daax depends_on terminal, so terminal
+  # comes up first; listing both makes the force-recreate + wait explicit.
+  compose up -d --force-recreate --wait --wait-timeout 120 daax terminal
   ok "daax is up"
   printf '    local  : http://localhost:4200\n'
   printf '    traefik: https://daax.%s.poley.dev (requires install-traefik-config)\n' "$DAAX_HOSTNAME"
@@ -412,20 +430,20 @@ ensure_network() {
 cmd_stop() {
   need_docker_access
   reach_native_docker
-  compose stop daax
-  ok "daax stopped"
+  compose stop daax terminal
+  ok "daax (web + terminal) stopped"
 }
 
 cmd_status() {
   need_docker_access
   reach_native_docker
-  compose ps daax
+  compose ps daax terminal
 }
 
 cmd_logs() {
   need_docker_access
   reach_native_docker
-  compose logs "$@" daax
+  compose logs "$@" daax terminal
 }
 
 # -----------------------------------------------------------------------------
@@ -505,12 +523,12 @@ cmd_migrate_daax() {
     fi
   done
 
-  # Bring up daax on native
+  # Bring up daax on native (web + terminal planes, F3 #100)
   log "building daax on native daemon..."
-  compose build --pull daax
+  compose build --pull daax terminal
   ensure_daax_data_owner
   log "starting daax on native daemon..."
-  compose up -d --force-recreate --wait --wait-timeout 120 daax
+  compose up -d --force-recreate --wait --wait-timeout 120 daax terminal
 
   ok "daax migrated to native docker daemon"
   ok "the snap daemon is still running for your other services"

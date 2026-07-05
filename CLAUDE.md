@@ -78,6 +78,17 @@ DAAX_WORKSPACE=/abs/path bun run docker:run   # run with workspace mount + HOST_
 
 **`DAAX_WS_TOKEN_SECRET` is required in container mode** (F1b #95): connections reach the terminal server from the Docker bridge gateway (not loopback), so the WS uses the single-use bearer-ticket path, which needs this secret on both the app and terminal server (same container, one value). Both compose files require it (`:?`). For untrusted exposure also set `DAAX_REQUIRE_AUTH=1` (with Traefik/Pocket ID). Host-dev (`bun dev`) needs no secret — the loopback bypass applies. Set `DAAX_WORKSPACE` to an absolute path before running `bun run docker:run`. The script's `~/prj` fallback does not expand `~` in shell parameter expansion, so without an explicit absolute path the mount target is a literal `~/prj` and the run fails. `bun run docker:run` mounts the Docker socket and a workspace into `/workspace` and sets `HOST_WORKSPACE_PATH` (without these the terminal server falls back to host mode and container path/auth mounts break). The `/code-server` proxy requires the local `daax-code-server:latest` image built by `./scripts/build-code-server.sh` (enforced by `rebuild.sh` / `deploy-local.sh` and the API preflight). `./rebuild.sh` or `docker compose up` perform both steps. Access at `http://localhost:4200` or `http://<tailscale-ip>:4200`. Supports Docker-in-Docker for spawning AI coding containers.
 
+#### Split topology (F3, #100): `daax-web` + `daax-terminal`
+
+The **production deploy** (`deploy/docker-compose.yml` + Traefik) runs the two planes as **separate services**:
+
+- **`daax` (web)** — Next.js only (`start:web`, port 4200). Traefik-facing. **Holds NO Docker socket.** It still mounts `/workspace` (editor/MCP) and connects to Postgres, and it MINTS the WS bearer ticket (`POST /api/terminal/ticket`).
+- **`terminal` (`daax-terminal` image)** — `server/terminal-server.ts` only (`start:terminal`, port 4201). Sole holder of `docker.sock` (group-based access via `group_add: ${DOCKER_GID}`, non-root `node` user, boot preflight) + the workspace spawn machinery. It VERIFIES the WS ticket. Traefik's `/ws` route targets `127.0.0.1:4201`, now published by this service. Needs no Postgres and no Claude-config mount.
+- **Service contract:** both services share the SAME `DAAX_WS_TOKEN_SECRET` (stateless HMAC ticket — no shared memory), the `/workspace` mount, and `HOST_WORKSPACE_PATH`. The web tier reaches the terminal for its `/api/health` deep-probe via `TERMINAL_INTERNAL_HOST=terminal` over `daax-net`.
+- **Known trade-off:** with the socket removed from the web tier, the diagnostics that used it — `GET /api/containers` (host container list), `/api/containers/[id]/logs`, and the settings > Build panel live image digests / SBOM — degrade to their existing graceful "Docker unavailable" (503) in the split deploy. Restoring them (a read-only socket-proxy or a terminal-service internal API) is a follow-up.
+
+The image's **default CMD is still `start:prod` (both planes in one container)**, so the single-container convenience modes are **unchanged**: `bun dev` (host), `bun run docker:run`, `./rebuild.sh`, and the local `docker-compose.yml` all still run web + terminal together. **Only the production `deploy/docker-compose.yml` topology splits.**
+
 ---
 
 ## Database (Postgres)
