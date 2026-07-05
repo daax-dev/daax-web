@@ -56,14 +56,19 @@ export function useUnblockSession(params: UnblockParams): UnblockSession {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [output, setOutput] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
-  const disposedRef = useRef(false);
   const [nonce, setNonce] = useState(0);
 
   // Stable key so the effect only re-runs when connection params truly change.
   const paramKey = JSON.stringify([params.mode, nonce]);
 
   useEffect(() => {
-    disposedRef.current = false;
+    // Per-effect-run disposed flag (NOT a shared ref). A previous run's async
+    // openTerminalWebSocket() can resolve AFTER a reconnect/mode change has
+    // started a new run; a shared ref would have been reset to false by the new
+    // run, so the stale continuation would wrongly attach handlers / set state
+    // for a dead socket. Each run captures its OWN `disposed` in this closure,
+    // set true by that run's cleanup, so stale continuations always see true.
+    let disposed = false;
     setStatus("connecting");
     setOutput("");
     setSessionId(null);
@@ -83,10 +88,10 @@ export function useUnblockSession(params: UnblockParams): UnblockSession {
       try {
         ws = await openTerminalWebSocket(wsUrl);
       } catch {
-        if (!disposedRef.current) setStatus("error");
+        if (!disposed) setStatus("error");
         return;
       }
-      if (disposedRef.current) {
+      if (disposed) {
         try {
           ws.close();
         } catch {
@@ -97,12 +102,12 @@ export function useUnblockSession(params: UnblockParams): UnblockSession {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        if (disposedRef.current) return;
+        if (disposed) return;
         setStatus("open");
       };
 
       ws.onmessage = (event) => {
-        if (disposedRef.current) return;
+        if (disposed) return;
         try {
           const msg = JSON.parse(event.data);
           if (msg.type === "output" && typeof msg.data === "string") {
@@ -123,18 +128,18 @@ export function useUnblockSession(params: UnblockParams): UnblockSession {
       };
 
       ws.onclose = (event) => {
-        if (disposedRef.current) return;
+        if (disposed) return;
         // 1008 = policy violation (auth/ticket rejection): non-recoverable.
         setStatus(event.code === 1008 ? "unauthorized" : "closed");
       };
 
       ws.onerror = () => {
-        if (!disposedRef.current) setStatus("error");
+        if (!disposed) setStatus("error");
       };
     })();
 
     return () => {
-      disposedRef.current = true;
+      disposed = true;
       const sock = wsRef.current;
       wsRef.current = null;
       if (sock) {

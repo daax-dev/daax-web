@@ -115,6 +115,53 @@ describe("useUnblockSession", () => {
     expect(ws.close).toHaveBeenCalled();
   });
 
+  it("does not attach handlers or set state for a stale socket after reconnect (race)", async () => {
+    // Regression guard for the #156 review concurrency bug: a previous run's
+    // async openTerminalWebSocket() must not attach handlers / set state after a
+    // reconnect has started a new run. With a shared disposed ref (reset per
+    // run) the stale continuation would see disposed === false and clobber the
+    // fresh socket. Each run must check its OWN disposed flag.
+    const staleWs = makeWs();
+    const freshWs = makeWs();
+    let resolveStale!: (ws: WebSocket) => void;
+    const stalePromise = new Promise<WebSocket>((r) => {
+      resolveStale = r;
+    });
+
+    vi.mocked(openTerminalWebSocket)
+      .mockReturnValueOnce(stalePromise)
+      .mockResolvedValueOnce(freshWs as unknown as WebSocket);
+
+    const hook = renderHook(() => useUnblockSession({ mode: "local" }));
+
+    // First run's async continuation is still pending (stale promise open).
+    // Reconnect disposes run #1 and starts run #2, which resolves freshWs.
+    act(() => hook.result.current.reconnect());
+    await waitFor(() => expect(freshWs.onmessage).toBeTypeOf("function"));
+
+    // Now the stale connector finally resolves — AFTER the new run is live.
+    await act(async () => {
+      resolveStale(staleWs as unknown as WebSocket);
+      await stalePromise;
+    });
+
+    // The stale socket must be closed and must NEVER have handlers attached,
+    // and the live (fresh) socket must remain the one in use.
+    expect(staleWs.close).toHaveBeenCalled();
+    expect(staleWs.onopen).toBeNull();
+    expect(staleWs.onmessage).toBeNull();
+    expect(staleWs.onclose).toBeNull();
+
+    act(() => freshWs.onopen?.());
+    expect(hook.result.current.status).toBe("open");
+    act(() =>
+      freshWs.onmessage?.({
+        data: JSON.stringify({ type: "session", id: "fresh-id" }),
+      }),
+    );
+    expect(hook.result.current.sessionId).toBe("fresh-id");
+  });
+
   it("never forwards command/containerName/cwd to the WS query string", async () => {
     // Regression guard for the #156 review RCE: even if a caller smuggles
     // command-execution params in (e.g. lifted from the /m URL), the hook
