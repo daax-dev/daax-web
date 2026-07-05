@@ -27,12 +27,9 @@ test.describe("RBAC admin gate — unauthenticated is blocked", () => {
           ? await unauthenticatedRequest.get(path)
           : await unauthenticatedRequest.post(path, { data: {} });
       const status = response.status();
-      // Unauthenticated block only: 401 (deny) or 302/307 (redirect to login).
-      // 403 is an AUTHENTICATED-but-forbidden status and must NOT satisfy this
-      // assertion — an unauthenticated caller must never reach an authz verdict.
       expect(
         status === 401 || status === 302 || status === 307,
-        `Expected an unauthenticated block for ${method} ${path}, got ${status}`,
+        `Expected an unauthenticated block (401/302/307) for ${method} ${path}, got ${status}`,
       ).toBe(true);
     });
   }

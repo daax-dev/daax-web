@@ -127,9 +127,13 @@ describe("admin allow-list parsing + matching (F5 #101)", () => {
     expect(rolesForGroups(["unmapped"], map)).toEqual([]);
   });
 
-  it("lowercases role names so they match the seeded lowercase roles", () => {
-    const map = parseGroupRoleMap("Eng:Admin");
-    expect(map.get("Eng")).toEqual(new Set(["admin"]));
-    expect(rolesForGroups(["Eng"], map)).toEqual(["admin"]);
+  it("lowercases role names (roles are seeded lowercase); group names stay case-sensitive", () => {
+    const map = parseGroupRoleMap("eng:Admin, Ops:USER");
+    expect(map.get("eng")).toEqual(new Set(["admin"]));
+    expect(map.get("Ops")).toEqual(new Set(["user"]));
+    expect(map.has("ops")).toBe(false);
+
+    expect(rolesForGroups(["eng"], map)).toEqual(["admin"]);
+    expect(rolesForGroups(["Ops"], map)).toEqual(["user"]);
   });
 });

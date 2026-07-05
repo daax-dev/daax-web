@@ -141,11 +141,17 @@ async function materializePendingGrants(
     [id.subject, email, username],
   );
   for (const row of res.rows) {
+    // Provenance precedence (ui > reconcile > group-sync): a reconcile-owned
+    // pending grant must UPGRADE an existing group-sync row to 'reconcile' so a
+    // later group-sync prune (user leaves the IdP group) cannot revoke an
+    // allow-listed admin. Never downgrade a 'ui' row, never touch an existing
+    // 'reconcile' row.
     await client.query(
       `INSERT INTO user_roles (subject, role, granted_by)
        VALUES ($1, $2, $3)
-       ON CONFLICT (subject, role) DO NOTHING`,
-      [id.subject, row.role, row.granted_by],
+       ON CONFLICT (subject, role) DO UPDATE SET granted_by = EXCLUDED.granted_by
+         WHERE EXCLUDED.granted_by = $4 AND user_roles.granted_by = $5`,
+      [id.subject, row.role, row.granted_by, GRANT_RECONCILE, GRANT_GROUP_SYNC],
     );
   }
   // Consume the pending rows we just matched.
@@ -169,10 +175,18 @@ async function syncGroupRoles(
   id: JitIdentity,
   groupRoleMap: Map<string, Set<string>>,
 ): Promise<void> {
-  const known = await existingRoleNames(client);
-  const desired = rolesForGroups(id.groups, groupRoleMap).filter((r) =>
-    known.has(r),
-  );
+  // No group→role mapping configured (no DAAX_GROUP_ROLE_MAP): nothing can be
+  // group-granted, so skip the `roles` table roundtrip that jitProvision would
+  // otherwise pay on EVERY requireRole/resolveAccess. Still fall through to the
+  // prune below so any group-sync grants left over from a previously-configured
+  // mapping are revoked (empty `desired` prunes them all).
+  let desired: string[] = [];
+  if (groupRoleMap.size > 0) {
+    const known = await existingRoleNames(client);
+    desired = rolesForGroups(id.groups, groupRoleMap).filter((r) =>
+      known.has(r),
+    );
+  }
 
   // Remove group-sync grants no longer justified by current group membership.
   await client.query(
@@ -263,7 +277,16 @@ export async function getUserRoles(subject: string): Promise<string[]> {
   return res.rows.map((r) => r.role);
 }
 
-/** Grant a role to an existing user (UI provenance by default). Idempotent. */
+/**
+ * Grant a role to an existing user (UI provenance by default). Idempotent.
+ *
+ * Provenance precedence — explicit UI grants win: when the (subject, role) row
+ * already exists with a non-'ui' provenance (e.g. 'group-sync') and this call
+ * is an explicit UI grant, the row is UPGRADED to granted_by='ui' so a later
+ * group-sync / reconcile prune (which only deletes rows of its OWN provenance)
+ * can never silently revoke an operator's explicit grant. Non-'ui' callers
+ * never downgrade an existing row.
+ */
 export async function grantRole(
   subject: string,
   role: string,
@@ -272,8 +295,9 @@ export async function grantRole(
   await query(
     `INSERT INTO user_roles (subject, role, granted_by)
      VALUES ($1, $2, $3)
-     ON CONFLICT (subject, role) DO NOTHING`,
-    [subject, role, grantedBy],
+     ON CONFLICT (subject, role) DO UPDATE SET granted_by = EXCLUDED.granted_by
+       WHERE EXCLUDED.granted_by = $4 AND user_roles.granted_by <> $4`,
+    [subject, role, grantedBy, GRANT_UI],
   );
 }
 
@@ -348,11 +372,16 @@ export async function reconcile(
     if (dryRun) return computed;
 
     for (const g of computed.userRoleGrantsToAdd) {
+      // Provenance precedence (ui > reconcile > group-sync): UPGRADE an existing
+      // group-sync row to 'reconcile' so a later group-sync prune (user leaves
+      // the IdP group) cannot revoke an allow-listed admin. Never downgrade a
+      // 'ui' row, never touch an existing 'reconcile' row.
       await client.query(
         `INSERT INTO user_roles (subject, role, granted_by)
          VALUES ($1, $2, $3)
-         ON CONFLICT (subject, role) DO NOTHING`,
-        [g.subject, g.role, GRANT_RECONCILE],
+         ON CONFLICT (subject, role) DO UPDATE SET granted_by = $3
+           WHERE user_roles.granted_by = $4`,
+        [g.subject, g.role, GRANT_RECONCILE, GRANT_GROUP_SYNC],
       );
     }
     // Prune ONLY reconcile-owned user_roles — UI / default / group grants survive.

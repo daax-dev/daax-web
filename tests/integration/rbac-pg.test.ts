@@ -211,6 +211,142 @@ describe.skipIf(!configured)("RBAC on Postgres (F5 #101)", () => {
     expect(jit2.roles).toEqual(["user"]);
   });
 
+  it("prunes stale group-sync grants when the group→role map is emptied (no roles roundtrip, but still revokes)", async () => {
+    const s = "77777777-0000-0000-0000-00000000000f";
+    const map = new Map([["daax-admins", new Set(["admin"])]]);
+    const withGroup = {
+      subject: s,
+      email: null,
+      username: null,
+      name: null,
+      idp: "test",
+      groups: ["daax-admins"],
+    };
+
+    // Login with a configured map → admin granted via group-sync.
+    const jit = await jitProvision(withGroup, map);
+    expect(jit.roles.sort()).toEqual(["admin", "user"]);
+
+    // Operator removes DAAX_GROUP_ROLE_MAP → empty map. The perf guard skips the
+    // `roles` roundtrip, but the stale group-sync admin grant must STILL be
+    // pruned (a full early-return would leave the privileged grant in place).
+    const jit2 = await jitProvision(withGroup, new Map());
+    expect(jit2.roles).toEqual(["user"]);
+  });
+
+  it("explicit UI grant upgrades group-sync provenance so group removal does NOT revoke it", async () => {
+    const s = "88888888-0000-0000-0000-00000000000d";
+    const map = new Map([["daax-admins", new Set(["admin"])]]);
+
+    // 1. Admin arrives via group-sync.
+    const withGroup = {
+      subject: s,
+      email: null,
+      username: null,
+      name: null,
+      idp: "test",
+      groups: ["daax-admins"],
+    };
+    const jit = await jitProvision(withGroup, map);
+    expect(jit.roles.sort()).toEqual(["admin", "user"]);
+
+    // 2. Operator explicitly grants admin via the UI → provenance upgraded.
+    await grantRole(s, "admin");
+    const prov = await query<{ granted_by: string }>(
+      "SELECT granted_by FROM user_roles WHERE subject = $1 AND role = 'admin'",
+      [s],
+    );
+    expect(prov.rows[0]?.granted_by).toBe("ui");
+
+    // 3. User leaves the IdP group → group-sync must NOT revoke the UI grant.
+    const jit2 = await jitProvision({ ...withGroup, groups: [] }, map);
+    expect(jit2.roles.sort()).toEqual(["admin", "user"]);
+  });
+
+  it("reconcile/allow-list grant upgrades group-sync provenance so group removal does NOT revoke an allow-listed admin", async () => {
+    const s = "aaaaaaaa-0000-0000-0000-00000000000a";
+    const map = new Map([["daax-admins", new Set(["admin"])]]);
+    const withGroup = {
+      subject: s,
+      email: "gs@x.z",
+      username: "gs",
+      name: null,
+      idp: "test",
+      groups: ["daax-admins"],
+    };
+
+    // 1. Admin arrives via group-sync.
+    const jit = await jitProvision(withGroup, map);
+    expect(jit.roles.sort()).toEqual(["admin", "user"]);
+    const provGs = await query<{ granted_by: string }>(
+      "SELECT granted_by FROM user_roles WHERE subject = $1 AND role = 'admin'",
+      [s],
+    );
+    expect(provGs.rows[0]?.granted_by).toBe("group-sync");
+
+    // 2. Boot reconcile with the user allow-listed (user already exists) →
+    //    the group-sync admin row is UPGRADED to granted_by='reconcile'.
+    await reconcile(envWith("gs@x.z"));
+    const provRec = await query<{ granted_by: string }>(
+      "SELECT granted_by FROM user_roles WHERE subject = $1 AND role = 'admin'",
+      [s],
+    );
+    expect(provRec.rows[0]?.granted_by).toBe("reconcile");
+
+    // 3. User leaves the IdP group → group-sync prune must NOT revoke the now
+    //    reconcile-owned admin (the allow-listed admin keeps access).
+    const jit2 = await jitProvision({ ...withGroup, groups: [] }, map);
+    expect(jit2.roles.sort()).toEqual(["admin", "user"]);
+  });
+
+  it("pending-grant materialization upgrades group-sync provenance (allow-list survives group removal)", async () => {
+    const s = "bbbbbbbb-0000-0000-0000-00000000000b";
+    const map = new Map([["daax-admins", new Set(["admin"])]]);
+    const withGroup = {
+      subject: s,
+      email: "pg@x.z",
+      username: "pg",
+      name: null,
+      idp: "test",
+      groups: ["daax-admins"],
+    };
+
+    // Admin arrives via group-sync (granted_by='group-sync').
+    await jitProvision(withGroup, map);
+
+    // A reconcile-owned pending grant keyed to the user's email exists (e.g. an
+    // allow-list entry created before this subject was linked). On next login it
+    // must UPGRADE the group-sync row to 'reconcile', not DO NOTHING.
+    await query(
+      "INSERT INTO pending_grants (identifier, role, granted_by) VALUES ($1, 'admin', 'reconcile')",
+      ["pg@x.z"],
+    );
+
+    // Next login (still in group) materializes the pending grant → upgrade.
+    await jitProvision(withGroup, map);
+    const prov = await query<{ granted_by: string }>(
+      "SELECT granted_by FROM user_roles WHERE subject = $1 AND role = 'admin'",
+      [s],
+    );
+    expect(prov.rows[0]?.granted_by).toBe("reconcile");
+
+    // Leaving the group must NOT revoke the reconcile-owned admin.
+    const jit2 = await jitProvision({ ...withGroup, groups: [] }, map);
+    expect(jit2.roles.sort()).toEqual(["admin", "user"]);
+  });
+
+  it("a non-UI grant never downgrades an existing UI grant", async () => {
+    const s = "99999999-0000-0000-0000-00000000000e";
+    await jitProvision(identity(s, "e@x.z", "e"));
+    await grantRole(s, "admin"); // granted_by='ui'
+    await grantRole(s, "admin", "group-sync"); // must NOT downgrade
+    const prov = await query<{ granted_by: string }>(
+      "SELECT granted_by FROM user_roles WHERE subject = $1 AND role = 'admin'",
+      [s],
+    );
+    expect(prov.rows[0]?.granted_by).toBe("ui");
+  });
+
   it("writes an auth_audit row on reconcile", async () => {
     await reconcile(envWith(""));
     const res = await query<{ event: string; outcome: string }>(
