@@ -14,7 +14,8 @@
 # Docker socket by group membership. For a bare `docker compose up` (not via
 # ./rebuild.sh, which derives it), export the HOST socket GID first or spawning
 # fails — and the terminal server FAILS LOUD at boot if it is wrong:
-#   export DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+#   export DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)   # Linux
+#   export DOCKER_GID=$(stat -f '%g' /var/run/docker.sock)   # macOS/BSD (Docker Desktop)
 # The compose default (999) is only correct on hosts whose docker GID is 999.
 
 services:

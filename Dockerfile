@@ -6,7 +6,8 @@
 # The image runs as the non-root `node` user (#185), so Docker-socket access is by
 # GROUP membership: pass --group-add with the HOST socket's GID (NOT uid 0), or
 # spawning fails with a socket permission-denied. Resolve it with:
-#     stat -c '%g' /var/run/docker.sock
+#     stat -c '%g' /var/run/docker.sock   # Linux
+#     stat -f '%g' /var/run/docker.sock   # macOS/BSD (Docker Desktop)
 # --security-opt no-new-privileges and --cap-drop ALL match the compose hardening.
 #
 # Run (minimal):
