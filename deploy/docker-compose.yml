@@ -207,6 +207,15 @@ services:
       # GitHub token (optional)
       - GITHUB_DAAX=${GITHUB_DAAX:-}
 
+      # Deploy provenance (brain2daax F8/F9, #104). scripts/deploy.sh stamps
+      # who/how/where at deploy time; lib/build/build-info.ts surfaces these on
+      # the settings > Build page. All optional (:-) so non-deploy.sh runs
+      # (deploy-local.sh, docker:run) are unaffected.
+      - DAAX_DEPLOY_BY=${DAAX_DEPLOY_BY:-}
+      - DAAX_DEPLOY_VIA=${DAAX_DEPLOY_VIA:-}
+      - DAAX_DEPLOY_MODE=${DAAX_DEPLOY_MODE:-}
+      - DAAX_DEPLOY_HOST=${DAAX_DEPLOY_HOST:-}
+
       # Clawdbot gateway (optional - required for /bot page)
       - CLAWD_GATEWAY_URL=${CLAWD_GATEWAY_URL:-}
       - CLAWD_GATEWAY_TOKEN=${CLAWD_GATEWAY_TOKEN:-}
