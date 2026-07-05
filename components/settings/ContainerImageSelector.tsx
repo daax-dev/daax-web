@@ -11,8 +11,36 @@ import {
   AlertTriangle,
   Edit2,
 } from "lucide-react";
-import { CONTAINER_VARIANTS } from "@/lib/settings";
+import {
+  CONTAINER_VARIANTS,
+  DEFAULT_AGENT_IMAGE,
+  DEFAULT_AGENT_IMAGE_GSD,
+} from "@/lib/settings";
 import { cn } from "@/lib/utils";
+
+// Known variants pinned to an immutable manifest-list digest (issue #195).
+// Selecting or pulling one of these must write/pull the DIGEST reference, never
+// `${registry}/${id}:latest` — a click in Settings must not silently un-pin the
+// agent image. Unpinned known variants (core/flowspec/openspec) and custom
+// images keep the existing tag-based behavior.
+const PINNED_VARIANT_DIGESTS: Record<string, string> = {
+  "daax-agents": DEFAULT_AGENT_IMAGE,
+  "daax-agents-gsd": DEFAULT_AGENT_IMAGE_GSD,
+};
+
+// Build the image reference for a known variant id. Pinned variants resolve to
+// `${registry}/${id}@sha256:...` (immutable); everything else falls back to the
+// mutable `:latest` tag, preserving prior behavior for unpinned variants.
+export function imageRefForVariant(registry: string, id: string): string {
+  const pinned = PINNED_VARIANT_DIGESTS[id];
+  if (pinned) {
+    // The pin embeds the `jpoley/` namespace; honor a custom registry prefix
+    // while keeping the content-addressed @sha256 digest.
+    const digest = pinned.slice(pinned.indexOf("@"));
+    return `${registry}/${id}${digest}`;
+  }
+  return `${registry}/${id}:latest`;
+}
 
 interface ImageStatus {
   id: string;
@@ -89,7 +117,8 @@ export function ContainerImageSelector({
 
   // Pull an image
   const pullImage = async (imageId: string) => {
-    const fullName = `${registry}/${imageId}:latest`;
+    // Pull by pinned digest for known-pinned variants (issue #195), else :latest.
+    const fullName = imageRefForVariant(registry, imageId);
     setPullingImage(imageId);
     setPullProgress("");
     setPullError(null);
@@ -290,7 +319,10 @@ export function ContainerImageSelector({
                 )}
                 onClick={() => {
                   if (isClickable) {
-                    const fullName = `${registry}/${variant.id}:latest`;
+                    // Emit the pinned digest for known-pinned variants (issue
+                    // #195) so a click cannot un-pin the agent image; unpinned
+                    // variants keep :latest.
+                    const fullName = imageRefForVariant(registry, variant.id);
                     onSelect(variant.id, fullName);
                   }
                 }}
