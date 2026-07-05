@@ -267,6 +267,23 @@ describe("settings migration: legacy :latest agent-image defaults (#195)", () =>
     expect(saved.aiCoding.defaultContainerImage).toBe(DEFAULT_AGENT_IMAGE_GSD);
   });
 
+  it("preserves a valid digest that uses uppercase hex (not reset to default)", async () => {
+    const { getSettings, DEFAULT_AGENT_IMAGE_GSD } = await loadSettings();
+    // A valid @sha256 digest may use uppercase hex per the Docker reference
+    // grammar (lib/docker-validation.ts VALID_IMAGE_NAME_PATTERN allows A-F).
+    // The persisted-settings validImagePattern must accept it too, otherwise a
+    // legitimate pinned image is wrongly reset to the default on load.
+    const upperHexDigest =
+      "jpoley/daax-agents@sha256:2153F137B3F47DE007698D1E5F0D31A684CB45A7E1EBC1326F668EE458F55BC5";
+    mockStored(imageFixture(upperHexDigest, DEFAULT_AGENT_IMAGE_GSD));
+
+    const result = getSettings();
+
+    // Must survive untouched — not reset, not re-saved.
+    expect(result.containerImage).toBe(upperHexDigest);
+    expect(localStorage.setItem).not.toHaveBeenCalled();
+  });
+
   it("does NOT rewrite genuinely custom user-chosen images", async () => {
     const { getSettings } = await loadSettings();
     // Values a user could have picked deliberately: a valid non-default tag

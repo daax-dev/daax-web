@@ -22,7 +22,8 @@ cd "$(dirname "$0")/.."
 # Registry namespace/username prefix. Matches AICodingSettings.containerRegistry
 # default in lib/settings.ts (DEFAULT_AI_CODING_SETTINGS). Images are built as
 # {registry}/{variant}:{tag}.
-REGISTRY="${DAAX_AGENT_REGISTRY:-jpoley}"
+DEFAULT_REGISTRY="jpoley"
+REGISTRY="${DAAX_AGENT_REGISTRY:-$DEFAULT_REGISTRY}"
 TAG="${DAAX_AGENT_TAG:-latest}"
 
 # Digest the default agent image is pinned to (issue #195, Fable M5). MUST stay
@@ -112,6 +113,27 @@ verify_pinned_digest() {
   # $2 = pinned sha256 digest
   # $3 = human hint naming the source-of-truth constant to bump on drift
   local repo="$1" pinned="$2" const_hint="$3"
+
+  # Pinning rule (issue #195), mirroring imageRefForVariant() in lib/settings.ts:
+  # the pinned digests identify jpoley-built manifests, which cannot exist under a
+  # third-party namespace, so `${REGISTRY}/${repo}@<jpoley-digest>` would be a dead
+  # reference there. Verify the immutable digest pin ONLY for the default `jpoley`
+  # registry; a custom DAAX_AGENT_REGISTRY falls back to the mutable `:latest` tag
+  # (the operator's own builds). The fail-closed gate applies to BOTH paths.
+  if [ "$REGISTRY" != "$DEFAULT_REGISTRY" ]; then
+    local tag_ref="${REGISTRY}/${repo}:latest"
+    printf '   Pulling %s ... ' "$tag_ref"
+    if docker pull "$tag_ref" >/dev/null; then
+      echo "✅ pulled (custom registry: tag-based, jpoley digest pin not applicable)"
+    else
+      echo "❌ FAILED"
+      echo "   ⚠️  Could not pull ${tag_ref}."
+      echo "       The registry may be unreachable or the tag may not exist."
+      digest_ok=0
+    fi
+    return
+  fi
+
   local pinned_ref="${REGISTRY}/${repo}@${pinned}"
   printf '   Pulling %s ... ' "$pinned_ref"
   # Suppress the noisy progress on stdout but keep stderr, so a failed digest pull

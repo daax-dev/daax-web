@@ -575,7 +575,7 @@ export const DEFAULT_AI_CODING_SETTINGS: AICodingSettings = {
   // Digest-pinned (issue #195) — see DEFAULT_AGENT_IMAGE_GSD above.
   defaultContainerImage: DEFAULT_AGENT_IMAGE_GSD,
   // Registry is the username/namespace prefix for images (not hostname like docker.io).
-  // Images are constructed as: {registry}/{variant}:latest -> jpoley/daax-agents-gsd
+  // Images are constructed as: {registry}/{variant}:latest -> jpoley/daax-agents-gsd:latest
   containerRegistry: "jpoley",
   autoPullLatest: false,
   usePrebuiltImage: true,
@@ -968,7 +968,7 @@ export function getSettings(): DaaxSettings {
       // Accepts the digest-pinned default (issue #195) as valid so it is not
       // needlessly reset (and rewritten) on every load.
       const validImagePattern =
-        /^jpoley\/daax-agents(?::(latest|amd64|arm64|[\w.-]+)|@sha256:[0-9a-f]{64})$/;
+        /^jpoley\/daax-agents(?::(latest|amd64|arm64|[\w.-]+)|@sha256:[0-9a-fA-F]{64})$/;
       if (
         parsed.containerImage &&
         !validImagePattern.test(parsed.containerImage)
