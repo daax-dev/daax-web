@@ -31,8 +31,10 @@ export function ApproveDenyBar({ send, disabled }: ApproveDenyBarProps) {
     (action: PermissionAction) => {
       const now = Date.now();
       if (now - lastRef.current < DEBOUNCE_MS) return;
-      lastRef.current = now;
-      send(permissionSequence(action));
+      // Only open the debounce window when the send actually lands. `send`
+      // returns false when the socket isn't open; advancing the timestamp on a
+      // failed send would lock the user out for DEBOUNCE_MS with nothing sent.
+      if (send(permissionSequence(action))) lastRef.current = now;
     },
     [send],
   );

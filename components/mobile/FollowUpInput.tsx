@@ -25,6 +25,12 @@ export function FollowUpInput({ send, disabled }: FollowUpInputProps) {
     if (data && send(data)) setValue("");
   }, [value, send]);
 
+  // Enable Send only when the SANITIZED payload is non-empty: control-only
+  // input (tabs/newlines) sanitizes to "" and would be a no-op click. Reuse the
+  // send-path sanitizer (submit=false → no trailing Enter) so the button state
+  // reflects exactly what would be sent.
+  const canSend = followUpInput(value, false).length > 0;
+
   return (
     <form
       className="flex gap-2"
@@ -43,11 +49,7 @@ export function FollowUpInput({ send, disabled }: FollowUpInputProps) {
         autoCapitalize="off"
         autoCorrect="off"
       />
-      <Button
-        type="submit"
-        size="icon"
-        disabled={disabled || value.length === 0}
-      >
+      <Button type="submit" size="icon" disabled={disabled || !canSend}>
         <Send />
       </Button>
     </form>
