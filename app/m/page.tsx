@@ -27,21 +27,24 @@ import { useUnblockSession } from "@/hooks/useUnblockSession";
  * The buttons send the SAME `{ type: "input", data }` frames and ticket auth
  * the desktop terminal uses. Connection target via query params:
  *   ?mode=local|container|shell-tmux  (default: local — a raw shell)
- *   ?containerName=daax-xxxxxxxx      (exec a new shell in a running container)
- *   ?command=…  ?cwd=…
+ *
+ * SECURITY: `mode` is the ONLY URL parameter honored, allowlisted below.
+ * `command`, `containerName`, and `cwd` are deliberately NOT read from the
+ * URL: the terminal server executes `command` verbatim in the spawned shell
+ * and does not validate `cwd`/`containerName`, so honoring them here would
+ * let a crafted /m link run arbitrary commands in a victim's authenticated
+ * session (zero-click RCE — #156 review). Mobile opens a plain interactive
+ * shell only; all input goes through the sanitized controls below.
  */
+const ALLOWED_MODES = new Set(["local", "container", "shell-tmux"]);
+
 function UnblockView() {
   const params = useSearchParams();
-  const mode = params.get("mode") || "local";
-  const containerName = params.get("containerName") || undefined;
-  const command = params.get("command") || undefined;
-  const cwd = params.get("cwd") || undefined;
+  const modeParam = params.get("mode") || "local";
+  const mode = ALLOWED_MODES.has(modeParam) ? modeParam : "local";
 
   const { status, sessionId, output, send, reconnect } = useUnblockSession({
     mode,
-    containerName,
-    command,
-    cwd,
   });
 
   // The follow-up field writes raw text to a shell (in mode=local, a real

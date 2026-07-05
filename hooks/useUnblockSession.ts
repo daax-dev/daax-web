@@ -36,11 +36,6 @@ export type UnblockStatus =
 export interface UnblockParams {
   /** "local" | "container" | "shell-tmux" — mirrors desktop semantics. */
   mode: string;
-  /** Existing docker container to exec into (opens a new shell in it). */
-  containerName?: string;
-  /** Initial command to run (e.g. reserved; usually empty for unblock). */
-  command?: string;
-  cwd?: string;
 }
 
 const MAX_BUFFER = 64 * 1024; // cap retained output so a chatty pty can't grow unbounded
@@ -65,13 +60,7 @@ export function useUnblockSession(params: UnblockParams): UnblockSession {
   const [nonce, setNonce] = useState(0);
 
   // Stable key so the effect only re-runs when connection params truly change.
-  const paramKey = JSON.stringify([
-    params.mode,
-    params.containerName ?? "",
-    params.command ?? "",
-    params.cwd ?? "",
-    nonce,
-  ]);
+  const paramKey = JSON.stringify([params.mode, nonce]);
 
   useEffect(() => {
     disposedRef.current = false;
@@ -79,11 +68,14 @@ export function useUnblockSession(params: UnblockParams): UnblockSession {
     setOutput("");
     setSessionId(null);
 
+    // SECURITY: only `mode` is forwarded to the terminal WS. The server
+    // executes a `command` query param verbatim in the spawned shell and uses
+    // `cwd`/`containerName` without validation, so the mobile surface must
+    // never place caller-supplied values on the WS query string (issue #156
+    // review: zero-click RCE via a crafted /m link). Mobile opens a plain
+    // interactive shell only; input flows through send() like typed keys.
     const qs = new URLSearchParams();
     qs.set("mode", params.mode);
-    if (params.containerName) qs.set("containerName", params.containerName);
-    if (params.command) qs.set("command", params.command);
-    if (params.cwd) qs.set("cwd", params.cwd);
     const wsUrl = buildTerminalWsUrl(qs);
 
     let ws: WebSocket | null = null;
