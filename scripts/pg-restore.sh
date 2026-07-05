@@ -66,6 +66,35 @@ if ! command -v pg_restore >/dev/null 2>&1; then
   exit 1
 fi
 
+# Percent-decode a URI component (%XX -> byte) WITHOUT interpreting backslash
+# escapes. Each literal character — including a backslash decoded from %5C — is
+# appended verbatim, and only the two hex digits we control are ever handed to
+# printf's escape parser. A `printf %b`-based decode is unsafe here: a decoded
+# backslash immediately followed by e.g. `n` gets reinterpreted as a newline,
+# silently corrupting the password handed to PGPASSWORD.
+url_decode() {
+  # $1 = percent-encoded string. Prints the decoded bytes on stdout.
+  local encoded="$1" decoded="" i=0 n ch hex byte
+  n=${#encoded}
+  while [ "$i" -lt "$n" ]; do
+    ch="${encoded:i:1}"
+    if [ "$ch" = "%" ] && [ $((i + 2)) -lt "$n" ]; then
+      hex="${encoded:i+1:2}"
+      case "$hex" in
+        [0-9A-Fa-f][0-9A-Fa-f])
+          printf -v byte "\x${hex}"
+          decoded+="$byte"
+          i=$((i + 3))
+          continue
+          ;;
+      esac
+    fi
+    decoded+="$ch"
+    i=$((i + 1))
+  done
+  printf '%s' "$decoded"
+}
+
 # Strip the `:password` from a libpq URI's userinfo and hand it to libpq via
 # PGPASSWORD instead (same helper as pg-backup.sh). SECURITY: a password-bearing
 # URI on argv is readable by any local user via `ps` / /proc/*/cmdline for the
@@ -80,8 +109,7 @@ strip_url_password() {
   # An '@' after the first '/' is in the path/query, not userinfo.
   case "$userinfo" in */*) userinfo="" ;; esac
   if [ -n "$userinfo" ] && [ "${userinfo#*:}" != "$userinfo" ]; then
-    PGPASSWORD="$(printf '%b' "$(printf '%s' "${userinfo#*:}" \
-      | sed -e 's/\\/\\\\/g' -e 's/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')")"
+    PGPASSWORD="$(url_decode "${userinfo#*:}")"
     export PGPASSWORD
     conn_uri="${1%%://*}://${userinfo%%:*}@${rest#*@}"
   fi

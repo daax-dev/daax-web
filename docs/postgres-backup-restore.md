@@ -15,9 +15,9 @@ grant and the audit trail — so backups are load-bearing, not optional.
 
 The Postgres data volume is a **persistent named volume in both deploy modes**:
 
-| File | Service | Volume mount | Named volume |
-| --- | --- | --- | --- |
-| `docker-compose.yml` (local) | `postgres` | `daax-pg-data:/var/lib/postgresql` | `daax-pg-data` (`driver: local`) |
+| File                               | Service    | Volume mount                       | Named volume                     |
+| ---------------------------------- | ---------- | ---------------------------------- | -------------------------------- |
+| `docker-compose.yml` (local)       | `postgres` | `daax-pg-data:/var/lib/postgresql` | `daax-pg-data` (`driver: local`) |
 | `deploy/docker-compose.yml` (prod) | `postgres` | `daax-pg-data:/var/lib/postgresql` | `daax-pg-data` (`driver: local`) |
 
 The data survives `docker compose restart` / `down`. An **ephemeral** DB
@@ -104,8 +104,10 @@ DAAX_BACKUP_DIR=/var/backups/daax DAAX_RESTORE_YES=1 scripts/pg-restore.sh --lat
 
 Restore into a **fresh/idle** database with the app stopped (`docker compose stop
 daax` or scale to 0) so no writer races the restore. `pg_restore` runs with
-`--exit-on-error`; a non-zero exit means a partial restore — investigate before
-serving traffic.
+`--single-transaction` (which implies `--exit-on-error`), so the whole restore
+runs in one transaction: a non-zero exit means that transaction **rolled back**
+and the database is unchanged from before the restore — nothing is partially
+applied. Investigate the failure and re-run before serving traffic.
 
 Restoring a dump from the compose `daax-pg-backups` volume: copy it out first
 (`docker run --rm -v daax-pg-backups:/b -v "$PWD":/out alpine cp /b/<file> /out/`)
@@ -202,6 +204,6 @@ The reconcile dry-run report mode (`brain2daax.md` §4, "Reconcile dry-run")
 depends on the RBAC reconcile machinery introduced with **#101** (users/roles +
 `reconcileRoles`), which is not yet merged. It is intentionally **not**
 implemented here to avoid colliding with that branch; it lands with #101. When
-added, it emits the diff it *would* apply (grants to add, `reconcile`-grants to
+added, it emits the diff it _would_ apply (grants to add, `reconcile`-grants to
 prune, unmatched allow-list entries) as structured JSON to stdout/`.logs`
 without writing, and never prunes UI grants (`granted_by != 'reconcile'`).

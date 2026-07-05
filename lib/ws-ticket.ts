@@ -117,21 +117,22 @@ export function verifyTicket(
   const provided = token.slice(dot + 1);
 
   // Accept a signature made with the current secret OR, during a rotation
-  // window, the previous one (issue #103). Both branches are constant-time; the
-  // previous branch runs only when `DAAX_WS_TOKEN_SECRET_PREVIOUS` is set, so an
-  // unset previous is byte-for-byte the pre-rotation current-only behavior and
-  // does not weaken verification. Minting always uses the current secret.
+  // window, the previous one (issue #103). Both compares are constant-time; the
+  // previous secret is only consulted when `DAAX_WS_TOKEN_SECRET_PREVIOUS` is
+  // set, so an unset previous is byte-for-byte the pre-rotation current-only
+  // behavior and does not weaken verification. Minting always uses the current
+  // secret.
   //
-  // The short-circuit means total verify time reveals WHICH of the two valid
-  // secrets matched — but only while a previous secret is configured (a bounded
-  // rotation window) and only to a holder of an already-valid ticket; it never
-  // leaks either secret's bytes (each compare is timingSafeEqual). Accepted.
+  // Both comparisons are ALWAYS evaluated when a previous secret is configured
+  // (no `&&` short-circuit between them) before OR-ing the booleans, so total
+  // verify time does not reveal WHICH of the two valid secrets matched. Each
+  // compare is timingSafeEqual, so neither secret's bytes leak either.
   const previous = getWsTokenSecretPrevious();
-  let signatureOk = signatureMatches(provided, sign(encoded, secret));
-  if (!signatureOk && previous) {
-    signatureOk = signatureMatches(provided, sign(encoded, previous));
-  }
-  if (!signatureOk) {
+  const matchesCurrent = signatureMatches(provided, sign(encoded, secret));
+  const matchesPrevious = previous
+    ? signatureMatches(provided, sign(encoded, previous))
+    : false;
+  if (!matchesCurrent && !matchesPrevious) {
     return { valid: false, reason: "bad-signature" };
   }
 
