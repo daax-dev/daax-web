@@ -137,4 +137,17 @@ describe("requestPermission", () => {
     N.requestPermission.mockRejectedValue(new Error("nope"));
     await expect(requestPermission()).resolves.toBe("denied");
   });
+
+  it("supports the legacy callback signature (undefined return)", async () => {
+    const N = installNotification("default");
+    // Legacy browsers ignore the promise contract: they return undefined and
+    // deliver the result only through the callback argument.
+    N.requestPermission.mockImplementation(
+      (cb?: (p: NotificationPermission) => void) => {
+        cb?.("granted");
+        return undefined;
+      },
+    );
+    await expect(requestPermission()).resolves.toBe("granted");
+  });
 });
