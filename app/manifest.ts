@@ -15,10 +15,13 @@ import type { MetadataRoute } from "next";
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "daax — Agent Unblock",
+    name: "daax — Mobile Terminal",
     short_name: "daax",
+    // Honest description: this drives a NEW shell session on the workbench. It
+    // does NOT yet attach to an already-running agent (server-side pty
+    // multiplexing is deferred), so it must not claim agent approve/deny.
     description:
-      "Unblock an AI coding agent from your phone: see the pending prompt, approve or deny, or send a short follow-up.",
+      "Send terminal keystrokes to a shell session on your daax workbench from your phone. Opens a new session; does not yet attach to a running agent.",
     start_url: "/m",
     scope: "/",
     display: "standalone",

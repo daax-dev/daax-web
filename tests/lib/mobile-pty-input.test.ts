@@ -64,9 +64,17 @@ describe("followUpInput", () => {
     expect(followUpInput("a\x03b\r\n")).toBe("ab\r");
   });
 
+  it("strips C1 controls and unicode line/paragraph separators", () => {
+    // U+009B (8-bit CSI), U+0085 (NEL), U+2028/U+2029 must not survive.
+    expect(followUpInput("a\x9b[Bb")).toBe("a[Bb\r");
+    expect(followUpInput("x\x85y")).toBe("xy\r");
+    expect(followUpInput("p\u2028q\u2029r")).toBe("pqr\r");
+  });
+
   it("returns empty string for blank / control-only input (no bare newline)", () => {
     expect(followUpInput("")).toBe("");
-    expect(followUpInput("   \t")).not.toBe("");
+    // Tabs are stripped (control), spaces survive: "   \t" -> "   " + Enter.
+    expect(followUpInput("   \t")).toBe("   \r");
     expect(followUpInput("\x1b\x03")).toBe("");
   });
 

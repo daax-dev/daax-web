@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Bell, BellRing, RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { ConnectionStatus } from "@/components/mobile/ConnectionStatus";
@@ -11,27 +11,24 @@ import { ApproveDenyBar } from "@/components/mobile/ApproveDenyBar";
 import { ModifierKeyRow } from "@/components/mobile/ModifierKeyRow";
 import { FollowUpInput } from "@/components/mobile/FollowUpInput";
 import { useUnblockSession } from "@/hooks/useUnblockSession";
-import {
-  permissionState,
-  requestPermission,
-  type DesktopPermission,
-} from "@/lib/notifications/desktop";
 
 /**
- * Mobile agent-unblock view (issue #156).
+ * Mobile terminal control surface (issue #156).
  *
- * Lets a developer see a pending agent prompt and Approve / Deny / send a short
- * follow-up from a phone, writing to the same terminal WebSocket (:4201) the
- * desktop uses. Installable as a PWA (app/manifest.ts + public/sw.js).
+ * IMPORTANT — what this is and is NOT:
+ *   The terminal server mints a FRESH pty per WebSocket
+ *   (server/handlers/connection-handler.ts assigns a new sessionId every
+ *   connect; there is no attach-by-id). So this view drives a NEW shell/agent
+ *   session that it opens — it does NOT yet attach to an already-running agent.
+ *   Approve/Deny/keys here affect THIS session only. Attaching to a running
+ *   agent needs server-side pty multiplexing (deferred). The UI states this
+ *   plainly so a user never believes a prod agent was approved when it wasn't.
  *
- * Connection target is chosen via query params, mirroring desktop semantics:
- *   ?mode=local|container|shell-tmux  (default: local)
- *   ?containerName=daax-xxxxxxxx      (exec into a running container)
+ * The buttons send the SAME `{ type: "input", data }` frames and ticket auth
+ * the desktop terminal uses. Connection target via query params:
+ *   ?mode=local|container|shell-tmux  (default: local — a raw shell)
+ *   ?containerName=daax-xxxxxxxx      (exec a new shell in a running container)
  *   ?command=…  ?cwd=…
- *
- * The auto-trigger that flags WHICH session is waiting-for-input is deferred
- * (depends on watchtower exposing notification events — same wall as #153/#154).
- * This view works for any reachable session regardless.
  */
 function UnblockView() {
   const params = useSearchParams();
@@ -47,57 +44,65 @@ function UnblockView() {
     cwd,
   });
 
-  const [perm, setPerm] = useState<DesktopPermission>("default");
-  useEffect(() => setPerm(permissionState()), []);
-  const enableNotifications = useCallback(async () => {
-    setPerm(await requestPermission());
-  }, []);
+  // The follow-up field writes raw text to a shell (in mode=local, a real
+  // root/docker.sock shell). Gate it behind an explicit acknowledgement so a
+  // user can't type prose thinking it's an "agent reply" and run it as a
+  // command unawares.
+  const [ackRawShell, setAckRawShell] = useState(false);
 
   const live = status === "open";
   const dead =
     status === "closed" || status === "error" || status === "unauthorized";
 
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-md flex-col gap-4 p-4">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-semibold text-foreground">
-            Unblock agent
-          </h1>
-          <p className="text-xs text-muted-foreground">
-            Approve, deny, or reply from your phone
-          </p>
-        </div>
-        {perm !== "granted" && perm !== "unsupported" && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={enableNotifications}
-            aria-label="Enable notifications"
-          >
-            <Bell className="mr-1" /> Notify
-          </Button>
-        )}
-        {perm === "granted" && (
-          <span className="flex items-center gap-1 text-xs text-muted-foreground">
-            <BellRing className="size-4" /> On
-          </span>
-        )}
+    <div
+      className="mx-auto flex min-h-screen w-full max-w-md flex-col gap-4 p-4"
+      style={{
+        paddingTop: "max(1rem, env(safe-area-inset-top))",
+        paddingBottom: "max(1rem, env(safe-area-inset-bottom))",
+        paddingLeft: "max(1rem, env(safe-area-inset-left))",
+        paddingRight: "max(1rem, env(safe-area-inset-right))",
+      }}
+    >
+      <header>
+        <h1 className="text-lg font-semibold text-foreground">
+          Mobile terminal
+        </h1>
+        <p className="text-xs text-muted-foreground">
+          Sends keystrokes to a shell session on your workbench
+        </p>
       </header>
+
+      {/* Persistent, unmissable statement of the actual capability. */}
+      <div
+        role="alert"
+        className="flex gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-xs leading-snug text-foreground"
+      >
+        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+        <span>
+          This opens a <strong>new shell session</strong>
+          {mode === "local" ? " (a raw shell on the host)" : ""}. It does{" "}
+          <strong>not yet attach</strong> to an already-running agent — anything
+          you send here affects this new session only, not a blocked agent
+          elsewhere. Live attach arrives with server-side pty multiplexing.
+        </span>
+      </div>
 
       <ConnectionStatus status={status} sessionId={sessionId} />
 
       <PromptView output={output} />
 
       {dead && (
-        <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-          {status === "unauthorized"
-            ? "Not authorized to connect to the terminal server."
-            : "Connection closed."}
+        <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+          <span>
+            {status === "unauthorized"
+              ? "Not authorized to connect to the terminal server."
+              : "Connection closed."}
+          </span>
           <Button
             size="sm"
             variant="outline"
-            className="ml-2"
+            className="ml-auto"
             onClick={reconnect}
           >
             <RefreshCw className="mr-1" /> Reconnect
@@ -107,13 +112,29 @@ function UnblockView() {
 
       <section className="flex flex-col gap-3">
         <ApproveDenyBar send={send} disabled={!live} />
-        <FollowUpInput send={send} disabled={!live} />
+
+        <label className="flex items-start gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            className="mt-0.5 size-4 accent-primary"
+            checked={ackRawShell}
+            onChange={(e) => setAckRawShell(e.target.checked)}
+            aria-label="Acknowledge follow-up types into a raw shell"
+          />
+          <span>
+            The follow-up field types into a <strong>raw shell</strong>, not
+            your agent — text is run as a command. I understand.
+          </span>
+        </label>
+        <FollowUpInput send={send} disabled={!live || !ackRawShell} />
+
         <ModifierKeyRow send={send} disabled={!live} />
       </section>
 
       <p className="mt-auto pt-2 text-center text-[11px] leading-tight text-muted-foreground">
-        Approve/Deny map to a Claude Code permission prompt. If the agent uses a
-        different prompt, use the follow-up field or the key row.
+        Approve/Deny map to a Claude Code permission prompt. Background alerts
+        (wake-on-lockscreen) are not available yet — the Web Push backend is
+        pending.
       </p>
     </div>
   );

@@ -82,15 +82,22 @@ export function permissionSequence(action: PermissionAction): string {
 /**
  * Prepare a free-text follow-up for submission to the pty.
  *
- * Strips control characters (so a pasted escape sequence can't smuggle a
- * different action into the pty) and appends a single Enter to submit. Returns
- * an empty string for blank input so the caller can no-op instead of sending a
- * bare newline. `submit` (default true) appends Enter; pass false to type
- * without submitting.
+ * Removes control characters so a pasted/typed sequence can't smuggle a
+ * different action into the pty, then appends a single Enter to submit. What is
+ * stripped:
+ *   - C0 controls + DEL: U+0000–U+001F, U+007F (incl. ESC, CR, LF, TAB)
+ *   - C1 controls: U+0080–U+009F (esp. U+009B 8-bit CSI, U+0085 NEL) — a
+ *     terminal in 8-bit mode could otherwise treat these as control introducers
+ *   - Unicode line/paragraph separators: U+2028, U+2029
+ * Removing the introducer byte neutralises the sequence (any residual "[B"-type
+ * text becomes inert literal characters). Returns an empty string for blank
+ * input so the caller can no-op instead of sending a bare newline. `submit`
+ * (default true) appends Enter; pass false to type without submitting.
  */
 export function followUpInput(text: string, submit = true): string {
-  // eslint-disable-next-line no-control-regex
-  const cleaned = (text ?? "").replace(/[\x00-\x1f\x7f]/g, "");
+  const cleaned = (text ?? "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]/g, "");
   if (cleaned.length === 0) return "";
   return submit ? cleaned + CONTROL_KEYS.enter : cleaned;
 }

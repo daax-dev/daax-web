@@ -96,22 +96,33 @@ self.addEventListener("push", (event) => {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
-// Focus an existing daax tab (or open /m) when a notification is tapped — the
-// one-tap path from lock screen to the approve/deny surface.
+// One-tap path from the lock screen to the mobile surface. Prefer an EXISTING
+// tab already on the target path and just focus it (never navigate it). Only if
+// none exists do we open a new window — deliberately NOT commandeering an
+// arbitrary open workbench/terminal tab by navigating it away.
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const targetUrl =
     (event.notification.data && event.notification.data.url) || "/m";
+  const targetPath = targetUrl.split("?")[0];
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
       .then((clientList) => {
+        // 1) A tab already on the target path → just focus it.
         for (const client of clientList) {
-          if ("focus" in client) {
-            client.navigate(targetUrl).catch(() => {});
-            return client.focus();
+          try {
+            if (
+              new URL(client.url).pathname === targetPath &&
+              "focus" in client
+            ) {
+              return client.focus();
+            }
+          } catch {
+            /* client.url unparseable — skip */
           }
         }
+        // 2) Otherwise open a fresh window; do not hijack an unrelated tab.
         return self.clients.openWindow(targetUrl);
       }),
   );

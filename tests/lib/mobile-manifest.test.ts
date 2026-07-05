@@ -17,6 +17,13 @@ describe("PWA manifest", () => {
     expect(m.start_url).toBe("/m");
   });
 
+  it("description does not overclaim agent approve/deny/unblock", () => {
+    const desc = (m.description ?? "").toLowerCase();
+    expect(desc).not.toMatch(/approve|deny|unblock/);
+    // It must state it does not yet attach to a running agent.
+    expect(desc).toMatch(/does not yet attach|new session/);
+  });
+
   it("provides 192 and 512 icons in both 'any' and 'maskable' purposes", () => {
     const icons = m.icons ?? [];
     const has = (sizes: string, purpose: string) =>
