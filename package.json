@@ -22,7 +22,7 @@
     "format:write": "prettier --write \"**/*.{ts,tsx,js,jsx,mdx}\" --cache",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,mdx}\" --cache",
     "docker:build": "docker build --target runner -t daax .",
-    "docker:run": "docker run -p 4200:4200 -p 4201:4201 -p 18080:18080 --group-add \"$(stat -c %g /var/run/docker.sock 2>/dev/null || echo 999)\" --security-opt no-new-privileges --cap-drop ALL -v /var/run/docker.sock:/var/run/docker.sock -v ${DAAX_WORKSPACE:-~/prj}:/workspace -e HOST_WORKSPACE_PATH=${DAAX_WORKSPACE:-$HOME/prj} -e DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-} -e DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:-} daax",
+    "docker:run": "docker run -p 4200:4200 -p 4201:4201 -p 18080:18080 --group-add \"$(stat -c %g /var/run/docker.sock 2>/dev/null || stat -f %g /var/run/docker.sock 2>/dev/null || echo 999)\" --security-opt no-new-privileges:true --cap-drop ALL -v /var/run/docker.sock:/var/run/docker.sock -v ${DAAX_WORKSPACE:-~/prj}:/workspace -e HOST_WORKSPACE_PATH=${DAAX_WORKSPACE:-$HOME/prj} -e DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-} -e DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:-} daax",
     "docker:up": "docker compose up -d",
     "docker:up:build": "docker compose up -d --build",
     "docker:down": "docker compose down",

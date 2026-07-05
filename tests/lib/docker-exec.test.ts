@@ -38,6 +38,18 @@ describe("isDockerUnavailableError", () => {
     expect(isDockerUnavailableError(err)).toBe(true);
   });
 
+  it("classifies the daemon error carried on a Buffer stderr as unavailable", () => {
+    // execFile surfaces stderr as a Buffer unless an encoding is set, so the
+    // classifier must coerce it before matching.
+    const err = Object.assign(new Error("Command failed: docker inspect x"), {
+      code: 1,
+      stderr: Buffer.from(
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+      ),
+    });
+    expect(isDockerUnavailableError(err)).toBe(true);
+  });
+
   it("classifies a socket permission error as unavailable", () => {
     expect(
       isDockerUnavailableError(
