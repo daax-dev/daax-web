@@ -181,6 +181,29 @@ describe("createStreamMasker — chunk-boundary safety", () => {
     expect(out).toBe(`secret ${R} done`);
   });
 
+  it("flushes ordinary trailing output immediately (no stuck output)", () => {
+    // `printf done`-style output ends mid-line with no trailing newline/control
+    // byte. It has no possible-introducer suffix, so it must render at once
+    // rather than being held back until the next chunk or the socket closes.
+    const m = createStreamMasker();
+    expect(m.push("hello world")).toBe("hello world");
+    const m2 = createStreamMasker();
+    expect(m2.push("done")).toBe("done");
+    const m3 = createStreamMasker();
+    expect(m3.push("build finished with 0 errors")).toBe(
+      "build finished with 0 errors",
+    );
+  });
+
+  it("still masks an AKIA key split mid-token across push() calls", () => {
+    const m = createStreamMasker();
+    // The boundary lands inside the 20-char AWS key; the partial must be carried
+    // (never emitted raw) so the reassembled key is masked.
+    expect(m.push("id AKIAIOSF")).toBe("id ");
+    const out = "id " + m.push("ODNN7EXAMPLE done") + m.flush();
+    expect(out).toBe("id [redacted] done");
+  });
+
   it("reassembles an ANSI escape split across two chunks", () => {
     const m = createStreamMasker();
     const out = m.push("\x1b[3") + m.push("1msecret\x1b[0m") + m.flush();

@@ -18,10 +18,12 @@
  * - `createStreamMasker()` handles the LIVE stream where output arrives in
  *   arbitrary chunks. A secret (and its interleaved escapes) can be split across
  *   WebSocket messages, and an ANSI escape can be split mid-sequence. The masker
- *   carries the unsafe trailing bytes of each chunk — a partial visible token
- *   (with any interleaved/trailing escapes, plus a leading `Bearer ` introducer)
- *   or an incomplete escape sequence — into the next chunk. Carried escape bytes
- *   are never re-masked, so a split OSC-52/DCS payload is not corrupted.
+ *   carries only the unsafe trailing bytes of each chunk — a trailing suffix
+ *   that could be the split START of a secret (a partial introducer prefix or a
+ *   bounded hex run, see `PARTIAL_SECRET_TAIL`) or an incomplete escape sequence
+ *   — into the next chunk. Ordinary trailing words with no possible-introducer
+ *   suffix flush immediately (no "stuck output"). Carried escape bytes are never
+ *   re-masked, so a split OSC-52/DCS payload is not corrupted.
  *
  * SECURITY: This is BEST-EFFORT masking for screen-sharing, NOT a security
  * guarantee. It is visual-only and applied at the render/write boundary; the
@@ -38,14 +40,83 @@ export const DEFAULT_REDACTION_LABEL = "[redacted]";
 const TOKEN_CHAR = /[A-Za-z0-9._+/=~-]/;
 
 /**
- * Trailing VISIBLE region of a logical line that may still grow into a secret in
- * the next chunk, and must therefore be carried over. It is the trailing run of
- * token characters, OPTIONALLY prefixed by a `Bearer ` introducer — the only
- * multi-word shape — so a Bearer token split across a chunk boundary keeps its
- * label context. A shell prompt (ends in a space/symbol) yields an empty
- * trailing run and is emitted immediately, preserving live interactivity.
+ * Build a regex source matching any non-empty PREFIX of `literal`, and — once
+ * the full literal has been consumed — any run of `body` chars continuing it.
+ * E.g. ("AKIA", "[0-9A-Z]") → `A(?:K(?:I(?:A[0-9A-Z]*)?)?)?`, which matches the
+ * split-in-progress states "A", "AK", "AKI", "AKIA", "AKIA1F2G…". Used to carry
+ * only a trailing partial that could plausibly become a supported secret.
  */
-const CARRY_TAIL = /(?:\bBearer\s+)?[A-Za-z0-9._+/=~-]*$/;
+function partialIntroducerSource(literal: string, body: string): string {
+  let src = body + "*";
+  for (let i = literal.length - 1; i >= 0; i--) {
+    const ch = escapeRegExp(literal[i]);
+    src = i === literal.length - 1 ? ch + src : `${ch}(?:${src})?`;
+  }
+  return src;
+}
+
+/**
+ * Trailing VISIBLE region of a logical line that could be the split START of a
+ * supported secret and must therefore be carried into the next chunk. It is the
+ * shortest-necessary suffix that is a partial match of a secret INTRODUCER — a
+ * prefix of `sk-`/`AKIA`/`ASIA`/`gh?_`/`github_pat_`/`xox?-`/`eyJ`/`Bearer `
+ * (with any body chars already accumulated), or a bounded trailing hex run — so
+ * a secret split across a chunk boundary keeps growing and is still masked.
+ *
+ * The leading `(?<![A-Za-z0-9])` pins each alternative to a token boundary,
+ * matching the introducers' own `\b`/lookbehind anchors, so a hex-ish or
+ * introducer-ish suffix that is merely the tail of an ordinary word (e.g. the
+ * `d` in `world`, the `g` in `log`) is NOT carried. Anchored at `$` with a
+ * non-global `exec`, the leftmost match is the longest boundary-aligned suffix.
+ * Ordinary words (no possible-introducer suffix) yield no match and flush
+ * immediately, preserving live interactivity.
+ */
+const PARTIAL_SECRET_TAIL = new RegExp(
+  "(?<![A-Za-z0-9])(?:" +
+    [
+      partialIntroducerSource("sk-", "[A-Za-z0-9_-]"),
+      partialIntroducerSource("AKIA", "[0-9A-Z]"),
+      partialIntroducerSource("ASIA", "[0-9A-Z]"),
+      partialIntroducerSource("ghp_", "[A-Za-z0-9]"),
+      partialIntroducerSource("gho_", "[A-Za-z0-9]"),
+      partialIntroducerSource("ghs_", "[A-Za-z0-9]"),
+      partialIntroducerSource("ghr_", "[A-Za-z0-9]"),
+      partialIntroducerSource("ghu_", "[A-Za-z0-9]"),
+      partialIntroducerSource("github_pat_", "[A-Za-z0-9_]"),
+      partialIntroducerSource("xoxb-", "[A-Za-z0-9-]"),
+      partialIntroducerSource("xoxp-", "[A-Za-z0-9-]"),
+      partialIntroducerSource("xoxa-", "[A-Za-z0-9-]"),
+      partialIntroducerSource("xoxr-", "[A-Za-z0-9-]"),
+      partialIntroducerSource("xoxs-", "[A-Za-z0-9-]"),
+      partialIntroducerSource("eyJ", "[A-Za-z0-9._-]"),
+      // Bearer <token>: \s+ separator, not a literal char, so hand-written.
+      "B(?:e(?:a(?:r(?:e(?:r(?:\\s+[A-Za-z0-9._~+/=-]*)?)?)?)?)?)?",
+      // Bare long-hex run — the introducer is the boundary itself.
+      "[0-9a-fA-F]+",
+    ].join("|") +
+    ")$",
+);
+
+/**
+ * Longest suffix of `projection` that is a prefix of any known credential value
+ * (values shorter than 4 chars are ignored, matching {@link collectMatches}).
+ * Carries a known value split across a chunk boundary so it is still masked.
+ */
+function knownValueTailLen(projection: string, knownValues?: string[]): number {
+  if (!knownValues || knownValues.length === 0) return 0;
+  let best = 0;
+  for (const value of knownValues) {
+    if (!value || value.length < 4) continue;
+    const max = Math.min(value.length, projection.length);
+    for (let k = max; k > best; k--) {
+      if (projection.endsWith(value.slice(0, k))) {
+        best = k;
+        break;
+      }
+    }
+  }
+  return best;
+}
 
 /** Upper bound (visible chars) carried across a chunk boundary for a partial
  *  token. Far larger than any realistic secret, so a token is never split by the
@@ -362,9 +433,10 @@ export interface StreamMasker {
 
 /**
  * Stateful, ANSI- and chunk-boundary-safe masker for the LIVE terminal stream.
- * Carries the unsafe trailing bytes of each chunk (a partial visible token with
- * its interleaved/trailing escapes, or an incomplete escape sequence) into the
- * next chunk. Carried escape bytes are never passed through `maskSecrets`.
+ * Carries only the unsafe trailing bytes of each chunk (a suffix that could be
+ * the split start of a secret — see `PARTIAL_SECRET_TAIL` — or an incomplete
+ * escape sequence) into the next chunk; ordinary trailing output is emitted
+ * immediately. Carried escape bytes are never passed through `maskSecrets`.
  */
 export function createStreamMasker(options: MaskOptions = {}): StreamMasker {
   let carry = "";
@@ -408,9 +480,14 @@ export function createStreamMasker(options: MaskOptions = {}): StreamMasker {
     // Where does the carried region begin? Default: nothing held.
     let holdStart = data.length;
 
-    // Partial visible token (optionally with a `Bearer ` prefix) that may grow.
-    const tail = CARRY_TAIL.exec(projection);
-    const holdProjLen = tail ? tail[0].length : 0;
+    // Trailing region that could be the split START of a secret — a partial
+    // introducer prefix / secret-in-progress / bounded hex run, or a prefix of
+    // a known credential value — and must grow into the next chunk. Ordinary
+    // words with no possible-introducer suffix flush immediately.
+    const partial = PARTIAL_SECRET_TAIL.exec(projection);
+    let holdProjLen = partial ? partial[0].length : 0;
+    const knownLen = knownValueTailLen(projection, options.knownValues);
+    if (knownLen > holdProjLen) holdProjLen = knownLen;
     if (holdProjLen > 0) {
       let visIdx = projection.length - holdProjLen;
       if (projection.length - visIdx > MAX_CARRY) {
