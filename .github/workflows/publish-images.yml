@@ -15,7 +15,7 @@ permissions:
 jobs:
   daax-web:
     name: Publish daax-web
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     outputs:
       # Digest-pinned ref for the SBOM job (F2, #97) — never a mutable tag.
       image: ghcr.io/daax-dev/daax-web@${{ steps.build.outputs.digest }}
@@ -69,7 +69,7 @@ jobs:
 
   code-server:
     name: Publish code-server
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     outputs:
       image: ghcr.io/daax-dev/code-server@${{ steps.build.outputs.digest }}
     steps:
@@ -121,7 +121,7 @@ jobs:
   sbom:
     name: SBOM (${{ matrix.name }}, ${{ matrix.format }})
     needs: [daax-web, code-server]
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: read

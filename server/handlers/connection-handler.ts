@@ -20,6 +20,7 @@ import {
   resolveContainerImage,
   DEFAULT_CONTAINER_IMAGE,
 } from "../docker/image-manager";
+import { buildPtyEnv } from "../sessions/pty-env";
 import { getPty } from "../sessions/pty-loader";
 import {
   TerminalSession,
@@ -37,10 +38,7 @@ import {
 } from "../recording/recorder";
 import { handleMessage, MessageHandlerContext } from "./message-handler";
 import { scheduleCommand } from "./command-handler";
-import {
-  resolveWorkspaceRoot,
-  isValidPath,
-} from "../../lib/worktree-manager";
+import { resolveWorkspaceRoot, isValidPath } from "../../lib/worktree-manager";
 
 // Auth paths are initialized in terminal-server.ts and passed here
 let claudeAuthHostPath: string;
@@ -216,11 +214,13 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     cols: DEFAULT_TERMINAL_COLS,
     rows: DEFAULT_TERMINAL_ROWS,
     cwd: mode === "local" ? cwd : undefined,
+    // buildPtyEnv strips the compose-set HOST posture var so it never leaks
+    // into workbench terminals (#184 review).
     env: {
-      ...process.env,
+      ...buildPtyEnv(),
       TERM: "xterm-256color",
       COLORTERM: "truecolor",
-    } as Record<string, string>,
+    },
   });
 
   // Store recording config but don't start until first output
