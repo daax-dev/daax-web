@@ -11,9 +11,12 @@
  * to reflect a real change" acceptance criterion) over the existing REST proxy
  * pattern.
  *
- * Resilience: only one request is in flight at a time (the previous is aborted),
- * polling pauses while the tab is hidden, and each response fully replaces state
- * (no unbounded accumulation on long-lived boards).
+ * Resilience: only one request is in flight at a time (a tick while a request
+ * is outstanding is skipped, not aborted — aborting each tick would livelock
+ * against an upstream slower than the poll interval, so no request ever
+ * completes), polling pauses while the tab is hidden, and each response fully
+ * replaces state (no unbounded accumulation on long-lived boards). Abort is
+ * reserved for unmount / poll-interval change.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -39,11 +42,14 @@ export function useAttentionPoll(
   const [conn, setConn] = useState<ConnState>("loading");
   const [truncated, setTruncated] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const inFlightRef = useRef(false);
 
   const load = useCallback(async () => {
-    // Cancel any in-flight request so slow responses can't pile up or land
-    // out of order.
-    abortRef.current?.abort();
+    // Skip this tick if a request is still outstanding. Requests can't pile up
+    // (at most one in flight), and a slow-but-alive upstream still gets to
+    // complete instead of being aborted every interval.
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     const ac = new AbortController();
     abortRef.current = ac;
 
@@ -67,9 +73,11 @@ export function useAttentionPoll(
         setConn("disconnected");
       }
     } catch (err) {
-      // Aborts are expected on unmount / supersede; ignore them.
+      // Aborts are expected on unmount / poll-interval change; ignore them.
       if (err instanceof DOMException && err.name === "AbortError") return;
       setConn("disconnected");
+    } finally {
+      inFlightRef.current = false;
     }
   }, []);
 

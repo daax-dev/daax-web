@@ -11,8 +11,12 @@
 
 import type { AttentionResponse } from "./adapter";
 
-/** Cache window. Kept below the client poll interval so data stays fresh. */
-export const CACHE_TTL_MS = 1_000;
+/**
+ * Cache window. At least the client poll interval (2s) so one completed scan
+ * of a slow-but-alive upstream is amortized across polls instead of every
+ * tick restarting a full fleet re-scan.
+ */
+export const CACHE_TTL_MS = 2_000;
 
 let entry: { at: number; body: AttentionResponse } | null = null;
 
