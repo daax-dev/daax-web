@@ -17,10 +17,25 @@
  * so the browser falls back to polling and reconnects with backoff.
  */
 
-import { WebSocket } from "ws";
+import { WebSocket, type RawData } from "ws";
 import type { IncomingMessage } from "http";
 
 import { authenticateConnection } from "./ws-auth";
+
+/**
+ * Normalize a `ws` RawData frame to a UTF-8 string. `ws` may hand a message as
+ * a Buffer, an array of Buffer chunks (fragmented frame), an ArrayBuffer, or a
+ * string. Calling `.toString()` directly on an ArrayBuffer yields
+ * "[object ArrayBuffer]" and on a Buffer[] yields a comma-joined list — both
+ * corrupt the relayed JSON. Concatenate/decode explicitly so the downstream
+ * JSON parser receives the exact bytes Watchtower sent.
+ */
+export function rawDataToString(data: RawData | string): string {
+  if (typeof data === "string") return data;
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  if (Array.isArray(data)) return Buffer.concat(data).toString("utf8");
+  return Buffer.from(data).toString("utf8");
+}
 
 /**
  * Resolve the Watchtower WebSocket URL. Mirrors watchtowerBaseUrl() in
@@ -74,9 +89,9 @@ export function handleAttentionBridge(
   // receives from other clients (agents) to this passive consumer; forward each
   // frame verbatim. No buffering: a slow browser simply drops behind, it cannot
   // grow server memory.
-  upstream.on("message", (data: Buffer | ArrayBuffer | Buffer[]) => {
+  upstream.on("message", (data: RawData) => {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(data.toString());
+      client.send(rawDataToString(data));
     }
   });
 

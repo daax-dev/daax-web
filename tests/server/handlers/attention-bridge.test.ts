@@ -12,6 +12,7 @@ import { WebSocket } from "ws";
 
 import {
   handleAttentionBridge,
+  rawDataToString,
   watchtowerWsUrl,
 } from "@/server/handlers/attention-bridge";
 
@@ -39,6 +40,38 @@ describe("watchtowerWsUrl", () => {
     expect(watchtowerWsUrl()).toBe("ws://watchtower:9000/ws");
     process.env.WATCHTOWER_API_URL = "https://wt.example.com/";
     expect(watchtowerWsUrl()).toBe("wss://wt.example.com/ws");
+  });
+});
+
+describe("rawDataToString", () => {
+  const frame = JSON.stringify({ type: "session", id: "sess-1", n: 42 });
+
+  it("passes a string frame through unchanged", () => {
+    expect(rawDataToString(frame)).toBe(frame);
+  });
+
+  it("decodes a single Buffer frame to intact JSON", () => {
+    const buf = Buffer.from(frame, "utf8");
+    expect(rawDataToString(buf)).toBe(frame);
+    expect(() => JSON.parse(rawDataToString(buf))).not.toThrow();
+  });
+
+  it("concatenates a Buffer[] (fragmented) frame instead of comma-joining", () => {
+    const buf = Buffer.from(frame, "utf8");
+    const mid = Math.floor(buf.length / 2);
+    const chunks = [buf.subarray(0, mid), buf.subarray(mid)];
+    // .toString() on the array would comma-join and corrupt the JSON.
+    expect(rawDataToString(chunks)).toBe(frame);
+    expect(JSON.parse(rawDataToString(chunks))).toMatchObject({ n: 42 });
+  });
+
+  it("decodes an ArrayBuffer frame rather than stringifying the object", () => {
+    const buf = Buffer.from(frame, "utf8");
+    const ab = buf.buffer.slice(
+      buf.byteOffset,
+      buf.byteOffset + buf.byteLength,
+    );
+    expect(rawDataToString(ab)).toBe(frame);
   });
 });
 
