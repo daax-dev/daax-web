@@ -145,6 +145,15 @@ else
     echo "[pg-restore] PGPORT is not a valid integer: \"${port_trimmed}\"." >&2
     exit 1
   fi
+  # Apply the normalized value so pg_restore/libpq (and the target label below)
+  # uses exactly what was validated: empty → unset (libpq default 5432);
+  # otherwise the trimmed integer. Without this, a whitespace-padded PGPORT would
+  # pass the gate but be handed to libpq untrimmed, diverging from resolveDbConfig().
+  if [ -n "$port_trimmed" ]; then
+    export PGPORT="$port_trimmed"
+  else
+    unset PGPORT
+  fi
   conn_args=(--dbname "$PGDATABASE")
   target_label="${PGUSER}@${PGHOST}:${PGPORT:-5432}/${PGDATABASE}"
 fi
