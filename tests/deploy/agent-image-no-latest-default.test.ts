@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { DEFAULT_AGENT_IMAGE, DEFAULT_AGENT_IMAGE_GSD } from "@/lib/settings";
 
 /**
  * Regression guard for issue #195 (Fable M5).
@@ -39,4 +40,46 @@ describe("#195 agent image: no shipped :latest default (enumerated deploy files)
       expect(active).not.toContain("daax-agents:latest");
     });
   }
+});
+
+/**
+ * Regression guard for review finding F1 (issue #195).
+ *
+ * scripts/refresh-agent-images.sh must pull-by-digest AND drift-check BOTH
+ * built-in defaults: the legacy `-agents` image (server DEFAULT_CONTAINER_IMAGE)
+ * and the UI default `-gsd` image (the most-spawned image, keyed by
+ * DEFAULT_AI_CODING_SETTINGS.defaultContainerImage). A prior version pinned only
+ * `-agents`, leaving the most-used image unverified. The pinned digests must
+ * stay byte-identical to the client-safe constants in lib/settings.ts.
+ */
+describe("#195 F1: refresh script digest-pins BOTH -agents and -gsd", () => {
+  const root = resolve(__dirname, "../..");
+  const script = readFileSync(
+    resolve(root, "scripts/refresh-agent-images.sh"),
+    "utf8",
+  );
+
+  const digestOf = (ref: string): string => ref.slice(ref.indexOf("@") + 1);
+  const agentDigest = digestOf(DEFAULT_AGENT_IMAGE);
+  const gsdDigest = digestOf(DEFAULT_AGENT_IMAGE_GSD);
+
+  it("embeds the -gsd pinned digest (matches DEFAULT_AGENT_IMAGE_GSD)", () => {
+    expect(gsdDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(script).toContain(gsdDigest);
+  });
+
+  it("embeds the -agents pinned digest (matches DEFAULT_AGENT_IMAGE)", () => {
+    expect(script).toContain(agentDigest);
+  });
+
+  it("pulls+drift-checks both -agents and -gsd repos by digest", () => {
+    // The verify helper is invoked for both repos with their pinned digests.
+    expect(script).toContain('verify_pinned_digest "daax-agents"');
+    expect(script).toContain('verify_pinned_digest "daax-agents-gsd"');
+  });
+
+  it("fails closed when a pinned digest pull fails (digest_ok gate)", () => {
+    // Script still exits non-zero if any digest verification failed.
+    expect(script).toContain('[ "${digest_ok}" -eq 1 ]');
+  });
 });

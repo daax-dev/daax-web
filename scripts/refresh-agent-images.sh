@@ -33,6 +33,13 @@ TAG="${DAAX_AGENT_TAG:-latest}"
 # `:latest` ahead of the pin and constants.ts should be reviewed/bumped.
 PINNED_AGENT_DIGEST="${DAAX_PINNED_AGENT_DIGEST:-sha256:2153f137b3f47de007698d1e5f0d31a684cb45a7e1ebc1326f668ee458f55bc5}"
 
+# Digest the UI-DEFAULT agent image (-gsd, "Get Shit Done") is pinned to (issue
+# #195). This is the MOST-spawned image: DEFAULT_AI_CODING_SETTINGS.defaultContainerImage
+# resolves to it. MUST stay in sync with DEFAULT_AGENT_IMAGE_GSD in lib/settings.ts
+# (the client-safe pin); see also the -agents pin in server/config/constants.ts.
+# Pulled by digest and drift-checked below with the same logic as -agents.
+PINNED_GSD_DIGEST="${DAAX_PINNED_GSD_DIGEST:-sha256:2df736e58e6410f5d31b181c0150977d6415ce6f9c4fa3c6a1282e810c102ac3}"
+
 # Authoritative variant list — keep in sync with CONTAINER_VARIANTS in
 # lib/settings.ts. Every AI-coding image variant is pulled on every run.
 VARIANTS=(
@@ -87,50 +94,68 @@ if [ "${#failed[@]}" -gt 0 ]; then
   printf '   ⚠️  Could not pull: %s\n' "${failed[@]}"
 fi
 
-# ── Verify the digest-pinned default agent image (issue #195) ────────────────
-# The server runs the default agent by digest, not by tag. Pull that exact
+# ── Verify the digest-pinned default agent images (issue #195) ───────────────
+# The server runs the default agents by digest, not by tag. Pull each exact
 # immutable reference so it is present locally, then confirm the mutable
 # `:latest` tag still resolves to the same digest. Docker verifies the content
 # hash on pull, so a pull-by-digest that succeeds IS the verification that the
 # bytes match the pin; the tag comparison is an advisory drift check.
-echo
-echo "── Verifying pinned default agent digest ───"
-pinned_ref="${REGISTRY}/daax-agents@${PINNED_AGENT_DIGEST}"
+#
+# BOTH built-in defaults are verified: `-agents` (legacy top-level default /
+# server DEFAULT_CONTAINER_IMAGE) AND `-gsd` (the UI default, the most-spawned
+# image via DEFAULT_AI_CODING_SETTINGS.defaultContainerImage). A miss on either
+# is a security-relevant failure and fails the script closed.
 digest_ok=1
-printf '   Pulling %s ... ' "$pinned_ref"
-# Suppress the noisy progress on stdout but keep stderr, so a failed digest pull
-# (auth/registry/DNS) surfaces its concrete Docker error — this is a security
-# control (issue #195), so a silent failure is worse than for the tag pulls above.
-if docker pull "$pinned_ref" >/dev/null; then
-  echo "✅ verified (content hash matches pin)"
-  # Advisory: has the mutable multi-arch `:latest` tag drifted past the pin?
-  # The pin is a multi-arch manifest-list digest, so this check is only
-  # meaningful against `:latest` (the manifest list). Arch-specific tags
-  # (${TAG}=amd64/arm64) resolve to a per-arch digest that never equals the
-  # manifest-list pin, so we always inspect `:latest` here — NOT `${TAG}`.
-  latest_tag="${REGISTRY}/daax-agents:latest"
-  latest_repo_digest="$(digest_of "$latest_tag")"
-  case "$latest_repo_digest" in
-    *"@${PINNED_AGENT_DIGEST}")
-      echo "   ℹ️  ${latest_tag} still matches the pinned digest."
-      ;;
-    "")
-      echo "   ℹ️  ${latest_tag} not present locally; skipping drift check."
-      ;;
-    *)
-      echo "   ⚠️  ${latest_tag} has moved past the pinned digest."
-      echo "       latest -> ${latest_repo_digest}"
-      echo "       pinned -> ${PINNED_AGENT_DIGEST}"
-      echo "       Review and bump DEFAULT_CONTAINER_IMAGE in server/config/constants.ts"
-      echo "       (and PINNED_AGENT_DIGEST here) if the new image is trusted."
-      ;;
-  esac
-else
-  echo "❌ FAILED"
-  echo "   ⚠️  Could not pull the pinned digest ${pinned_ref}."
-  echo "       The registry may be unreachable or the pin may be invalid."
-  digest_ok=0
-fi
+
+verify_pinned_digest() {
+  # $1 = image repo (e.g. daax-agents / daax-agents-gsd)
+  # $2 = pinned sha256 digest
+  # $3 = human hint naming the source-of-truth constant to bump on drift
+  local repo="$1" pinned="$2" const_hint="$3"
+  local pinned_ref="${REGISTRY}/${repo}@${pinned}"
+  printf '   Pulling %s ... ' "$pinned_ref"
+  # Suppress the noisy progress on stdout but keep stderr, so a failed digest pull
+  # (auth/registry/DNS) surfaces its concrete Docker error — this is a security
+  # control (issue #195), so a silent failure is worse than for the tag pulls above.
+  if docker pull "$pinned_ref" >/dev/null; then
+    echo "✅ verified (content hash matches pin)"
+    # Advisory: has the mutable multi-arch `:latest` tag drifted past the pin?
+    # The pin is a multi-arch manifest-list digest, so this check is only
+    # meaningful against `:latest` (the manifest list). Arch-specific tags
+    # (${TAG}=amd64/arm64) resolve to a per-arch digest that never equals the
+    # manifest-list pin, so we always inspect `:latest` here — NOT `${TAG}`.
+    local latest_tag="${REGISTRY}/${repo}:latest"
+    local latest_repo_digest
+    latest_repo_digest="$(digest_of "$latest_tag")"
+    case "$latest_repo_digest" in
+      *"@${pinned}")
+        echo "   ℹ️  ${latest_tag} still matches the pinned digest."
+        ;;
+      "")
+        echo "   ℹ️  ${latest_tag} not present locally; skipping drift check."
+        ;;
+      *)
+        echo "   ⚠️  ${latest_tag} has moved past the pinned digest."
+        echo "       latest -> ${latest_repo_digest}"
+        echo "       pinned -> ${pinned}"
+        echo "       Review and bump ${const_hint}"
+        echo "       (and the matching pin in this script) if the new image is trusted."
+        ;;
+    esac
+  else
+    echo "❌ FAILED"
+    echo "   ⚠️  Could not pull the pinned digest ${pinned_ref}."
+    echo "       The registry may be unreachable or the pin may be invalid."
+    digest_ok=0
+  fi
+}
+
+echo
+echo "── Verifying pinned default agent digests ──"
+verify_pinned_digest "daax-agents" "$PINNED_AGENT_DIGEST" \
+  "DEFAULT_CONTAINER_IMAGE in server/config/constants.ts"
+verify_pinned_digest "daax-agents-gsd" "$PINNED_GSD_DIGEST" \
+  "DEFAULT_AGENT_IMAGE_GSD in lib/settings.ts"
 
 # The terminal server caches image *availability* (existence) in memory, not the
 # digest, so a re-pulled :latest is picked up by the next `docker run` without a
