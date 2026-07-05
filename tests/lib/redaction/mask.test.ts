@@ -112,6 +112,49 @@ describe("maskSecrets — known credential values", () => {
   });
 });
 
+describe("maskSecrets — mid-token ANSI escapes (grep/ls --color)", () => {
+  it("masks an AWS key split by SGR + erase-line (real grep --color output)", () => {
+    // grep --color=always AKIA ... emits the match wrapped in color codes.
+    const input = "\x1b[01;31m\x1b[KAKIA\x1b[m\x1b[KIOSFODNN7EXAMPLE";
+    expect(maskSecrets(input)).toBe(`\x1b[01;31m\x1b[K${R}\x1b[m\x1b[K`);
+    // The full key must NOT survive anywhere in the output.
+    expect(maskSecrets(input)).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    expect(maskSecrets(input)).not.toContain("IOSFODNN7EXAMPLE");
+  });
+
+  it("masks an sk- key split by a mid-token reset (\\x1b[0m)", () => {
+    const input = "sk-abc\x1b[0mdefghijklmnop1234";
+    expect(maskSecrets(input)).toBe(`${R}\x1b[0m`);
+  });
+
+  it("masks a hex secret split by \\x1b[K in the middle", () => {
+    const input = "0123456789abcdef\x1b[K0123456789abcdef";
+    expect(maskSecrets(input)).toBe(`${R}\x1b[K`);
+  });
+
+  it("does not join tokens across a real newline (control boundary)", () => {
+    // AKIA and the rest are on different logical lines — must NOT be merged.
+    const input = "AKIA\nIOSFODNN7EXAMPLE";
+    expect(maskSecrets(input)).toBe("AKIA\nIOSFODNN7EXAMPLE");
+  });
+});
+
+describe("maskSecrets — deliberate over-masking of long hex", () => {
+  it("does NOT mask UUIDs or short/git-short hashes (false-positive bound)", () => {
+    const uuid = "550e8400-e29b-41d4-a716-446655440000";
+    expect(maskSecrets(`id ${uuid}`)).toBe(`id ${uuid}`);
+    expect(maskSecrets("commit a1b2c3d")).toBe("commit a1b2c3d");
+  });
+
+  it("DOES mask checksums / docker digests (pinned as intentional)", () => {
+    const md5 = "d41d8cd98f00b204e9800998ecf8427e"; // 32
+    const sha256 =
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"; // 64
+    expect(maskSecrets(`sum ${md5}`)).toBe(`sum ${R}`);
+    expect(maskSecrets(`sha256:${sha256}`)).toBe(`sha256:${R}`);
+  });
+});
+
 describe("createStreamMasker — chunk-boundary safety", () => {
   it("masks a token split across two chunks", () => {
     const m = createStreamMasker();
@@ -147,15 +190,76 @@ describe("createStreamMasker — chunk-boundary safety", () => {
     expect(m.flush()).toBe("");
   });
 
-  it("streaming equals whole-string masking across many random splits", () => {
+  it("masks a token split mid-token by an escape AND across a chunk boundary", () => {
+    // grep-color output where the chunk boundary lands inside the colored key.
+    const full = "\x1b[01;31m\x1b[KAKIA\x1b[m\x1b[KIOSFODNN7EXAMPLE";
+    const expected = maskSecrets(full);
+    for (let cut = 1; cut < full.length; cut++) {
+      const m = createStreamMasker();
+      const out =
+        m.push(full.slice(0, cut)) + m.push(full.slice(cut)) + m.flush();
+      expect(out).toBe(expected);
+    }
+  });
+
+  it("does not corrupt an incomplete OSC payload larger than the text cap", () => {
+    // 5000-byte OSC-52 clipboard payload split so the first chunk holds an
+    // unterminated escape > MAX_CARRY (4096). It must be carried intact, never
+    // re-tokenized as text, never masked.
+    const payload = "A".repeat(5000);
+    const chunk1 = `\x1b]52;c;${payload}`; // unterminated OSC
+    const chunk2 = "BBBBBBBBBB\x07done";
+    const m = createStreamMasker();
+    const out = m.push(chunk1) + m.push(chunk2) + m.flush();
+    expect(out).toBe(chunk1 + chunk2);
+    expect(out).not.toContain(R);
+  });
+
+  it("emits a runaway unterminated escape raw once it exceeds the esc cap", () => {
+    const huge = `\x1b]52;c;${"A".repeat(300000)}`; // > MAX_ESC_CARRY, no ST
+    const m = createStreamMasker();
+    const out = m.push(huge) + m.flush();
+    expect(out).toBe(huge);
+    expect(out).not.toContain(R);
+  });
+
+  it("streaming equals whole-string masking across many 2- and 3-way splits", () => {
     const full =
       "log: Bearer abcdef1234567890 then AKIAIOSFODNN7EXAMPLE and " +
       "0123456789abcdef0123456789abcdef trailing\n";
     const expected = maskSecrets(full);
-    for (let cut = 1; cut < full.length; cut++) {
-      const m = createStreamMasker();
-      const out = m.push(full.slice(0, cut)) + m.push(full.slice(cut)) + m.flush();
-      expect(out).toBe(expected);
+    for (let i = 1; i < full.length; i++) {
+      // 2-way
+      const m2 = createStreamMasker();
+      expect(m2.push(full.slice(0, i)) + m2.push(full.slice(i)) + m2.flush()).toBe(
+        expected,
+      );
+      // 3-way (step j to keep the loop bounded)
+      for (let j = i + 1; j < full.length; j += 7) {
+        const m3 = createStreamMasker();
+        const out =
+          m3.push(full.slice(0, i)) +
+          m3.push(full.slice(i, j)) +
+          m3.push(full.slice(j)) +
+          m3.flush();
+        expect(out).toBe(expected);
+      }
     }
+  });
+
+  it("OFF->ON toggle mid-stream: no crash, later secrets masked, no loss on OFF", () => {
+    // Mirrors the component write path: ON -> masker.push(); OFF -> flush()+raw.
+    const m = createStreamMasker();
+    const write = (enabled: boolean, data: string) =>
+      enabled ? m.push(data) : m.flush() + data;
+
+    // OFF: raw passthrough.
+    expect(write(false, "prompt$ ")).toBe("prompt$ ");
+    // ON: a complete secret (line-terminated) is fully masked.
+    expect(write(true, "key sk-abcdefghijklmnop1234\n")).toBe(`key ${R}\n`);
+    // ON: partial token is carried (not yet emitted).
+    expect(write(true, "secret sk-abc")).toBe("secret ");
+    // Toggle OFF: carried bytes are flushed (no loss), then raw is written.
+    expect(write(false, "next")).toBe("sk-abcnext");
   });
 });

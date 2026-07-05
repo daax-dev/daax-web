@@ -5,24 +5,30 @@
  *
  * Design notes
  * ------------
- * - `maskSecrets(text)` is a pure function over a COMPLETE string. It tokenizes
- *   the input into ANSI/control sequences (passed through untouched) and
- *   printable text runs (scanned for secrets). Escape sequences are never
- *   scanned, so color codes, cursor moves, OSC hyperlinks/clipboard payloads,
- *   etc. are preserved byte-for-byte and never mangled.
- * - `createStreamMasker()` wraps the pure function for the LIVE terminal, where
- *   output arrives in arbitrary chunks. A secret token can be split across two
- *   WebSocket messages, and an ANSI escape can be split mid-sequence. The stream
- *   masker carries the unsafe trailing bytes (a partial token or an incomplete
- *   escape) into the next chunk so cross-boundary secrets are still caught and
- *   split escapes are reassembled.
+ * - A secret's VISIBLE characters can be interleaved with ANSI escape sequences
+ *   (e.g. `grep --color`/`ls --color` wrap a match in SGR + `\x1b[K`, so an AWS
+ *   key arrives as `\x1b[01;31m\x1b[KAKIA\x1b[m\x1b[KIOSFODNN7EXAMPLE`). Masking
+ *   each printable run independently would miss the secret. Instead, for each
+ *   LOGICAL LINE (segments between C0 control boundaries) we build an
+ *   ANSI-STRIPPED PROJECTION of the visible text, run the patterns on that, then
+ *   map each matched visible span back onto the interleaved segments — masking
+ *   the visible characters while RE-EMITTING the interior escape sequences
+ *   untouched. Colors/cursor moves are preserved; only visible secret chars
+ *   become the redaction label.
+ * - `createStreamMasker()` handles the LIVE stream where output arrives in
+ *   arbitrary chunks. A secret (and its interleaved escapes) can be split across
+ *   WebSocket messages, and an ANSI escape can be split mid-sequence. The masker
+ *   carries the unsafe trailing bytes of each chunk — a partial visible token
+ *   (with any interleaved/trailing escapes, plus a leading `Bearer ` introducer)
+ *   or an incomplete escape sequence — into the next chunk. Carried escape bytes
+ *   are never re-masked, so a split OSC-52/DCS payload is not corrupted.
  *
  * SECURITY: This is BEST-EFFORT masking for screen-sharing, NOT a security
  * guarantee. It is visual-only and applied at the render/write boundary; the
- * underlying recording data is never modified. Novel secret shapes or secrets
- * embedded inside escape-sequence payloads may slip through. A future
- * redact-at-capture mode (server-side, in `server/recording/recorder.ts`) would
- * be required to strip secrets from stored recordings themselves.
+ * underlying recording data is never modified. Novel secret shapes may slip
+ * through. A future redact-at-capture mode (server-side, in
+ * `server/recording/recorder.ts`) would be required to strip secrets from stored
+ * recordings themselves.
  */
 
 export const DEFAULT_REDACTION_LABEL = "[redacted]";
@@ -32,20 +38,24 @@ export const DEFAULT_REDACTION_LABEL = "[redacted]";
 const TOKEN_CHAR = /[A-Za-z0-9._+/=~-]/;
 
 /**
- * Trailing region of a chunk that may still grow into a secret in the next
- * chunk, and must therefore be carried over. This is the trailing run of token
- * characters, OPTIONALLY prefixed by a `Bearer ` introducer — the only
+ * Trailing VISIBLE region of a logical line that may still grow into a secret in
+ * the next chunk, and must therefore be carried over. It is the trailing run of
+ * token characters, OPTIONALLY prefixed by a `Bearer ` introducer — the only
  * multi-word shape — so a Bearer token split across a chunk boundary keeps its
- * label context and is still masked. A shell prompt (ends in a space/symbol)
- * yields an empty trailing run and is emitted immediately, preserving live
- * interactivity.
+ * label context. A shell prompt (ends in a space/symbol) yields an empty
+ * trailing run and is emitted immediately, preserving live interactivity.
  */
 const CARRY_TAIL = /(?:\bBearer\s+)?[A-Za-z0-9._+/=~-]*$/;
 
-/** Upper bound on bytes carried across a chunk boundary. Far larger than any
- *  realistic secret, so a token is never split by the cap in practice; bounds
- *  memory/latency on pathological single-line high-throughput output. */
+/** Upper bound (visible chars) carried across a chunk boundary for a partial
+ *  token. Far larger than any realistic secret, so a token is never split by the
+ *  cap in practice; bounds memory/latency on pathological long single lines. */
 const MAX_CARRY = 4096;
+
+/** Upper bound (bytes) for buffering an incomplete escape sequence across a
+ *  chunk boundary. Beyond this the (likely malformed) sequence is emitted raw so
+ *  memory stays bounded. Large enough for realistic OSC-52 clipboard payloads. */
+const MAX_ESC_CARRY = 262144;
 
 export interface MaskOptions {
   /** Replacement string for a matched secret. Defaults to `[redacted]`. */
@@ -67,7 +77,17 @@ interface SecretPattern {
 /**
  * Known token/key shapes (issue #155 AC2). Each `re` MUST be global (`g`).
  * Ordering is not significant — matches from all patterns are collected over the
- * original text and de-overlapped (longest-wins) before replacement.
+ * projection and de-overlapped (longest-wins) before replacement.
+ *
+ * NOTE (deliberate over-masking): the `hex` rule masks any run of >=32 hex
+ * chars. In presentation mode this intentionally also redacts MD5/SHA-256
+ * checksums and `sha256:` digests — safe-direction for a screen-share (better to
+ * hide a checksum than leak a secret). UUIDs and short/git-short hashes contain
+ * separators or are below the threshold and are NOT masked (pinned by tests).
+ *
+ * Regex reentrancy: these are module-level globals; `lastIndex` is reset before
+ * every use and JS is single-threaded, so sequential calls are safe. Do not use
+ * these objects concurrently.
  */
 const PATTERNS: SecretPattern[] = [
   // OpenAI keys: sk-..., sk-proj-... (dashes allowed in body)
@@ -93,8 +113,7 @@ const PATTERNS: SecretPattern[] = [
     re: /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/g,
     keepPrefix: /^Bearer\s+/,
   },
-  // Long hex secrets (>=32 hex chars). Note: a 40-char git SHA also matches;
-  // over-masking a commit hash on a shared screen is harmless and accepted.
+  // Long hex secrets (>=32 hex chars) — see deliberate over-masking note above.
   {
     name: "hex",
     re: /(?<![A-Za-z0-9])[0-9a-fA-F]{32,}(?![0-9a-fA-F])/g,
@@ -112,11 +131,15 @@ function escapeRegExp(value: string): string {
 }
 
 /**
- * Mask secrets inside a single printable text run (no ANSI / control bytes).
- * Collects matches from every pattern + known values, resolves overlaps
- * (earliest start wins; longest wins on ties), then rebuilds the string.
+ * Collect secret matches over a (already ANSI-stripped) projection string.
+ * Returns spans sorted by start with overlaps removed (earliest start wins;
+ * longest wins on ties). Spans index into the projection, not the raw input.
  */
-function maskTextRun(text: string, label: string, knownValues: string[]): string {
+function collectMatches(
+  text: string,
+  label: string,
+  knownValues: string[],
+): Match[] {
   const matches: Match[] = [];
 
   for (const pattern of PATTERNS) {
@@ -129,7 +152,6 @@ function maskTextRun(text: string, label: string, knownValues: string[]): string
         ? (value.match(pattern.keepPrefix)?.[0] ?? "") + label
         : label;
       matches.push({ start, end: start + value.length, replacement });
-      // Guard against zero-length matches causing an infinite loop.
       if (pattern.re.lastIndex === start) pattern.re.lastIndex++;
     }
   }
@@ -148,20 +170,18 @@ function maskTextRun(text: string, label: string, knownValues: string[]): string
     }
   }
 
-  if (matches.length === 0) return text;
-
-  // Longest-wins de-overlap: sort by start asc, then by end desc.
+  if (matches.length === 0) return matches;
   matches.sort((a, b) => a.start - b.start || b.end - a.end);
 
-  let result = "";
+  // Drop overlaps (keep the earliest/longest already at the front after sort).
+  const merged: Match[] = [];
   let cursor = 0;
   for (const match of matches) {
-    if (match.start < cursor) continue; // overlaps an already-applied match
-    result += text.slice(cursor, match.start) + match.replacement;
+    if (match.start < cursor) continue;
+    merged.push(match);
     cursor = match.end;
   }
-  result += text.slice(cursor);
-  return result;
+  return merged;
 }
 
 type SegmentType = "text" | "ctrl" | "esc" | "esc-incomplete";
@@ -172,10 +192,9 @@ interface Segment {
 }
 
 /**
- * Match a single escape sequence starting at `input[i]` (which is ESC).
- * Returns the consumed value and whether it is a complete sequence. An
- * incomplete sequence (chunk ended mid-escape) is reported so the stream masker
- * can carry it into the next chunk.
+ * Match a single escape sequence starting at the ESC that begins `rest`.
+ * Reports whether it is complete; an incomplete sequence (chunk ended mid-escape)
+ * consumes to end-of-string and is flagged so the stream masker can carry it.
  */
 function matchEscape(rest: string): { value: string; complete: boolean } {
   // CSI: ESC [ params intermediates final
@@ -202,9 +221,10 @@ function matchEscape(rest: string): { value: string; complete: boolean } {
 }
 
 /**
- * Split terminal output into ordered segments of ANSI/control sequences and
- * printable text runs. Printable runs keep spaces (so `Bearer <token>` is one
- * run) but exclude ESC and C0 control bytes / DEL.
+ * Split terminal output into ordered segments: ANSI escape sequences (`esc` /
+ * `esc-incomplete`), single C0/DEL control bytes (`ctrl`, treated as logical
+ * boundaries), and printable text runs (`text`, spaces kept so `Bearer <token>`
+ * stays contiguous).
  */
 function tokenize(input: string): Segment[] {
   const segments: Segment[] = [];
@@ -242,24 +262,80 @@ function tokenize(input: string): Segment[] {
 }
 
 /**
- * Mask all secrets in a complete string. ANSI/control sequences pass through
- * untouched; only printable text runs are scanned. Pure and deterministic.
+ * Mask one logical line (a run of non-`ctrl` segments). Builds the ANSI-stripped
+ * projection, finds secret spans, then re-emits segments in order: escapes pass
+ * through untouched (even inside a masked span); visible chars inside a span are
+ * dropped except the label emitted once at the span's start.
+ */
+function maskGroup(
+  segments: Segment[],
+  label: string,
+  knownValues: string[],
+): string {
+  let projection = "";
+  for (const seg of segments) {
+    if (seg.type === "text") projection += seg.value;
+  }
+
+  const join = () => segments.map((s) => s.value).join("");
+  if (!projection) return join();
+
+  const matches = collectMatches(projection, label, knownValues);
+  if (matches.length === 0) return join();
+
+  let out = "";
+  let p = 0; // projection offset at the start of the current text segment
+  let mi = 0; // index into sorted, non-overlapping matches
+  for (const seg of segments) {
+    if (seg.type !== "text") {
+      out += seg.value;
+      continue;
+    }
+    const v = seg.value;
+    for (let k = 0; k < v.length; k++) {
+      const i = p + k;
+      while (mi < matches.length && matches[mi].end <= i) mi++;
+      const inMatch = mi < matches.length && matches[mi].start <= i;
+      if (inMatch) {
+        if (i === matches[mi].start) out += matches[mi].replacement;
+        // else: visible char inside a masked span — drop it
+      } else {
+        out += v[k];
+      }
+    }
+    p += v.length;
+  }
+  return out;
+}
+
+/**
+ * Mask all secrets in a complete string. ANSI/control sequences are preserved;
+ * secrets are matched across escape sequences within a logical line. Pure and
+ * deterministic.
  */
 export function maskSecrets(input: string, options: MaskOptions = {}): string {
   if (!input) return input;
   const label = options.label ?? DEFAULT_REDACTION_LABEL;
   const knownValues = options.knownValues ?? [];
 
-  // Fast path: no ESC/control and nothing that could start a secret shape can
-  // still contain secrets, so only skip work when the whole string is trivially
-  // safe (short + no token chars). Keep it simple: always tokenize.
+  const segments = tokenize(input);
   let out = "";
-  for (const segment of tokenize(input)) {
-    out +=
-      segment.type === "text"
-        ? maskTextRun(segment.value, label, knownValues)
-        : segment.value;
+  let group: Segment[] = [];
+  const flush = () => {
+    if (group.length) {
+      out += maskGroup(group, label, knownValues);
+      group = [];
+    }
+  };
+  for (const seg of segments) {
+    if (seg.type === "ctrl") {
+      flush();
+      out += seg.value;
+    } else {
+      group.push(seg);
+    }
   }
+  flush();
   return out;
 }
 
@@ -275,8 +351,9 @@ export interface StreamMasker {
 
 /**
  * Stateful, ANSI- and chunk-boundary-safe masker for the LIVE terminal stream.
- * Carries the unsafe trailing bytes of each chunk (a partial token or an
- * incomplete escape sequence) into the next chunk.
+ * Carries the unsafe trailing bytes of each chunk (a partial visible token with
+ * its interleaved/trailing escapes, or an incomplete escape sequence) into the
+ * next chunk. Carried escape bytes are never passed through `maskSecrets`.
  */
 export function createStreamMasker(options: MaskOptions = {}): StreamMasker {
   let carry = "";
@@ -285,33 +362,67 @@ export function createStreamMasker(options: MaskOptions = {}): StreamMasker {
     if (!chunk) return "";
     const data = carry + chunk;
     carry = "";
+    if (!data) return "";
 
     const segments = tokenize(data);
-    if (segments.length === 0) return "";
 
-    const last = segments[segments.length - 1];
-    let hold = "";
-
-    if (last.type === "esc-incomplete") {
-      // Carry the whole unterminated escape so it can be reassembled next chunk.
-      hold = last.value;
-    } else if (last.type === "text") {
-      // Carry the trailing partial token (plus a `Bearer ` prefix if present) —
-      // a secret that may continue in the next chunk. Text ending in a
-      // space/newline (e.g. a shell prompt) has an empty trailing run and is
-      // emitted immediately.
-      hold = CARRY_TAIL.exec(last.value)?.[0] ?? "";
+    // Absolute byte offset of each segment; and the tail group = segments after
+    // the last `ctrl` boundary (a secret never spans a control byte).
+    const starts: number[] = [];
+    let off = 0;
+    let tailStart = 0;
+    for (let idx = 0; idx < segments.length; idx++) {
+      starts.push(off);
+      off += segments[idx].value.length;
+      if (segments[idx].type === "ctrl") tailStart = idx + 1;
     }
 
-    // Bound the carry. Overflow at the front cannot be a pending secret prefix
-    // (carry >> max secret length), so emit it now.
-    let emit = data.slice(0, data.length - hold.length);
-    if (hold.length > MAX_CARRY) {
-      const keep = hold.length - MAX_CARRY;
-      emit += hold.slice(0, keep);
-      hold = hold.slice(keep);
+    // Build the tail group's visible projection with each visible char's
+    // absolute byte offset, and note a trailing incomplete escape.
+    let projection = "";
+    const projOffset: number[] = [];
+    let incompleteEscStart = -1;
+    for (let idx = tailStart; idx < segments.length; idx++) {
+      const seg = segments[idx];
+      if (seg.type === "text") {
+        for (let k = 0; k < seg.value.length; k++) {
+          projOffset.push(starts[idx] + k);
+          projection += seg.value[k];
+        }
+      } else if (seg.type === "esc-incomplete") {
+        incompleteEscStart = starts[idx];
+      }
     }
-    carry = hold;
+
+    // Where does the carried region begin? Default: nothing held.
+    let holdStart = data.length;
+
+    // Partial visible token (optionally with a `Bearer ` prefix) that may grow.
+    const tail = CARRY_TAIL.exec(projection);
+    const holdProjLen = tail ? tail[0].length : 0;
+    if (holdProjLen > 0) {
+      let visIdx = projection.length - holdProjLen;
+      if (projection.length - visIdx > MAX_CARRY) {
+        visIdx = projection.length - MAX_CARRY; // keep only the last MAX_CARRY
+      }
+      holdStart = projOffset[visIdx];
+    }
+
+    // An incomplete escape must be carried from its start (never split/masked).
+    if (incompleteEscStart >= 0) {
+      holdStart = Math.min(holdStart, incompleteEscStart);
+    }
+
+    const emit = data.slice(0, holdStart);
+    carry = data.slice(holdStart);
+
+    // Runaway incomplete escape: emit raw (never masked) and stop buffering.
+    if (incompleteEscStart >= 0 && carry.length > MAX_ESC_CARRY) {
+      const raw = carry;
+      carry = "";
+      return maskSecrets(emit, options) + raw;
+    }
+
     return maskSecrets(emit, options);
   };
 
@@ -319,6 +430,8 @@ export function createStreamMasker(options: MaskOptions = {}): StreamMasker {
     if (!carry) return "";
     const remaining = carry;
     carry = "";
+    // maskSecrets leaves an incomplete-escape carry untouched (escapes are never
+    // masked), and masks a completed trailing token.
     return maskSecrets(remaining, options);
   };
 
