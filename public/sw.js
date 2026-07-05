@@ -17,7 +17,11 @@
  * Bump CACHE_VERSION whenever offline.html changes so the activate handler
  * evicts the old cache.
  */
-const CACHE_VERSION = "daax-v1";
+// Every cache this SW owns is named `${CACHE_PREFIX}<version>`. Eviction is
+// scoped to this prefix so we only ever drop OLD versions of OUR cache and
+// never touch caches other code on this origin might register later.
+const CACHE_PREFIX = "daax-";
+const CACHE_VERSION = `${CACHE_PREFIX}v1`;
 const OFFLINE_URL = "/offline.html";
 
 self.addEventListener("install", (event) => {
@@ -32,10 +36,14 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
-      // Drop any cache from a previous version (evicts a stale offline page).
+      // Drop OLD versions of OUR cache only (evicts a stale offline page).
+      // Scope by CACHE_PREFIX so caches owned by other code on this origin are
+      // left untouched.
       const keys = await caches.keys();
       await Promise.all(
-        keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k)),
+        keys
+          .filter((k) => k.startsWith(CACHE_PREFIX) && k !== CACHE_VERSION)
+          .map((k) => caches.delete(k)),
       );
       await self.clients.claim();
     })(),

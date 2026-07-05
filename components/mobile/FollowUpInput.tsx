@@ -49,7 +49,12 @@ export function FollowUpInput({ send, disabled }: FollowUpInputProps) {
         autoCapitalize="off"
         autoCorrect="off"
       />
-      <Button type="submit" size="icon" disabled={disabled || !canSend}>
+      <Button
+        type="submit"
+        size="icon"
+        aria-label="Send"
+        disabled={disabled || !canSend}
+      >
         <Send />
       </Button>
     </form>

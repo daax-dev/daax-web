@@ -112,6 +112,24 @@ describe("service worker: install / activate", () => {
     expect(h.cacheStore.has("daax-v1")).toBe(true);
     expect((h.self.clients as { claim: unknown }).claim).toHaveBeenCalled();
   });
+
+  it("leaves caches with a different prefix untouched (scoped eviction)", async () => {
+    const h = loadSw();
+    // Our own stale + current caches, plus caches owned by unrelated code.
+    h.cacheStore.set("daax-v0", new Map());
+    h.cacheStore.set("daax-v1", new Map());
+    h.cacheStore.set("workbox-precache", new Map());
+    h.cacheStore.set("third-party-images", new Map());
+    const c = collector();
+    h.listeners.activate({ waitUntil: c.waitUntil });
+    await c.settle();
+    // Old version of OUR cache is dropped.
+    expect(h.cacheStore.has("daax-v0")).toBe(false);
+    // Current cache and all foreign caches survive.
+    expect(h.cacheStore.has("daax-v1")).toBe(true);
+    expect(h.cacheStore.has("workbox-precache")).toBe(true);
+    expect(h.cacheStore.has("third-party-images")).toBe(true);
+  });
 });
 
 describe("service worker: fetch", () => {

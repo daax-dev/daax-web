@@ -21,6 +21,12 @@ describe("FollowUpInput Send enablement", () => {
     expect(btn).toBeDisabled();
   });
 
+  it("exposes an accessible name on the icon-only Send button", () => {
+    render(<FollowUpInput send={vi.fn(() => true)} />);
+    // Fails without an aria-label: the icon-only button has no text content.
+    expect(screen.getByRole("button", { name: /send/i })).toBeInTheDocument();
+  });
+
   it("keeps Send disabled for control-only input that sanitizes to empty", () => {
     render(<FollowUpInput send={vi.fn(() => true)} />);
     const input = screen.getByLabelText(
