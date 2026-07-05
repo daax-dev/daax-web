@@ -200,23 +200,34 @@ function matchEscape(rest: string): { value: string; complete: boolean } {
   // CSI: ESC [ params intermediates final
   let m = /^\x1b\[[0-9;?:<>=!]*[ -/]*[@-~]/.exec(rest);
   if (m) return { value: m[0], complete: true };
-  if (/^\x1b\[[0-9;?:<>=!]*[ -/]*$/.test(rest)) return { value: rest, complete: false };
+  if (/^\x1b\[[0-9;?:<>=!]*[ -/]*$/.test(rest))
+    return { value: rest, complete: false };
 
   // OSC: ESC ] ... (BEL | ST)
   m = /^\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/.exec(rest);
   if (m) return { value: m[0], complete: true };
-  if (/^\x1b\][^\x07\x1b]*$/.test(rest)) return { value: rest, complete: false };
-  if (/^\x1b\][^\x07\x1b]*\x1b$/.test(rest)) return { value: rest, complete: false };
+  if (/^\x1b\][^\x07\x1b]*$/.test(rest))
+    return { value: rest, complete: false };
+  if (/^\x1b\][^\x07\x1b]*\x1b$/.test(rest))
+    return { value: rest, complete: false };
 
   // DCS / SOS / PM / APC: ESC (P|X|^|_) ... ST
   m = /^\x1b[PX^_][^\x1b]*\x1b\\/.exec(rest);
   if (m) return { value: m[0], complete: true };
-  if (/^\x1b[PX^_][^\x1b]*\x1b?$/.test(rest)) return { value: rest, complete: false };
+  if (/^\x1b[PX^_][^\x1b]*\x1b?$/.test(rest))
+    return { value: rest, complete: false };
+
+  // nF sequences: ESC + intermediates (0x20-0x2F) + one final (0x30-0x7E),
+  // e.g. charset designation ESC ( B / ESC ) 0 or DEC line-attr ESC # 8 —
+  // three or more bytes. Consuming only 2 would leak the final byte as text.
+  m = /^\x1b[ -/]+[0-~]/.exec(rest);
+  if (m) return { value: m[0], complete: true };
+  if (/^\x1b[ -/]+$/.test(rest)) return { value: rest, complete: false };
 
   // Lone ESC at end of chunk — could begin any sequence.
   if (rest === "\x1b") return { value: rest, complete: false };
 
-  // Any other two-byte escape (ESC + one byte), e.g. ESC c, ESC ( B.
+  // Any other two-byte escape (ESC + one final byte), e.g. ESC c, ESC 7.
   return { value: rest.slice(0, 2), complete: true };
 }
 

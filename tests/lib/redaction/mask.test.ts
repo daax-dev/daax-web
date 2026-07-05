@@ -55,7 +55,9 @@ describe("maskSecrets — true negatives (bound false positives)", () => {
   });
 
   it("does not mask dotted identifiers / versions / filenames", () => {
-    expect(maskSecrets("version 1.2.3 released")).toBe("version 1.2.3 released");
+    expect(maskSecrets("version 1.2.3 released")).toBe(
+      "version 1.2.3 released",
+    );
     expect(maskSecrets("open a.b.c now")).toBe("open a.b.c now");
   });
 
@@ -106,9 +108,9 @@ describe("maskSecrets — known credential values", () => {
   });
 
   it("honours a custom label", () => {
-    expect(
-      maskSecrets("sk-abcdefghijklmnop1234", { label: "***" }),
-    ).toBe("***");
+    expect(maskSecrets("sk-abcdefghijklmnop1234", { label: "***" })).toBe(
+      "***",
+    );
   });
 });
 
@@ -130,6 +132,20 @@ describe("maskSecrets — mid-token ANSI escapes (grep/ls --color)", () => {
   it("masks a hex secret split by \\x1b[K in the middle", () => {
     const input = "0123456789abcdef\x1b[K0123456789abcdef";
     expect(maskSecrets(input)).toBe(`${R}\x1b[K`);
+  });
+
+  it("masks an AWS key split by a charset-designation escape (ESC ( B)", () => {
+    // nF sequence is THREE bytes; a two-byte consume would leak "B" into the
+    // projection and break the match while xterm renders the key contiguously.
+    const input = "AKIA\x1b(BIOSFODNN7EXAMPLE";
+    expect(maskSecrets(input)).toBe(`${R}\x1b(B`);
+    expect(maskSecrets(input)).not.toContain("IOSFODNN7EXAMPLE");
+  });
+
+  it("masks an AWS key split by a DEC line-attribute escape (ESC # 8)", () => {
+    const input = "AKIA\x1b#8IOSFODNN7EXAMPLE";
+    expect(maskSecrets(input)).toBe(`${R}\x1b#8`);
+    expect(maskSecrets(input)).not.toContain("IOSFODNN7EXAMPLE");
   });
 
   it("does not join tokens across a real newline (control boundary)", () => {
@@ -202,6 +218,20 @@ describe("createStreamMasker — chunk-boundary safety", () => {
     }
   });
 
+  it("masks a key split by a charset escape AND across every chunk boundary", () => {
+    // The cut at every position includes splitting the ESC ( B sequence itself
+    // (after ESC, and after the intermediate) — must be carried, never leaked.
+    const full = "AKIA\x1b(BIOSFODNN7EXAMPLE\n";
+    const expected = maskSecrets(full);
+    expect(expected).not.toContain("IOSFODNN7EXAMPLE");
+    for (let cut = 1; cut < full.length; cut++) {
+      const m = createStreamMasker();
+      const out =
+        m.push(full.slice(0, cut)) + m.push(full.slice(cut)) + m.flush();
+      expect(out).toBe(expected);
+    }
+  });
+
   it("does not corrupt an incomplete OSC payload larger than the text cap", () => {
     // 5000-byte OSC-52 clipboard payload split so the first chunk holds an
     // unterminated escape > MAX_CARRY (4096). It must be carried intact, never
@@ -231,9 +261,9 @@ describe("createStreamMasker — chunk-boundary safety", () => {
     for (let i = 1; i < full.length; i++) {
       // 2-way
       const m2 = createStreamMasker();
-      expect(m2.push(full.slice(0, i)) + m2.push(full.slice(i)) + m2.flush()).toBe(
-        expected,
-      );
+      expect(
+        m2.push(full.slice(0, i)) + m2.push(full.slice(i)) + m2.flush(),
+      ).toBe(expected);
       // 3-way (step j to keep the loop bounded)
       for (let j = i + 1; j < full.length; j += 7) {
         const m3 = createStreamMasker();
