@@ -51,6 +51,7 @@ function loadSw(clientList: Array<Record<string, unknown>> = []): Harness {
   };
 
   const self: Record<string, unknown> = {
+    location: { origin: "https://x" },
     addEventListener: (type: string, fn: (e: unknown) => void) => {
       listeners[type] = fn;
     },
@@ -167,11 +168,14 @@ describe("service worker: fetch", () => {
 });
 
 describe("service worker: notificationclick", () => {
-  function clickWith(clients: Array<Record<string, unknown>>) {
+  function clickWith(
+    clients: Array<Record<string, unknown>>,
+    url: string = "/m",
+  ) {
     const h = loadSw(clients);
     const c = collector();
     h.listeners.notificationclick({
-      notification: { close: vi.fn(), data: { url: "/m" } },
+      notification: { close: vi.fn(), data: { url } },
       waitUntil: c.waitUntil,
     });
     return { h, settled: c.settle() };
@@ -200,5 +204,47 @@ describe("service worker: notificationclick", () => {
     expect(
       (h.self.clients as { openWindow: ReturnType<typeof vi.fn> }).openWindow,
     ).toHaveBeenCalledWith("/m");
+  });
+
+  it("focuses an existing tab when the payload is an ABSOLUTE same-origin URL", async () => {
+    const mFocus = vi.fn();
+    const { h, settled } = clickWith(
+      [{ url: "https://x/m", focus: mFocus }],
+      "https://x/m?job=42",
+    );
+    await settled;
+    expect(mFocus).toHaveBeenCalled();
+    expect(
+      (h.self.clients as { openWindow: unknown }).openWindow,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("matches on pathname when the payload carries a hash/query", async () => {
+    const mFocus = vi.fn();
+    const { h, settled } = clickWith(
+      [{ url: "https://x/m", focus: mFocus }],
+      "/m?job=42#section",
+    );
+    await settled;
+    expect(mFocus).toHaveBeenCalled();
+    expect(
+      (h.self.clients as { openWindow: unknown }).openWindow,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("rejects a CROSS-ORIGIN payload and opens the safe /m default", async () => {
+    const { h, settled } = clickWith([], "https://evil.example/steal");
+    await settled;
+    expect(
+      (h.self.clients as { openWindow: ReturnType<typeof vi.fn> }).openWindow,
+    ).toHaveBeenCalledWith("/m");
+  });
+
+  it("passes the normalized same-origin path+query to openWindow", async () => {
+    const { h, settled } = clickWith([], "https://x/m?job=42");
+    await settled;
+    expect(
+      (h.self.clients as { openWindow: ReturnType<typeof vi.fn> }).openWindow,
+    ).toHaveBeenCalledWith("/m?job=42");
   });
 });

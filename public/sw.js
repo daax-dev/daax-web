@@ -102,9 +102,24 @@ self.addEventListener("push", (event) => {
 // arbitrary open workbench/terminal tab by navigating it away.
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const targetUrl =
-    (event.notification.data && event.notification.data.url) || "/m";
-  const targetPath = targetUrl.split("?")[0];
+  const raw = (event.notification.data && event.notification.data.url) || "/m";
+
+  // The payload URL is untrusted. Resolve it against OUR origin and reject
+  // anything that resolves cross-origin, falling back to the mobile surface.
+  // This both prevents openWindow() from navigating to an attacker-controlled
+  // origin and makes the "focus an existing tab" match work for absolute-URL or
+  // hash-bearing payloads — we compare normalized pathnames, not raw strings.
+  let target = "/m";
+  try {
+    const url = new URL(raw, self.location.origin);
+    if (url.origin === self.location.origin) {
+      target = url.pathname + url.search + url.hash;
+    }
+  } catch {
+    /* unparseable payload — keep the safe /m default */
+  }
+  const targetPath = new URL(target, self.location.origin).pathname;
+
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
@@ -122,8 +137,9 @@ self.addEventListener("notificationclick", (event) => {
             /* client.url unparseable — skip */
           }
         }
-        // 2) Otherwise open a fresh window; do not hijack an unrelated tab.
-        return self.clients.openWindow(targetUrl);
+        // 2) Otherwise open a fresh same-origin window; never hijack an
+        // unrelated tab, and never open the untrusted payload verbatim.
+        return self.clients.openWindow(target);
       }),
   );
 });
