@@ -59,6 +59,10 @@ export function useAttentionPoll(
         signal: ac.signal,
       });
       if (!res.ok) {
+        // Drop stale session data so the UI doesn't show old cards / a stale
+        // truncated banner while actually disconnected.
+        setCards([]);
+        setTruncated(false);
         setConn("disconnected");
         return;
       }
@@ -75,6 +79,9 @@ export function useAttentionPoll(
     } catch (err) {
       // Aborts are expected on unmount / poll-interval change; ignore them.
       if (err instanceof DOMException && err.name === "AbortError") return;
+      // Drop stale session data on a fetch/parse failure (see non-2xx path).
+      setCards([]);
+      setTruncated(false);
       setConn("disconnected");
     } finally {
       inFlightRef.current = false;

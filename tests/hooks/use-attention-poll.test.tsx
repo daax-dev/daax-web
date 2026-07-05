@@ -10,6 +10,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useAttentionPoll, DEFAULT_POLL_MS } from "@/hooks/useAttentionPoll";
+import type { AttentionCard } from "@/lib/attention/adapter";
+
+const sampleCard: AttentionCard = {
+  id: "s1",
+  label: "host-a",
+  host: "host-a",
+  cwd: "/repo",
+  repoBranch: "main",
+  status: "working",
+  since: 1,
+  lastTool: "bash",
+  toolCount: 3,
+  sparkline: [1, 2, 3],
+};
 
 interface PendingFetch {
   signal: AbortSignal;
@@ -79,6 +93,83 @@ describe("useAttentionPoll", () => {
       vi.advanceTimersByTime(DEFAULT_POLL_MS);
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears stale cards when a poll returns a non-2xx response", async () => {
+    // First poll populates a truncated board; the second returns non-2xx.
+    const queue: Array<() => unknown> = [
+      () => ({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            ok: true,
+            sessions: [sampleCard],
+            truncated: true,
+          }),
+      }),
+      () => ({ ok: false, status: 503, json: () => Promise.resolve({}) }),
+    ];
+    let call = 0;
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(queue[Math.min(call++, queue.length - 1)]()),
+    );
+
+    const { result } = renderHook(() => useAttentionPoll());
+
+    // Flush the initial (successful) poll.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.cards).toHaveLength(1);
+    expect(result.current.truncated).toBe(true);
+    expect(result.current.conn).toBe("connected");
+
+    // Next tick returns non-2xx: stale cards/truncated must be cleared.
+    await act(async () => {
+      vi.advanceTimersByTime(DEFAULT_POLL_MS);
+      await Promise.resolve();
+    });
+    expect(result.current.conn).toBe("disconnected");
+    expect(result.current.cards).toEqual([]);
+    expect(result.current.truncated).toBe(false);
+  });
+
+  it("clears stale cards when a poll throws a network error", async () => {
+    // First poll populates a board; the second rejects (network/parse failure).
+    const queue: Array<() => Promise<unknown>> = [
+      () =>
+        Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              ok: true,
+              sessions: [sampleCard],
+              truncated: true,
+            }),
+        }),
+      () => Promise.reject(new TypeError("network down")),
+    ];
+    let call = 0;
+    fetchMock.mockImplementation(() =>
+      queue[Math.min(call++, queue.length - 1)](),
+    );
+
+    const { result } = renderHook(() => useAttentionPoll());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.cards).toHaveLength(1);
+    expect(result.current.truncated).toBe(true);
+
+    // Next tick rejects: stale cards/truncated must be cleared, not retained.
+    await act(async () => {
+      vi.advanceTimersByTime(DEFAULT_POLL_MS);
+      await Promise.resolve();
+    });
+    expect(result.current.conn).toBe("disconnected");
+    expect(result.current.cards).toEqual([]);
+    expect(result.current.truncated).toBe(false);
   });
 
   it("aborts the in-flight request on unmount", () => {
