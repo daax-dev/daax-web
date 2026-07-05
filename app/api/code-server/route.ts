@@ -95,6 +95,19 @@ const CONTAINER_IMAGE = envImage || "daax-code-server:latest";
 // When Daax runs in a container, we need the HOST path, not the container path
 const HOST_WORKSPACE_PATH = process.env.HOST_WORKSPACE_PATH || "";
 
+// Host interface for the published code-server port. The spawned container
+// runs `--auth none`, so whatever interface this publish binds becomes an
+// unauthenticated IDE (workspace mounted read-write) for every peer that can
+// reach it. Default is loopback; widening (a Tailscale IP, or 0.0.0.0) is an
+// explicit operator opt-in via DAAX_CODE_SERVER_BIND. Fails closed to
+// loopback on a malformed value.
+const BIND_ADDR_PATTERN = /^\d{1,3}(\.\d{1,3}){3}$/;
+function getPublishBindAddr(): string {
+  const bind = process.env.DAAX_CODE_SERVER_BIND?.trim();
+  if (!bind || !BIND_ADDR_PATTERN.test(bind)) return "127.0.0.1";
+  return bind;
+}
+
 // expandPath is imported from @/lib/path-utils
 
 // Get the actual host path for mounting volumes
@@ -203,7 +216,9 @@ function getContainerPort(): number | null {
     const result = execFileSync("docker", ["port", CONTAINER_NAME, "8080"], {
       encoding: "utf-8",
     });
-    const match = result.match(/:(\d+)$/);
+    // `docker port` output is newline-terminated and may list multiple
+    // bindings (IPv4 + IPv6); match per-line, not end-of-string.
+    const match = result.match(/:(\d+)$/m);
     return match ? parseInt(match[1]) : null;
   } catch {
     return null;
@@ -449,11 +464,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       //     cookie. A PASSWORD/HASHED_PASSWORD would therefore force a manual
       //     login page (broken UX) with no app-side way to auto-authenticate.
       //   - Deploy/Tailscale mode fronts code-server with Traefik + Pocket ID
-      //     forward-auth on the daax-code.* subdomain (see the compose stanza);
-      //     host-dev binds it on the developer's own machine / Tailscale network.
+      //     forward-auth on the daax-code.* subdomain (see the compose stanza).
+      //   - THIS spawn path publishes the container port itself, and once the
+      //     container is up the app's auth gate is no longer in the loop: any
+      //     peer that can reach the published interface gets a full IDE (with
+      //     terminal) unauthenticated. That is why the publish binds loopback
+      //     by default; exposing it beyond the machine (e.g. a Tailscale IP)
+      //     requires the operator to opt in via DAAX_CODE_SERVER_BIND and
+      //     accept that every network on that interface can reach the IDE.
       // `PASSWORD=` (empty) is set explicitly so a stray host PASSWORD env cannot
-      // leak in and unexpectedly enable a login prompt. Revisit if code-server is
-      // ever reachable from an untrusted network without the forward-auth chain.
+      // leak in and unexpectedly enable a login prompt.
       const args = [
         "run",
         "-d",
@@ -462,7 +482,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         "--label",
         `daax.project=${project}`,
         "-p",
-        `${port}:8080`,
+        `${getPublishBindAddr()}:${port}:8080`,
         "-v",
         `${hostWorkspace}:${containerPath}`,
         "-v",

@@ -19,10 +19,7 @@ describe("code-server --auth none accepted-risk invariant (#201)", () => {
   const composePath = resolve(__dirname, "../../deploy/docker-compose.yml");
   const rawCompose = readFileSync(composePath, "utf8");
   const compose = parse(rawCompose) as {
-    services: Record<
-      string,
-      { ports?: string[]; command?: string[] | string }
-    >;
+    services: Record<string, { ports?: string[]; command?: string[] | string }>;
   };
   const codeServer = compose.services["code-server"];
 
@@ -80,5 +77,18 @@ describe("code-server API route --auth none accepted-risk invariant (#201)", () 
 
   it("sets PASSWORD explicitly empty so a stray host env cannot leak in", () => {
     expect(rawRoute).toContain('"PASSWORD="');
+  });
+
+  it("publishes the spawned container on an explicit bind, loopback by default", () => {
+    // The publish spec is the binding that matters on this path: the app's
+    // auth gate is not in the HTTP path once the container is up, so a bare
+    // `${port}:8080` (0.0.0.0) publish would expose an unauthenticated IDE on
+    // every host interface. The bind must come from getPublishBindAddr(),
+    // which defaults to loopback and only widens via DAAX_CODE_SERVER_BIND.
+    expect(rawRoute).toMatch(/`\$\{getPublishBindAddr\(\)\}:\$\{port\}:8080`/);
+    expect(rawRoute).toContain("DAAX_CODE_SERVER_BIND");
+    expect(rawRoute).toMatch(
+      /getPublishBindAddr\(\)[\s\S]{0,200}return "127\.0\.0\.1"/,
+    );
   });
 });
