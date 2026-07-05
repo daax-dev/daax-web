@@ -40,6 +40,14 @@ jobs:
       - name: Unit tests
         run: bun run test
 
+      # Integration tests gate the DB invariants (F5, #101): revoked-no-regrant,
+      # JIT xmax insert-vs-update, first-admin bootstrap, prune-only-reconcile,
+      # group-sync. `test:integration` spins a throwaway Postgres via Docker
+      # (scripts/with-test-postgres.sh) and self-skips only if Docker is absent —
+      # the self-hosted runner HAS Docker, so these actually run at the gate.
+      - name: Integration tests (Postgres via Docker)
+        run: bun run test:integration
+
       - name: Build
         env:
           # Dummy connection string so the build never trips the fail-closed DB
