@@ -26,6 +26,7 @@ vi.mock("util", () => {
 
 // Import AFTER vi.mock (though vitest hoists these anyway)
 import { GET } from "@/app/api/docker/images/route";
+import { DEFAULT_AGENT_IMAGE, DEFAULT_AGENT_IMAGE_GSD } from "@/lib/settings";
 
 describe("/api/docker/images", () => {
   beforeEach(() => {
@@ -68,7 +69,7 @@ describe("/api/docker/images", () => {
       });
 
       const request = new NextRequest(
-        "http://localhost/api/docker/images?images=daax-agents&registry=jpoley",
+        "http://localhost/api/docker/images?images=daax-agents-core&registry=jpoley",
       );
 
       const response = await GET(request);
@@ -77,8 +78,8 @@ describe("/api/docker/images", () => {
       expect(response.status).toBe(200);
       expect(data.images).toHaveLength(1);
       expect(data.images[0]).toMatchObject({
-        id: "daax-agents",
-        fullName: "jpoley/daax-agents:latest",
+        id: "daax-agents-core",
+        fullName: "jpoley/daax-agents-core:latest",
         available: true,
         size: "1024 MB",
       });
@@ -196,6 +197,76 @@ describe("/api/docker/images", () => {
         details: expect.stringContaining("docker image inspect"),
         hint: "Make sure Docker is running and the socket is accessible.",
       });
+    });
+  });
+
+  describe("pinned variant availability (#195)", () => {
+    // The availability check must inspect the SAME ref the Settings selector
+    // pulls: `docker pull repo@sha256:...` never tags :latest, so checking
+    // `${registry}/${id}:latest` would report a pinned variant unavailable
+    // forever after a successful digest pull.
+    it("inspects the pinned digest ref for daax-agents on the default registry", async () => {
+      mockExecFileAsync.mockResolvedValue({
+        stdout: "1073741824|2026-01-15T10:00:00Z",
+      });
+
+      const request = new NextRequest(
+        "http://localhost/api/docker/images?images=daax-agents&registry=jpoley",
+      );
+
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(mockExecFileAsync).toHaveBeenCalledWith(
+        "docker",
+        [
+          "image",
+          "inspect",
+          DEFAULT_AGENT_IMAGE,
+          "--format",
+          "{{.Size}}|{{.Created}}",
+        ],
+        { timeout: 5000 },
+      );
+      expect(data.images[0]).toMatchObject({
+        id: "daax-agents",
+        fullName: DEFAULT_AGENT_IMAGE,
+        available: true,
+      });
+    });
+
+    it("inspects the pinned digest ref for daax-agents-gsd on the default registry", async () => {
+      mockExecFileAsync.mockResolvedValue({
+        stdout: "1073741824|2026-01-15T10:00:00Z",
+      });
+
+      const request = new NextRequest(
+        "http://localhost/api/docker/images?images=daax-agents-gsd&registry=jpoley",
+      );
+
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(data.images[0].fullName).toBe(DEFAULT_AGENT_IMAGE_GSD);
+      expect(data.images[0].available).toBe(true);
+    });
+
+    it("falls back to :latest for pinned variant ids on a custom registry", async () => {
+      // Custom registries use the operator's own builds; the jpoley digests
+      // cannot exist there, so the tag-based ref is checked instead.
+      mockExecFileAsync.mockImplementation(async (_cmd, args) => {
+        expect(args?.[2]).toBe("ghcr.io/acme/daax-agents:latest");
+        return { stdout: "104857600|2026-01-15T10:00:00Z" };
+      });
+
+      const request = new NextRequest(
+        "http://localhost/api/docker/images?images=daax-agents&registry=ghcr.io/acme",
+      );
+
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(data.images[0].fullName).toBe("ghcr.io/acme/daax-agents:latest");
     });
   });
 

@@ -180,6 +180,17 @@ services:
       - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
       - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
 
+      # LOCAL_OPERATOR bypass posture (F-C2, #184). The HTTP plane cannot inspect
+      # the TCP peer (plain `next start`, no custom server), so the uncredentialed
+      # "trusted local operator" bypass is gated on deployment posture. HOST=0.0.0.0
+      # marks this container as EXPOSED beyond loopback → the bypass is DISABLED:
+      # an uncredentialed request is 401'd, never trusted as the operator. This is
+      # the hardened Traefik + Pocket ID path, so identity comes via forwarded
+      # headers + DAAX_REQUIRE_AUTH=1; the bypass must stay off. Only set
+      # DAAX_TRUST_LOCAL_OPERATOR=1 for a deliberately proxy-less trusted tailnet.
+      - HOST=0.0.0.0
+      - DAAX_TRUST_LOCAL_OPERATOR=${DAAX_TRUST_LOCAL_OPERATOR:-}
+
       # HTTP proxy-secret trust boundary (F1a, #94/#191). The app MUST receive the
       # same value deploy-local.sh renders into Traefik's inject-proxy-secret
       # middleware (X-Daax-Proxy-Secret), or enabling strict mode
@@ -216,7 +227,8 @@ services:
       # Docker network name — read by the web tier (lib/settings.ts). The spawn
       # machinery that actually attaches containers to it runs in the `terminal`
       # service (which also sets DOCKER_NETWORK). CLAUDE_CONTAINER_IMAGE and
-      # DEFAULT_MOUNT_PATH are spawn-only and now live solely on `terminal`.
+      # DEFAULT_MOUNT_PATH are spawn-only and now live solely on `terminal`
+      # (where #195's digest-pin fallback is applied).
       - DOCKER_NETWORK=${DAAX_NETWORK:-daax-net}
 
       # Host workspace path — read by many web routes (workspace/editor, code
@@ -321,9 +333,15 @@ services:
       - DOCKER_NETWORK=${DAAX_NETWORK:-daax-net}
       - HOST_WORKSPACE_PATH=${DAAX_WORKSPACE:?DAAX_WORKSPACE required}
       - DEFAULT_MOUNT_PATH=/workspace
-      # DEFERRED (#195): mutable :latest default; digest-pinning pending offline
-      # registry access. Lives in the spawn lane (server/), same as before.
-      - CLAUDE_CONTAINER_IMAGE=${CLAUDE_CONTAINER_IMAGE:-jpoley/daax-agents:latest}
+      # #195 (Fable M5): the default is the digest-pinned image in
+      # server/config/constants.ts (DEFAULT_CONTAINER_IMAGE). This line ONLY
+      # forwards an explicit operator override — it deliberately does NOT default
+      # to a mutable `:latest` tag. When CLAUDE_CONTAINER_IMAGE is unset the
+      # container receives an empty value, and constants.ts falls through
+      # (`"" || <digest>`) to the pinned digest. Setting `:latest` here would
+      # override the pin on the real deploy path, so keep the fallback empty.
+      # Lives in the spawn lane (terminal service), same as before.
+      - CLAUDE_CONTAINER_IMAGE=${CLAUDE_CONTAINER_IMAGE:-}
       # GitHub token (optional, used by spawned agent containers).
       - GITHUB_DAAX=${GITHUB_DAAX:-}
 
@@ -380,11 +398,15 @@ services:
     # relies entirely on network-level controls: the port is bound to loopback
     # (127.0.0.1:18080 above), and external access is only via Traefik, which
     # applies Pocket ID forward-auth in front. A second layer (code-server
-    # PASSWORD/HASHED_PASSWORD) is NOT added here because the app opens the IDE via
-    # a transparent reverse-proxy/iframe that does not present a credential; adding
-    # one would break that seamless flow unless the app coordinates the secret,
-    # which is app-side work outside this infra change. Revisit if the port is ever
-    # exposed beyond loopback or the Traefik forward-auth chain changes.
+    # PASSWORD/HASHED_PASSWORD) is NOT added here because the app opens the IDE by
+    # pointing the browser straight at code-server in a new tab (window.open in
+    # app/code-server/page.tsx) — the daax app is NOT in that HTTP path (and it is
+    # a cross-origin daax-code.* subdomain), so it cannot transparently inject a
+    # code-server session cookie. A PASSWORD would therefore surface a manual login
+    # page with no app-side way to auto-authenticate (broken UX); doing it
+    # seamlessly would require Traefik-side credential injection, which is
+    # infra/proxy work outside this stanza. Revisit if the port is ever exposed
+    # beyond loopback or the Traefik forward-auth chain changes.
     command: ["--auth", "none", "--bind-addr", "0.0.0.0:8080", "/workspace"]
 
     environment:

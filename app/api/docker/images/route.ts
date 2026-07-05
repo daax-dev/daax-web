@@ -6,6 +6,7 @@ import {
   dockerUnavailableResponse,
   isDockerUnavailableError,
 } from "@/lib/docker-exec";
+import { imageRefForVariant } from "@/lib/settings";
 
 const execFileAsync = promisify(execFile);
 
@@ -40,7 +41,10 @@ export async function GET(request: NextRequest) {
   const results: ImageStatus[] = [];
 
   for (const imageId of imageIds) {
-    const fullName = `${registry}/${imageId}:latest`;
+    // Inspect the SAME ref the Settings selector selects/pulls (issue #195):
+    // pinned variants resolve to their digest ref on the default registry, so
+    // a digest pull is reported as available; everything else stays :latest.
+    const fullName = imageRefForVariant(registry, imageId);
 
     // Validate image name using shared utility
     if (!isValidDockerImageName(fullName)) {
