@@ -28,8 +28,8 @@ test.describe("RBAC admin gate — unauthenticated is blocked", () => {
           : await unauthenticatedRequest.post(path, { data: {} });
       const status = response.status();
       expect(
-        status === 401 || status === 403 || status === 302 || status === 307,
-        `Expected an auth/authz block for ${method} ${path}, got ${status}`,
+        status === 401 || status === 302 || status === 307,
+        `Expected an unauthenticated block (401/302/307) for ${method} ${path}, got ${status}`,
       ).toBe(true);
     });
   }
