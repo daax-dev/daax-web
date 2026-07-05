@@ -1,68 +1,46 @@
-# Provisioning a self-hosted CI runner (`runs-on: self-hosted`)
+# Making a self-hosted runner host CI-ready (`runs-on: self-hosted`)
 
-`ci.yml` and `publish-images.yml` target **`runs-on: self-hosted`** — the generic
-label every self-hosted runner carries. Any runner registered to the `daax-dev`
-org (runner group **Default**) that daax-web is authorized to use will pick up the
-jobs. This is the plain-host path; the k8s ARC (`daax-arc`) and container
-(`daax-docker`) variants are documented separately in
-`self-hosted-runners-runbook.md`.
+`ci.yml` and `publish-images.yml` target **`runs-on: self-hosted`** — any runner
+registered to the `daax-dev` org (group **Default**) picks up the jobs. The runner
+agents are already registered and the hosts are already logged in to Docker; they
+just need the tooling the jobs use. (The k8s ARC `daax-arc` and container
+`daax-docker` variants are covered separately in `self-hosted-runners-runbook.md`.)
 
-## One-shot host provisioning
+## One script, run on each host
 
-`deploy/runners/provision-self-hosted-runner.sh` turns a fresh Ubuntu 22.04/24.04
-host into a runner that can run **every** job in both workflows, then registers it
-and installs it as a systemd service. It is idempotent and resilient (network
-retries, apt-lock waits, arch detection).
+`deploy/runners/provision-self-hosted-runner.sh` — idempotent, resilient (network
+retries, apt-lock waits), **zero-argument**. Run as root on every runner host:
 
 ```bash
-# 1. Get a single-use org registration token (~1h TTL):
-#    daax-dev → Settings → Actions → Runners → New runner
-#    or: gh api -X POST orgs/daax-dev/actions/runners/registration-token -q .token  (needs admin:org)
-
-# 2. Provision (run as root):
-sudo -E RUNNER_TOKEN=<token> ./deploy/runners/provision-self-hosted-runner.sh
+sudo ./deploy/runners/provision-self-hosted-runner.sh
 ```
 
-Verify: **daax-dev → Settings → Actions → Runners** shows the runner **Idle** in
-group **Default**. Trigger a PR and confirm the checks schedule on it.
+It:
 
-### Tunables (env vars)
+1. installs the tooling the workflows need (below),
+2. auto-detects the runner's service account from its `actions.runner.*` systemd
+   unit, adds it to the `docker` group, and grants passwordless sudo,
+3. restarts the runner service so the new group membership takes effect —
+   **no manual follow-up.**
 
-| Var | Default | Purpose |
-|-----|---------|---------|
-| `RUNNER_TOKEN` | *(required)* | Org registration token (single-use) |
-| `RUNNER_URL` | `https://github.com/daax-dev` | Registration scope (org-level) |
-| `RUNNER_GROUP` | `Default` | Runner group |
-| `RUNNER_LABELS` | `self-hosted` | Must include `self-hosted` (what the workflows match) |
-| `RUNNER_NAME` | `daax-<hostname>` | Runner name |
-| `RUNNER_USER` | `$SUDO_USER` / `gha-runner` | Unprivileged service user |
-| `RUNNER_VERSION` | latest release | Pin the agent version |
-| `RUNNER_SHA256` | *(unset)* | Verify the agent tarball checksum |
-| `EPHEMERAL` | `0` | `1` = one-job-then-deregister |
-| `FORCE` | `0` | `1` = reconfigure an already-registered runner |
+If a host's runner isn't a systemd service (so the account can't be detected),
+pass it explicitly: `sudo RUNNER_USER=<account> ./deploy/runners/provision-self-hosted-runner.sh`.
 
-## What the script installs, and why (mapped to the workflows)
+## What it installs, and why (mapped to the workflow steps)
 
 | Installed | Required by |
 |-----------|-------------|
-| Docker Engine + Buildx + Compose | e2e Postgres **service container**; `setup-qemu` + `setup-buildx` + `build-push-action` (publish); `docker login` (sbom) |
-| Node.js 20 | sbom job's `node -e` placeholder-vs-real guard (runs as a shell step, not via the runner-bundled node) |
-| Bun | belt-and-suspenders for `oven-sh/setup-bun` (which otherwise downloads it per job) |
-| git, curl, unzip, tar, jq, ca-certs | checkout, artifact up/download, Bun/Trivy/syft binary fetch |
+| Docker **buildx + compose** plugins | publish `setup-buildx` / `build-push-action`; e2e Postgres **service container**. (Docker engine itself is assumed already present — installed only if the plugins are missing.) |
+| Node.js 20 | sbom job's `node -e` placeholder-vs-real guard (a shell step, not the runner-bundled node) |
+| Bun | belt-and-suspenders for `oven-sh/setup-bun` |
+| git, curl, unzip, tar, jq, ca-certs | checkout, artifact up/download, Bun/syft fetch |
 | Chromium OS libs + passwordless sudo | e2e `bunx playwright install --with-deps chromium` |
 
-Trivy runs as an **installed binary** (the composite `trivy-action` fetches it) —
-the `vuln-scan` job needs no Docker. Docker is required only by e2e, publish, and
-sbom; because all jobs share the `self-hosted` label and can land on any runner,
-every runner gets the full set.
+**Trivy is not installed** — the composite `trivy-action` fetches its own binary,
+so the `vuln-scan` job needs nothing on the host.
 
-## Teardown
+It does **not** register runners or touch Docker login — both are already done.
 
-```bash
-cd /opt/daax-runner
-sudo ./svc.sh stop && sudo ./svc.sh uninstall
-sudo -u <RUNNER_USER> ./config.sh remove --token <removal token>   # deregisters from the org
-```
+## Revert CI to GitHub-hosted
 
-To revert CI to GitHub-hosted: change `runs-on: self-hosted` back to
-`runs-on: ubuntu-latest` in both workflows (6 lines).
+Change `runs-on: self-hosted` back to `runs-on: ubuntu-latest` in both workflows.
