@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently --kill-others-on-fail -n next,terminal -c cyan,magenta \"next dev -p 4200\" \"tsx server/terminal-server.ts\"",
+    "dev": "concurrently --kill-others-on-fail -n next,terminal -c cyan,magenta \"next dev -p 4200 -H 127.0.0.1\" \"tsx server/terminal-server.ts\"",
     "dev:tailscale": "concurrently --kill-others-on-fail -n next,terminal -c cyan,magenta \"HOST=0.0.0.0 next dev -p 4200 -H 0.0.0.0\" \"TERMINAL_HOST=0.0.0.0 tsx server/terminal-server.ts\"",
-    "dev:next": "next dev -p 4200",
+    "dev:next": "next dev -p 4200 -H 127.0.0.1",
     "dev:terminal": "tsx server/terminal-server.ts",
     "parse:safe-mcp": "tsx scripts/parse-safe-mcp.ts",
     "sbom:generate": "./scripts/generate-sbom.sh",

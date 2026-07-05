@@ -564,8 +564,10 @@ describe("auth module", () => {
     });
 
     it("trusts a forwarded identity when the secret is unset and strict mode is off (boundary disabled)", async () => {
-      // Backward-compatible: opt-in. With no DAAX_PROXY_SECRET and non-strict
-      // mode, legacy behavior (trust the forwarded identity) is preserved.
+      // Backward-compatible: opt-in. With no DAAX_PROXY_SECRET, non-strict mode
+      // AND no exposed bind signal (HOST is stubbed to undefined in beforeEach),
+      // legacy behavior (trust the forwarded identity) is preserved. An explicit
+      // non-loopback HOST bind revokes this — see the #184-review cases below.
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-user": "user-uuid",
@@ -576,6 +578,112 @@ describe("auth module", () => {
       const result = await requireAuth();
 
       expect(result.authenticated).toBe(true);
+    });
+
+    it("refuses a forwarded identity on an exposed bind (HOST=0.0.0.0) when the secret is unset, non-strict (#184 review)", async () => {
+      // The #184 scenario: proxy-less 0.0.0.0 container, no DAAX_PROXY_SECRET,
+      // DAAX_REQUIRE_AUTH unset. A tailnet peer sending X-Forwarded-User must
+      // NOT be authenticated — the header carries no proof it traversed a
+      // trusted proxy, so it fails closed instead of legacy-trusting.
+      vi.stubEnv("HOST", "0.0.0.0");
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "attacker-chosen-uuid",
+          "x-forwarded-name": "Mallory",
+        }),
+      );
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(false);
+      if (!result.authenticated) {
+        expect(result.response.status).toBe(401);
+      }
+    });
+
+    it("surfaces NO identity-derived fields when the exposed-bind refusal rejects a forwarded identity (#184 review)", async () => {
+      vi.stubEnv("HOST", "0.0.0.0");
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "attacker-chosen-uuid",
+          "x-forwarded-name": "Mallory",
+          "x-forwarded-email": "mallory@evil.test",
+          "x-forwarded-groups": "admin,superuser",
+        }),
+      );
+
+      const user = await getAuthUser();
+
+      expect(user).toEqual({
+        username: null,
+        email: null,
+        groups: [],
+        authenticated: false,
+        pictureUrl: null,
+      });
+    });
+
+    it("logs a one-time REFUSED warning when the exposed-bind refusal fires (#184 review)", async () => {
+      vi.stubEnv("HOST", "0.0.0.0");
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      // Fresh module import so the once-per-process warning flag is reset and we
+      // can assert the warning is actually emitted on this path.
+      vi.resetModules();
+      vi.doMock("next/headers", () => ({
+        headers: () =>
+          Promise.resolve(
+            createMockHeaders({
+              "x-forwarded-user": "attacker-chosen-uuid",
+            }),
+          ),
+      }));
+      const { requireAuth: requireAuthFresh } = await import("@/lib/auth");
+
+      const result = await requireAuthFresh();
+
+      expect(result.authenticated).toBe(false);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Forwarded identity (X-Forwarded-User) REFUSED",
+        ),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("still trusts a forwarded identity with the secret unset on a loopback HOST bind (legacy unchanged, #184 review)", async () => {
+      vi.stubEnv("HOST", "127.0.0.1");
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "user-uuid",
+          "x-forwarded-name": "Legacy User",
+        }),
+      );
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(true);
+    });
+
+    it("authenticates a forwarded identity on an exposed bind when the secret is configured and matches (#184 review)", async () => {
+      // The secret-configured path is unchanged by the exposed-bind refusal:
+      // with DAAX_PROXY_SECRET set, the boundary is enforced in every posture
+      // and a matching secret authenticates the identity.
+      process.env.DAAX_PROXY_SECRET = SECRET;
+      vi.stubEnv("HOST", "0.0.0.0");
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "user-uuid",
+          "x-forwarded-name": "Trusted User",
+          "x-daax-proxy-secret": SECRET,
+        }),
+      );
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(true);
+      if (result.authenticated) {
+        expect(result.user.username).toBe("Trusted User");
+      }
     });
 
     it("refuses a forwarded identity in strict mode when the secret is unset (fail-closed) and logs a ship-blocking warning", async () => {
@@ -792,14 +900,19 @@ describe("LOCAL_OPERATOR bypass posture gate (F-C2, #184)", () => {
     if (!result.authenticated) expect(result.response.status).toBe(401);
   });
 
-  // (d) forwarded identity is unaffected: gating the operator bypass must not
-  //     touch the forwarded-identity (Path A) branch, which resolves earlier.
-  it("still authenticates a forwarded identity on an exposed bind (Path A unaffected)", async () => {
+  // (d) forwarded identity still works on an exposed bind — but only through
+  //     the proxy-secret boundary (#184 review): with DAAX_PROXY_SECRET set and
+  //     matching, Path A resolves as before. Without the secret an exposed bind
+  //     now REFUSES forwarded identity (covered in the proxy-secret describe),
+  //     since any peer that can reach the port could forge X-Forwarded-User.
+  it("still authenticates a proxy-secret-backed forwarded identity on an exposed bind (Path A)", async () => {
     vi.stubEnv("HOST", "0.0.0.0");
+    vi.stubEnv("DAAX_PROXY_SECRET", "posture-gate-secret");
     mockHeaders.mockResolvedValue(
       createMockHeaders({
         "x-forwarded-user": "user-uuid",
         "x-forwarded-name": "Proxied User",
+        "x-daax-proxy-secret": "posture-gate-secret",
       }),
     );
 

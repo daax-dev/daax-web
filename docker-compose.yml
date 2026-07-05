@@ -36,7 +36,11 @@ services:
       # PGDATA off-volume and the image refuses to start.
       - daax-pg-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DAAX_PG_USER:-daax} -d ${DAAX_PG_DB:-daax}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DAAX_PG_USER:-daax} -d ${DAAX_PG_DB:-daax}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -132,6 +136,9 @@ services:
       # HOST=0.0.0.0 marks this container as EXPOSED beyond loopback, so the
       # bypass is DISABLED by default: an uncredentialed request gets 401 rather
       # than being trusted as the operator (any tailnet peer could reach the port).
+      # The exposed bind ALSO refuses forwarded identity (X-Forwarded-User)
+      # while DAAX_PROXY_SECRET is unset — see the proxy-secret comment below —
+      # so a peer cannot self-authenticate with one spoofed header either.
       # To run proxy-less on a trusted tailnet and intentionally trust EVERY peer
       # that can reach 4200, set DAAX_TRUST_LOCAL_OPERATOR=1. Preferred instead:
       # front with the Pocket ID proxy and set DAAX_REQUIRE_AUTH=1.
@@ -140,8 +147,12 @@ services:
       # HTTP proxy-secret trust boundary (F1a, #94/#191). The app must receive the
       # SAME value Traefik injects as X-Daax-Proxy-Secret, or enabling strict mode
       # (DAAX_REQUIRE_AUTH=1) fails closed and locks out all forwarded identity.
-      # Opt-in: empty default keeps the boundary disabled (legacy behavior) and in
-      # sync with deploy-local.sh, which also renders an empty header when unset.
+      # The empty default stays in sync with deploy-local.sh (which also renders
+      # an empty header when unset), but on THIS compose file it is NOT legacy
+      # behavior: HOST=0.0.0.0 is an exposed bind, so with the secret unset,
+      # forwarded identity is REFUSED (fail-closed, #184 review) — any peer that
+      # can reach 4200 could forge X-Forwarded-User. Set the secret (with Traefik
+      # injecting it) to authenticate forwarded identity on this path.
       # _PREVIOUS is accepted too, so the secret can be rotated without an outage.
       - DAAX_PROXY_SECRET=${DAAX_PROXY_SECRET:-}
       - DAAX_PROXY_SECRET_PREVIOUS=${DAAX_PROXY_SECRET_PREVIOUS:-}

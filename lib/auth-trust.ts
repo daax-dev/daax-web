@@ -58,12 +58,26 @@ const OIDC_PROVIDER_URL =
 // This is opt-in: when DAAX_PROXY_SECRET is unset the boundary is disabled and
 // legacy behavior is preserved — EXCEPT in strict mode (DAAX_REQUIRE_AUTH=1),
 // where an unset secret fails closed (forwarded identity is refused and a
-// ship-blocking warning is logged), mirroring reference-platform `validate()`.
+// ship-blocking warning is logged), mirroring reference-platform `validate()` —
+// AND except on an EXPOSED bind (#184 review): when HOST is an explicit
+// non-loopback address (e.g. the 0.0.0.0 compose containers) and the secret is
+// unset, forwarded identity is refused even in non-strict mode, because any
+// peer that can reach the port could send X-Forwarded-User and be
+// authenticated as that user with a single spoofed header.
 const PROXY_SECRET_HEADER =
   process.env.DAAX_AUTH_PROXY_SECRET_HEADER || "x-daax-proxy-secret";
 
 function proxySecretConfigured(): boolean {
   return !!process.env.DAAX_PROXY_SECRET;
+}
+
+// Whether the server is EXPOSED beyond loopback per the explicit HOST bind
+// signal (same signal the LOCAL_OPERATOR posture gate uses below — #184). An
+// unset/empty HOST is NOT exposed here: it carries no bind signal, and the
+// legacy no-secret behavior is only revoked on a provably exposed bind.
+function hostBindExposedBeyondLoopback(): boolean {
+  const host = (process.env.HOST ?? "").trim();
+  return host !== "" && !isLoopbackAddress(host);
 }
 
 // Constant-time string comparison. A length mismatch returns false without a
@@ -254,6 +268,20 @@ function warnProxySecretMissingOnce(): void {
   );
 }
 
+let exposedIdentityRefusedWarned = false;
+function warnForwardedIdentityRefusedExposedOnce(): void {
+  if (exposedIdentityRefusedWarned) return;
+  exposedIdentityRefusedWarned = true;
+  console.warn(
+    "[auth] Forwarded identity (X-Forwarded-User) REFUSED: the server is bound " +
+      "beyond loopback (HOST is not a loopback address) but DAAX_PROXY_SECRET is " +
+      "unset, so the header carries no proof it traversed a trusted proxy — any " +
+      "peer that can reach the port could forge it (issue #184). Set " +
+      "DAAX_PROXY_SECRET and inject X-Daax-Proxy-Secret at the proxy (plus " +
+      "DAAX_REQUIRE_AUTH=1 behind a real proxy) to authenticate forwarded identity.",
+  );
+}
+
 /**
  * Resolved auth context for a single request.
  *
@@ -304,8 +332,18 @@ export function deriveAuthContext(h: HeaderReader): AuthContext {
       // Strict mode + secret unset → fail closed (refuse forwarded identity).
       warnProxySecretMissingOnce();
       identityTrusted = false;
+    } else if (hostBindExposedBeyondLoopback()) {
+      // Non-strict + secret unset + EXPOSED bind (HOST beyond loopback) → fail
+      // closed (#184 review): on a proxy-less exposed container any peer that
+      // can reach the port could set X-Forwarded-User and be authenticated as
+      // that user with one spoofed header. The hardened deploy path requires
+      // DAAX_PROXY_SECRET (deploy/docker-compose.yml) and host-dev sends no
+      // forwarded headers, so only the unprotected exposed posture is affected.
+      warnForwardedIdentityRefusedExposedOnce();
+      identityTrusted = false;
     }
-    // else: non-strict + secret unset → boundary disabled, legacy behavior.
+    // else: non-strict + secret unset + not provably exposed → boundary
+    // disabled, legacy behavior.
   }
 
   const authenticated = userId !== null && identityTrusted;
