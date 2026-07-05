@@ -18,6 +18,65 @@ export const AUTH_GUARD_CALL_RE =
 /** An import line that brings in an auth guard (`requireAuth*` or `requireRole`). */
 export const AUTH_GUARD_IMPORT_RE = /import\s+.*require(?:Auth|Role).*from/;
 
+/**
+ * Strip line comments, block comments, and string/template literal CONTENT from
+ * a source string, replacing each stripped span with a single space so token
+ * boundaries (and line count, roughly) are preserved.
+ *
+ * SECURITY: without this, a guard mentioned only in a comment or a string
+ * literal (e.g. `// TODO: requireRole()` or `"call requireRole() here"`) would
+ * satisfy `AUTH_GUARD_CALL_RE` and let an unprotected write route slip past the
+ * audit gate misclassified as guarded. A real guard is always live code, never
+ * a comment/string, so stripping these can only make detection STRICTER — it
+ * never hides a genuine `requireRole(`/`requireAuth(` call site. The walker is
+ * string-aware so a `//` or guard mention inside a real string does not, in
+ * turn, swallow subsequent live code.
+ */
+export function stripCommentsAndStrings(src: string): string {
+  let out = "";
+  const n = src.length;
+  let i = 0;
+  while (i < n) {
+    const c = src[i];
+    const next = src[i + 1];
+    // Line comment: skip to end of line.
+    if (c === "/" && next === "/") {
+      while (i < n && src[i] !== "\n") i++;
+      out += " ";
+      continue;
+    }
+    // Block comment: skip to closing */.
+    if (c === "/" && next === "*") {
+      i += 2;
+      while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      i += 2;
+      out += " ";
+      continue;
+    }
+    // String / template literal: skip content, honoring backslash escapes.
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      i++;
+      while (i < n) {
+        if (src[i] === "\\") {
+          i += 2;
+          continue;
+        }
+        if (src[i] === quote) {
+          i++;
+          break;
+        }
+        i++;
+      }
+      out += " ";
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
 export interface RouteInfo {
   path: string;
   methods: string[];
@@ -42,8 +101,13 @@ export interface RouteAuth {
  * RBAC-gated routes are not falsely reported as unprotected.
  */
 export function detectRouteAuth(content: string, methods: string[]): RouteAuth {
+  // Match against code only: a guard mentioned in a comment or string literal
+  // must NOT count as an invoked guard (else an unprotected write route could
+  // be misclassified as guarded and slip past the gate).
+  const code = stripCommentsAndStrings(content);
+
   const hasAuthGuard =
-    AUTH_GUARD_IMPORT_RE.test(content) && AUTH_GUARD_CALL_RE.test(content);
+    AUTH_GUARD_IMPORT_RE.test(code) && AUTH_GUARD_CALL_RE.test(code);
 
   const protectedMethods: string[] = [];
   if (hasAuthGuard) {
@@ -51,7 +115,7 @@ export function detectRouteAuth(content: string, methods: string[]): RouteAuth {
       const funcPattern = new RegExp(
         `export\\s+(?:async\\s+)?function\\s+${method}\\b[\\s\\S]*?(?=export\\s+(?:async\\s+)?function|$)`,
       );
-      const funcMatch = content.match(funcPattern);
+      const funcMatch = code.match(funcPattern);
       if (funcMatch && AUTH_GUARD_CALL_RE.test(funcMatch[0])) {
         protectedMethods.push(method);
       }

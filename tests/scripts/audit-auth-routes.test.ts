@@ -155,6 +155,66 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
       expect(protectedMethods).toEqual([]);
     });
 
+    it("reports a route as UNGUARDED when requireAuth is imported but only invoked in a comment", () => {
+      // The dangerous case: the guard IS imported (so a naive file-level check
+      // passes) but the only call site is a commented-out placeholder. The
+      // write route is actually open and must be flagged.
+      const commentedCall = `
+        import { requireAuth } from "@/lib/auth";
+        export async function POST() {
+          // await requireAuth() -- planned, not yet wired
+          return new Response();
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        commentedCall,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(false);
+      expect(protectedMethods).toEqual([]);
+      expect(
+        isUnprotectedWriteRoute({
+          path: "x",
+          methods: ["POST"],
+          hasRequireAuth: hasAuthGuard,
+          protectedMethods,
+        }),
+      ).toBe(true);
+    });
+
+    it("does NOT count a guard name that appears only inside a string literal", () => {
+      const stringOnly = `
+        import { requireRole } from "@/lib/auth";
+        export async function POST() {
+          const hint = "remember to call requireRole() on this route";
+          return new Response(hint);
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(stringOnly, [
+        "POST",
+      ]);
+      expect(hasAuthGuard).toBe(false);
+      expect(protectedMethods).toEqual([]);
+    });
+
+    it("still detects a real block-comment-adjacent guard call", () => {
+      // Guarantee the comment stripper does not swallow the live call that
+      // follows a block comment on the same construct.
+      const realCall = `
+        import { requireRole } from "@/lib/auth";
+        export async function POST() {
+          /* enforce write permission */ const a = await requireRole("admin:users:write");
+          if (!a.authorized) return a.response;
+          return new Response();
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(realCall, [
+        "POST",
+      ]);
+      expect(hasAuthGuard).toBe(true);
+      expect(protectedMethods).toEqual(["POST"]);
+    });
+
     it("flags a partially-guarded route (GET requireRole, POST open)", () => {
       const partial = `
         import { requireRole } from "@/lib/auth";

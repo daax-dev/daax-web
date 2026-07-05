@@ -169,10 +169,18 @@ async function syncGroupRoles(
   id: JitIdentity,
   groupRoleMap: Map<string, Set<string>>,
 ): Promise<void> {
-  const known = await existingRoleNames(client);
-  const desired = rolesForGroups(id.groups, groupRoleMap).filter((r) =>
-    known.has(r),
-  );
+  // No group→role mapping configured (no DAAX_GROUP_ROLE_MAP): nothing can be
+  // group-granted, so skip the `roles` table roundtrip that jitProvision would
+  // otherwise pay on EVERY requireRole/resolveAccess. Still fall through to the
+  // prune below so any group-sync grants left over from a previously-configured
+  // mapping are revoked (empty `desired` prunes them all).
+  let desired: string[] = [];
+  if (groupRoleMap.size > 0) {
+    const known = await existingRoleNames(client);
+    desired = rolesForGroups(id.groups, groupRoleMap).filter((r) =>
+      known.has(r),
+    );
+  }
 
   // Remove group-sync grants no longer justified by current group membership.
   await client.query(

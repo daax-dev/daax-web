@@ -211,6 +211,29 @@ describe.skipIf(!configured)("RBAC on Postgres (F5 #101)", () => {
     expect(jit2.roles).toEqual(["user"]);
   });
 
+  it("prunes stale group-sync grants when the group→role map is emptied (no roles roundtrip, but still revokes)", async () => {
+    const s = "77777777-0000-0000-0000-00000000000f";
+    const map = new Map([["daax-admins", new Set(["admin"])]]);
+    const withGroup = {
+      subject: s,
+      email: null,
+      username: null,
+      name: null,
+      idp: "test",
+      groups: ["daax-admins"],
+    };
+
+    // Login with a configured map → admin granted via group-sync.
+    const jit = await jitProvision(withGroup, map);
+    expect(jit.roles.sort()).toEqual(["admin", "user"]);
+
+    // Operator removes DAAX_GROUP_ROLE_MAP → empty map. The perf guard skips the
+    // `roles` roundtrip, but the stale group-sync admin grant must STILL be
+    // pruned (a full early-return would leave the privileged grant in place).
+    const jit2 = await jitProvision(withGroup, new Map());
+    expect(jit2.roles).toEqual(["user"]);
+  });
+
   it("explicit UI grant upgrades group-sync provenance so group removal does NOT revoke it", async () => {
     const s = "88888888-0000-0000-0000-00000000000d";
     const map = new Map([["daax-admins", new Set(["admin"])]]);

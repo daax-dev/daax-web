@@ -48,7 +48,7 @@ jobs:
       # JIT xmax insert-vs-update, first-admin bootstrap, prune-only-reconcile,
       # group-sync. `test:integration` spins a throwaway Postgres via Docker
       # (scripts/with-test-postgres.sh) and self-skips only if Docker is absent —
-      # the self-hosted runner HAS Docker, so these actually run at the gate.
+      # the ubuntu-latest runner HAS Docker, so these actually run at the gate.
       - name: Integration tests (Postgres via Docker)
         run: bun run test:integration
 
