@@ -235,7 +235,11 @@ compose() {
     || die "DAAX_ENV_FILE not found: $env_file"
 
   local docker_gid
-  docker_gid="$(getent group docker 2>/dev/null | awk -F: '{print $3}')"
+  # Non-fatal: under `set -Eeuo pipefail`, a missing `docker` group (getent
+  # exits non-zero) or absent `getent` (macOS) would otherwise trip errexit
+  # here and skip the socket-stat fallback below. `|| true` lets resolution
+  # fall through to the socket stat, then the explicit `die`.
+  docker_gid="$(getent group docker 2>/dev/null | awk -F: '{print $3}' || true)"
   # Fallback (#185, M3): snap/rootless/custom-socket hosts may have no `docker`
   # group entry; use the GID that actually owns the socket so group_add still
   # grants access. DOCKER_SOCKET is a unix:// URL — strip the scheme for stat.

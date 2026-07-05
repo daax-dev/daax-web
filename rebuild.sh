@@ -24,7 +24,7 @@ HOME_MCP="${HOME_MCP_PATH:-}"
 # the HOST docker GID that owns /var/run/docker.sock; a wrong GID makes the Docker
 # SDK EACCES and breaks container spawning. Match deploy-local.sh: prefer the
 # docker group, fall back to the socket's own GID, then a common default.
-DOCKER_GID="${DOCKER_GID:-$(getent group docker 2>/dev/null | awk -F: '{print $3}')}"
+DOCKER_GID="${DOCKER_GID:-$(getent group docker 2>/dev/null | awk -F: '{print $3}' || true)}"
 if [ -z "$DOCKER_GID" ]; then
   # Non-fatal socket-GID lookup: `stat` exits non-zero when the socket is absent
   # (rootless/remote Docker, daemon not started yet), and GNU `stat -c` is
