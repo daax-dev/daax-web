@@ -1,14 +1,28 @@
 /**
  * Unit tests for the useAttentionPoll hook (issue #153).
  *
- * Focus: poll-tick behaviour against a slow upstream. A tick while a request
- * is in flight must be skipped — NOT abort the outstanding request — otherwise
- * an upstream slower than the poll interval livelocks the board (no request
- * ever completes). Abort is reserved for unmount.
+ * Covers two planes:
+ *  - Poll fallback: a tick while a request is in flight must be skipped — NOT
+ *    abort the outstanding request — otherwise an upstream slower than the poll
+ *    interval livelocks the board. Stale cards are cleared on failure. This is
+ *    the resilient path used whenever the live WS is unavailable/down.
+ *  - Live WS: the hook resyncs the REST snapshot on every (re)connect and
+ *    applies relayed Watchtower events to the matching card in real time.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
+
+// Controllable stand-in for the WS bridge connector so tests never touch a real
+// socket or the ticket endpoint. `openTerminalWebSocket` is driven per test.
+const { openTerminalWebSocket } = vi.hoisted(() => ({
+  openTerminalWebSocket: vi.fn(),
+}));
+vi.mock("@/lib/websocket-utils", () => ({
+  buildTerminalWsUrl: (p: URLSearchParams) => `ws://mock/?${p.toString()}`,
+  openTerminalWebSocket,
+}));
+
 import { useAttentionPoll, DEFAULT_POLL_MS } from "@/hooks/useAttentionPoll";
 import type { AttentionCard } from "@/lib/attention/adapter";
 
@@ -25,6 +39,26 @@ const sampleCard: AttentionCard = {
   sparkline: [1, 2, 3],
 };
 
+interface FakeSocket {
+  onopen: (() => void) | null;
+  onmessage: ((event: { data: string }) => void) | null;
+  onclose: (() => void) | null;
+  onerror: (() => void) | null;
+  readyState: number;
+  close: ReturnType<typeof vi.fn>;
+}
+
+function fakeSocket(): FakeSocket {
+  return {
+    onopen: null,
+    onmessage: null,
+    onclose: null,
+    onerror: null,
+    readyState: 1,
+    close: vi.fn(),
+  };
+}
+
 interface PendingFetch {
   signal: AbortSignal;
   resolve: (body: unknown) => void;
@@ -38,6 +72,9 @@ describe("useAttentionPoll", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     pending = [];
+    // By default the WS never connects, so the hook exercises the poll fallback.
+    openTerminalWebSocket.mockReset();
+    openTerminalWebSocket.mockRejectedValue(new Error("no-ws"));
     // fetch that never resolves until the test releases it, capturing the
     // AbortSignal so abort behaviour can be asserted.
     fetchMock = vi.fn(
@@ -73,7 +110,7 @@ describe("useAttentionPoll", () => {
     expect(pending[0].signal.aborted).toBe(false);
   });
 
-  it("applies a slow response and resumes polling afterwards", async () => {
+  it("applies a slow response and resumes polling afterwards (WS down)", async () => {
     const { result } = renderHook(() => useAttentionPoll());
 
     // Slower than the poll interval: several ticks pass unanswered.
@@ -88,7 +125,7 @@ describe("useAttentionPoll", () => {
     });
     expect(result.current.conn).toBe("connected");
 
-    // With the request settled, the next tick polls again.
+    // With the request settled and the WS down, the next tick polls again.
     await act(async () => {
       vi.advanceTimersByTime(DEFAULT_POLL_MS);
     });
@@ -177,5 +214,120 @@ describe("useAttentionPoll", () => {
     expect(pending[0].signal.aborted).toBe(false);
     unmount();
     expect(pending[0].signal.aborted).toBe(true);
+  });
+
+  describe("live WebSocket", () => {
+    // Resolve the snapshot immediately so we can drive the WS lifecycle.
+    function snapshotFetch(sessions: AttentionCard[]) {
+      return vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ ok: true, sessions, truncated: false }),
+        }),
+      );
+    }
+
+    const flush = async () => {
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    };
+
+    it("resyncs the REST snapshot on every (re)connect", async () => {
+      const sock1 = fakeSocket();
+      const sock2 = fakeSocket();
+      openTerminalWebSocket
+        .mockResolvedValueOnce(sock1 as unknown as WebSocket)
+        .mockResolvedValueOnce(sock2 as unknown as WebSocket);
+      fetchMock = snapshotFetch([sampleCard]);
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      // Large poll interval so the timer never fires an extra snapshot.
+      renderHook(() => useAttentionPoll(1_000_000));
+      await flush();
+
+      // Initial snapshot on mount.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // WS connects → resync snapshot.
+      await act(async () => {
+        sock1.onopen?.();
+      });
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      // WS drops → reconnect after backoff → resync again.
+      await act(async () => {
+        sock1.onclose?.();
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(1_000);
+      });
+      await flush();
+      await act(async () => {
+        sock2.onopen?.();
+      });
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("applies a relayed tool event to the matching card", async () => {
+      const sock = fakeSocket();
+      openTerminalWebSocket.mockResolvedValueOnce(sock as unknown as WebSocket);
+      const idleCard: AttentionCard = {
+        ...sampleCard,
+        status: "idle",
+        toolCount: 0,
+        lastTool: null,
+      };
+      fetchMock = snapshotFetch([idleCard]);
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const { result } = renderHook(() => useAttentionPoll(1_000_000));
+      await flush();
+      await act(async () => {
+        sock.onopen?.();
+      });
+      await flush();
+      expect(result.current.cards[0].status).toBe("idle");
+
+      // A tool_post for s1 marks it working and bumps the tool count.
+      await act(async () => {
+        sock.onmessage?.({
+          data: JSON.stringify({
+            type: "tool_post",
+            session_id: "s1",
+            timestamp: new Date().toISOString(),
+            payload: { tool_name: "grep" },
+          }),
+        });
+      });
+      expect(result.current.cards[0].status).toBe("working");
+      expect(result.current.cards[0].lastTool).toBe("grep");
+      expect(result.current.cards[0].toolCount).toBe(1);
+    });
+
+    it("removes a card when a session_end event arrives", async () => {
+      const sock = fakeSocket();
+      openTerminalWebSocket.mockResolvedValueOnce(sock as unknown as WebSocket);
+      fetchMock = snapshotFetch([sampleCard]);
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const { result } = renderHook(() => useAttentionPoll(1_000_000));
+      await flush();
+      await act(async () => {
+        sock.onopen?.();
+      });
+      await flush();
+      expect(result.current.cards).toHaveLength(1);
+
+      await act(async () => {
+        sock.onmessage?.({
+          data: JSON.stringify({ type: "session_end", session_id: "s1" }),
+        });
+      });
+      expect(result.current.cards).toHaveLength(0);
+    });
   });
 });

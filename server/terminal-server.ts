@@ -31,6 +31,7 @@ import { initializeRecordingsDir } from "./recording/recorder";
 import { registerGlobalErrorHandlers } from "./handlers/error-handler";
 import { registerSignalHandlers } from "./handlers/signal-handler";
 import { handleConnection, setAuthPaths } from "./handlers/connection-handler";
+import { handleAttentionBridge } from "./handlers/attention-bridge";
 
 // Initialize BacklogServer integration
 import "./startup";
@@ -92,8 +93,26 @@ if (
   );
 }
 
-// Handle new connections
-wss.on("connection", handleConnection);
+// Handle new connections. A single WS port (4201) serves two consumers,
+// dispatched by request path/query — both go through the SAME upgrade auth:
+//   - `?stream=attention` → the Attention live-stream bridge (issue #153),
+//     which relays Watchtower's broadcast bus to the browser (read-only).
+//   - everything else → the terminal PTY handler.
+wss.on("connection", (ws, req) => {
+  let stream: string | null = null;
+  try {
+    stream = new URL(req.url || "/", `http://${HOST}:${PORT}`).searchParams.get(
+      "stream",
+    );
+  } catch {
+    stream = null;
+  }
+  if (stream === "attention") {
+    handleAttentionBridge(ws, req);
+    return;
+  }
+  handleConnection(ws, req);
+});
 
 // Register signal handlers for graceful shutdown
 registerSignalHandlers(wss);
