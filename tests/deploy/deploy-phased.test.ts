@@ -228,7 +228,7 @@ describe("scripts/deploy-lib.sh unit helpers", () => {
   });
 
   it("resolve_env_file rejects a name with characters outside [A-Za-z0-9._-]", () => {
-    // The message promises "letters/digits/-/_ only" — the check must actually
+    // The message promises "letters, digits, dot, hyphen, underscore only" — the check must actually
     // enforce that, not merely reject path separators/traversal. A name with a
     // shell/meta char (here `;`) must fail closed and never form a file path.
     const out = execFileSync(

@@ -49,7 +49,7 @@ resolve_env_file() {
   # every other character, so nothing outside the allowlist reaches a file path
   # or the log output. The `..` guard blocks traversal (`.` is otherwise allowed).
   if [[ -z "$name" || "$name" == *..* || "$name" == *[!A-Za-z0-9._-]* ]]; then
-    echo "invalid target name: '$name' (letters/digits/-/_ only)" >&2
+    echo "invalid target name: '$name' (letters, digits, dot, hyphen, underscore only)" >&2
     return 1
   fi
   local path="$dir/$name.env"
