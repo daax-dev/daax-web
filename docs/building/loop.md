@@ -9,5 +9,7 @@ always perform 3 rounds of review from an adversarial objective agent (using cod
 
 perform a round of premordem - completely evaluating what could go wrong, think of operational resilience and edge cases - then fix.
 
+(deploy locally and to [daax.galway.poley.dev](https://daax.galway.poley.dev/) which runs on 4200 4201 when ready for PR), and validate locally (using the means necessarily, make tests repeatable not agentic)
+
 when ready for a PR - submit PR - wait for copilot review - (trigger it if needed) - when it comes back close the PR - use same branch and fix and repeat this process - do not ever change branch names, do not ever update a branch with an open PR, do not ever update a PR - always a new one.
 this process repeats until GitHub copilot explicitly says - "generated no issues" then we are done and you can merge to main.   - a PR must NEVER fail ANY CI or EVER have a merge conflict - if it does -wait for copilot feedback (then fix all).
