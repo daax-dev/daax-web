@@ -31,6 +31,20 @@ describe("presentation-mode store", () => {
     expect(setItem).toHaveBeenCalledWith(STORAGE_KEY, "0");
   });
 
+  it("updates in-memory state without touching localStorage when window is absent (SSR)", () => {
+    setPresentationMode(false);
+    setItem.mockClear();
+
+    vi.stubGlobal("window", undefined);
+    try {
+      setPresentationMode(true);
+      expect(getPresentationMode()).toBe(true);
+      expect(setItem).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("notifies subscribers on change and stops after unsubscribe", () => {
     let calls = 0;
     const unsubscribe = subscribePresentationMode(() => {

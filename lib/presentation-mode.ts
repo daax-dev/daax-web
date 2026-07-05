@@ -59,10 +59,12 @@ export function setPresentationMode(enabled: boolean): void {
   ensureInit();
   if (cache === enabled) return;
   cache = enabled;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, enabled ? "1" : "0");
-  } catch {
-    /* storage unavailable — in-memory value still drives this tab */
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, enabled ? "1" : "0");
+    } catch {
+      /* storage unavailable — in-memory value still drives this tab */
+    }
   }
   emit();
 }
