@@ -263,7 +263,16 @@ export async function getUserRoles(subject: string): Promise<string[]> {
   return res.rows.map((r) => r.role);
 }
 
-/** Grant a role to an existing user (UI provenance by default). Idempotent. */
+/**
+ * Grant a role to an existing user (UI provenance by default). Idempotent.
+ *
+ * Provenance precedence — explicit UI grants win: when the (subject, role) row
+ * already exists with a non-'ui' provenance (e.g. 'group-sync') and this call
+ * is an explicit UI grant, the row is UPGRADED to granted_by='ui' so a later
+ * group-sync / reconcile prune (which only deletes rows of its OWN provenance)
+ * can never silently revoke an operator's explicit grant. Non-'ui' callers
+ * never downgrade an existing row.
+ */
 export async function grantRole(
   subject: string,
   role: string,
@@ -272,8 +281,9 @@ export async function grantRole(
   await query(
     `INSERT INTO user_roles (subject, role, granted_by)
      VALUES ($1, $2, $3)
-     ON CONFLICT (subject, role) DO NOTHING`,
-    [subject, role, grantedBy],
+     ON CONFLICT (subject, role) DO UPDATE SET granted_by = EXCLUDED.granted_by
+       WHERE EXCLUDED.granted_by = $4 AND user_roles.granted_by <> $4`,
+    [subject, role, grantedBy, GRANT_UI],
   );
 }
 

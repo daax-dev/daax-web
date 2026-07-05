@@ -119,7 +119,10 @@ export function parseGroupRoleMap(
     const idx = pair.indexOf(":");
     if (idx <= 0) continue;
     const group = pair.slice(0, idx).trim();
-    const role = pair.slice(idx + 1).trim();
+    const role = pair
+      .slice(idx + 1)
+      .trim()
+      .toLowerCase();
     if (!group || !role) continue;
     if (!map.has(group)) map.set(group, new Set());
     map.get(group)!.add(role);

@@ -211,6 +211,47 @@ describe.skipIf(!configured)("RBAC on Postgres (F5 #101)", () => {
     expect(jit2.roles).toEqual(["user"]);
   });
 
+  it("explicit UI grant upgrades group-sync provenance so group removal does NOT revoke it", async () => {
+    const s = "88888888-0000-0000-0000-00000000000d";
+    const map = new Map([["daax-admins", new Set(["admin"])]]);
+
+    // 1. Admin arrives via group-sync.
+    const withGroup = {
+      subject: s,
+      email: null,
+      username: null,
+      name: null,
+      idp: "test",
+      groups: ["daax-admins"],
+    };
+    const jit = await jitProvision(withGroup, map);
+    expect(jit.roles.sort()).toEqual(["admin", "user"]);
+
+    // 2. Operator explicitly grants admin via the UI → provenance upgraded.
+    await grantRole(s, "admin");
+    const prov = await query<{ granted_by: string }>(
+      "SELECT granted_by FROM user_roles WHERE subject = $1 AND role = 'admin'",
+      [s],
+    );
+    expect(prov.rows[0]?.granted_by).toBe("ui");
+
+    // 3. User leaves the IdP group → group-sync must NOT revoke the UI grant.
+    const jit2 = await jitProvision({ ...withGroup, groups: [] }, map);
+    expect(jit2.roles.sort()).toEqual(["admin", "user"]);
+  });
+
+  it("a non-UI grant never downgrades an existing UI grant", async () => {
+    const s = "99999999-0000-0000-0000-00000000000e";
+    await jitProvision(identity(s, "e@x.z", "e"));
+    await grantRole(s, "admin"); // granted_by='ui'
+    await grantRole(s, "admin", "group-sync"); // must NOT downgrade
+    const prov = await query<{ granted_by: string }>(
+      "SELECT granted_by FROM user_roles WHERE subject = $1 AND role = 'admin'",
+      [s],
+    );
+    expect(prov.rows[0]?.granted_by).toBe("ui");
+  });
+
   it("writes an auth_audit row on reconcile", async () => {
     await reconcile(envWith(""));
     const res = await query<{ event: string; outcome: string }>(
