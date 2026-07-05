@@ -120,7 +120,11 @@ export function initializeClaudeAuthDir(): {
       }
     }
   } catch (error) {
-    const runningNonRoot = !process.getuid || process.getuid() !== 0;
+    // Only show the non-root (UID 1000 / chown) guidance when a non-root uid is
+    // POSITIVELY detected. Where getuid is unavailable (e.g. Windows host-dev),
+    // uid can't be determined, so don't assert a non-root cause.
+    const runningNonRoot =
+      typeof process.getuid === "function" && process.getuid() !== 0;
     console.error(
       `[Terminal Server] FATAL: cannot create the Claude auth directory at ${localPath}.`,
       error,
