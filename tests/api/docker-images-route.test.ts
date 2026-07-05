@@ -173,6 +173,33 @@ describe("/api/docker/images", () => {
     });
   });
 
+  describe("split-deploy degradation (#100)", () => {
+    it("returns the /api/containers-shaped 503 when the docker daemon is unreachable", async () => {
+      // The split web plane holds no /var/run/docker.sock — this must NOT be
+      // misreported as "image not found".
+      mockExecFileAsync.mockRejectedValue(
+        Object.assign(new Error("Command failed: docker image inspect"), {
+          stderr:
+            "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+        }),
+      );
+
+      const request = new NextRequest(
+        "http://localhost/api/docker/images?images=daax-agents&registry=jpoley",
+      );
+
+      const response = await GET(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(503);
+      expect(data).toEqual({
+        error: "Docker daemon not available",
+        details: expect.stringContaining("docker image inspect"),
+        hint: "Make sure Docker is running and the socket is accessible.",
+      });
+    });
+  });
+
   describe("pinned variant availability (#195)", () => {
     // The availability check must inspect the SAME ref the Settings selector
     // pulls: `docker pull repo@sha256:...` never tags :latest, so checking

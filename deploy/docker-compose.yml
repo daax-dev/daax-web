@@ -28,7 +28,11 @@ services:
       # PGDATA off-volume and the image refuses to start.
       - daax-pg-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DAAX_PG_USER:-daax} -d ${DAAX_PG_DB:-daax}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DAAX_PG_USER:-daax} -d ${DAAX_PG_DB:-daax}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -45,7 +49,10 @@ services:
   # service waits for this to complete successfully, so a bad/failed migration
   # blocks the rollout (fail-closed) without coupling the app process to PG.
   migrate:
-    image: ${DAAX_IMAGE:-daax:latest}
+    # GHCR-published web image (#100): deploy:kinsale/muckross `docker compose
+    # pull` fetches the published image, not a local `daax:latest` (which would
+    # resolve to Docker Hub and fail). Same image as the daax web service.
+    image: ghcr.io/daax-dev/daax-web:latest
     container_name: daax-migrate
     restart: "no"
     depends_on:
@@ -64,7 +71,12 @@ services:
       # Explicit target (F3 #100): the Dockerfile's last stage is `terminal`, so
       # the web plane must pin `runner` or it would build the terminal image.
       target: runner
-    image: ${DAAX_IMAGE:-daax:latest}
+    # GHCR-published web image (#100): the deploy path is pull-based
+    # (deploy:kinsale/muckross run `docker compose pull daax terminal`), so this
+    # must name the published GHCR ref. A local `daax:latest` would resolve to
+    # Docker Hub and fail the pull. `docker compose up --build` still builds
+    # locally and tags this same ref.
+    image: ghcr.io/daax-dev/daax-web:latest
     container_name: daax
     restart: unless-stopped
 
@@ -123,6 +135,13 @@ services:
 
       # Persist application data
       - daax-data:/app/data
+
+      # Terminal recordings (F3 #100): the recorder runs in the `terminal`
+      # service and writes ~/.daax/recordings (= /home/node/.daax); this web
+      # plane serves GET /api/terminal-recordings from the SAME path. Share one
+      # named volume on BOTH services or the web API silently returns an empty
+      # list — it also persists recordings across terminal-container recreates.
+      - daax-recordings:/home/node/.daax
 
       # Environment file for secrets (optional). If DAAX_ENV_FILE is not set,
       # /dev/null is mounted and no .env.local file will be loaded.
@@ -274,7 +293,11 @@ services:
       context: ..
       dockerfile: Dockerfile
       target: terminal
-    image: ${DAAX_TERMINAL_IMAGE:-daax-terminal:latest}
+    # GHCR-published terminal image (#100): deploy:kinsale/muckross `docker
+    # compose pull daax terminal` fetches this published ref. A local
+    # `daax-terminal:latest` would resolve to Docker Hub and fail the pull.
+    # `docker compose up --build` still builds locally and tags this same ref.
+    image: ghcr.io/daax-dev/daax-terminal:latest
     container_name: daax-terminal
     restart: unless-stopped
 
@@ -303,6 +326,9 @@ services:
       # Same workspace as the web plane — the terminal writes agent auth under
       # /workspace/.daax and mounts subpaths into spawned containers.
       - ${DAAX_WORKSPACE:?DAAX_WORKSPACE env var required (absolute path, e.g. $HOME/prj — Compose does not expand ~)}:/workspace
+      # Shared with the `daax` (web) service: the recorder here writes
+      # ~/.daax/recordings; the web plane reads it (see daax service above).
+      - daax-recordings:/home/node/.daax
 
     environment:
       # Bind to all interfaces so the web container / Traefik reach it over daax-net.
@@ -332,14 +358,16 @@ services:
       - daax-net
 
     # TCP-connect probe: the terminal speaks WebSocket, not HTTP. Confirms the
-    # listener is up without tripping the F1b (#95) WS upgrade auth.
+    # listener is up without tripping the F1b (#95) WS upgrade auth. Honors
+    # TERMINAL_PORT (like the server + the Dockerfile healthcheck), defaulting to
+    # 4201, so a port override probes the right socket.
     healthcheck:
       test:
         [
           "CMD",
           "node",
           "-e",
-          "require('net').connect({port:4201,host:'127.0.0.1'}).on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))",
+          "require('net').connect({port:parseInt(process.env.TERMINAL_PORT||'4201',10),host:'127.0.0.1'}).on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))",
         ]
       interval: 30s
       timeout: 10s
@@ -429,6 +457,8 @@ networks:
 
 volumes:
   daax-data:
+    driver: local
+  daax-recordings:
     driver: local
   daax-code-server-data:
     driver: local

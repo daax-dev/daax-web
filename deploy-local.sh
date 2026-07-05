@@ -240,12 +240,21 @@ compose() {
     || die "DAAX_ENV_FILE not found: $env_file"
 
   local docker_gid
-  docker_gid="$(getent group docker 2>/dev/null | awk -F: '{print $3}')"
+  # Non-fatal: under `set -Eeuo pipefail`, a missing `docker` group (getent
+  # exits non-zero) or absent `getent` (macOS) would otherwise trip errexit
+  # here and skip the socket-stat fallback below. `|| true` lets resolution
+  # fall through to the socket stat, then the explicit `die`.
+  docker_gid="$(getent group docker 2>/dev/null | awk -F: '{print $3}' || true)"
   # Fallback (#185, M3): snap/rootless/custom-socket hosts may have no `docker`
   # group entry; use the GID that actually owns the socket so group_add still
   # grants access. DOCKER_SOCKET is a unix:// URL — strip the scheme for stat.
   if [[ -z "$docker_gid" ]]; then
-    docker_gid="$(stat -c '%g' "${DOCKER_SOCKET#unix://}" 2>/dev/null)"
+    # Non-fatal socket-GID lookup: `stat` exits non-zero on a missing socket and
+    # GNU `stat -c` is unsupported on macOS. Guard both (BSD `stat -f` fallback,
+    # trailing `|| true`) so a failure can't trip `set -Eeuo pipefail` before the
+    # explicit `die` below gives a clear, actionable error.
+    docker_gid="$(stat -c '%g' "${DOCKER_SOCKET#unix://}" 2>/dev/null \
+      || stat -f '%g' "${DOCKER_SOCKET#unix://}" 2>/dev/null || true)"
   fi
   [[ -n "$docker_gid" ]] || die "cannot resolve docker group GID (set DOCKER_GID explicitly)"
 
@@ -406,8 +415,18 @@ ensure_daax_data_owner() {
   local vol="${PROJECT_NAME}_daax-data"
   docker volume inspect "$vol" >/dev/null 2>&1 || return 0
 
-  local img="daax:latest"
-  docker image inspect "$img" >/dev/null 2>&1 || img="alpine"
+  # Prefer the just-built web image (compose tags it ghcr.io/daax-dev/daax-web:latest
+  # in deploy/docker-compose.yml — see the daax service `image:`). `compose build`
+  # above tags this locally, so it's present and needs no pull. Fall back to a
+  # legacy daax:latest tag, then alpine (last resort; may pull from Docker Hub).
+  local img
+  for candidate in "ghcr.io/daax-dev/daax-web:latest" "daax:latest" "alpine"; do
+    if docker image inspect "$candidate" >/dev/null 2>&1; then
+      img="$candidate"
+      break
+    fi
+  done
+  img="${img:-alpine}"
 
   local owner
   owner="$(docker run --rm -v "$vol:/d" "$img" stat -c '%u' /d 2>/dev/null || echo unknown)"
@@ -415,7 +434,11 @@ ensure_daax_data_owner() {
     return 0
   fi
   log "chowning volume $vol to 1000:1000 (was uid=$owner) for non-root app (#185)..."
-  docker run --rm -v "$vol:/d" "$img" chown -R 1000:1000 /d >/dev/null
+  # --user 0:0: the daax image defaults to USER node (uid 1000, no CAP_CHOWN),
+  # which cannot chown the stale root-owned volume — the exact case being
+  # remediated. Root inside this throwaway maintenance container does not
+  # weaken the runtime hardening of the app itself.
+  docker run --rm --user 0:0 -v "$vol:/d" "$img" chown -R 1000:1000 /d >/dev/null
 }
 
 # Idempotently create the external docker network the compose file expects.

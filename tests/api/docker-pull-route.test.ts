@@ -10,10 +10,21 @@ import { NextRequest } from "next/server";
 import { EventEmitter } from "events";
 
 // Create mock spawn function using vi.hoisted() so it's available when vi.mock runs
-const { mockSpawn, mockRequireAuth } = vi.hoisted(() => ({
-  mockSpawn: vi.fn(),
-  mockRequireAuth: vi.fn(),
-}));
+const { mockSpawn, mockRequireAuth, mockDefaultDockerExec } = vi.hoisted(
+  () => ({
+    mockSpawn: vi.fn(),
+    mockRequireAuth: vi.fn(),
+    mockDefaultDockerExec: vi.fn(),
+  }),
+);
+
+// The route preflights the daemon (F3 #100 split degradation) via
+// defaultDockerExec before streaming; mock ONLY that binding so no real
+// docker subprocess runs, keeping the unavailable/response helpers real.
+vi.mock("@/lib/docker-exec", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/docker-exec")>();
+  return { ...actual, defaultDockerExec: mockDefaultDockerExec };
+});
 
 // Guard added in #197: mock auth as authenticated so these streaming/validation
 // tests exercise the handler past the requireAuth() gate deterministically
@@ -55,6 +66,10 @@ describe("/api/docker/pull", () => {
 
     mockSpawn.mockReturnValue(mockProcess as never);
 
+    // Daemon reachable by default; individual tests override to exercise the
+    // split-deploy 503 path.
+    mockDefaultDockerExec.mockResolvedValue({ stdout: "28.0.0", stderr: "" });
+
     mockRequireAuth.mockResolvedValue({
       authenticated: true,
       user: {
@@ -69,6 +84,35 @@ describe("/api/docker/pull", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  describe("split-deploy degradation (#100)", () => {
+    it("returns the /api/containers-shaped 503 when the docker daemon is unreachable", async () => {
+      mockDefaultDockerExec.mockRejectedValue(
+        Object.assign(new Error("Command failed: docker version"), {
+          stderr:
+            "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+        }),
+      );
+
+      const request = new NextRequest("http://localhost/api/docker/pull", {
+        method: "POST",
+        body: JSON.stringify({ image: "nginx:latest" }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const response = await POST(request);
+      const data = await response.json();
+
+      expect(response.status).toBe(503);
+      expect(data).toEqual({
+        error: "Docker daemon not available",
+        details: expect.stringContaining("docker version"),
+        hint: "Make sure Docker is running and the socket is accessible.",
+      });
+      // The pull itself must never start.
+      expect(mockSpawn).not.toHaveBeenCalled();
+    });
   });
 
   describe("input validation", () => {

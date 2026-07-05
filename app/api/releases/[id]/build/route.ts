@@ -8,6 +8,11 @@ import {
 import { DEFAULT_PLUGINS } from "@/lib/settings";
 import { generateRealSbom } from "@/lib/sbom-syft";
 import { requireAuth } from "@/lib/auth";
+import {
+  defaultDockerExec,
+  dockerUnavailableResponse,
+  isDockerUnavailableError,
+} from "@/lib/docker-exec";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -32,6 +37,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
         { error: "Build already in progress" },
         { status: 409 },
       );
+    }
+
+    // Split deploy (F3 #100): the web plane may hold no Docker socket.
+    // Preflight the daemon and return the same structured 503 as
+    // /api/containers BEFORE mutating release state (snapshots/"building").
+    try {
+      await defaultDockerExec(["version", "--format", "{{.Server.Version}}"], {
+        timeout: 5000,
+      });
+    } catch (error) {
+      if (isDockerUnavailableError(error))
+        return dockerUnavailableResponse(error);
+      // Any other probe failure: fall through and let the build surface it.
     }
 
     // Parse feature config and save snapshots

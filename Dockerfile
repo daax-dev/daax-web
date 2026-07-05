@@ -1,10 +1,12 @@
 # Daax Container Image
 # Supports Docker-in-Docker for spawning AI coding containers
 #
-# Build (default/combined runner image): docker build --target runner -t daax .
-#   The Dockerfile's LAST stage is `terminal`, so an untargeted `docker build`
-#   yields the terminal-only image — always pass `--target runner` for the app
-#   image. Terminal-only plane: docker build --target terminal -t daax-terminal .
+# Build (combined/default web+terminal image — matches rebuild.sh / package.json):
+#   docker build --target runner -t daax .
+# The final stage is `terminal`, so an untargeted `docker build .` yields a
+# terminal-only image; pass `--target runner` for the app image.
+# Build the terminal-only image explicitly with:
+#   docker build --target terminal -t daax-terminal .
 #
 # The image runs as the non-root `node` user (#185), so Docker-socket access is by
 # GROUP membership: pass --group-add with the HOST socket's GID (NOT uid 0), or
@@ -242,8 +244,12 @@ COPY --from=builder /app/config.toml ./config.toml
 # chown of /app is non-recursive: node only needs to CREATE entries in /app;
 # the root-owned copied assets (node_modules, .next server/static) stay
 # read-only, which is all the runtime needs.
-RUN mkdir -p /app/data /app/.logs/decisions /app/.data /app/.next/cache && \
-    chown node:node /app /app/data /app/.logs /app/.logs/decisions /app/.data && \
+# /home/node/.daax is pre-created node-owned for the same reason as /app/data:
+# the F3 split deploy (#100) mounts a shared named volume there
+# (daax-recordings) so the terminal plane's recordings reach the web plane; a
+# fresh named-volume mount inherits this ownership instead of root:root.
+RUN mkdir -p /app/data /app/.logs/decisions /app/.data /app/.next/cache /home/node/.daax && \
+    chown node:node /app /app/data /app/.logs /app/.logs/decisions /app/.data /home/node/.daax && \
     chown -R node:node /app/.next/cache
 
 # Drop to the unprivileged user for the app runtime (#185). Docker-socket access

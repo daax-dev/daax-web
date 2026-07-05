@@ -18,7 +18,12 @@
 import { NextResponse } from "next/server";
 import { isAiSessionName } from "@/lib/ai-session-name";
 import { mapPool } from "@/lib/concurrency";
-import { defaultDockerExec, type DockerExec } from "@/lib/docker-exec";
+import {
+  defaultDockerExec,
+  dockerUnavailableResponse,
+  isDockerUnavailableError,
+  type DockerExec,
+} from "@/lib/docker-exec";
 
 // Cheap server-side prefilter for `docker ps`. This is a substring match,
 // so results are re-filtered with isAiSessionName() before use.
@@ -201,6 +206,11 @@ export async function GET() {
     const sessions = await listAndProbeSessions();
     return NextResponse.json({ success: true, sessions });
   } catch (error) {
+    // Split deploy (F3 #100): the web plane holds no Docker socket, so this
+    // route degrades to the same structured 503 as /api/containers instead of
+    // a raw 500. Manual fallback: `docker ps` / `docker rm -f daax-<id>`.
+    if (isDockerUnavailableError(error))
+      return dockerUnavailableResponse(error);
     return NextResponse.json(
       {
         success: false,

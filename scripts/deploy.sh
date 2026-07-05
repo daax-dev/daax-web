@@ -89,7 +89,11 @@ export_compose_env() {
 
   export TERMINAL_WS_URL="${TERMINAL_WS_URL:-wss://daax.${DAAX_HOSTNAME}.poley.dev/ws}"
   export CODE_SERVER_URL="${CODE_SERVER_URL:-https://daax-code.${DAAX_HOSTNAME}.poley.dev/?folder=/workspace}"
-  export CLAUDE_CONTAINER_IMAGE="${CLAUDE_CONTAINER_IMAGE:-jpoley/daax-agents:latest}"
+  # #195: default EMPTY, not a mutable :latest tag. An empty value lets
+  # server/config/constants.ts fall through (`"" || <digest>`) to the pinned
+  # digest; hard-coding `:latest` here would always override the pin and
+  # reintroduce the supply-chain risk. Only forward an explicit operator override.
+  export CLAUDE_CONTAINER_IMAGE="${CLAUDE_CONTAINER_IMAGE:-}"
 
   # Postgres: compose-local by default (DAAX_PG_PASSWORD secret → compose builds
   # DATABASE_URL). Managed Postgres (DAAX_PG_MANAGED=1) is gated off in
