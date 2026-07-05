@@ -12,19 +12,50 @@
  * functions are directly unit-testable.
  */
 
-/** The `resource:action` permission catalog for daax-web's surface. */
+/**
+ * The `resource:action` permission catalog for daax-web's surface.
+ *
+ * ENFORCEMENT STATUS (be precise — the catalog must not imply protection that
+ * does not exist):
+ *   - ENFORCED today (a route calls `requireRole` with it):
+ *       admin:db:read   — provenance-admin table/actions LIST + row/schema reads
+ *       admin:db:write  — provenance-admin table row create/update/delete
+ *       admin:users:read  — admin-UI gating (settings/provenance admin surface)
+ *       admin:users:write — provenance-admin action mutations
+ *   - FORWARD-LOOKING (declared for the model but NOT yet gated at any route;
+ *     the corresponding routes are still `requireAuth`-only). Do NOT assume a
+ *     holder is restricted by these until the route enforcement lands:
+ *       terminal:exec, containers:write, mcp:manage, recording:write, settings:write
+ * See ENFORCED_PERMISSIONS below for the machine-readable set.
+ */
 export const PERMISSIONS = [
+  // Forward-looking (not yet enforced at routes).
   "terminal:exec",
   "containers:write",
   "mcp:manage",
   "recording:write",
   "settings:write",
+  // Enforced (a route calls requireRole with these).
   "admin:users:read",
   "admin:users:write",
   "admin:db:read",
+  "admin:db:write",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
+
+/**
+ * The subset of {@link PERMISSIONS} that is actually enforced at a route today.
+ * Everything else in the catalog is forward-looking (declared for the RBAC model
+ * but the route is still `requireAuth`-only), so a permission's presence in the
+ * catalog does NOT by itself mean the surface is access-controlled.
+ */
+export const ENFORCED_PERMISSIONS: readonly Permission[] = Object.freeze([
+  "admin:users:read",
+  "admin:users:write",
+  "admin:db:read",
+  "admin:db:write",
+]);
 
 /** The default role granted on a genuine JIT insert (docs §3 F5). */
 export const DEFAULT_ROLE = "user";
