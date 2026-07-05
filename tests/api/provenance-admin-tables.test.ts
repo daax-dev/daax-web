@@ -52,7 +52,7 @@ import {
 const mockFetch = vi.fn();
 global.fetch = mockFetch as unknown as typeof fetch;
 
-describe("provenance-admin auth gate (F4, #96)", () => {
+describe("provenance-admin requireRole gate (F5, #101)", () => {
   afterEach(() => vi.clearAllMocks());
 
   it("returns the requireRole 401 response when unauthenticated", async () => {

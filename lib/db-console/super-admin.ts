@@ -34,7 +34,11 @@ import {
 } from "@/lib/rbac/allowlist";
 import { writeAudit } from "@/lib/rbac/store";
 
-/** Env var listing super-admin identities (subjects / emails / usernames, comma/space separated). */
+/**
+ * Env var listing super-admin identities. Only subject-kind entries (immutable
+ * OIDC UUIDs) are honored by `identityIsSuperAdmin()`; any email/username
+ * entries are IGNORED (with a one-time operator warning). Comma/space separated.
+ */
 export const SUPERADMIN_ENV = "DAAX_SUPERADMIN_USERS";
 /** Env flag enabling the opt-in, audited write path (D4). Off by default. */
 export const DB_CONSOLE_WRITES_ENV = "DAAX_DB_CONSOLE_WRITES";
