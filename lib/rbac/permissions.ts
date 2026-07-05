@@ -28,7 +28,7 @@
  *       terminal:exec, containers:write, mcp:manage, recording:write, settings:write
  * See ENFORCED_PERMISSIONS below for the machine-readable set.
  */
-export const PERMISSIONS = [
+export const PERMISSIONS = Object.freeze([
   // Forward-looking (not yet enforced at routes).
   "terminal:exec",
   "containers:write",
@@ -40,7 +40,7 @@ export const PERMISSIONS = [
   "admin:users:write",
   "admin:db:read",
   "admin:db:write",
-] as const;
+] as const);
 
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -75,7 +75,9 @@ export const ADMIN_UI_PERMISSION: Permission = "admin:users:read";
  * permission (full administrative access). `user` receives the non-privileged
  * baseline. Unknown roles resolve to no permissions.
  *
- * Frozen so a caller cannot mutate the catalog at runtime.
+ * Frozen so a caller cannot mutate the catalog at runtime — the map itself and
+ * every referenced permission array (the `admin` entry reuses the frozen
+ * {@link PERMISSIONS}; the `user` entry is frozen inline) are all immutable.
  */
 export const ROLE_PERMISSIONS: Readonly<Record<string, readonly Permission[]>> =
   Object.freeze({

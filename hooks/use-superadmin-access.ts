@@ -8,6 +8,12 @@ import { useEffect, useState } from "react";
  * host-dev operator). The client only reflects that decision — it is never a
  * client-owned flag. Fails SAFE: `isSuperAdmin` stays `false` until resolved and
  * on any error, so the Data tab is never flashed to a non-super-admin.
+ *
+ * The endpoint is AUTHENTICATED-ONLY (not on the middleware public allowlist),
+ * so an unauthenticated or unauthorized caller is denied by the default-deny
+ * middleware / super-admin gate. A 401/403 is therefore the EXPECTED "no
+ * super-admin access" answer — not an error — and is mapped to a cached,
+ * authoritative no-access result rather than logged as a transient failure.
  */
 export interface SuperAdminAccess {
   authenticated: boolean;
@@ -36,11 +42,17 @@ export function useSuperAdminAccess(): UseSuperAdminAccessResult {
 
     if (!fetchPromise) {
       fetchPromise = fetch("/api/admin/db/access")
-        .then((res) => {
+        .then(async (res) => {
+          // 401/403 are the EXPECTED "not authenticated / not super-admin"
+          // answers from the default-deny middleware + super-admin gate, not
+          // error states: the caller simply has no super-admin access. Cache
+          // the authoritative no-access result (do not retry, do not log).
+          if (res.status === 401 || res.status === 403) {
+            cachedAccess = EMPTY_ACCESS;
+            return EMPTY_ACCESS;
+          }
           if (!res.ok) throw new Error(`access: ${res.status}`);
-          return res.json();
-        })
-        .then((data: SuperAdminAccess) => {
+          const data = (await res.json()) as SuperAdminAccess;
           cachedAccess = data;
           return data;
         })
