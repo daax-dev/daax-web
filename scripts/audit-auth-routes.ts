@@ -12,7 +12,11 @@ import { existsSync, readFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
-import { computeAuthDrift, type RouteInfo } from "./auth-audit-lib";
+import {
+  computeAuthDrift,
+  detectRouteAuth,
+  type RouteInfo,
+} from "./auth-audit-lib";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const API_DIR = join(__dirname, "..", "app", "api");
@@ -78,35 +82,18 @@ export async function scanRoutes(): Promise<RouteInfo[]> {
       methods.push(match[1]);
     }
 
-    // Check if requireAuth is imported and called (not just mentioned in
-    // comments). Match BOTH requireAuth( and requireAuthOrThrow( so the
-    // file-level signal stays consistent with the per-method scan below.
-    const hasRequireAuthImport = /import\s+.*requireAuth.*from/.test(content);
-    const hasRequireAuthCall = /requireAuth(?:OrThrow)?\s*\(/.test(content);
-    const hasRequireAuth = hasRequireAuthImport && hasRequireAuthCall;
-
-    // Determine which specific methods are guarded. Require a real CALL site
-    // (`requireAuth(` / `requireAuthOrThrow(`) inside the handler body — a mere
-    // mention (comment/string) does NOT count, so a route that only references
-    // requireAuth in a doc comment is still flagged as unprotected.
-    const protectedMethods: string[] = [];
-    if (hasRequireAuth) {
-      for (const method of methods) {
-        // Find the function body and check if it calls requireAuth
-        const funcPattern = new RegExp(
-          `export\\s+(?:async\\s+)?function\\s+${method}\\b[\\s\\S]*?(?=export\\s+(?:async\\s+)?function|$)`,
-        );
-        const funcMatch = content.match(funcPattern);
-        if (funcMatch && /requireAuth(?:OrThrow)?\s*\(/.test(funcMatch[0])) {
-          protectedMethods.push(method);
-        }
-      }
-    }
+    // Detect the auth guard (requireAuth* OR the stronger requireRole, F5 #101)
+    // both file-wide and per-method, via the shared pure helper so this exact
+    // call-pattern is unit-tested (tests/scripts/audit-auth-routes.test.ts).
+    const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+      content,
+      methods,
+    );
 
     routes.push({
       path: file.replace(/\/route\.ts$/, ""),
       methods,
-      hasRequireAuth,
+      hasRequireAuth: hasAuthGuard,
       protectedMethods,
     });
   }

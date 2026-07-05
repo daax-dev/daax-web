@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   isUnprotectedWriteRoute,
   computeAuthDrift,
+  detectRouteAuth,
   type RouteInfo,
 } from "@/scripts/auth-audit-lib";
 
@@ -83,6 +84,101 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
           }),
         ),
       ).toBe(false);
+    });
+  });
+
+  describe("detectRouteAuth (requireAuth OR requireRole, F5 #101)", () => {
+    const requireAuthRoute = `
+      import { requireAuth } from "@/lib/auth";
+      export async function POST() {
+        const auth = await requireAuth();
+        if (!auth.authenticated) return auth.response;
+        return new Response();
+      }
+    `;
+    const requireRoleRoute = `
+      import { requireRole } from "@/lib/auth";
+      export async function POST() {
+        const auth = await requireRole("admin:users:write");
+        if (!auth.authorized) return auth.response;
+        return new Response();
+      }
+    `;
+
+    it("treats a requireAuth-guarded write method as guarded", () => {
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        requireAuthRoute,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(true);
+      expect(protectedMethods).toEqual(["POST"]);
+    });
+
+    it("treats a requireRole-guarded write method as guarded (stronger than requireAuth)", () => {
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        requireRoleRoute,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(true);
+      expect(protectedMethods).toEqual(["POST"]);
+    });
+
+    it("recognises a mix of GET(requireRole) + POST(requireRole) per method", () => {
+      const mixed = `
+        import { requireRole } from "@/lib/auth";
+        export async function GET() {
+          const a = await requireRole("admin:db:read");
+          if (!a.authorized) return a.response;
+        }
+        export async function POST() {
+          const a = await requireRole("admin:users:write");
+          if (!a.authorized) return a.response;
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(mixed, [
+        "GET",
+        "POST",
+      ]);
+      expect(hasAuthGuard).toBe(true);
+      expect(protectedMethods.sort()).toEqual(["GET", "POST"]);
+    });
+
+    it("does NOT count a mere comment mention of requireRole", () => {
+      const commentOnly = `
+        // TODO: gate this with requireRole() later
+        export async function POST() { return new Response(); }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(commentOnly, [
+        "POST",
+      ]);
+      expect(hasAuthGuard).toBe(false);
+      expect(protectedMethods).toEqual([]);
+    });
+
+    it("flags a partially-guarded route (GET requireRole, POST open)", () => {
+      const partial = `
+        import { requireRole } from "@/lib/auth";
+        export async function GET() {
+          const a = await requireRole("admin:db:read");
+          if (!a.authorized) return a.response;
+        }
+        export async function POST() { return new Response(); }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(partial, [
+        "GET",
+        "POST",
+      ]);
+      expect(hasAuthGuard).toBe(true);
+      expect(protectedMethods).toEqual(["GET"]);
+      // And the drift logic still flags the open POST.
+      expect(
+        isUnprotectedWriteRoute({
+          path: "x",
+          methods: ["GET", "POST"],
+          hasRequireAuth: hasAuthGuard,
+          protectedMethods,
+        }),
+      ).toBe(true);
     });
   });
 
