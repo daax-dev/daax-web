@@ -20,6 +20,7 @@ vi.mock("next/server", () => ({
 
 // Import after mocks are set up
 import { getAuthUser, requireAuth, requireAuthOrThrow } from "@/lib/auth";
+import { localOperatorBypassAllowed } from "@/lib/auth-trust";
 import type { AuthUser } from "@/lib/auth-types";
 
 /**
@@ -51,6 +52,12 @@ describe("auth module", () => {
     delete process.env.DAAX_PROXY_SECRET;
     delete process.env.DAAX_PROXY_SECRET_PREVIOUS;
     delete process.env.DAAX_AUTH_PROXY_SECRET_HEADER;
+    // Posture env (Copilot #184): under vitest NODE_ENV="test", so the operator
+    // bypass now DENIES unless a case sets an explicit posture (HOST loopback or
+    // DAAX_TRUST_LOCAL_OPERATOR). Stub both to undefined so a case never inherits
+    // leaked state, and vi.unstubAllEnvs() restores the runner's originals.
+    vi.stubEnv("HOST", undefined);
+    vi.stubEnv("DAAX_TRUST_LOCAL_OPERATOR", undefined);
   });
 
   afterEach(() => {
@@ -59,6 +66,8 @@ describe("auth module", () => {
     delete process.env.DAAX_PROXY_SECRET;
     delete process.env.DAAX_PROXY_SECRET_PREVIOUS;
     delete process.env.DAAX_AUTH_PROXY_SECRET_HEADER;
+    // Restore posture env to the runner's originals (Copilot #184).
+    vi.unstubAllEnvs();
   });
 
   describe("getAuthUser", () => {
@@ -320,6 +329,9 @@ describe("auth module", () => {
     });
 
     it("should bypass to a local operator when no header and DAAX_REQUIRE_AUTH unset", async () => {
+      // Explicit host-dev loopback posture (Copilot #184): the operator bypass
+      // requires an explicit safe posture, not merely a non-production NODE_ENV.
+      vi.stubEnv("HOST", "127.0.0.1");
       mockHeaders.mockResolvedValue(createMockHeaders({}));
 
       const result = await requireAuth();
@@ -410,6 +422,8 @@ describe("auth module", () => {
     });
 
     it("should return local operator when not authenticated and DAAX_REQUIRE_AUTH unset", async () => {
+      // Explicit host-dev loopback posture (Copilot #184).
+      vi.stubEnv("HOST", "127.0.0.1");
       mockHeaders.mockResolvedValue(createMockHeaders({}));
 
       const user = await requireAuthOrThrow();
@@ -537,6 +551,8 @@ describe("auth module", () => {
 
     it("bypasses to LOCAL_OPERATOR when no header is present (non-strict), even with a secret configured", async () => {
       process.env.DAAX_PROXY_SECRET = SECRET;
+      // Explicit host-dev loopback posture (Copilot #184).
+      vi.stubEnv("HOST", "127.0.0.1");
       mockHeaders.mockResolvedValue(createMockHeaders({}));
 
       const result = await requireAuth();
@@ -548,8 +564,10 @@ describe("auth module", () => {
     });
 
     it("trusts a forwarded identity when the secret is unset and strict mode is off (boundary disabled)", async () => {
-      // Backward-compatible: opt-in. With no DAAX_PROXY_SECRET and non-strict
-      // mode, legacy behavior (trust the forwarded identity) is preserved.
+      // Backward-compatible: opt-in. With no DAAX_PROXY_SECRET, non-strict mode
+      // AND no exposed bind signal (HOST is stubbed to undefined in beforeEach),
+      // legacy behavior (trust the forwarded identity) is preserved. An explicit
+      // non-loopback HOST bind revokes this — see the #184-review cases below.
       mockHeaders.mockResolvedValue(
         createMockHeaders({
           "x-forwarded-user": "user-uuid",
@@ -560,6 +578,112 @@ describe("auth module", () => {
       const result = await requireAuth();
 
       expect(result.authenticated).toBe(true);
+    });
+
+    it("refuses a forwarded identity on an exposed bind (HOST=0.0.0.0) when the secret is unset, non-strict (#184 review)", async () => {
+      // The #184 scenario: proxy-less 0.0.0.0 container, no DAAX_PROXY_SECRET,
+      // DAAX_REQUIRE_AUTH unset. A tailnet peer sending X-Forwarded-User must
+      // NOT be authenticated — the header carries no proof it traversed a
+      // trusted proxy, so it fails closed instead of legacy-trusting.
+      vi.stubEnv("HOST", "0.0.0.0");
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "attacker-chosen-uuid",
+          "x-forwarded-name": "Mallory",
+        }),
+      );
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(false);
+      if (!result.authenticated) {
+        expect(result.response.status).toBe(401);
+      }
+    });
+
+    it("surfaces NO identity-derived fields when the exposed-bind refusal rejects a forwarded identity (#184 review)", async () => {
+      vi.stubEnv("HOST", "0.0.0.0");
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "attacker-chosen-uuid",
+          "x-forwarded-name": "Mallory",
+          "x-forwarded-email": "mallory@evil.test",
+          "x-forwarded-groups": "admin,superuser",
+        }),
+      );
+
+      const user = await getAuthUser();
+
+      expect(user).toEqual({
+        username: null,
+        email: null,
+        groups: [],
+        authenticated: false,
+        pictureUrl: null,
+      });
+    });
+
+    it("logs a one-time REFUSED warning when the exposed-bind refusal fires (#184 review)", async () => {
+      vi.stubEnv("HOST", "0.0.0.0");
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      // Fresh module import so the once-per-process warning flag is reset and we
+      // can assert the warning is actually emitted on this path.
+      vi.resetModules();
+      vi.doMock("next/headers", () => ({
+        headers: () =>
+          Promise.resolve(
+            createMockHeaders({
+              "x-forwarded-user": "attacker-chosen-uuid",
+            }),
+          ),
+      }));
+      const { requireAuth: requireAuthFresh } = await import("@/lib/auth");
+
+      const result = await requireAuthFresh();
+
+      expect(result.authenticated).toBe(false);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Forwarded identity (X-Forwarded-User) REFUSED",
+        ),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("still trusts a forwarded identity with the secret unset on a loopback HOST bind (legacy unchanged, #184 review)", async () => {
+      vi.stubEnv("HOST", "127.0.0.1");
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "user-uuid",
+          "x-forwarded-name": "Legacy User",
+        }),
+      );
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(true);
+    });
+
+    it("authenticates a forwarded identity on an exposed bind when the secret is configured and matches (#184 review)", async () => {
+      // The secret-configured path is unchanged by the exposed-bind refusal:
+      // with DAAX_PROXY_SECRET set, the boundary is enforced in every posture
+      // and a matching secret authenticates the identity.
+      process.env.DAAX_PROXY_SECRET = SECRET;
+      vi.stubEnv("HOST", "0.0.0.0");
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "user-uuid",
+          "x-forwarded-name": "Trusted User",
+          "x-daax-proxy-secret": SECRET,
+        }),
+      );
+
+      const result = await requireAuth();
+
+      expect(result.authenticated).toBe(true);
+      if (result.authenticated) {
+        expect(result.user.username).toBe("Trusted User");
+      }
     });
 
     it("refuses a forwarded identity in strict mode when the secret is unset (fail-closed) and logs a ship-blocking warning", async () => {
@@ -644,6 +768,192 @@ describe("auth module", () => {
 
       const user = await getAuthUser();
       expect(user.authenticated).toBe(true);
+    });
+  });
+});
+
+describe("LOCAL_OPERATOR bypass posture gate (F-C2, #184)", () => {
+  // The HTTP plane cannot see the TCP peer, so the uncredentialed operator
+  // bypass is gated on deployment posture. Drive the posture env (HOST,
+  // DAAX_TRUST_LOCAL_OPERATOR, NODE_ENV) through vi.stubEnv / vi.unstubAllEnvs
+  // so the runner's originals are restored and never leak into the rest of the
+  // suite (Copilot #184).
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete process.env.DAAX_REQUIRE_AUTH;
+    vi.stubEnv("HOST", undefined);
+    vi.stubEnv("DAAX_TRUST_LOCAL_OPERATOR", undefined);
+    // Simulate a production build (`next start`) unless a case overrides it, so
+    // the fail-safe default is exercised rather than the vitest 'test' default.
+    vi.stubEnv("NODE_ENV", "production");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    delete process.env.DAAX_REQUIRE_AUTH;
+  });
+
+  // Pure posture-function unit tests (no header mocking needed).
+  describe("localOperatorBypassAllowed()", () => {
+    it("honors DAAX_TRUST_LOCAL_OPERATOR=1 even when exposed (0.0.0.0)", () => {
+      vi.stubEnv("HOST", "0.0.0.0");
+      vi.stubEnv("DAAX_TRUST_LOCAL_OPERATOR", "1");
+      expect(localOperatorBypassAllowed()).toBe(true);
+    });
+
+    it("honors an explicit opt-out (DAAX_TRUST_LOCAL_OPERATOR=0) even on loopback", () => {
+      vi.stubEnv("HOST", "127.0.0.1");
+      vi.stubEnv("DAAX_TRUST_LOCAL_OPERATOR", "0");
+      expect(localOperatorBypassAllowed()).toBe(false);
+    });
+
+    it("allows a loopback bind and denies a 0.0.0.0 bind", () => {
+      vi.stubEnv("HOST", "127.0.0.1");
+      expect(localOperatorBypassAllowed()).toBe(true);
+      vi.stubEnv("HOST", "localhost");
+      expect(localOperatorBypassAllowed()).toBe(true);
+      vi.stubEnv("HOST", "0.0.0.0");
+      expect(localOperatorBypassAllowed()).toBe(false);
+      vi.stubEnv("HOST", "100.64.0.5");
+      expect(localOperatorBypassAllowed()).toBe(false);
+    });
+
+    it("with no explicit signal, allows ONLY in explicit development; denies test and production (Copilot #184)", () => {
+      vi.stubEnv("NODE_ENV", "development");
+      expect(localOperatorBypassAllowed()).toBe(true);
+      // "test" now DENIES: only an explicit NODE_ENV=development enables the
+      // bypass. A non-production value is no longer sufficient (fail safe).
+      vi.stubEnv("NODE_ENV", "test");
+      expect(localOperatorBypassAllowed()).toBe(false);
+      vi.stubEnv("NODE_ENV", "production");
+      expect(localOperatorBypassAllowed()).toBe(false);
+    });
+
+    it("denies when NODE_ENV is unset (ambiguous posture, no other signal) — fail safe (Copilot #184)", () => {
+      // An UNSET NODE_ENV carries no posture signal, so the fallback must DENY.
+      // Deleting it via stubEnv proves "ambiguous → deny" rather than the old
+      // "!= production → allow" behavior that treated unset as non-production.
+      vi.stubEnv("NODE_ENV", undefined);
+      expect(process.env.NODE_ENV).toBeUndefined();
+      expect(localOperatorBypassAllowed()).toBe(false);
+    });
+  });
+
+  // (a) loopback posture, no header, non-strict → LOCAL_OPERATOR.
+  it("grants LOCAL_OPERATOR on a loopback bind with no header, non-strict (host-dev unchanged)", async () => {
+    vi.stubEnv("HOST", "127.0.0.1");
+    mockHeaders.mockResolvedValue(createMockHeaders({}));
+
+    const result = await requireAuth();
+
+    expect(result.authenticated).toBe(true);
+    if (result.authenticated) expect(result.user.username).toBe("local");
+  });
+
+  // (b) exposed posture, no header, non-strict → 401 (the #184 fix).
+  it("rejects (401) an exposed (HOST=0.0.0.0) request with no header, non-strict", async () => {
+    vi.stubEnv("HOST", "0.0.0.0");
+    mockHeaders.mockResolvedValue(createMockHeaders({}));
+
+    const result = await requireAuth();
+
+    expect(result.authenticated).toBe(false);
+    if (!result.authenticated) {
+      expect(result.response.status).toBe(401);
+      expect(result.response.body).toEqual({
+        error: "Authentication required",
+        message: "You must be logged in to access this resource",
+      });
+    }
+  });
+
+  it("requireAuthOrThrow throws on an exposed (HOST=0.0.0.0) request with no header, non-strict", async () => {
+    vi.stubEnv("HOST", "0.0.0.0");
+    mockHeaders.mockResolvedValue(createMockHeaders({}));
+
+    await expect(requireAuthOrThrow()).rejects.toThrow(
+      "Authentication required",
+    );
+  });
+
+  // Exposed + explicit opt-in → operator (proxy-less trusted-tailnet escape hatch).
+  it("grants LOCAL_OPERATOR on an exposed bind when DAAX_TRUST_LOCAL_OPERATOR=1", async () => {
+    vi.stubEnv("HOST", "0.0.0.0");
+    vi.stubEnv("DAAX_TRUST_LOCAL_OPERATOR", "1");
+    mockHeaders.mockResolvedValue(createMockHeaders({}));
+
+    const result = await requireAuth();
+
+    expect(result.authenticated).toBe(true);
+    if (result.authenticated) expect(result.user.username).toBe("local");
+  });
+
+  // (c) strict mode → 401 regardless of posture (already true; unchanged).
+  it("rejects (401) in strict mode even on a loopback bind", async () => {
+    process.env.DAAX_REQUIRE_AUTH = "1";
+    vi.stubEnv("HOST", "127.0.0.1");
+    mockHeaders.mockResolvedValue(createMockHeaders({}));
+
+    const result = await requireAuth();
+
+    expect(result.authenticated).toBe(false);
+    if (!result.authenticated) expect(result.response.status).toBe(401);
+  });
+
+  // (d) forwarded identity still works on an exposed bind — but only through
+  //     the proxy-secret boundary (#184 review): with DAAX_PROXY_SECRET set and
+  //     matching, Path A resolves as before. Without the secret an exposed bind
+  //     now REFUSES forwarded identity (covered in the proxy-secret describe),
+  //     since any peer that can reach the port could forge X-Forwarded-User.
+  it("still authenticates a proxy-secret-backed forwarded identity on an exposed bind (Path A)", async () => {
+    vi.stubEnv("HOST", "0.0.0.0");
+    vi.stubEnv("DAAX_PROXY_SECRET", "posture-gate-secret");
+    mockHeaders.mockResolvedValue(
+      createMockHeaders({
+        "x-forwarded-user": "user-uuid",
+        "x-forwarded-name": "Proxied User",
+        "x-daax-proxy-secret": "posture-gate-secret",
+      }),
+    );
+
+    const result = await requireAuth();
+
+    expect(result.authenticated).toBe(true);
+    if (result.authenticated) expect(result.user.username).toBe("Proxied User");
+  });
+
+  // The deny-reason → warning-message mapping must name the ACTUAL cause, not
+  // always blame exposure (Copilot #184). A fresh module import per case resets
+  // the module-level once-flag so the warning is actually emitted each time.
+  describe("deny-reason warning names the actual cause (#184)", () => {
+    it("emits the exposed-host reason for a non-loopback HOST bind", async () => {
+      vi.stubEnv("HOST", "0.0.0.0");
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.resetModules();
+      const { evaluateAuthDecision } = await import("@/lib/auth-trust");
+
+      const decision = evaluateAuthDecision(createMockHeaders({}));
+
+      expect(decision.decision).toBe("deny");
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("bound beyond loopback"),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it("emits the explicit-opt-out reason for a falsy DAAX_TRUST_LOCAL_OPERATOR", async () => {
+      vi.stubEnv("DAAX_TRUST_LOCAL_OPERATOR", "0");
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.resetModules();
+      const { evaluateAuthDecision } = await import("@/lib/auth-trust");
+
+      const decision = evaluateAuthDecision(createMockHeaders({}));
+
+      expect(decision.decision).toBe("deny");
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("explicit opt-out"),
+      );
+      warnSpy.mockRestore();
     });
   });
 });

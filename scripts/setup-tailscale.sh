@@ -59,7 +59,10 @@ TERMINAL_WS_URL=ws://$TAILSCALE_IP:4201
 DAAX_WORKSPACE=$WORKSPACE
 
 # Container settings
-CLAUDE_CONTAINER_IMAGE=jpoley/daax-agents:latest
+# CLAUDE_CONTAINER_IMAGE is intentionally omitted: the default agent image is
+# the digest-pinned ref in server/config/constants.ts (single source of truth,
+# avoids digest drift, #195). Uncomment and set an explicit ref only to override.
+# CLAUDE_CONTAINER_IMAGE=
 CODE_SERVER_PORT=18080
 EOF
 
