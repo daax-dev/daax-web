@@ -240,7 +240,12 @@ compose() {
   # group entry; use the GID that actually owns the socket so group_add still
   # grants access. DOCKER_SOCKET is a unix:// URL — strip the scheme for stat.
   if [[ -z "$docker_gid" ]]; then
-    docker_gid="$(stat -c '%g' "${DOCKER_SOCKET#unix://}" 2>/dev/null)"
+    # Non-fatal socket-GID lookup: `stat` exits non-zero on a missing socket and
+    # GNU `stat -c` is unsupported on macOS. Guard both (BSD `stat -f` fallback,
+    # trailing `|| true`) so a failure can't trip `set -Eeuo pipefail` before the
+    # explicit `die` below gives a clear, actionable error.
+    docker_gid="$(stat -c '%g' "${DOCKER_SOCKET#unix://}" 2>/dev/null \
+      || stat -f '%g' "${DOCKER_SOCKET#unix://}" 2>/dev/null || true)"
   fi
   [[ -n "$docker_gid" ]] || die "cannot resolve docker group GID (set DOCKER_GID explicitly)"
 

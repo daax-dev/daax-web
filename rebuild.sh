@@ -25,7 +25,15 @@ HOME_MCP="${HOME_MCP_PATH:-}"
 # SDK EACCES and breaks container spawning. Match deploy-local.sh: prefer the
 # docker group, fall back to the socket's own GID, then a common default.
 DOCKER_GID="${DOCKER_GID:-$(getent group docker 2>/dev/null | awk -F: '{print $3}')}"
-DOCKER_GID="${DOCKER_GID:-$(stat -c '%g' /var/run/docker.sock 2>/dev/null)}"
+if [ -z "$DOCKER_GID" ]; then
+  # Non-fatal socket-GID lookup: `stat` exits non-zero when the socket is absent
+  # (rootless/remote Docker, daemon not started yet), and GNU `stat -c` is
+  # unsupported on macOS. Guard both (BSD `stat -f` fallback, trailing `|| true`)
+  # so a failure can't trip `set -e`; resolution then falls through to 999 and we
+  # rely on later real Docker errors if the socket is genuinely unusable.
+  DOCKER_GID="$(stat -c '%g' /var/run/docker.sock 2>/dev/null \
+    || stat -f '%g' /var/run/docker.sock 2>/dev/null || true)"
+fi
 DOCKER_GID="${DOCKER_GID:-999}"
 
 echo "🛑 Stopping existing container..."
