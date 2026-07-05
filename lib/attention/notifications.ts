@@ -76,9 +76,30 @@ export interface ReconcileResult {
 
 const WAITING = "waiting";
 
+/**
+ * Prototype-less map so a hostile/malformed session id like "__proto__" or
+ * "constructor" is stored as an ordinary key instead of walking/corrupting the
+ * Object prototype (which would also make `prev.waiting[id]` truthy by accident).
+ */
+function emptyMap<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
+
 /** A fresh, empty engine state. */
 export function initialState(): NotifyState {
-  return { waiting: {}, entries: {} };
+  return { waiting: emptyMap<true>(), entries: emptyMap<NotifyEntry>() };
+}
+
+export interface ReconcileOptions {
+  /**
+   * True when the upstream session list was capped server-side (see
+   * AttentionResponse.truncated). Under truncation a session can drop out of one
+   * snapshot and reappear in the next purely because of the cap, so an entry
+   * that is merely ABSENT must NOT be auto-cleared — only an explicit
+   * non-waiting status clears it. Prevents a false clear+re-fire (the browser
+   * Notification uses renotify) as a waiting session flaps across the cap.
+   */
+  truncated?: boolean;
 }
 
 function isWaiting(card: NotifyCard): boolean {
@@ -99,16 +120,23 @@ function isWaiting(card: NotifyCard): boolean {
 export function reconcile(
   prev: NotifyState,
   cards: readonly NotifyCard[],
+  opts: ReconcileOptions = {},
 ): ReconcileResult {
-  const nextWaiting: Record<string, true> = {};
-  const nextEntries: Record<string, NotifyEntry> = {};
+  const nextWaiting = emptyMap<true>();
+  const nextEntries = emptyMap<NotifyEntry>();
   const toNotify: NotifyCard[] = [];
 
   // De-dupe by id defensively (a malformed snapshot could repeat a session);
   // the first occurrence wins so a later duplicate can't spawn a second alert.
   const seen = new Set<string>();
+  // Every id present in this snapshot (any status) — used to distinguish
+  // "present but no longer waiting" (explicit clear) from "absent" (which under
+  // truncation must be preserved, not cleared).
+  const present = new Set<string>();
 
   for (const card of cards ?? []) {
+    if (card == null || typeof card.id !== "string" || card.id === "") continue;
+    present.add(card.id);
     if (!isWaiting(card)) continue;
     if (seen.has(card.id)) continue;
     seen.add(card.id);
@@ -133,9 +161,18 @@ export function reconcile(
     }
   }
 
-  // Any prior entry whose session is no longer waiting (or gone) is dropped:
-  // that is the auto-clear on next activity. Achieved implicitly — we only
-  // carried forward entries for sessions still in `nextWaiting`.
+  // Non-waiting present sessions and absent sessions have their prior entry
+  // dropped (auto-clear on next activity) — achieved implicitly, since only
+  // still-waiting sessions were carried above. EXCEPTION: under truncation a
+  // prior entry that is simply ABSENT (not present with a non-waiting status)
+  // is preserved so a cap-boundary flap does not clear+re-fire.
+  if (opts.truncated) {
+    for (const id in prev.entries) {
+      if (nextEntries[id] || present.has(id)) continue;
+      nextEntries[id] = prev.entries[id];
+      nextWaiting[id] = true;
+    }
+  }
 
   return { state: { waiting: nextWaiting, entries: nextEntries }, toNotify };
 }
@@ -156,7 +193,7 @@ export function unacknowledgedCount(state: NotifyState): number {
 
 /** Marks every active entry acknowledged (e.g. the bell was opened). Pure. */
 export function acknowledgeAll(state: NotifyState): NotifyState {
-  const entries: Record<string, NotifyEntry> = {};
+  const entries = emptyMap<NotifyEntry>();
   for (const id in state.entries) {
     entries[id] = { ...state.entries[id], acknowledged: true };
   }
@@ -167,8 +204,8 @@ export function acknowledgeAll(state: NotifyState): NotifyState {
 export function acknowledgeOne(state: NotifyState, id: string): NotifyState {
   const target = state.entries[id];
   if (!target || target.acknowledged) return state;
-  return {
-    waiting: state.waiting,
-    entries: { ...state.entries, [id]: { ...target, acknowledged: true } },
-  };
+  const entries = emptyMap<NotifyEntry>();
+  for (const key in state.entries) entries[key] = state.entries[key];
+  entries[id] = { ...target, acknowledged: true };
+  return { waiting: state.waiting, entries };
 }

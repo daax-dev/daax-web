@@ -64,8 +64,12 @@ function card(id: string, status: string): AttentionCard {
   };
 }
 
-function setPoll(cards: AttentionCard[], conn: ConnState = "connected") {
-  pollValue = { cards, conn, truncated: false, refresh: vi.fn() };
+function setPoll(
+  cards: AttentionCard[],
+  conn: ConnState = "connected",
+  truncated = false,
+) {
+  pollValue = { cards, conn, truncated, refresh: vi.fn() };
 }
 
 beforeEach(() => {
@@ -109,7 +113,18 @@ describe("useBlockedAgents", () => {
     expect(fireBlockedNotification).not.toHaveBeenCalled();
   });
 
-  it("fires a single aggregate popup when many block at once (anti-storm)", () => {
+  it("fires individually at the boundary (exactly 3 new blocks)", () => {
+    setPoll([]); // prime empty
+    const { rerender } = renderHook(() => useBlockedAgents());
+    act(() =>
+      setPoll([card("a", "waiting"), card("b", "waiting"), card("c", "waiting")]),
+    );
+    rerender();
+    expect(fireBlockedNotification).toHaveBeenCalledTimes(3);
+    expect(fireAggregateNotification).not.toHaveBeenCalled();
+  });
+
+  it("fires a single aggregate popup above the boundary (4 new blocks, anti-storm)", () => {
     setPoll([]); // prime empty
     const { rerender } = renderHook(() => useBlockedAgents());
     act(() =>
@@ -139,8 +154,13 @@ describe("useBlockedAgents", () => {
   });
 
   it("preserves state and does not re-fire across a transient disconnect", () => {
-    setPoll([card("a", "waiting")]); // prime with a already waiting
+    // Prime with 'a' NOT waiting, then genuinely transition it so it DID fire —
+    // otherwise the no-re-fire assertion would be vacuous.
+    setPoll([card("a", "working")]);
     const { result, rerender } = renderHook(() => useBlockedAgents());
+    act(() => setPoll([card("a", "waiting")]));
+    rerender();
+    expect(fireBlockedNotification).toHaveBeenCalledTimes(1);
     expect(result.current.count).toBe(1);
 
     // Watchtower drops: disconnected poll clears cards but must be ignored.
@@ -148,11 +168,30 @@ describe("useBlockedAgents", () => {
     rerender();
     expect(result.current.entries).toHaveLength(1);
 
-    // Recovery: a is still waiting → no re-fire (it was never not-waiting).
+    // Recovery: 'a' is still waiting → must NOT re-fire.
     act(() => setPoll([card("a", "waiting")], "connected"));
     rerender();
-    expect(fireBlockedNotification).not.toHaveBeenCalled();
+    expect(fireBlockedNotification).toHaveBeenCalledTimes(1);
     expect(result.current.count).toBe(1);
+  });
+
+  it("threads truncation: a waiting session vanishing under the cap is not cleared/re-fired", () => {
+    // Prime empty, then transition 'a' to waiting under truncation (fires once).
+    setPoll([], "connected", true);
+    const { result, rerender } = renderHook(() => useBlockedAgents());
+    act(() => setPoll([card("a", "waiting")], "connected", true));
+    rerender();
+    expect(fireBlockedNotification).toHaveBeenCalledTimes(1);
+
+    // 'a' drops off the capped list — absent, truncated → entry preserved.
+    act(() => setPoll([card("b", "working")], "connected", true));
+    rerender();
+    expect(result.current.entries.some((e) => e.id === "a")).toBe(true);
+
+    // 'a' reappears still waiting → no re-fire.
+    act(() => setPoll([card("a", "waiting")], "connected", true));
+    rerender();
+    expect(fireBlockedNotification).toHaveBeenCalledTimes(1);
   });
 
   it("acknowledgeAll clears the badge count while entries remain", () => {

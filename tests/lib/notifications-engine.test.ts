@@ -160,6 +160,67 @@ describe("reconcile — robustness", () => {
   });
 });
 
+describe("truncation-aware auto-clear", () => {
+  it("does NOT clear+re-fire when a waiting session vanishes then reappears under truncation", () => {
+    let state = initialState();
+
+    // Poll 1: 'a' is waiting (fires once).
+    let r = reconcile(state, [card("a", "waiting")], { truncated: true });
+    expect(r.toNotify.map((c) => c.id)).toEqual(["a"]);
+    state = r.state;
+
+    // Poll 2: 'a' fell off the far side of the server cap — absent, but the list
+    // was truncated, so the entry must be preserved (no clear).
+    r = reconcile(state, [card("z", "waiting")], { truncated: true });
+    expect(r.toNotify.map((c) => c.id)).toEqual(["z"]); // z is new
+    expect(entryList(r.state).map((e) => e.id).sort()).toEqual(["a", "z"]);
+    state = r.state;
+
+    // Poll 3: 'a' reappears still waiting — must NOT re-fire (same episode).
+    r = reconcile(state, [card("a", "waiting"), card("z", "waiting")], {
+      truncated: true,
+    });
+    expect(r.toNotify).toEqual([]);
+    expect(entryList(r.state)).toHaveLength(2);
+  });
+
+  it("still clears on an EXPLICIT non-waiting status even under truncation", () => {
+    let state = reconcile(initialState(), [card("a", "waiting")], {
+      truncated: true,
+    }).state;
+    // 'a' is present but now working → genuine activity → clear.
+    state = reconcile(state, [card("a", "working")], { truncated: true }).state;
+    expect(entryList(state)).toHaveLength(0);
+  });
+
+  it("without truncation, an absent session still auto-clears (unchanged behaviour)", () => {
+    let state = reconcile(initialState(), [card("a", "waiting")]).state;
+    state = reconcile(state, []).state; // absent, not truncated → clear
+    expect(entryList(state)).toHaveLength(0);
+  });
+});
+
+describe("prototype-pollution safety", () => {
+  it("treats a '__proto__' session id as an ordinary key without corrupting Object", () => {
+    const r = reconcile(initialState(), [
+      card("__proto__", "waiting"),
+      card("constructor", "waiting"),
+    ]);
+    expect(r.toNotify).toHaveLength(2);
+    expect(unacknowledgedCount(r.state)).toBe(2);
+    // The global prototype is untouched.
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    expect(Object.prototype).toBe(Object.prototype);
+  });
+
+  it("does not spuriously treat '__proto__' as already-waiting on the first poll", () => {
+    // With a plain object, prev.waiting["__proto__"] would be truthy (the proto),
+    // wrongly suppressing the first notification. A null-proto map fires correctly.
+    const r = reconcile(initialState(), [card("__proto__", "waiting")]);
+    expect(r.toNotify.map((c) => c.id)).toEqual(["__proto__"]);
+  });
+});
+
 describe("acknowledgement & unacknowledged count", () => {
   it("new entries start unacknowledged and are counted", () => {
     const { state } = run([[card("a", "waiting"), card("b", "waiting")]]);
