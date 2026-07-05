@@ -95,6 +95,27 @@ const CONTAINER_IMAGE = envImage || "daax-code-server:latest";
 // When Daax runs in a container, we need the HOST path, not the container path
 const HOST_WORKSPACE_PATH = process.env.HOST_WORKSPACE_PATH || "";
 
+// Host interface for the published code-server port. The spawned container
+// runs `--auth none`, so whatever interface this publish binds becomes an
+// unauthenticated IDE (workspace mounted read-write) for every peer that can
+// reach it. Default is loopback; widening (a Tailscale IP, or 0.0.0.0) is an
+// explicit operator opt-in via DAAX_CODE_SERVER_BIND. Fails closed to
+// loopback on a malformed value.
+// A dotted-quad shape check is NOT enough: /^\d{1,3}(\.\d{1,3}){3}$/ accepts
+// 999.999.999.999 and 256.0.0.1, which would emit a broken
+// `docker run -p 999.999.999.999:PORT:8080` spec. Validate each octet
+// numerically (0-255) so anything malformed fails closed to loopback.
+export function isValidIPv4BindAddr(addr: string): boolean {
+  const parts = addr.split(".");
+  if (parts.length !== 4) return false;
+  return parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255);
+}
+export function getPublishBindAddr(): string {
+  const bind = process.env.DAAX_CODE_SERVER_BIND?.trim();
+  if (!bind || !isValidIPv4BindAddr(bind)) return "127.0.0.1";
+  return bind;
+}
+
 // expandPath is imported from @/lib/path-utils
 
 // Get the actual host path for mounting volumes
@@ -203,7 +224,9 @@ function getContainerPort(): number | null {
     const result = execFileSync("docker", ["port", CONTAINER_NAME, "8080"], {
       encoding: "utf-8",
     });
-    const match = result.match(/:(\d+)$/);
+    // `docker port` output is newline-terminated and may list multiple
+    // bindings (IPv4 + IPv6); match per-line, not end-of-string.
+    const match = result.match(/:(\d+)$/m);
     return match ? parseInt(match[1]) : null;
   } catch {
     return null;
@@ -437,6 +460,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Start code-server container
       // Persist user data so theme preference is saved after first manual set
       // Add label to track which project was mounted (for status checks)
+      //
+      // ACCEPTED RISK (#201): `--auth none` (mirrors deploy/docker-compose.yml).
+      // code-server has no credential of its own here; access control is by
+      // network + the app's own auth gate:
+      //   - Starting the container requires an authenticated request (requireAuth
+      //     above) — an unauthenticated caller cannot spawn or reach this flow.
+      //   - The IDE is opened in a new browser tab pointed straight at code-server
+      //     (window.open in app/code-server/page.tsx); the daax app is NOT in that
+      //     HTTP path, so it cannot transparently inject a code-server session
+      //     cookie. A PASSWORD/HASHED_PASSWORD would therefore force a manual
+      //     login page (broken UX) with no app-side way to auto-authenticate.
+      //   - Deploy/Tailscale mode fronts code-server with Traefik + Pocket ID
+      //     forward-auth on the daax-code.* subdomain (see the compose stanza).
+      //   - THIS spawn path publishes the container port itself, and once the
+      //     container is up the app's auth gate is no longer in the loop: any
+      //     peer that can reach the published interface gets a full IDE (with
+      //     terminal) unauthenticated. That is why the publish binds loopback
+      //     by default; exposing it beyond the machine (e.g. a Tailscale IP)
+      //     requires the operator to opt in via DAAX_CODE_SERVER_BIND and
+      //     accept that every network on that interface can reach the IDE.
+      // `PASSWORD=` (empty) is set explicitly so a stray host PASSWORD env cannot
+      // leak in and unexpectedly enable a login prompt.
       const args = [
         "run",
         "-d",
@@ -445,7 +490,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         "--label",
         `daax.project=${project}`,
         "-p",
-        `${port}:8080`,
+        `${getPublishBindAddr()}:${port}:8080`,
         "-v",
         `${hostWorkspace}:${containerPath}`,
         "-v",
