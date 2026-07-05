@@ -41,8 +41,35 @@ export function getWsTokenSecret(): string | undefined {
   return process.env.DAAX_WS_TOKEN_SECRET || undefined;
 }
 
+/**
+ * The PREVIOUS shared HMAC secret during a rotation window, or undefined.
+ *
+ * Zero-outage secret rotation (issue #103, brain2daax §4): tickets already
+ * minted (and still within their short TTL) were signed with the old secret. To
+ * rotate without rejecting those in-flight tickets, the operator sets the new
+ * value in `DAAX_WS_TOKEN_SECRET` and moves the old value to
+ * `DAAX_WS_TOKEN_SECRET_PREVIOUS`; verification accepts a signature made with
+ * EITHER. Minting always uses only the current secret, so once every old ticket
+ * has expired the operator drops `_PREVIOUS`. Unset = current-only (no change).
+ */
+export function getWsTokenSecretPrevious(): string | undefined {
+  return process.env.DAAX_WS_TOKEN_SECRET_PREVIOUS || undefined;
+}
+
 function sign(encoded: string, secret: string): string {
   return createHmac("sha256", secret).update(encoded).digest("base64url");
+}
+
+/**
+ * Constant-time compare of the provided signature against the expected one.
+ * A length mismatch returns false without a timing-safe compare (the length is
+ * not the secret); equal lengths use `timingSafeEqual`.
+ */
+function signatureMatches(provided: string, expected: string): boolean {
+  const providedBuf = Buffer.from(provided);
+  const expectedBuf = Buffer.from(expected);
+  if (providedBuf.length !== expectedBuf.length) return false;
+  return timingSafeEqual(providedBuf, expectedBuf);
 }
 
 /**
@@ -88,14 +115,18 @@ export function verifyTicket(
   }
   const encoded = token.slice(0, dot);
   const provided = token.slice(dot + 1);
-  const expected = sign(encoded, secret);
 
-  const providedBuf = Buffer.from(provided);
-  const expectedBuf = Buffer.from(expected);
-  if (
-    providedBuf.length !== expectedBuf.length ||
-    !timingSafeEqual(providedBuf, expectedBuf)
-  ) {
+  // Accept a signature made with the current secret OR, during a rotation
+  // window, the previous one (issue #103). Both branches are constant-time; the
+  // previous branch runs only when `DAAX_WS_TOKEN_SECRET_PREVIOUS` is set, so an
+  // unset previous is byte-for-byte the pre-rotation current-only behavior and
+  // does not weaken verification. Minting always uses the current secret.
+  const previous = getWsTokenSecretPrevious();
+  let signatureOk = signatureMatches(provided, sign(encoded, secret));
+  if (!signatureOk && previous) {
+    signatureOk = signatureMatches(provided, sign(encoded, previous));
+  }
+  if (!signatureOk) {
     return { valid: false, reason: "bad-signature" };
   }
 

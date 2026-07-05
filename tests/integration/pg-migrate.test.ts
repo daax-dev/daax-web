@@ -105,6 +105,42 @@ describe.skipIf(!configured)("Postgres migration round-trip", () => {
     expect(reverted.some((n) => n.includes("baseline"))).toBe(true);
     expect(await tableExists("schema_meta")).toBe(false);
   });
+
+  // Operational-resilience gate (#103, brain2daax §4): every migration ships a
+  // WORKING `down`. The prior cases establish up (build) then down (teardown to
+  // empty); this re-applies to complete a full up→down→up round-trip and asserts
+  // the schema returns to the expected state — the concrete evidence that the
+  // down steps leave the DB in a state a subsequent up can rebuild cleanly.
+  it("migrate up again after down completes an up→down→up round-trip", async () => {
+    // Precondition from the previous case: schema is empty.
+    expect(await tableExists("schema_meta")).toBe(false);
+
+    const reapplied = await migrate("up", Infinity);
+    // Every migration that was reverted is re-applied (all of them).
+    expect(reapplied.some((n) => n.includes("baseline"))).toBe(true);
+
+    // Expected end-state: the domain tables and the baseline marker exist again.
+    expect(await tableExists("schema_meta")).toBe(true);
+    expect(await tableExists("built_images")).toBe(true);
+    expect(await tableExists("releases")).toBe(true);
+
+    // The F2 column reverts and re-applies with its migration (proves the
+    // add/drop-column down step round-trips, not just table create/drop).
+    const col = await query<{ exists: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'built_images'
+           AND column_name = 'sbom_json'
+       ) AS exists`,
+    );
+    expect(col.rows[0]?.exists).toBe(true);
+
+    const meta = await query<{ value: string }>(
+      "SELECT value FROM schema_meta WHERE key = 'baseline'",
+    );
+    expect(meta.rows[0]?.value).toBe("phase-0");
+  });
 });
 
 describe.skipIf(configured)("Postgres migration round-trip (skipped)", () => {
