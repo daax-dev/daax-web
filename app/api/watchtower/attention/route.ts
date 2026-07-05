@@ -26,11 +26,13 @@
  *  - Sessions are capped server-side (MAX_SESSIONS); truncation is flagged in
  *    the response (`truncated:true`) and logged — never silently dropped.
  *  - The incoming request's AbortSignal is threaded into every Watchtower fetch
- *    (combined with a sub-poll-interval timeout), so a client disconnect or a
- *    re-poll cancels the prior handler's in-flight work instead of letting
- *    overlapping executions stack up.
- *  - A short-TTL cache (lib/attention/cache.ts) coalesces rapid re-polls
- *    (e.g. several tabs) so the fleet is not re-scanned on every hit.
+ *    (combined with a per-fetch timeout), so a client disconnect cancels the
+ *    handler's in-flight work. The polling client itself never aborts a live
+ *    request — it skips ticks while one is outstanding — so overlapping
+ *    executions do not stack up.
+ *  - A TTL cache (lib/attention/cache.ts, TTL ≥ poll interval) coalesces
+ *    re-polls (e.g. several tabs) so the fleet is not re-scanned on every hit
+ *    and one completed slow scan is amortized across polls.
  *
  * Tool history is still fetched per session per poll (Watchtower's tools
  * endpoint exposes no limit/range param); the derivation and sparkline only use
@@ -45,7 +47,11 @@ import {
   fetchSessionTools,
   watchtowerBaseUrl,
 } from "@/lib/watchtower/client";
-import { buildCard, type AttentionResponse } from "@/lib/attention/adapter";
+import {
+  buildCard,
+  type AttentionCard,
+  type AttentionResponse,
+} from "@/lib/attention/adapter";
 import { getFresh, store as storeCache } from "@/lib/attention/cache";
 
 /** Bound concurrent per-session tool fetches so a large fleet can't fan out unbounded. */
@@ -101,16 +107,28 @@ export async function GET(req: Request) {
     capped,
     TOOLS_FETCH_CONCURRENCY,
     async (session) => {
-      // Non-poisoning: one session's tool fetch failing (or aborting) must not
-      // sink the whole batch — fall back to a tools-less card so the healthy
-      // sessions still render. (fetchSessionTools already fails soft to []; this
-      // is belt-and-braces against any future throw.)
+      // Non-poisoning: one session's tool fetch OR card build failing must not
+      // sink the whole batch. The fallback is a minimal static card — not a
+      // buildCard() retry, since buildCard itself may be what threw (e.g. a
+      // malformed session record) and re-invoking it would 500 the board.
       try {
         const tools = await fetchSessionTools(session.id, baseUrl, req.signal);
         return buildCard(session, tools, { now });
       } catch (err) {
-        console.warn(`[attention] tool fetch failed for ${session.id}:`, err);
-        return buildCard(session, [], { now });
+        console.warn(`[attention] card build failed for ${session.id}:`, err);
+        const fallback: AttentionCard = {
+          id: session.id,
+          label: session.id.slice(0, 8),
+          host: "",
+          cwd: "",
+          repoBranch: null,
+          status: "idle",
+          since: null,
+          lastTool: null,
+          toolCount: 0,
+          sparkline: [],
+        };
+        return fallback;
       }
     },
   );

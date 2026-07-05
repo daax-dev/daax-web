@@ -140,6 +140,40 @@ describe("GET /api/watchtower/attention", () => {
     expect(byId["sess-good"].lastTool).toBe("Read");
   });
 
+  it("degrades a malformed session (non-string host) to a minimal card instead of a 500", async () => {
+    const now = Date.now();
+    mockFetchActiveSessions.mockResolvedValue({
+      reachable: true,
+      sessions: [
+        // Schema drift: numeric host makes buildCard throw (.trim on a number).
+        { id: "sess-malformed", host: 123, active: true },
+        {
+          id: "sess-good",
+          host: "h2",
+          active: true,
+          created_at: new Date(now - 5_000).toISOString(),
+        },
+      ],
+    });
+    mockFetchSessionTools.mockResolvedValue([]);
+
+    const res = await GET(req());
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    const byId = Object.fromEntries(
+      body.sessions.map((s: { id: string }) => [s.id, s]),
+    );
+    expect(Object.keys(byId).sort()).toEqual(["sess-good", "sess-malformed"]);
+    // Malformed record falls back to a static idle card, not a 500.
+    expect(byId["sess-malformed"]).toMatchObject({
+      id: "sess-malformed",
+      status: "idle",
+      lastTool: null,
+      toolCount: 0,
+    });
+  });
+
   it("does no upstream work when the client has already aborted", async () => {
     const ac = new AbortController();
     ac.abort();
