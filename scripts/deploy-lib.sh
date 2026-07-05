@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # deploy-lib.sh — pure-ish, unit-testable helpers for the phased deploy model
 # (brain2daax F9, issue #104). SOURCED by scripts/deploy.sh and by the test
-# suite (tests/deploy/deploy-preflight.test.ts). It defines functions only; it
+# suite (tests/deploy/deploy-phased.test.ts). It defines functions only; it
 # never runs anything on its own, so sourcing it is side-effect free.
 #
 # Every external effect routes through an OVERRIDABLE command variable so tests

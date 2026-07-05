@@ -68,7 +68,7 @@ compose() {
 
 resolve_docker_gid() {
   local gid
-  gid="$(getent group docker 2>/dev/null | awk -F: '{print $3}')"
+  gid="$(getent group docker 2>/dev/null | awk -F: '{print $3}' || true)"
   if [[ -z "$gid" ]]; then
     gid="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)"
   fi
