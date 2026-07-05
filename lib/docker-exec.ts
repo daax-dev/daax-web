@@ -33,7 +33,14 @@ export const defaultDockerExec: DockerExec = async (args, opts) => {
 export function isDockerUnavailableError(error: unknown): boolean {
   const err = error as NodeJS.ErrnoException & { stderr?: unknown };
   if (err?.code === "ENOENT") return true; // docker CLI not on PATH
-  const text = `${err?.message ?? ""} ${typeof err?.stderr === "string" ? err.stderr : ""}`;
+  // execFile errors carry `stderr` (and sometimes `message`) as a Buffer/
+  // Uint8Array unless an explicit encoding is set, so coerce to UTF-8 before
+  // matching — otherwise a Buffer daemon-unreachable message misclassifies.
+  const asText = (x: unknown): string =>
+    Buffer.isBuffer(x) || x instanceof Uint8Array
+      ? Buffer.from(x).toString("utf8")
+      : String(x ?? "");
+  const text = `${asText(err?.message)} ${asText(err?.stderr)}`;
   return /cannot connect to the docker daemon|is the docker daemon running|docker daemon is not running|error during connect|permission denied while trying to connect/i.test(
     text,
   );
