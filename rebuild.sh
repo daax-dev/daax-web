@@ -24,8 +24,16 @@ HOME_MCP="${HOME_MCP_PATH:-}"
 # the HOST docker GID that owns /var/run/docker.sock; a wrong GID makes the Docker
 # SDK EACCES and breaks container spawning. Match deploy-local.sh: prefer the
 # docker group, fall back to the socket's own GID, then a common default.
-DOCKER_GID="${DOCKER_GID:-$(getent group docker 2>/dev/null | awk -F: '{print $3}')}"
-DOCKER_GID="${DOCKER_GID:-$(stat -c '%g' /var/run/docker.sock 2>/dev/null)}"
+DOCKER_GID="${DOCKER_GID:-$(getent group docker 2>/dev/null | awk -F: '{print $3}' || true)}"
+if [ -z "$DOCKER_GID" ]; then
+  # Non-fatal socket-GID lookup: `stat` exits non-zero when the socket is absent
+  # (rootless/remote Docker, daemon not started yet), and GNU `stat -c` is
+  # unsupported on macOS. Guard both (BSD `stat -f` fallback, trailing `|| true`)
+  # so a failure can't trip `set -e`; resolution then falls through to 999 and we
+  # rely on later real Docker errors if the socket is genuinely unusable.
+  DOCKER_GID="$(stat -c '%g' /var/run/docker.sock 2>/dev/null \
+    || stat -f '%g' /var/run/docker.sock 2>/dev/null || true)"
+fi
 DOCKER_GID="${DOCKER_GID:-999}"
 
 echo "🛑 Stopping existing container..."
@@ -68,12 +76,16 @@ docker network create "$NETWORK_NAME" 2>/dev/null || true
 # volume as the OLD root image, node(1000) would EACCES on it. Fix it here too so
 # alternating between rebuild.sh and compose on the same host is safe.
 # Idempotent + cheap: no-op unless such a volume exists and is stale (uid != 1000).
+# The chown fixer must run as root (--user 0:0): the image itself now defaults to
+# USER node (uid 1000, no CAP_CHOWN), which cannot chown the stale root-owned
+# volume — the exact case this remediates. Root inside this throwaway
+# maintenance container does not weaken the runtime hardening of the app.
 for __vol in daax_daax-data daax-data; do
   if docker volume inspect "$__vol" >/dev/null 2>&1; then
     __owner="$(docker run --rm -v "$__vol:/d" "$IMAGE_NAME" stat -c '%u' /d 2>/dev/null || echo unknown)"
     if [ "$__owner" != "1000" ]; then
       echo "🔧 Fixing ownership of volume $__vol -> 1000:1000 (was uid=$__owner)..."
-      docker run --rm -v "$__vol:/d" "$IMAGE_NAME" chown -R 1000:1000 /d >/dev/null
+      docker run --rm --user 0:0 -v "$__vol:/d" "$IMAGE_NAME" chown -R 1000:1000 /d >/dev/null
     fi
   fi
 done
