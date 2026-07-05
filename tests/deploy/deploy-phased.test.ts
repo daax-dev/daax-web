@@ -215,6 +215,24 @@ describe("scripts/deploy-lib.sh unit helpers", () => {
     expect(out).toContain("rc=1");
   });
 
+  it("deploy_log escapes a literal TAB and strips other C0 controls into valid JSONL", () => {
+    // A JSON string cannot hold an unescaped control char; a msg with a literal
+    // tab (0x09) or other C0 control (here 0x01) must still produce parseable
+    // JSONL. Tab -> \t (preserved); 0x01 -> stripped.
+    const out = execFileSync(
+      "bash",
+      [
+        "-c",
+        `source "${LIB_SH}"; f="$(mktemp)"; deploy_log "$f" test capture ok "$(printf 'a\\tb\\x01c')"; cat "$f"; rm -f "$f"`,
+      ],
+      { encoding: "utf8" },
+    ).trim();
+    const parsed = JSON.parse(out); // throws (fails the test) if invalid JSON
+    expect(parsed.msg).toBe("a\tbc");
+    expect(parsed.phase).toBe("capture");
+    expect(parsed.status).toBe("ok");
+  });
+
   it("assert_postgres_reachable fails closed when the managed host is unreachable", () => {
     const out = execFileSync(
       "bash",
@@ -382,7 +400,12 @@ describe("deploy.sh rollback — mid-flight failure", () => {
     );
     expect(res.status).not.toBe(0);
     const dl = readFileSync(dockerLog, "utf8");
-    expect(dl).toMatch(/tag prior-daax daax:latest/); // tags restored
+    // Rollback restores the SAME GHCR ref the compose file uses (not a local
+    // daax:latest), so `compose up` reverts to the prior good image.
+    expect(dl).toMatch(/tag prior-daax ghcr\.io\/daax-dev\/daax-web:latest/);
+    expect(dl).toMatch(
+      /tag prior-daax-terminal ghcr\.io\/daax-dev\/daax-terminal:latest/,
+    ); // tags restored
     // Nothing was switched, so the app plane is NEVER force-recreated.
     expect(dl).not.toMatch(/up -d --force-recreate .*daax terminal/);
     expect(dl).not.toMatch(/compose .*down/); // and never torn down
@@ -407,7 +430,10 @@ describe("deploy.sh rollback — mid-flight failure", () => {
     );
     expect(res.status).not.toBe(0);
     const dl = readFileSync(dockerLog, "utf8");
-    expect(dl).toMatch(/tag prior-daax daax:latest/);
+    expect(dl).toMatch(/tag prior-daax ghcr\.io\/daax-dev\/daax-web:latest/);
+    expect(dl).toMatch(
+      /tag prior-daax-terminal ghcr\.io\/daax-dev\/daax-terminal:latest/,
+    );
     expect(dl).toMatch(/up -d --force-recreate .*daax terminal/);
     const jl = readFileSync(log, "utf8");
     expect(jl).toMatch(/"phase":"health","status":"fail"/);

@@ -245,10 +245,16 @@ phase_capture() {
     STATEFILE_IS_TMP=1
   fi
   # Capture rollback tags using the ACTUAL deployed image refs (so the :rollback
-  # pin matches ghcr refs in pull mode, not a hardcoded local tag).
+  # pin matches ghcr refs in pull mode, not a hardcoded local tag). The defaults
+  # MUST match the refs deploy/docker-compose.yml uses for the daax + terminal
+  # services (ghcr.io/daax-dev/daax-web:latest, ghcr.io/daax-dev/daax-terminal:latest),
+  # which are hardcoded there for BOTH pull and `--build` deploys. Defaulting to
+  # a local `daax:latest`/`daax-terminal:latest` would retag/restore the WRONG
+  # refs, so `compose up` would keep the new/broken GHCR tags and rollback would
+  # be a silent no-op unless DAAX_IMAGE/DAAX_TERMINAL_IMAGE were set per-env.
   capture_rollback_state "$STATEFILE" \
-    "daax=${DAAX_IMAGE:-daax:latest}" \
-    "daax-terminal=${DAAX_TERMINAL_IMAGE:-daax-terminal:latest}"
+    "daax=${DAAX_IMAGE:-ghcr.io/daax-dev/daax-web:latest}" \
+    "daax-terminal=${DAAX_TERMINAL_IMAGE:-ghcr.io/daax-dev/daax-terminal:latest}"
   CAPTURED=1
   # POSITIVE pre-mutation check (H1): did a stack exist BEFORE we touched
   # anything? This — not a per-container image inspect — decides fresh vs upgrade,

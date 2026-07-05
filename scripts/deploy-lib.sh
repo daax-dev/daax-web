@@ -25,11 +25,19 @@ deploy_log() {
   local logfile="$1" env="$2" phase="$3" status="$4" msg="$5"
   local ts
   ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  # Escape the free-text message for JSON (backslash, double-quote, strip CR/LF).
+  # Escape the free-text message for JSON. A JSON string cannot contain any
+  # unescaped control character (< 0x20), so escaping only backslash/quote and
+  # newlines would still emit invalid JSONL when msg holds a literal TAB or
+  # other C0 control. Order matters: escape backslash FIRST so the `\t` we
+  # produce below is not double-escaped.
   local esc="${msg//\\/\\\\}"
   esc="${esc//\"/\\\"}"
-  esc="${esc//$'\n'/ }"
-  esc="${esc//$'\r'/ }"
+  esc="${esc//$'\n'/ }"      # newline  -> space
+  esc="${esc//$'\r'/ }"      # carriage return -> space
+  esc="${esc//$'\t'/\\t}"    # tab -> \t (valid JSON escape)
+  # Strip any remaining C0 controls (0x00-0x08, 0x0B-0x0C, 0x0E-0x1F) and DEL
+  # (0x7F). CR/LF/TAB are already handled above; this is a POSIX `tr` byte pass.
+  esc="$(printf '%s' "$esc" | LC_ALL=C tr -d '\000-\010\013\014\016-\037\177')"
   local dir
   dir="$(dirname -- "$logfile")"
   mkdir -p "$dir" 2>/dev/null || true
