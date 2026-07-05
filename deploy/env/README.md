@@ -24,30 +24,32 @@ Because env files carry no secrets, they are safe to commit.
 
 ## Keys
 
-| Key | Meaning |
-|-----|---------|
-| `DAAX_HOSTNAME` | short hostname; drives default Traefik route + container `HOSTNAME` |
-| `DAAX_WORKSPACE` | absolute host path mounted at `/workspace` (Compose does not expand `~`) |
-| `CLAUDE_CONFIG_PATH` | absolute path to `.claude.json` |
-| `DAAX_NETWORK` | external Docker bridge network name (default `daax-net`) |
-| `TERMINAL_WS_URL` / `CODE_SERVER_URL` | public URLs surfaced to the browser |
-| `DAAX_PG_MANAGED` | `0` = Postgres runs as a Compose container (default); `1` = external/managed Postgres via `DATABASE_URL` |
-| `DAAX_DEPLOY_PULL` | `0` = build images from local source; `1` = pull published GHCR images |
-| `DAAX_DEPLOY_VIA` / `DAAX_DEPLOY_HOST` | provenance stamped onto the F8 Build page |
-| `DAAX_REQUIRE_AUTH` | `1` enforces Pocket ID forward-auth (Traefik) |
-| `DAAX_REQUIRED_SECRETS` | space-separated NAMES of env vars that must be present (fail-closed) |
+| Key                                    | Meaning                                                                                                                                                              |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DAAX_HOSTNAME`                        | short hostname; drives default Traefik route + container `HOSTNAME`                                                                                                  |
+| `DAAX_WORKSPACE`                       | absolute host path mounted at `/workspace` (Compose does not expand `~`)                                                                                             |
+| `CLAUDE_CONFIG_PATH`                   | absolute path to `.claude.json`                                                                                                                                      |
+| `DAAX_NETWORK`                         | external Docker bridge network name (default `daax-net`)                                                                                                             |
+| `TERMINAL_WS_URL` / `CODE_SERVER_URL`  | public URLs surfaced to the browser                                                                                                                                  |
+| `DAAX_PG_MANAGED`                      | `0` = Postgres runs as a Compose container (default); `1` = external/managed Postgres via `DATABASE_URL` — **not yet supported** (preflight fails closed; see below) |
+| `DAAX_DEPLOY_PULL`                     | `0` = build images from local source; `1` = pull published GHCR images                                                                                               |
+| `DAAX_DEPLOY_VIA` / `DAAX_DEPLOY_HOST` | provenance stamped onto the F8 Build page                                                                                                                            |
+| `DAAX_REQUIRE_AUTH`                    | `1` enforces Pocket ID forward-auth (Traefik)                                                                                                                        |
+| `DAAX_REQUIRED_SECRETS`                | space-separated NAMES of env vars that must be present (fail-closed)                                                                                                 |
 
 ## Postgres: local (default) vs managed
 
 - **Compose-local (default, zero lock-in):** `DAAX_PG_MANAGED=0`. Postgres runs as
   a container with a persistent named volume. The required secret is
   `DAAX_PG_PASSWORD`; Compose derives `DATABASE_URL`.
-- **Managed (RDS / Cloud SQL / Neon / Azure):** `DAAX_PG_MANAGED=1` and export
-  `DATABASE_URL` (a secret — it embeds the password) instead of `DAAX_PG_PASSWORD`.
-  Preflight TCP-checks the managed host and fails closed if unreachable. Removing
-  the local Postgres container from the Compose stack for a fully-managed cloud
-  deploy is a documented follow-up (see `deploy/iac/cloud/README.md`); the
-  connection-string swap itself is supported today.
+- **Managed (RDS / Cloud SQL / Neon / Azure):** **NOT YET SUPPORTED.**
+  `deploy.sh` fails closed in preflight when `DAAX_PG_MANAGED=1`:
+  `deploy/docker-compose.yml` hardcodes `DATABASE_URL` to the compose-local
+  `postgres` for both the `migrate` and `daax` services, so an
+  operator-exported managed `DATABASE_URL` never reaches a container — the app
+  would silently use compose-local Postgres. Wiring the connection-string swap
+  through compose (and dropping the local `postgres` coupling) is a documented
+  follow-up (see `deploy/iac/cloud/README.md`).
 
 ## Network exposure (Tailscale ACL + optional Traefik IP allow-list)
 

@@ -22,10 +22,10 @@ IaC surface is deliberately tiny:
 Everything else — image, health checks, SBOM, provenance, secrets — is handled
 by `scripts/deploy.sh <target>` running **on** that VM, unchanged from local.
 
-## The managed-Postgres mechanism (supported today, no code change)
+## The managed-Postgres mechanism (NOT YET SUPPORTED — follow-up)
 
 The app already speaks Postgres, so switching from the compose-local container to
-a managed instance is a **connection-string swap**:
+a managed instance is intended to be a **connection-string swap**:
 
 ```bash
 # in deploy/env/cloud.env:  DAAX_PG_MANAGED=1
@@ -33,12 +33,17 @@ export DATABASE_URL='postgres://user:pw@my-db.abc123.us-east-1.rds.amazonaws.com
 scripts/deploy.sh cloud
 ```
 
-`deploy.sh` preflight TCP-checks the managed host and **fails closed** if it is
-unreachable, then runs migrations against it. No application code changes.
+**This does not work today**, and `deploy.sh` fails closed in preflight when
+`DAAX_PG_MANAGED=1`: `deploy/docker-compose.yml` hardcodes `DATABASE_URL` to the
+compose-local `postgres` for both the `migrate` and `daax` services, so the
+exported managed `DATABASE_URL` never reaches a container — the app would
+silently run against compose-local Postgres.
 
-> Follow-up (not in this PR): a `docker-compose.cloud.yml` override that drops the
-> local `postgres`/`migrate-local` coupling so a fully-managed deploy does not
-> also start an unused Postgres container. Tracked separately.
+> Follow-up (not in this PR): rework the compose interpolation so an exported
+> `DATABASE_URL` reaches the `migrate`/`daax` services, plus a
+> `docker-compose.cloud.yml` override that drops the local
+> `postgres`/`migrate-local` coupling so a fully-managed deploy does not also
+> start an unused Postgres container. Tracked separately.
 
 ## variables.tf
 

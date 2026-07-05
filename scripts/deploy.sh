@@ -16,9 +16,10 @@
 #
 # The deploy runs ON THE TARGET VM (local Compose orchestration): ssh to the VM,
 # `source ~/.secrets`, then `scripts/deploy.sh <target>`. The same model serves a
-# generic cloud VM — a managed Postgres is a DATABASE_URL swap (see cloud.env),
-# no code change. This does NOT replace `bun dev` (host-dev) or `docker:run`
-# (single-container); those modes are unchanged.
+# generic cloud VM. (Managed Postgres via DAAX_PG_MANAGED=1 is NOT yet supported
+# — preflight fails closed; see deploy/env/README.md.) This does NOT replace
+# `bun dev` (host-dev) or `docker:run` (single-container); those modes are
+# unchanged.
 #
 # PHASES (each fail-closed; a failure after CAPTURE rolls back to the prior state):
 #   preflight → capture → build/pull → db → migrate → up → health → done
@@ -40,7 +41,10 @@ readonly COMPOSE_FILE="${DAAX_COMPOSE_FILE:-$REPO_ROOT/deploy/docker-compose.yml
 readonly BUILD_CODE_SERVER="$SCRIPT_DIR/build-code-server.sh"
 readonly PROJECT_NAME="daax"
 readonly LOGFILE="${DAAX_DEPLOY_LOG:-$REPO_ROOT/.logs/deploy.jsonl}"
-readonly STATEFILE="${DAAX_ROLLBACK_STATE:-$(mktemp -t daax-rollback.XXXXXX)}"
+# Rollback statefile: created LAZILY in phase_capture (so --help/--list never
+# litter a temp file) and removed on successful completion when self-created.
+STATEFILE="${DAAX_ROLLBACK_STATE:-}"
+STATEFILE_IS_TMP=0
 
 # Overridable in tests: skip long real waits / real health polling cadence.
 HEALTH_RETRIES="${DAAX_HEALTH_RETRIES:-24}"
@@ -88,7 +92,8 @@ export_compose_env() {
   export CLAUDE_CONTAINER_IMAGE="${CLAUDE_CONTAINER_IMAGE:-jpoley/daax-agents:latest}"
 
   # Postgres: compose-local by default (DAAX_PG_PASSWORD secret → compose builds
-  # DATABASE_URL). Managed Postgres = the operator exports DATABASE_URL directly.
+  # DATABASE_URL). Managed Postgres (DAAX_PG_MANAGED=1) is gated off in
+  # preflight — not yet wired into compose.
   export DAAX_PG_USER="${DAAX_PG_USER:-daax}"
   export DAAX_PG_DB="${DAAX_PG_DB:-daax}"
 
@@ -204,6 +209,16 @@ phase_preflight() {
   "$DOCKER_BIN" compose version >/dev/null 2>&1 || fail preflight "'docker compose' v2 plugin not available"
   [[ -f "$COMPOSE_FILE" ]] || fail preflight "compose file missing: $COMPOSE_FILE"
 
+  # Managed-Postgres mode is NOT yet wired into the compose file:
+  # deploy/docker-compose.yml hardcodes DATABASE_URL to the compose-local
+  # postgres for both the migrate and daax services, so an operator-exported
+  # managed DATABASE_URL never reaches a container — the app would silently use
+  # compose-local Postgres while preflight probes the managed host. Fail
+  # explicitly until the compose interpolation rework lands (follow-up).
+  if [[ "${DAAX_PG_MANAGED:-0}" == "1" ]]; then
+    fail preflight "DAAX_PG_MANAGED=1 is not yet supported: managed-Postgres mode is not yet wired into compose — the app would silently use compose-local Postgres. Use DAAX_PG_MANAGED=0 until the compose rework follow-up lands."
+  fi
+
   assert_required_secrets || fail preflight "required secret(s) missing/empty for target '$ENV_NAME'"
   assert_code_server_image "$BUILD_CODE_SERVER" || fail preflight "code-server image preflight failed"
   assert_postgres_reachable || fail preflight "managed Postgres unreachable"
@@ -216,6 +231,10 @@ phase_preflight() {
 
 phase_capture() {
   log "phase: capture (rollback baseline)"
+  if [[ -z "$STATEFILE" ]]; then
+    STATEFILE="$(mktemp -t daax-rollback.XXXXXX)"
+    STATEFILE_IS_TMP=1
+  fi
   # Capture rollback tags using the ACTUAL deployed image refs (so the :rollback
   # pin matches ghcr refs in pull mode, not a hardcoded local tag).
   capture_rollback_state "$STATEFILE" \
@@ -265,15 +284,28 @@ phase_migrate() {
   # primary migration-rollback mechanism is reversible down-migrations
   # (bun run db:migrate:down); this dump is a belt-and-suspenders restore point.
   if [[ "${DAAX_PG_MANAGED:-0}" != "1" && "${DAAX_SKIP_PG_DUMP:-0}" != "1" ]]; then
-    local snap
-    snap="$REPO_ROOT/.logs/pg-predeploy-$(date -u +%Y%m%dT%H%M%SZ).sql"
+    # Snapshots live OUTSIDE the repo: the repo is public and .logs/decisions/
+    # is routinely committed — a plaintext prod DB dump must never sit inside
+    # the work tree. Restrictive perms (700 dir / 600 file via umask 077).
+    local snap_dir snap
+    snap_dir="${DAAX_BACKUP_DIR:-$HOME/.daax/backups}"
+    (umask 077 && mkdir -p "$snap_dir")
+    chmod 700 "$snap_dir" 2>/dev/null || true
+    snap="$snap_dir/pg-predeploy-$(date -u +%Y%m%dT%H%M%SZ).sql"
     # SC2016: the single quotes are intentional — POSTGRES_USER/DB expand inside
     # the postgres container's shell, not here.
     # shellcheck disable=SC2016
-    if compose exec -T postgres sh -c \
-        'pg_dump -U "${POSTGRES_USER:-daax}" "${POSTGRES_DB:-daax}"' >"$snap" 2>/dev/null; then
+    if (umask 077 && compose exec -T postgres sh -c \
+        'pg_dump -U "${POSTGRES_USER:-daax}" "${POSTGRES_DB:-daax}"' >"$snap" 2>/dev/null); then
       log "pre-migrate snapshot: $snap"
       deploy_log "$LOGFILE" "$ENV_NAME" "migrate" "snapshot" "pg_dump saved to $snap"
+      # Retention: keep the newest N snapshots (0 = keep all), so pre-deploy
+      # dumps do not accumulate unbounded (mirrors scripts/pg-backup.sh).
+      local keep="${DAAX_SNAPSHOT_RETAIN:-10}"
+      if [[ "$keep" =~ ^[0-9]+$ && "$keep" -gt 0 ]]; then
+        ls -1t "$snap_dir"/pg-predeploy-*.sql 2>/dev/null \
+          | tail -n +"$((keep + 1))" | xargs -r rm -f --
+      fi
     else
       rm -f "$snap" 2>/dev/null || true
       log "pre-migrate snapshot skipped (pg_dump unavailable)"
@@ -318,6 +350,9 @@ run_deploy() {
   phase_up
   phase_health
   deploy_log "$LOGFILE" "$ENV_NAME" "done" "ok" "deploy succeeded"
+  # Successful deploy: the rollback baseline is spent — clean up a self-created
+  # (mktemp) statefile; an operator-provided DAAX_ROLLBACK_STATE is left alone.
+  if [[ "$STATEFILE_IS_TMP" == 1 ]]; then rm -f "$STATEFILE"; fi
   ok "deploy of '$ENV_NAME' succeeded"
   printf '    provenance: by=%s via=%s host=%s\n' "$DAAX_DEPLOY_BY" "$DAAX_DEPLOY_VIA" "$DAAX_DEPLOY_HOST"
 }

@@ -6,7 +6,9 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -212,6 +214,18 @@ describe("scripts/deploy-lib.sh unit helpers", () => {
     );
     expect(out).toContain("rc=1");
   });
+
+  it("assert_postgres_reachable fails closed when the managed host is unreachable", () => {
+    const out = execFileSync(
+      "bash",
+      [
+        "-c",
+        `source "${LIB_SH}"; export DAAX_PG_MANAGED=1 DATABASE_URL='postgres://u:p@unreachable.db:5432/daax' TCP_CHECK=false; assert_postgres_reachable; echo "rc=$?"`,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(out).toContain("rc=1");
+  });
 });
 
 describe("deploy.sh preflight — fail-closed", () => {
@@ -245,21 +259,30 @@ describe("deploy.sh preflight — fail-closed", () => {
     expect(readFileSync(dockerLog, "utf8")).not.toMatch(/compose .*build/);
   });
 
-  it("managed Postgres: FAILS closed when the DB is unreachable", () => {
-    const log = freshLog("pg-unreachable");
+  it("managed Postgres (DAAX_PG_MANAGED=1): preflight FAILS explicitly — mode not yet wired into compose", () => {
+    const log = freshLog("pg-managed-unsupported");
     resetDockerLog();
+    // Even with a resolvable DATABASE_URL and a reachable host, managed mode
+    // must fail closed in preflight: the compose file hardcodes DATABASE_URL
+    // to compose-local Postgres, so deploying would silently use the wrong DB.
     const res = runDeploy(
       "managed",
       {
         TEST_SECRET_A: "x",
-        DATABASE_URL: "postgres://u:p@unreachable.db:5432/daax",
-        FAKE_TCP_OK: "0",
+        DATABASE_URL: "postgres://u:p@managed.db:5432/daax",
+        FAKE_TCP_OK: "1",
       },
       log,
     );
     expect(res.status).not.toBe(0);
-    expect(res.stderr).toMatch(/unreachable/i);
-    expect(readFileSync(dockerLog, "utf8")).not.toMatch(/compose .*build/);
+    expect(res.stderr).toMatch(/not yet wired into compose/i);
+    const dl = readFileSync(dockerLog, "utf8");
+    expect(dl).not.toMatch(/compose .*build/);
+    expect(dl).not.toMatch(/up -d --force-recreate/);
+    expect(dl).not.toMatch(/compose .*down/);
+    expect(readFileSync(log, "utf8")).toMatch(
+      /"phase":"preflight","status":"fail"/,
+    );
   });
 });
 
@@ -288,6 +311,32 @@ describe("deploy.sh happy path", () => {
     expect(jl).toMatch(/"phase":"done","status":"ok"/);
     // M2: the disabled-serialization guard warns loudly.
     expect(res.stderr).toMatch(/serialization DISABLED/);
+  });
+
+  it("writes the pre-migrate snapshot OUTSIDE the repo with restrictive perms (700 dir / 600 file)", () => {
+    const log = freshLog("snapshot");
+    resetDockerLog();
+    const backupDir = join(work, "backups");
+    const res = runDeploy(
+      "test",
+      {
+        TEST_SECRET_A: "x",
+        TEST_SECRET_B: "y",
+        DAAX_SKIP_PG_DUMP: "0", // exercise the snapshot path
+        DAAX_BACKUP_DIR: backupDir,
+      },
+      log,
+    );
+    expect(res.status).toBe(0);
+    // The dump landed in DAAX_BACKUP_DIR (never $REPO/.logs — the repo is
+    // public and .logs/decisions/ is routinely committed).
+    const snaps = readdirSync(backupDir).filter((f) =>
+      /^pg-predeploy-.*\.sql$/.test(f),
+    );
+    expect(snaps.length).toBe(1);
+    expect(statSync(backupDir).mode & 0o777).toBe(0o700);
+    expect(statSync(join(backupDir, snaps[0])).mode & 0o777).toBe(0o600);
+    expect(readFileSync(log, "utf8")).toMatch(/"status":"snapshot"/);
   });
 });
 
