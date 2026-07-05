@@ -44,7 +44,11 @@ deploy_log() {
 # file inclusion). Returns non-zero if the name is unsafe or the file is absent.
 resolve_env_file() {
   local dir="$1" name="$2"
-  if [[ -z "$name" || "$name" == *[/\\]* || "$name" == *..* ]]; then
+  # Enforce the documented character set explicitly: only letters, digits, and
+  # `. _ -`. The `*[!A-Za-z0-9._-]*` glob rejects path separators (`/`, `\`) and
+  # every other character, so nothing outside the allowlist reaches a file path
+  # or the log output. The `..` guard blocks traversal (`.` is otherwise allowed).
+  if [[ -z "$name" || "$name" == *..* || "$name" == *[!A-Za-z0-9._-]* ]]; then
     echo "invalid target name: '$name' (letters/digits/-/_ only)" >&2
     return 1
   fi

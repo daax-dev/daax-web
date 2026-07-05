@@ -133,8 +133,13 @@ STACK_EXISTED_AT_CAPTURE=0
 # `compose ps` SUCCEEDS and reports NO containers for the app services. A failed
 # ps (docker unreachable) returns 0 so uncertainty never authorizes a teardown.
 stack_present() {
-  local out rc
-  out="$(compose ps -aq daax terminal 2>/dev/null)"; rc=$?
+  local out rc=0
+  # Capture the exit code via `|| rc=$?` so a failing `compose ps` (docker
+  # unreachable) cannot abort the script under `set -Eeuo`: a bare
+  # `out="$(compose ps …)"` is a simple command whose failure would trip errexit
+  # (and the ERR trap → an unwanted rollback) in any non-if/&&/|| call context.
+  # Guarding it here keeps the "uncertain -> present" intent regardless of caller.
+  out="$(compose ps -aq daax terminal 2>/dev/null)" || rc=$?
   if ((rc != 0)); then
     return 0 # uncertain -> treat as present (never tear down on doubt)
   fi

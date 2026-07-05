@@ -226,6 +226,31 @@ describe("scripts/deploy-lib.sh unit helpers", () => {
     );
     expect(out).toContain("rc=1");
   });
+
+  it("resolve_env_file rejects a name with characters outside [A-Za-z0-9._-]", () => {
+    // The message promises "letters/digits/-/_ only" — the check must actually
+    // enforce that, not merely reject path separators/traversal. A name with a
+    // shell/meta char (here `;`) must fail closed and never form a file path.
+    const out = execFileSync(
+      "bash",
+      [
+        "-c",
+        `source "${LIB_SH}"; resolve_env_file /tmp 'bad;name' 2>/dev/null; echo "rc=$?"`,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(out).toContain("rc=1");
+    // A well-formed name still resolves (positive control: no false rejection).
+    const dir = mkdtempSync(join(tmpdir(), "daax-envname-"));
+    writeFileSync(join(dir, "prod-1.env"), "X=1\n");
+    const ok = execFileSync(
+      "bash",
+      ["-c", `source "${LIB_SH}"; resolve_env_file '${dir}' 'prod-1'`],
+      { encoding: "utf8" },
+    ).trim();
+    expect(ok).toBe(join(dir, "prod-1.env"));
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 describe("deploy.sh preflight — fail-closed", () => {
@@ -409,6 +434,32 @@ describe("deploy.sh rollback — mid-flight failure", () => {
     );
     expect(readFileSync(log, "utf8")).toMatch(
       /"phase":"rollback","status":"ok"/,
+    );
+  });
+
+  it("compose ps FAILS at capture (docker unreachable): script does not abort, treats stack as present, never tears down", () => {
+    const log = freshLog("rollback-ps-fail");
+    resetDockerLog();
+    const res = runDeploy(
+      "test",
+      {
+        TEST_SECRET_A: "x",
+        TEST_SECRET_B: "y",
+        FAKE_PRIOR: "0", // no baseline image captured
+        FAKE_PS_FAIL: "1", // `compose ps` fails -> stack_present is uncertain
+        FAKE_HTTP_CODE: "500", // post-up health failure triggers rollback
+      },
+      log,
+    );
+    expect(res.status).not.toBe(0);
+    const dl = readFileSync(dockerLog, "utf8");
+    // The failing `compose ps` must NOT abort the run before capture: the build
+    // phase (which follows capture) still executes.
+    expect(dl).toMatch(/compose .*build --pull daax terminal/);
+    // Uncertain (ps failed) -> treated as PRESENT -> the stack is never torn down.
+    expect(dl).not.toMatch(/compose .*down/);
+    expect(readFileSync(log, "utf8")).toMatch(
+      /"phase":"rollback","status":"degraded"/,
     );
   });
 
