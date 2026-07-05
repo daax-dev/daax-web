@@ -173,11 +173,21 @@ function deny401(): NextResponse {
 /**
  * Authorization guard: require that the caller holds `permission`.
  *
+ * ⚠️ DEPLOYMENT PRECONDITION (do not misread this as protection by default):
+ * RBAC enforces NOTHING useful unless the app runs in STRICT mode —
+ * `DAAX_REQUIRE_AUTH=1` AND `DAAX_PROXY_SECRET` set (with the proxy injecting
+ * `X-Daax-Proxy-Secret` and `X-Forwarded-User`). In the NON-strict default
+ * posture, a request with NO forward-auth header takes the local-operator bypass
+ * below and is treated as a fully-trusted operator (i.e. admin) — so any
+ * headerless client reaching the app directly is effectively an admin. F5's
+ * role checks only bind once strict mode forces a trusted forwarded identity.
+ *
  * Layers on top of `requireAuth()` authentication:
  *   - Unauthenticated → 401 (audited).
  *   - Local-operator bypass (host-dev, no proxy) → allowed (the operator is the
  *     trusted root of the machine); audited as an operator grant. Keeps
- *     `bun dev` usable without a database.
+ *     `bun dev` usable without a database. (This is the bypass the precondition
+ *     above warns about — it is intended for host-dev, NOT untrusted exposure.)
  *   - Authenticated forwarded identity → JIT-provision, resolve roles from the
  *     DB, and allow ONLY if a held role grants `permission`; else 403. Every
  *     decision writes an `auth_audit` row.

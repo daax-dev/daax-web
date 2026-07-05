@@ -10,6 +10,17 @@
  *     attributes (email / username) — for GRANT purposes only, never as the key.
  *
  * Pure and framework-agnostic so it is directly unit-testable.
+ *
+ * ⚠️ SECURITY — attribute (email/username) matching trusts the IdP:
+ * A pending admin grant created from an email/username allow-list entry is
+ * materialised (store.ts) onto whichever subject FIRST logs in presenting a
+ * matching email/username. Those attributes are MUTABLE and forwarded by the
+ * proxy, so attr-matching is only safe when the IdP (Pocket ID) VERIFIES the
+ * email and uniquely binds it to one subject. Against an IdP that lets a user
+ * set an arbitrary/unverified email, an attacker could claim an admin's email
+ * and hijack the pending grant on first login. For high assurance prefer
+ * SUBJECT-based allow-list entries (the immutable OIDC subject UUID), which are
+ * matched exactly and cannot be spoofed.
  */
 
 /** One parsed allow-list entry. */

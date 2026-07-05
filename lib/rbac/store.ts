@@ -296,6 +296,14 @@ export async function revokeAllRoles(subject: string): Promise<void> {
  * grants. Returns the applied plan (also usable as a dry-run report when
  * `dryRun` is true — computes the diff, acquires the lock, but writes nothing).
  *
+ * ⚠️ REVOCATION IS BOOT-ONLY: reconcile runs once at server startup
+ * (instrumentation.ts). Removing a user from `DAAX_ADMIN_USERS` does NOT revoke
+ * their admin role until the app RESTARTS, and any unconsumed pending grant
+ * (an allow-listed admin who never logged in) persists across boots until it is
+ * either consumed at first login or reconcile prunes it on a later boot with the
+ * entry removed. To revoke immediately, restart the app (or delete the grant via
+ * the RBAC store). A future enhancement could expire stale pending grants by age.
+ *
  * @param env    environment to read `DAAX_ADMIN_USERS` from (injectable for tests).
  * @param dryRun when true, compute + return the plan without applying it.
  */
