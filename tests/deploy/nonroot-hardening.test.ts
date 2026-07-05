@@ -79,6 +79,28 @@ describe("#185 rebuild.sh (docker run path) applies non-root hardening", () => {
     expect(rebuild).toContain("getent group docker");
     expect(rebuild).toContain("stat -c '%g' /var/run/docker.sock");
   });
+
+  it("runs the stale-volume chown fixer as root (--user 0:0)", () => {
+    // The image defaults to USER node (uid 1000, no CAP_CHOWN); without
+    // --user 0:0 the fixer exits non-zero on the stale root-owned volume it
+    // exists to fix, and set -e aborts the whole script.
+    expect(rebuild).toMatch(
+      /docker run --rm --user 0:0[^\n]*chown -R 1000:1000/,
+    );
+  });
+});
+
+describe("#185 deploy-local.sh runs the stale-volume chown fixer as root", () => {
+  const deployLocal = readFileSync(
+    resolve(repoRoot, "deploy-local.sh"),
+    "utf8",
+  );
+
+  it("passes --user 0:0 to the chown docker run (image defaults to USER node)", () => {
+    expect(deployLocal).toMatch(
+      /docker run --rm --user 0:0[^\n]*chown -R 1000:1000/,
+    );
+  });
 });
 
 describe("#185 compose daax service keeps non-root hardening", () => {

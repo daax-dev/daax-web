@@ -397,7 +397,11 @@ ensure_daax_data_owner() {
     return 0
   fi
   log "chowning volume $vol to 1000:1000 (was uid=$owner) for non-root app (#185)..."
-  docker run --rm -v "$vol:/d" "$img" chown -R 1000:1000 /d >/dev/null
+  # --user 0:0: the daax image defaults to USER node (uid 1000, no CAP_CHOWN),
+  # which cannot chown the stale root-owned volume — the exact case being
+  # remediated. Root inside this throwaway maintenance container does not
+  # weaken the runtime hardening of the app itself.
+  docker run --rm --user 0:0 -v "$vol:/d" "$img" chown -R 1000:1000 /d >/dev/null
 }
 
 # Idempotently create the external docker network the compose file expects.
