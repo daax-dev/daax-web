@@ -15,7 +15,7 @@ import { WebSocketServer } from "ws";
 import { existsSync, accessSync, statSync, constants as fsConstants } from "fs";
 
 // Configuration
-import { PORT, HOST, HOST_WORKSPACE_PATH, localBaseUrl } from "./config/constants";
+import { PORT, HOST, HOST_WORKSPACE_PATH } from "./config/constants";
 import { WS_TICKET_SUBPROTOCOL } from "../lib/ws-ticket-protocol";
 
 // Docker/Auth initialization
@@ -33,6 +33,7 @@ import { registerGlobalErrorHandlers } from "./handlers/error-handler";
 import { registerSignalHandlers } from "./handlers/signal-handler";
 import { handleConnection, setAuthPaths } from "./handlers/connection-handler";
 import { handleAttentionBridge } from "./handlers/attention-bridge";
+import { dispatchConnection } from "./handlers/connection-dispatch";
 
 // Initialize BacklogServer integration
 import "./startup";
@@ -161,19 +162,7 @@ if (
 //     which relays Watchtower's broadcast bus to the browser (read-only).
 //   - everything else → the terminal PTY handler.
 wss.on("connection", (ws, req) => {
-  let stream: string | null = null;
-  try {
-    stream = new URL(req.url || "/", localBaseUrl(HOST, PORT)).searchParams.get(
-      "stream",
-    );
-  } catch {
-    stream = null;
-  }
-  if (stream === "attention") {
-    handleAttentionBridge(ws, req);
-    return;
-  }
-  handleConnection(ws, req);
+  dispatchConnection(ws, req, handleConnection, handleAttentionBridge);
 });
 
 // Register signal handlers for graceful shutdown
