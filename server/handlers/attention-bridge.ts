@@ -162,6 +162,9 @@ export function handleAttentionBridge(
   upstream.on("error", (err) => {
     clearTimeout(handshakeTimer);
     console.warn("[attention-bridge] upstream error:", err);
+    // Proactively tear down the upstream so a stalled close handshake can't
+    // leave the connection lingering; then close the client.
+    teardownUpstream(upstream);
     if (client.readyState === WebSocket.OPEN) {
       client.close(1011, "upstream error");
     }
