@@ -148,23 +148,37 @@ export function handleAttentionBridge(
   });
 
   // Browser is read-only: ignore inbound frames (do NOT forward to the bus).
+  // When the client disconnects we tear down the upstream. Clearing the
+  // handshake timer removes the only mechanism that would abort a still-
+  // CONNECTING socket, and close() does NOT forcibly abort a CONNECTING socket —
+  // so a blackholed upstream would leak. Force-abort (terminate) a CONNECTING
+  // upstream; close() only an OPEN one gracefully.
   client.on("close", () => {
     clearTimeout(handshakeTimer);
-    if (
-      upstream.readyState === WebSocket.OPEN ||
-      upstream.readyState === WebSocket.CONNECTING
-    ) {
-      upstream.close();
-    }
+    teardownUpstream(upstream);
   });
 
   client.on("error", (err) => {
     clearTimeout(handshakeTimer);
     console.warn("[attention-bridge] client error:", err);
-    try {
-      upstream.close();
-    } catch {
-      // already closing/closed
-    }
+    teardownUpstream(upstream);
   });
+}
+
+/**
+ * Tear down the upstream relay socket after the client is gone. A still-
+ * CONNECTING socket must be force-aborted (`terminate`) — `close()` does not
+ * abort a pending connection, so with the handshake timer already cleared a
+ * blackholed upstream would leak. An OPEN socket gets a graceful `close()`.
+ */
+function teardownUpstream(upstream: WebSocket): void {
+  try {
+    if (upstream.readyState === WebSocket.CONNECTING) {
+      upstream.terminate();
+    } else if (upstream.readyState === WebSocket.OPEN) {
+      upstream.close();
+    }
+  } catch {
+    // already closing/closed
+  }
 }
