@@ -147,11 +147,13 @@ export function applyLiveEvent(
 
     case "notification":
     case "permission_request":
-      // Agent is blocked on human input → needs attention.
+      // Agent is blocked on human input → needs attention. `since` marks when the
+      // session FIRST entered the current waiting episode, so a later waiting-type
+      // event for a session that is ALREADY waiting must not reset it (that would
+      // shorten "time in waiting" and make the bell/board look freshly blocked).
+      // Only stamp `since` when transitioning INTO waiting from another status.
       return patchCard(cards, id, (c) =>
-        c.status === "waiting" && c.since === at
-          ? c
-          : { ...c, status: "waiting", since: at },
+        c.status === "waiting" ? c : { ...c, status: "waiting", since: at },
       );
 
     case "prompt_submit":

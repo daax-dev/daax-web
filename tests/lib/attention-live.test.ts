@@ -164,6 +164,40 @@ describe("applyLiveEvent", () => {
     expect(out[0]).toBe(existing[0]);
   });
 
+  it("keeps the original `since` for a session that is already waiting", () => {
+    // Session entered waiting earlier; a second waiting-type event with a LATER
+    // timestamp must NOT reset `since` (that would shorten time-in-waiting and
+    // make the board look freshly blocked). `since` marks the FIRST entry into
+    // the current waiting episode.
+    const firstEnteredAt = NOW - 5_000;
+    const existing = [card({ status: "waiting", since: firstEnteredAt })];
+    const out = applyLiveEvent(
+      existing,
+      msg({
+        type: "notification",
+        timestamp: new Date(NOW - 100).toISOString(),
+      }),
+      NOW,
+    );
+    // Already waiting → no-op: original `since`, original references preserved.
+    expect(out[0].since).toBe(firstEnteredAt);
+    expect(out).toBe(existing);
+    expect(out[0]).toBe(existing[0]);
+  });
+
+  it("stamps `since` when transitioning INTO waiting from a non-waiting status", () => {
+    const out = applyLiveEvent(
+      [card({ status: "working", since: NOW - 5_000 })],
+      msg({
+        type: "notification",
+        timestamp: new Date(NOW - 100).toISOString(),
+      }),
+      NOW,
+    );
+    expect(out[0].status).toBe("waiting");
+    expect(out[0].since).toBe(NOW - 100);
+  });
+
   it("ignores unknown/future message types (forward-compatible)", () => {
     const existing = [card()];
     for (const type of ["subagent_stop", "pre_compact", "interrupt", "wat"]) {

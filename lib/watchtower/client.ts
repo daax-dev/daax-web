@@ -21,6 +21,16 @@ import type { RestSession, RestTool } from "@/lib/attention/adapter";
  * exceed the board's 2s poll interval. Overlap is prevented elsewhere — the
  * client hook skips a tick while a request is in flight, and the server TTL
  * cache amortizes a completed slow scan across polls.
+ *
+ * Deliberately shorter than the 5s used by the one-shot tools proxy
+ * (app/api/watchtower/sessions/[id]/tools/route.ts). That proxy answers a single
+ * user-triggered request where a longer wait is acceptable; the attention board
+ * polls on a ~2s cadence, so this timeout is kept BELOW that interval to stay
+ * responsive and livelock-safe. A per-fetch timeout longer than the poll cadence
+ * could let a slow scan straddle multiple ticks; the shorter bound plus the
+ * in-flight single-flight guard keep each poll bounded well under the cadence. Do
+ * not raise this to 5s without re-checking the poll interval — the difference is
+ * intentional, not drift.
  */
 const FETCH_TIMEOUT_MS = 1_500;
 
