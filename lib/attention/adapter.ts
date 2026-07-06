@@ -5,12 +5,15 @@
  * (app/api/watchtower/attention/route.ts) fetches raw sessions + tools from the
  * Watchtower proxy and calls into here to build the derived, glanceable model.
  *
- * NOTE ON THE 🟡 "waiting-for-input" STATE: Watchtower persists Notification
- * events but exposes no REST endpoint to read them (only sessions/prompts/tools
- * are queryable). The derivation in lib/attention/status.ts fully supports and
- * is tested for `waiting`, but this REST adapter cannot currently source
- * Notification events, so the live board will not surface 🟡 until Watchtower
- * grows a `/api/sessions/{id}/events` endpoint. See the issue notes / PR body.
+ * NOTE ON THE 🟡 "waiting-for-input" STATE: this REST adapter still cannot source
+ * Notification events — Watchtower persists them but exposes no REST endpoint to
+ * read them (only sessions/prompts/tools are queryable). The 🟡 state IS now
+ * surfaced at runtime, though: once the live `/ws` bridge connects, the reducer
+ * in lib/attention/live.ts applies `notification`/`permission_request` deltas
+ * that transition a card to `waiting`. The remaining limitation is replay/seeding
+ * — a session already waiting BEFORE the socket connects won't show 🟡 until it
+ * emits a new event or the REST snapshot resyncs (a `/api/sessions/{id}/events`
+ * endpoint would let the snapshot seed pre-existing waiting state). See PR body.
  */
 
 import {

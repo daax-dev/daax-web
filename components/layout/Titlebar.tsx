@@ -40,6 +40,7 @@ import {
 import { McpIcon } from "@/components/icons/McpIcon";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { UserMenu } from "@/components/layout/UserMenu";
 import { Button } from "@/components/ui/button";
 import { useProject } from "@/lib/project-context";
@@ -752,6 +753,8 @@ export function Titlebar() {
               </div>
             )}
           </div>
+
+          <NotificationBell />
 
           <ThemeToggle />
 

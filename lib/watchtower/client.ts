@@ -102,9 +102,14 @@ export async function fetchActiveSessions(
       return { reachable: false, sessions: [] };
     }
     const raw: unknown = await res.json();
-    const list = Array.isArray(raw) ? raw : [];
+    if (!Array.isArray(raw)) {
+      // Contract: a non-array body is an unexpected shape, not "no sessions".
+      // Surface it as unreachable so the UI shows a disconnected state.
+      console.warn("[watchtower] /api/sessions/active → non-array body");
+      return { reachable: false, sessions: [] };
+    }
     const sessions: RestSession[] = [];
-    for (const s of list) {
+    for (const s of raw) {
       if (isPlainObject(s) && typeof s.id === "string" && s.id !== "") {
         // Coerce optional fields: drop anything non-string so upstream schema
         // drift (e.g. a numeric host) can't leak non-string values into the
