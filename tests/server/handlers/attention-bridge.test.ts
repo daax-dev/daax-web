@@ -17,13 +17,22 @@ import {
 } from "@/server/handlers/attention-bridge";
 
 describe("watchtowerWsUrl", () => {
-  const saved = { ...process.env };
+  // Restore only the keys this suite mutates, in place, so the shared
+  // process.env proxy is never swapped out (a wholesale reassignment can
+  // leave a read-only env for later test files).
+  const ENV_KEYS = ["WATCHTOWER_API_URL", "HOST_WORKSPACE_PATH"] as const;
+  const saved: Record<string, string | undefined> = {};
   beforeEach(() => {
-    delete process.env.WATCHTOWER_API_URL;
-    delete process.env.HOST_WORKSPACE_PATH;
+    for (const key of ENV_KEYS) {
+      saved[key] = process.env[key];
+      delete process.env[key];
+    }
   });
   afterEach(() => {
-    process.env = { ...saved };
+    for (const key of ENV_KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
   });
 
   it("defaults to localhost in host-dev", () => {
