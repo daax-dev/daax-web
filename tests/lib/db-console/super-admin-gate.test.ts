@@ -34,6 +34,14 @@ const { writeAudit } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/rbac/store", () => ({ writeAudit }));
 
+// Postgres presence is mocked so auditSafe's DB-configured guard is deterministic
+// (default configured â†’ audit rows are written and can be asserted; a dedicated
+// test flips it to model host-dev without a DB).
+const { isDbConfigured } = vi.hoisted(() => ({
+  isDbConfigured: vi.fn(() => true),
+}));
+vi.mock("@/lib/db/config", () => ({ isDbConfigured }));
+
 import {
   requireSuperAdmin,
   resolveSuperAdmin,
@@ -71,6 +79,7 @@ describe("db-console super-admin GATE (requireSuperAdmin / resolveSuperAdmin) â€
 
   beforeEach(() => {
     vi.clearAllMocks();
+    isDbConfigured.mockReturnValue(true);
     mockHeaders.mockReturnValue({ get: () => null } as unknown as Headers);
     // Allow-list contains only the super subject (subject-kind entry).
     process.env[SUPERADMIN_ENV] = SUPER_SUBJECT;
@@ -147,6 +156,22 @@ describe("db-console super-admin GATE (requireSuperAdmin / resolveSuperAdmin) â€
           detail: "local-operator",
         }),
       );
+    });
+
+    it("stays QUIET when Postgres is unconfigured (host-dev): authorizes WITHOUT attempting an audit write", async () => {
+      // Host-dev posture: local-operator bypass + no DB. The gate decision is
+      // unchanged, but auditSafe must SKIP the write so requireSuperAdmin does
+      // not emit a DbConfigError on every DB-console request.
+      isDbConfigured.mockReturnValue(false);
+      requireRole.mockResolvedValueOnce(roleAllow(null));
+      evaluateAuthDecision.mockReturnValue({
+        decision: "allow-operator",
+        user: USER,
+      });
+
+      const gate = await requireSuperAdmin("admin:db:write");
+      expect(gate.authorized).toBe(true);
+      expect(writeAudit).not.toHaveBeenCalled();
     });
 
     it("ALLOWS an authenticated, allow-listed super-admin subject and audits an allow", async () => {

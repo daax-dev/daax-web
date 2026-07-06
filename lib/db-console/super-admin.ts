@@ -33,6 +33,7 @@ import {
   type UserIdentity,
 } from "@/lib/rbac/allowlist";
 import { writeAudit } from "@/lib/rbac/store";
+import { isDbConfigured } from "@/lib/db/config";
 
 /**
  * Env var listing super-admin identities. Only subject-kind entries (immutable
@@ -102,6 +103,11 @@ function auditNet(h: Awaited<ReturnType<typeof headers>>): {
 async function auditSafe(
   entry: Parameters<typeof writeAudit>[0],
 ): Promise<void> {
+  // Skip when Postgres is unconfigured (host-dev: local-operator bypass + no
+  // DB). Otherwise writeAudit hits DbConfigError on every DB-console request and
+  // spams the log, even though auditing is intentionally absent without a DB —
+  // mirrors writeAuditSafe in lib/auth.ts. Strict deployments have a DB and audit.
+  if (!isDbConfigured()) return;
   try {
     await writeAudit(entry);
   } catch {
