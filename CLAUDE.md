@@ -90,6 +90,24 @@ The **production deploy** (`deploy/docker-compose.yml` + Traefik) runs the two p
 
 The image's **default CMD is still `start:prod` (both planes in one container)**, so the single-container convenience modes are **unchanged**: `bun dev` (host), `bun run docker:run`, `./rebuild.sh`, and the local `docker-compose.yml` all still run web + terminal together. **Only the production `deploy/docker-compose.yml` topology splits.**
 
+#### Phased, env-file deploy (F9, #104): `scripts/deploy.sh <target>`
+
+The production deploy is driven by **`scripts/deploy.sh <target>`** — an env-file-driven, phased, fail-closed, rollback-capable model that runs the same Compose stack on a local VM or a generic cloud VM. **Target selection is CONFIG, not code:** a `<target>` maps to `deploy/env/<target>.env` (`kinsale`, `muckross`, `cloud`, …). Adding a target = adding an env file; the script never changes. This replaces the old hard-coded `deploy:kinsale`/`deploy:muckross` package scripts.
+
+- **Secrets are never in env files.** Env files hold non-secret config and declare the NAMES of required secrets in `DAAX_REQUIRED_SECRETS`. Values come from the environment (`source ~/.secrets` / a secret store). See `deploy/env/README.md`.
+- **Run on the target VM:** `ssh <vm>`, `source ~/.secrets`, then `scripts/deploy.sh kinsale` (or `bun run deploy kinsale`; `bun run deploy:list` shows targets).
+- **Phases (each fail-closed):** `preflight` (required-secret presence, code-server image preflight; managed-Postgres mode `DAAX_PG_MANAGED=1` currently **fails closed** — it is deferred/not-yet-wired into compose, so no reachability check runs) → `capture` (rollback baseline) → `build`/`pull` → `db` (compose-local Postgres health gate) → `migrate` → `up` (web + terminal) → `health` (F7 `/api/health` must return 200) → `done`. A failure **after capture rolls back** to the prior running images (or tears down a partial fresh deploy). A structured log is appended to `.logs/deploy.jsonl`.
+- **Provenance (F8):** `deploy.sh` stamps `DAAX_DEPLOY_BY`/`DAAX_DEPLOY_VIA`/`DAAX_DEPLOY_MODE`/`DAAX_DEPLOY_HOST` into the app so the settings > Build page shows who/how/where.
+- **Cloud is additive:** the cloud target is the same Compose stack on any cloud VM (zero lock-in). Managed Postgres (RDS/Cloud SQL/Neon/Azure, `DAAX_PG_MANAGED=1`) is **not yet supported** — the compose file hardcodes `DATABASE_URL` to compose-local Postgres, so `deploy.sh` preflight fails closed on `DAAX_PG_MANAGED=1` until the compose interpolation rework lands (see `deploy/env/README.md`). A thin, provider-parameterized IaC skeleton lives in `deploy/iac/cloud/` (documented follow-up; local needs no IaC).
+- **`deploy-local.sh` is unchanged** — it remains the host daemon-consolidation / Traefik-render helper; `deploy.sh` is the additive phased orchestrator.
+
+#### Network exposure: Tailscale ACL + optional Traefik IP allow-list
+
+Ingress is controlled at the network layer:
+
+- **Tailscale ACLs** gate who can reach the tailnet host/ports at all — the primary control for tailnet-only deploys. Restrict `daax`'s ports to trusted tags/users in the tailnet policy.
+- **Traefik IP allow-list (optional, defense-in-depth):** add an `ipAllowList` middleware to the router chain in `deploy/traefik-daax.yml.tpl` to restrict source IPs on top of Pocket ID forward-auth. This is the daax analogue of the reference platform's `allowed_ips` ingress/DB firewall.
+
 ---
 
 ## Database (Postgres)

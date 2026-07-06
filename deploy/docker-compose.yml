@@ -115,7 +115,11 @@ services:
     # GHCR-published web image (#100): deploy:kinsale/muckross `docker compose
     # pull` fetches the published image, not a local `daax:latest` (which would
     # resolve to Docker Hub and fail). Same image as the daax web service.
-    image: ghcr.io/daax-dev/daax-web:latest
+    # Env-driven (#104): DAAX_IMAGE overrides the GHCR default so an override
+    # deploy AND its rollback-tag baseline (capture_rollback_state) resolve the
+    # SAME ref; unset falls back to the published GHCR default so plain
+    # `docker compose pull` still works.
+    image: ${DAAX_IMAGE:-ghcr.io/daax-dev/daax-web:latest}
     container_name: daax-migrate
     restart: "no"
     depends_on:
@@ -139,7 +143,10 @@ services:
     # must name the published GHCR ref. A local `daax:latest` would resolve to
     # Docker Hub and fail the pull. `docker compose up --build` still builds
     # locally and tags this same ref.
-    image: ghcr.io/daax-dev/daax-web:latest
+    # Env-driven (#104): DAAX_IMAGE overrides the GHCR default so an override
+    # deploy AND its rollback-tag baseline (capture_rollback_state) resolve the
+    # SAME ref; unset falls back to the published GHCR default so pull works.
+    image: ${DAAX_IMAGE:-ghcr.io/daax-dev/daax-web:latest}
     container_name: daax
     restart: unless-stopped
 
@@ -305,6 +312,15 @@ services:
       # GitHub token (optional)
       - GITHUB_DAAX=${GITHUB_DAAX:-}
 
+      # Deploy provenance (brain2daax F8/F9, #104). scripts/deploy.sh stamps
+      # who/how/where at deploy time; lib/build/build-info.ts surfaces these on
+      # the settings > Build page. All optional (:-) so non-deploy.sh runs
+      # (deploy-local.sh, docker:run) are unaffected.
+      - DAAX_DEPLOY_BY=${DAAX_DEPLOY_BY:-}
+      - DAAX_DEPLOY_VIA=${DAAX_DEPLOY_VIA:-}
+      - DAAX_DEPLOY_MODE=${DAAX_DEPLOY_MODE:-}
+      - DAAX_DEPLOY_HOST=${DAAX_DEPLOY_HOST:-}
+
       # Clawdbot gateway (optional - required for /bot page)
       - CLAWD_GATEWAY_URL=${CLAWD_GATEWAY_URL:-}
       - CLAWD_GATEWAY_TOKEN=${CLAWD_GATEWAY_TOKEN:-}
@@ -355,7 +371,10 @@ services:
     # compose pull daax terminal` fetches this published ref. A local
     # `daax-terminal:latest` would resolve to Docker Hub and fail the pull.
     # `docker compose up --build` still builds locally and tags this same ref.
-    image: ghcr.io/daax-dev/daax-terminal:latest
+    # Env-driven (#104): DAAX_TERMINAL_IMAGE overrides the GHCR default so an
+    # override deploy AND its rollback-tag baseline (capture_rollback_state)
+    # resolve the SAME ref; unset falls back to the published GHCR default.
+    image: ${DAAX_TERMINAL_IMAGE:-ghcr.io/daax-dev/daax-terminal:latest}
     container_name: daax-terminal
     restart: unless-stopped
 

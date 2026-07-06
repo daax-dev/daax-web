@@ -47,6 +47,10 @@ yarn-error.log*
 logs/
 *.log
 
+# DB dumps must never be committed (second line of defense — deploy snapshots
+# default to ~/.daax/backups, outside the repo)
+.logs/*.sql
+
 # Session / test artifacts (Playwright MCP snapshots, verification screenshots, scratch dumps)
 .playwright-mcp/
 /*.png
