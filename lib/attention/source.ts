@@ -151,7 +151,13 @@ async function tick(): Promise<void> {
           conn: "connected",
         });
       } else {
-        update({ cards: [], truncated: false, conn: "disconnected" });
+        // HTTP 200 but the upstream is unreachable/transient (e.g. Watchtower
+        // down → `{ ok:false }`, or a malformed body). Treat this like the
+        // non-ok branch above: keep the last-known cards and only flag the
+        // connection as down. Cards are replaced ONLY by a successful
+        // (`ok:true`) fetch with a fresh session list, so a transient outage
+        // never wipes state consumers read while disconnected.
+        update({ ...snapshot, conn: "disconnected" });
       }
     }
   } catch (err) {

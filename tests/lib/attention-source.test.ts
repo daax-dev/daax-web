@@ -196,6 +196,33 @@ describe("shared attention source", () => {
     expect(getSnapshot().conn).toBe("disconnected");
   });
 
+  it("keeps the last cards on a 200-but-ok:false (upstream down) response", async () => {
+    // First poll: a healthy fetch loads a card set.
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        sessions: [{ id: "s1" }],
+        truncated: false,
+      }),
+    }));
+    subscribe(noopSub({ intervalMs: 2000, pauseWhenHidden: false }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getSnapshot().conn).toBe("connected");
+    expect(getSnapshot().cards).toHaveLength(1);
+
+    // Next poll: Watchtower unreachable → HTTP 200 with { ok:false }. Cards must
+    // survive (transient outage doesn't clear state); only the conn flips down.
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ ok: false, sessions: [] }),
+    }));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(getSnapshot().conn).toBe("disconnected");
+    expect(getSnapshot().cards).toHaveLength(1);
+    expect(getSnapshot().cards[0].id).toBe("s1");
+  });
+
   it("aborts a wedged request via timeout and keeps polling (no permanent stall)", async () => {
     // A fetch that only settles when its signal aborts (like the real one).
     fetchMock.mockImplementation(
