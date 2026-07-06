@@ -134,24 +134,28 @@ services:
       migrate:
         condition: service_completed_successfully
 
-    # Hardening (#185). no-new-privileges blocks setuid/setgid escalation from
-    # any process inside the container (bounds the blast radius of an in-app RCE;
-    # the container has the Docker socket mounted, so this matters here).
-    # NOT YET done (require verification we cannot do offline, and would break
-    # functionality if applied naively):
-    #   - Non-root USER: the app needs docker.sock access to spawn agent
-    #     containers; the socket is root:docker, so a non-root USER must join the
-    #     docker group with a GID matching the HOST socket. group_add: DOCKER_GID
-    #     is already present below, but it is inert while the process is uid 0 —
-    #     it only takes effect once a non-root USER is set (Dockerfile), which is
-    #     the paired follow-up. Applying `USER node` without a matching GID breaks
-    #     spawning.
-    #   - cap_drop: [ALL]: the app writes the host-owned .claude.json mounted :rw,
-    #     which a uid-0 process needs CAP_DAC_OVERRIDE for — a blanket drop would
-    #     break MCP config writes. Requires per-capability analysis + a live test.
-    # See #185 follow-up: non-root USER + docker-GID alignment + scoped cap_drop.
+    # Hardening (#185). The image runs as the unprivileged `node` user (UID 1000,
+    # Dockerfile `USER node`); these options bound the blast radius of an in-app
+    # RCE given the mounted Docker socket.
+    #   - no-new-privileges: blocks setuid/setgid escalation inside the container.
+    #   - group_add ${DOCKER_GID} (below): grants docker.sock access by GROUP
+    #     membership, not uid-0 — now load-bearing since the process is non-root.
+    #     Set DOCKER_GID to the host socket GID (`stat -c '%g' /var/run/docker.sock`).
+    #   - cap_drop [ALL]: no capability is required — socket access is group-based,
+    #     the app binds only high ports (4200/4201), and it runs non-root; none are
+    #     re-added.
+    # DEFERRED read_only rootfs: the app writes several scattered paths under
+    # process.cwd() (/app/.secrets.json, /app/data, /app/.logs, /app/.data,
+    # /app/.next/cache) plus /home/node/.mcp-gateway and the mounted /app/data
+    # volume; a read-only rootfs would need a tmpfs/volume per path and cannot be
+    # verified safe offline. Tracked for a follow-up.
+    # NOTE (existing deploys): the daax-data volume, if created by a prior
+    # root-running image, is root-owned; recreate (`docker volume rm daax-data`)
+    # or chown it to 1000:1000 after upgrading or app data writes will EACCES.
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
 
     ports:
       # Bind to localhost only - Traefik proxies external access
