@@ -6,7 +6,7 @@
  * in-memory map so get/set round-trips can be asserted.
  */
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   getDesktopEnabled,
   getServerSnapshot,
@@ -22,6 +22,12 @@ beforeEach(() => {
   vi.spyOn(window.localStorage, "setItem").mockImplementation((k, v) => {
     store.set(k, v);
   });
+});
+
+afterEach(() => {
+  // Restore the localStorage spies so the global mock from tests/setup.ts is
+  // not leaked into later suites (Vitest config does not enable restoreMocks).
+  vi.restoreAllMocks();
 });
 
 describe("desktop-notification preference", () => {
