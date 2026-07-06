@@ -7,7 +7,7 @@
  * DAAX_API_GUARD escape hatch. Env is reset per test (mirrors
  * tests/lib/auth.test.ts) so DAAX_* state never leaks between cases.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 
 import { middleware } from "@/middleware";
@@ -23,6 +23,17 @@ function isPassThrough(res: { headers: Headers }): boolean {
 
 describe("default-deny /api middleware (#181)", () => {
   beforeEach(() => {
+    delete process.env.DAAX_REQUIRE_AUTH;
+    delete process.env.DAAX_PROXY_SECRET;
+    delete process.env.DAAX_PROXY_SECRET_PREVIOUS;
+    delete process.env.DAAX_API_GUARD;
+  });
+
+  // These tests set DAAX_REQUIRE_AUTH / DAAX_PROXY_SECRET per case. process.env
+  // is shared across all test files in a worker, so without cleanup after the
+  // file's LAST test those values leak into later files and break env-sensitive
+  // auth/RBAC assertions (e.g. the local-operator bypass). Clear them here too.
+  afterEach(() => {
     delete process.env.DAAX_REQUIRE_AUTH;
     delete process.env.DAAX_PROXY_SECRET;
     delete process.env.DAAX_PROXY_SECRET_PREVIOUS;
