@@ -47,6 +47,23 @@ export interface AllowlistEntry {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * Canonicalise a forwarded/stored SUBJECT to its stable identity key.
+ *
+ * A subject that matches the UUID shape is lowercased (OIDC/Pocket ID UUID
+ * subjects are case-insensitive), so a differently-cased `X-Forwarded-User`
+ * maps to exactly ONE identity row and matches a subject allow-list entry
+ * (whose `value` is a lowercased UUID). A non-UUID subject is returned
+ * unchanged — it is NEVER blindly lowercased, mirroring
+ * `classifyAllowlistToken` exactly (only UUID subjects are canonicalised).
+ *
+ * Use this at the trust boundary (`auth-trust`) and wherever the subject enters
+ * an identifier comparison in the RBAC store so the storage key is stable.
+ */
+export function canonicalizeSubject(subject: string): string {
+  return UUID_RE.test(subject) ? subject.toLowerCase() : subject;
+}
+
 export function classifyAllowlistToken(token: string): AllowlistEntry | null {
   const raw = token.trim();
   if (!raw) return null;

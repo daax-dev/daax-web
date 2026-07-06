@@ -16,6 +16,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import type { AuthUser } from "./auth-types";
 import { UNAUTHENTICATED_USER } from "./auth-types";
+import { canonicalizeSubject } from "./rbac/allowlist";
 
 /**
  * Minimal headers-like reader satisfied by both the Web `Headers` object
@@ -236,7 +237,11 @@ export function deriveAuthContext(h: HeaderReader): AuthContext {
   return {
     rawUserHeader,
     // `subject` is the trusted identity key: only meaningful when authenticated.
-    subject: authenticated ? userId : null,
+    // Canonicalise UUID subjects to lowercase here (the trust boundary) so a
+    // differently-cased forwarded subject resolves to ONE stable RBAC identity
+    // key and matches lowercased subject allow-list entries. Non-UUID subjects
+    // are left untouched (mirrors allowlist.ts canonicalization).
+    subject: authenticated ? canonicalizeSubject(userId!) : null,
     rawUsername: username,
     displayName,
     user: {
