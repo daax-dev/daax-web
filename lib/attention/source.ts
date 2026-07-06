@@ -33,7 +33,7 @@
 
 import type { AttentionCard, AttentionResponse } from "./adapter";
 import { applyLiveEvent, parseWsMessage } from "./live";
-import { buildTerminalWsUrl, openTerminalWebSocket } from "../websocket-utils";
+import { buildTerminalWsUrl, openTerminalWebSocket } from "@/lib/websocket-utils";
 
 export type ConnState = "loading" | "connected" | "disconnected";
 
