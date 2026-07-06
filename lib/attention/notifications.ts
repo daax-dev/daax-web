@@ -11,14 +11,16 @@
  *   The engine is driven off the Attention board's derived status model
  *   (lib/attention/status.ts): a session is "blocked / waiting-for-input" iff
  *   its derived status is `waiting`. That status is produced by a Watchtower
- *   `notification` event flowing through the adapter. Watchtower exposes NO REST
- *   endpoint for notification events (its `events` table is write-only) and its
- *   only live channel is an unauthenticated, unscoped, no-replay `/ws` bus, so
- *   the REST-backed Attention board cannot currently source `waiting` from live
- *   data. This engine therefore lights up automatically the moment `waiting`
- *   becomes sourceable (a `/ws` bridge or a future `/api/sessions/{id}/events`
- *   REST endpoint) with no change here — it keys on the shared status model, not
- *   on any invented signal. Nothing is faked.
+ *   `notification` event flowing through the adapter. `waiting` can now come from
+ *   live data: this stack adds a `?stream=attention` `/ws` bridge whose reducer
+ *   (lib/attention/live.ts) applies `notification` frames to `waiting`, so this
+ *   engine lights up automatically once the socket connects. Watchtower still
+ *   exposes NO REST endpoint for notification events (its `events` table is
+ *   write-only), so the remaining limitation is replay/seeding — a session
+ *   already waiting BEFORE the socket connects isn't sourced until it emits a new
+ *   event or the REST snapshot resyncs (a future `/api/sessions/{id}/events`
+ *   endpoint would seed pre-existing waiting state). It keys on the shared status
+ *   model, not on any invented signal. Nothing is faked.
  *
  * Design: a level-triggered edge detector over successive polled snapshots.
  * Comparing "is this session waiting now?" against "was it waiting last poll?"
@@ -103,7 +105,12 @@ export interface ReconcileOptions {
 }
 
 function isWaiting(card: NotifyCard): boolean {
-  return card != null && card.status === WAITING && typeof card.id === "string" && card.id !== "";
+  return (
+    card != null &&
+    card.status === WAITING &&
+    typeof card.id === "string" &&
+    card.id !== ""
+  );
 }
 
 /**
