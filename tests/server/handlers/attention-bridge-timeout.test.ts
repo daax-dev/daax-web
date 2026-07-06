@@ -67,6 +67,9 @@ describe("handleAttentionBridge upstream handshake timeout", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    // process.env is shared across test files in a worker; don't leak the
+    // override this suite sets into later files.
+    delete process.env.DAAX_ATTENTION_UPSTREAM_TIMEOUT_MS;
   });
 
   function makeClient(): import("ws").WebSocket {
