@@ -53,6 +53,12 @@ const mockFetch = vi.fn();
 global.fetch = mockFetch as unknown as typeof fetch;
 
 describe("provenance-admin requireRole RBAC gate (F5, #101)", () => {
+  // `mockFetch` and `global.fetch` are module-scoped and shared across every
+  // describe in this file. Under a shuffled run a preceding sibling test (e.g.
+  // one that proxies a DELETE) can leave a call recorded on mockFetch, so this
+  // suite must reset it on ENTRY — not just clear on exit — or the
+  // `not.toHaveBeenCalled()` assertion below inherits that stale call.
+  beforeEach(() => mockFetch.mockReset());
   afterEach(() => vi.clearAllMocks());
 
   it("returns the requireRole 401 response when unauthenticated", async () => {

@@ -61,6 +61,12 @@ describe("requireRole enforcement (F5 #101)", () => {
     for (const [k, v] of Object.entries(savedEnv)) {
       if (v !== undefined) process.env[k] = v;
     }
+    // Auth-posture vars this file OWNS: guarantee they never leak FORWARD to a
+    // later file in the same worker (process.env is shared). These are never
+    // legitimately set in the test env, so deleting them post-restore is safe
+    // and mirrors this suite's beforeEach — clean on both entry and exit.
+    delete process.env.DAAX_REQUIRE_AUTH;
+    delete process.env.DAAX_PROXY_SECRET;
   });
 
   it("denies (401) an unauthenticated request in strict mode and audits it", async () => {
