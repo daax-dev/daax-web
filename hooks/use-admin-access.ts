@@ -12,12 +12,18 @@ import type { Permission } from "@/lib/rbac/permissions";
  * error (including a 401/403), so the admin surface is never flashed to a
  * non-admin.
  *
- * REVALIDATION (TTL): the resolved access is cached only for `ACCESS_TTL_MS` and
- * stamped with `cachedAt`. A mount past the TTL refetches, so a role change (or
- * an identity switch after re-auth) is picked up instead of the UI showing a
- * stale admin surface for the JS-runtime lifetime. The in-flight promise is
- * cleared on `.finally`, so the FIRST mount past the TTL always starts a fresh
- * fetch (a failed fetch likewise leaves nothing cached, so it retries).
+ * REVALIDATION (TTL): only a POSITIVE authenticated-admin summary is cached, for
+ * `ACCESS_TTL_MS` and stamped with `cachedAt`. A mount past the TTL refetches, so
+ * a role change (or an identity switch after re-auth) is picked up instead of the
+ * UI showing a stale admin surface for the JS-runtime lifetime. The in-flight
+ * promise is cleared on `.finally`, so the FIRST mount past the TTL always starts
+ * a fresh fetch (a failed fetch likewise leaves nothing cached, so it retries).
+ *
+ * NO-ACCESS IS NEVER CACHED: a pre-login `{ authenticated: false }` (the route
+ * returns 200 with this when unauthenticated), an authenticated-but-non-admin
+ * summary, and a 401/403 all resolve "no access" WITHOUT caching. A login (or a
+ * later admin grant) is therefore picked up on the very next mount immediately,
+ * not after the TTL — no sticky pre-login "no access" state.
  */
 export interface AdminAccess {
   authenticated: boolean;
@@ -75,10 +81,13 @@ export function useAdminAccess(): UseAdminAccessResult {
           return res.json() as Promise<AdminAccess>;
         })
         .then((data: AdminAccess) => {
-          // Only a real, authorized summary is cached (with its timestamp) so
-          // the TTL governs revalidation. EMPTY_ACCESS from a 401/403 is passed
-          // through below but intentionally NOT cached.
-          if (data !== EMPTY_ACCESS) {
+          // Cache ONLY a positive authenticated-admin summary (with its
+          // timestamp) so the TTL governs revalidation. A pre-login
+          // `{ authenticated: false }`, an authenticated-but-non-admin summary,
+          // and EMPTY_ACCESS from a 401/403 are all passed through below but
+          // intentionally NOT cached — so a login / later admin grant is picked
+          // up on the next mount immediately, not after the TTL.
+          if (data.authenticated && data.isAdmin) {
             cachedAccess = data;
             cachedAt = Date.now();
           }

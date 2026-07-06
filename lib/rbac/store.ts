@@ -410,8 +410,15 @@ export async function reconcile(
               email: string | null;
               username: string | null;
             }>(
+              // subject compares WITHOUT lower(): subject allow-list values are
+              // canonical lowercase UUIDs (classifyAllowlistToken) and UUID
+              // subjects are canonicalised to lowercase before insert
+              // (jitProvision → canonicalizeSubject), so users.subject already
+              // equals its lower() form. Dropping lower() lets the query use the
+              // users.subject primary-key index. email/username KEEP lower():
+              // those are not the PK and their stored casing is not normalised.
               `SELECT subject, email, username FROM users
-                WHERE lower(subject) = ANY($1::text[])
+                WHERE subject = ANY($1::text[])
                    OR lower(email) = ANY($2::text[])
                    OR lower(username) = ANY($3::text[])`,
               [subjectValues, attrValues, attrValues],
