@@ -13,7 +13,7 @@
     "build": "next build",
     "start": "next start",
     "start:prod": "concurrently --kill-others-on-fail -n next,terminal -c cyan,magenta \"HOST=0.0.0.0 next start -p 4200 -H 0.0.0.0\" \"TERMINAL_HOST=0.0.0.0 tsx server/terminal-server.ts\"",
-    "start:web": "next start -p 4200 -H 0.0.0.0",
+    "start:web": "HOST=0.0.0.0 next start -p 4200 -H 0.0.0.0",
     "start:terminal": "TERMINAL_HOST=0.0.0.0 tsx server/terminal-server.ts",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
