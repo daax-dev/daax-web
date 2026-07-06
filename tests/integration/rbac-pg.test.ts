@@ -210,6 +210,36 @@ describe.skipIf(!configured)("RBAC on Postgres (F5 #101)", () => {
     expect((await getUserRoles(sB)).sort()).toEqual(["admin", "user"]); // UI admin survives
   });
 
+  it("reconcile grants ONLY allow-listed users and ignores non-allow-listed ones (narrowed users query)", async () => {
+    // Two existing users. Only one is allow-listed. Reconcile must grant admin
+    // to the allow-listed user and never touch the other — proving the plan is
+    // driven by allow-list matches, not by loading the entire users table.
+    const sAllowed = "12121212-0000-0000-0000-00000000aa01";
+    const sOther = "34343434-0000-0000-0000-00000000bb02";
+    await jitProvision(identity(sAllowed, "allowed@x.z", "allowed"));
+    await jitProvision(identity(sOther, "other@x.z", "other"));
+
+    await reconcile(envWith("allowed@x.z"));
+
+    // Allow-listed user gains admin; the non-allow-listed user is unchanged.
+    expect((await getUserRoles(sAllowed)).sort()).toEqual(["admin", "user"]);
+    expect(await getUserRoles(sOther)).toEqual(["user"]);
+
+    // No pending grant was created — the allow-listed user already existed and
+    // matched directly (a pending row would mean the narrowed query missed it).
+    const pend = await query("SELECT 1 FROM pending_grants");
+    expect(pend.rowCount).toBe(0);
+
+    // Subject-based allow-list entry matches the narrowed query too.
+    await reconcile(envWith(sOther));
+    expect((await getUserRoles(sOther)).sort()).toEqual(["admin", "user"]);
+    // ...and emptying the allow-list prunes reconcile grants with NO user match
+    // needed (pruning is independent of the users table).
+    await reconcile(envWith(""));
+    expect(await getUserRoles(sAllowed)).toEqual(["user"]);
+    expect(await getUserRoles(sOther)).toEqual(["user"]);
+  });
+
   it("reconcile prunes ONLY its own pending grants, never non-reconcile ones", async () => {
     // A pending grant owned by a UI flow (granted_by='ui'), NOT by reconcile.
     await query(
