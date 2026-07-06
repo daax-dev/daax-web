@@ -123,6 +123,23 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
       expect(protectedMethods).toEqual(["POST"]);
     });
 
+    it("treats a requireSuperAdmin-guarded write method as guarded (F6 #102)", () => {
+      const requireSuperAdminRoute = `
+        import { requireSuperAdmin } from "@/lib/db-console/super-admin";
+        export async function POST() {
+          const gate = await requireSuperAdmin("admin:db:write");
+          if (!gate.authorized) return gate.response;
+          return new Response();
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        requireSuperAdminRoute,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(true);
+      expect(protectedMethods).toEqual(["POST"]);
+    });
+
     it("recognises a mix of GET(requireRole) + POST(requireRole) per method", () => {
       const mixed = `
         import { requireRole } from "@/lib/auth";
@@ -211,6 +228,56 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
           protectedMethods,
         }),
       ).toBe(true);
+    });
+
+    it("reports UNGUARDED when the ONLY `await requireRole(` is inside a REGEX literal (unescaped paren)", () => {
+      // SECURITY regression (Copilot F5/#102): the `await` prefix alone does not
+      // save us — a regex literal whose SOURCE text literally contains
+      // `await requireRole(` with a real (unescaped) paren, e.g.
+      // `/await requireRole(x)/`, still satisfies AUTH_GUARD_CALL_RE unless
+      // stripCommentsAndStrings() NEUTRALIZES regex literals. The POST here has
+      // no real guard call, so it must be reported UNGUARDED and flagged.
+      const regexLiteralGuardText = `
+        import { requireRole } from "@/lib/auth";
+        export async function POST(req: Request) {
+          const re = /await requireRole(x)/;
+          return new Response(String(re.test(await req.text())));
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        regexLiteralGuardText,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(false);
+      expect(protectedMethods).toEqual([]);
+      expect(
+        isUnprotectedWriteRoute({
+          path: "x",
+          methods: ["POST"],
+          hasAuthGuard,
+          protectedMethods,
+        }),
+      ).toBe(true);
+    });
+
+    it("still detects a real guard even when a DIVISION precedes it (regex neutralization is conservative)", () => {
+      // Guarantee the conservative regex-start detection never mis-scans a
+      // division `/` as a regex and swallows the live guard call that follows.
+      const divisionThenGuard = `
+        import { requireRole } from "@/lib/auth";
+        export async function POST() {
+          const ratio = total / count;
+          const a = await requireRole("admin:users:write");
+          if (!a.authorized) return a.response;
+          return new Response(String(ratio));
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        divisionThenGuard,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(true);
+      expect(protectedMethods).toEqual(["POST"]);
     });
 
     it("does NOT count a guard name that appears only inside a string literal", () => {

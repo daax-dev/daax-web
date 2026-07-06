@@ -12,15 +12,16 @@ export const WRITE_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
  * (F5, #101). `requireRole`/`requireSuperAdmin` are STRONGER than `requireAuth` —
  * they require authentication AND a role — so a route guarded by one is guarded.
  *
- * SECURITY: the `\bawait\s+` prefix is load-bearing. `stripCommentsAndStrings()`
- * removes comments and string literals but NOT regex literals, so a bare
- * `requireRole(` token inside a regex literal (e.g. `/requireRole\s*\(/`) would
- * otherwise be miscounted as a guard call and let an unprotected write route slip
- * past the audit gate. Every real guard in this codebase is invoked as
- * `await requireAuth(...)` / `await requireRole(...)` / `await requireSuperAdmin(...)`,
- * so requiring the `await` prefix excludes regex-literal (and other bare-token)
- * false positives without losing any genuine call site.
- * No `g` flag, so `.test()` is stateless and safe to reuse.
+ * SECURITY (defense in depth): the `\bawait\s+` prefix is load-bearing. Every
+ * real guard in this codebase is invoked as `await requireAuth(...)` /
+ * `await requireRole(...)` / `await requireSuperAdmin(...)`, so requiring the
+ * `await` prefix excludes bare-token false positives (e.g. a `requireRole(`
+ * mention) without losing any genuine call site. It is NOT sufficient on its
+ * own: a regex literal whose source text contains `await requireRole(` with an
+ * unescaped paren (e.g. `/await requireRole(x)/`) would still match, so
+ * `stripCommentsAndStrings()` ALSO neutralizes regex-literal content — the two
+ * defenses together close the bypass. No `g` flag, so `.test()` is stateless and
+ * safe to reuse.
  */
 export const AUTH_GUARD_CALL_RE =
   /\bawait\s+(?:requireAuth(?:OrThrow)?|requireRole|requireSuperAdmin)\s*\(/;
@@ -36,9 +37,31 @@ export const AUTH_GUARD_IMPORT_RE =
   /import\s+[^;]*?require(?:Auth|Role|SuperAdmin)[^;]*?from/;
 
 /**
- * Strip line comments, block comments, and string/template literal CONTENT from
- * a source string, replacing each stripped span with a single space so token
- * boundaries (and line count, roughly) are preserved.
+ * Single-char tokens that, when they are the immediately-preceding SIGNIFICANT
+ * character, put the parser in expression position — so a following `/` begins a
+ * REGEX LITERAL, not a division operator. `""` models start-of-input. This is
+ * the conservative set from the audit hardening (`(` `,` `=` `!` `:` `[` `;` and
+ * the trailing char of `&&`/`||`); `return` is handled separately as a keyword.
+ * Kept deliberately minimal so a real division (whose left operand ends in an
+ * identifier, `)`, `]`, or a digit) is never mis-scanned as a regex.
+ */
+const REGEX_PRECEDERS = new Set([
+  "",
+  "(",
+  ",",
+  "=",
+  "!",
+  ":",
+  "[",
+  ";",
+  "&",
+  "|",
+]);
+
+/**
+ * Strip line comments, block comments, string/template literal CONTENT, AND
+ * regex-literal content from a source string, replacing each stripped span with
+ * a single space so token boundaries (and line count, roughly) are preserved.
  *
  * SECURITY: without this, a guard mentioned only in a comment or a string
  * literal (e.g. `// TODO: requireRole()` or `"call requireRole() here"`) would
@@ -48,21 +71,38 @@ export const AUTH_GUARD_IMPORT_RE =
  * never hides a genuine `requireRole(`/`requireAuth(` call site. The walker is
  * string-aware so a `//` or guard mention inside a real string does not, in
  * turn, swallow subsequent live code.
+ *
+ * SECURITY (regex literals): the `\bawait\s+` prefix in `AUTH_GUARD_CALL_RE`
+ * defeats most bare-token false positives, but a regex literal whose SOURCE text
+ * literally contains `await requireRole(` (unescaped paren — e.g.
+ * `const re = /await requireRole(x)/`) would still match and misclassify an
+ * unguarded write route as guarded. Regex-literal source is data, never an
+ * invoked guard, so neutralizing it can only make detection STRICTER. Regex
+ * start is detected conservatively (only after {@link REGEX_PRECEDERS} or
+ * `return`); if no closing `/` is found before end-of-line the `/` is treated as
+ * division instead (regex literals never span newlines), so a mis-detected
+ * division can never swallow a subsequent live guard call.
  */
 export function stripCommentsAndStrings(src: string): string {
   let out = "";
   const n = src.length;
   let i = 0;
+  // Last SIGNIFICANT (non-whitespace) code character emitted. Comments do not
+  // update it (a `/**/` between an `=` and a `/re/` must not hide the regex).
+  let prevSig = "";
+  const updatePrev = (ch: string) => {
+    if (ch !== " " && ch !== "\t" && ch !== "\n" && ch !== "\r") prevSig = ch;
+  };
   while (i < n) {
     const c = src[i];
     const next = src[i + 1];
-    // Line comment: skip to end of line.
+    // Line comment: skip to end of line. (Does not update prevSig.)
     if (c === "/" && next === "/") {
       while (i < n && src[i] !== "\n") i++;
       out += " ";
       continue;
     }
-    // Block comment: skip to closing */.
+    // Block comment: skip to closing */. (Does not update prevSig.)
     if (c === "/" && next === "*") {
       i += 2;
       while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i++;
@@ -86,12 +126,71 @@ export function stripCommentsAndStrings(src: string): string {
         i++;
       }
       out += " ";
+      // After a string literal a following `/` is division, not a regex.
+      prevSig = quote;
       continue;
     }
+    // Regex literal: only when a `/` appears in expression position (start of a
+    // regex, not division). Conservative preceder check + newline-abort so a
+    // real division never swallows live code.
+    if (c === "/" && isRegexStart(prevSig, out)) {
+      const end = scanRegexLiteral(src, i);
+      if (end > i) {
+        i = end;
+        out += " ";
+        // After a regex literal a following `/` is division, not a regex.
+        prevSig = "/";
+        continue;
+      }
+      // No terminator on this line → treat `/` as an ordinary division char.
+    }
     out += c;
+    updatePrev(c);
     i++;
   }
   return out;
+}
+
+/**
+ * Is a `/` at expression position (regex-literal start) given the preceding
+ * significant char and the code emitted so far? True after a `REGEX_PRECEDERS`
+ * char, at start-of-input, or after the `return` keyword.
+ */
+function isRegexStart(prevSig: string, out: string): boolean {
+  if (REGEX_PRECEDERS.has(prevSig)) return true;
+  // `return /re/` — keyword preceder. prevSig is a letter here, so only pay for
+  // the trailing-word extraction in that case.
+  if (/[A-Za-z]/.test(prevSig)) {
+    const m = out.match(/(^|[^A-Za-z0-9_$])(return)\s*$/);
+    if (m) return true;
+  }
+  return false;
+}
+
+/**
+ * Scan a regex literal starting at `src[start] === "/"`. Honors backslash
+ * escapes and character classes (`[...]`, inside which `/` is not a terminator).
+ * Returns the index just past the closing `/` (before flags), or `start` if no
+ * closing `/` is found before a newline / end-of-input (i.e. NOT a regex — the
+ * `/` is a division operator). Regex literals cannot span newlines.
+ */
+function scanRegexLiteral(src: string, start: number): number {
+  const n = src.length;
+  let i = start + 1;
+  let inClass = false;
+  while (i < n) {
+    const ch = src[i];
+    if (ch === "\n") return start; // regex cannot span a newline → not a regex
+    if (ch === "\\") {
+      i += 2;
+      continue;
+    }
+    if (ch === "[") inClass = true;
+    else if (ch === "]") inClass = false;
+    else if (ch === "/" && !inClass) return i + 1; // past the closing slash
+    i++;
+  }
+  return start; // unterminated → not a regex
 }
 
 export interface RouteInfo {
