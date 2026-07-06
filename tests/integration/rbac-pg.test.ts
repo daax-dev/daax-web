@@ -393,6 +393,113 @@ describe.skipIf(!configured)("RBAC on Postgres (F5 #101)", () => {
     expect(jit2.roles.sort()).toEqual(["admin", "user"]);
   });
 
+  it("pending-grant materialization with granted_by='ui' upgrades a group-sync row so group removal does NOT revoke it", async () => {
+    const s = "dddddddd-0000-0000-0000-00000000000d";
+    const map = new Map([["daax-admins", new Set(["admin"])]]);
+    const withGroup = {
+      subject: s,
+      email: "uipend@x.z",
+      username: "uipend",
+      name: null,
+      idp: "test",
+      groups: ["daax-admins"],
+    };
+
+    // Admin arrives via group-sync (granted_by='group-sync').
+    await jitProvision(withGroup, map);
+    const provGs = await query<{ granted_by: string }>(
+      "SELECT granted_by FROM user_roles WHERE subject = $1 AND role = 'admin'",
+      [s],
+    );
+    expect(provGs.rows[0]?.granted_by).toBe("group-sync");
+
+    // A UI-owned pending grant keyed to the user's email exists (e.g. an
+    // operator granted admin in the UI before this subject was linked). On next
+    // login it must UPGRADE the group-sync row to 'ui' — precedence ui > group-sync.
+    await query(
+      "INSERT INTO pending_grants (identifier, role, granted_by) VALUES ($1, 'admin', 'ui')",
+      ["uipend@x.z"],
+    );
+
+    // Next login (still in group) materializes the pending grant → upgrade to ui.
+    await jitProvision(withGroup, map);
+    const prov = await query<{ granted_by: string }>(
+      "SELECT granted_by FROM user_roles WHERE subject = $1 AND role = 'admin'",
+      [s],
+    );
+    expect(prov.rows[0]?.granted_by).toBe("ui");
+
+    // User leaves the IdP group → group-sync prune must NOT revoke the UI grant.
+    const jit2 = await jitProvision({ ...withGroup, groups: [] }, map);
+    expect(jit2.roles.sort()).toEqual(["admin", "user"]);
+
+    // And a later reconcile prune (allow-list emptied) must NOT revoke it either.
+    await reconcile(envWith(""));
+    expect((await getUserRoles(s)).sort()).toEqual(["admin", "user"]);
+  });
+
+  it("pending-grant materialization with granted_by='ui' upgrades an existing reconcile row (reconcile → ui)", async () => {
+    const s = "eeeeeeee-0000-0000-0000-00000000000e";
+
+    // Admin arrives via reconcile allow-list (granted_by='reconcile').
+    await jitProvision(identity(s, "recui@x.z", "recui"));
+    await reconcile(envWith("recui@x.z"));
+    const provRec = await query<{ granted_by: string }>(
+      "SELECT granted_by FROM user_roles WHERE subject = $1 AND role = 'admin'",
+      [s],
+    );
+    expect(provRec.rows[0]?.granted_by).toBe("reconcile");
+
+    // A UI-owned pending grant for the same (subject, role) — must UPGRADE the
+    // reconcile row to 'ui' (precedence ui > reconcile), not DO NOTHING.
+    await query(
+      "INSERT INTO pending_grants (identifier, role, granted_by) VALUES ($1, 'admin', 'ui')",
+      ["recui@x.z"],
+    );
+    await jitProvision(identity(s, "recui@x.z", "recui"));
+    const provUi = await query<{ granted_by: string }>(
+      "SELECT granted_by FROM user_roles WHERE subject = $1 AND role = 'admin'",
+      [s],
+    );
+    expect(provUi.rows[0]?.granted_by).toBe("ui");
+
+    // Now emptying the allow-list must NOT prune the UI-owned admin.
+    await reconcile(envWith(""));
+    expect((await getUserRoles(s)).sort()).toEqual(["admin", "user"]);
+  });
+
+  it("pending-grant materialization never DOWNGRADES: a group-sync pending grant leaves a ui row as ui", async () => {
+    const s = "ffffffff-0000-0000-0000-00000000000f";
+
+    // Admin arrives via the UI (granted_by='ui').
+    await jitProvision(identity(s, "nodown@x.z", "nodown"));
+    await grantRole(s, "admin"); // granted_by='ui'
+
+    // A weaker (group-sync) pending grant for the same (subject, role) must NOT
+    // downgrade the ui row; a reconcile pending grant likewise must not.
+    await query(
+      "INSERT INTO pending_grants (identifier, role, granted_by) VALUES ($1, 'admin', 'group-sync')",
+      ["nodown@x.z"],
+    );
+    await jitProvision(identity(s, "nodown@x.z", "nodown"));
+    let prov = await query<{ granted_by: string }>(
+      "SELECT granted_by FROM user_roles WHERE subject = $1 AND role = 'admin'",
+      [s],
+    );
+    expect(prov.rows[0]?.granted_by).toBe("ui");
+
+    await query(
+      "INSERT INTO pending_grants (identifier, role, granted_by) VALUES ($1, 'admin', 'reconcile')",
+      ["nodown@x.z"],
+    );
+    await jitProvision(identity(s, "nodown@x.z", "nodown"));
+    prov = await query<{ granted_by: string }>(
+      "SELECT granted_by FROM user_roles WHERE subject = $1 AND role = 'admin'",
+      [s],
+    );
+    expect(prov.rows[0]?.granted_by).toBe("ui");
+  });
+
   it("a non-UI grant never downgrades an existing UI grant", async () => {
     const s = "99999999-0000-0000-0000-00000000000e";
     await jitProvision(identity(s, "e@x.z", "e"));

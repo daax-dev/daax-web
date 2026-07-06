@@ -37,6 +37,27 @@ export const GRANT_GROUP_SYNC = "group-sync";
 export const GRANT_UI = "ui";
 
 /**
+ * SQL CASE expression mapping a `granted_by` column to a numeric precedence rank
+ * so an upsert can UPGRADE to a stronger provenance but never DOWNGRADE:
+ *   ui (3) > reconcile (2) > group-sync (1) > everything else, incl.
+ *   jit-default (0).
+ *
+ * Used by `materializePendingGrants` so a pending grant whose provenance is
+ * 'ui' upgrades an existing group-sync OR reconcile row to 'ui' (protecting it
+ * from a later group-sync/reconcile prune), while a 'reconcile' pending grant
+ * upgrades only group-sync (never a stronger 'ui' row). `column` is a fixed
+ * internal identifier (never user input); the literals are the GRANT_* markers.
+ */
+function provenanceRankSql(column: string): string {
+  return `CASE ${column}
+            WHEN '${GRANT_UI}' THEN 3
+            WHEN '${GRANT_RECONCILE}' THEN 2
+            WHEN '${GRANT_GROUP_SYNC}' THEN 1
+            ELSE 0
+          END`;
+}
+
+/**
  * Advisory-lock key for boot reconcile. A fixed 64-bit constant so every
  * replica's reconcile serialises on the same lock (multi-replica boot safety,
  * docs §4). Arbitrary but stable; xact-scoped so it releases on COMMIT/ROLLBACK.
@@ -148,17 +169,21 @@ async function materializePendingGrants(
     [subject, email, username],
   );
   for (const row of res.rows) {
-    // Provenance precedence (ui > reconcile > group-sync): a reconcile-owned
-    // pending grant must UPGRADE an existing group-sync row to 'reconcile' so a
-    // later group-sync prune (user leaves the IdP group) cannot revoke an
-    // allow-listed admin. Never downgrade a 'ui' row, never touch an existing
-    // 'reconcile' row.
+    // Provenance precedence (ui > reconcile > group-sync): materialising a
+    // pending grant UPGRADES the existing row to the pending grant's provenance
+    // ONLY when that provenance outranks the current one — so a 'ui' pending
+    // grant upgrades an existing group-sync OR reconcile row to 'ui' (a later
+    // group-sync/reconcile prune can then never revoke the explicit UI grant),
+    // while a 'reconcile' pending grant upgrades only group-sync. Never a
+    // downgrade: a 'ui' row is never touched by a weaker provenance, and a
+    // 'reconcile' row is never dropped to group-sync.
     await client.query(
       `INSERT INTO user_roles (subject, role, granted_by)
        VALUES ($1, $2, $3)
        ON CONFLICT (subject, role) DO UPDATE SET granted_by = EXCLUDED.granted_by
-         WHERE EXCLUDED.granted_by = $4 AND user_roles.granted_by = $5`,
-      [subject, row.role, row.granted_by, GRANT_RECONCILE, GRANT_GROUP_SYNC],
+         WHERE ${provenanceRankSql("EXCLUDED.granted_by")}
+             > ${provenanceRankSql("user_roles.granted_by")}`,
+      [subject, row.role, row.granted_by],
     );
   }
   // Consume the pending rows we just matched — SAME normalized subject as the
