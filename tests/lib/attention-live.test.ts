@@ -84,6 +84,23 @@ describe("applyLiveEvent", () => {
     expect(out[0].sparkline[out[0].sparkline.length - 1]).toBe(2);
   });
 
+  it("tool_post buckets an out-of-order event by its own timestamp, not the newest bucket", () => {
+    // 3-bucket sparkline over the default 10-minute window: bucketMs = 200_000ms.
+    // A delayed event ~9 minutes old must land in the FIRST bucket, leaving the
+    // newest bucket untouched (regression: it used to always bump the last one).
+    const out = applyLiveEvent(
+      [card({ sparkline: [0, 0, 0] })],
+      msg({
+        type: "tool_post",
+        timestamp: new Date(NOW - 550_000).toISOString(),
+        payload: { tool_name: "grep" },
+      }),
+      NOW,
+    );
+    expect(out[0].sparkline).toEqual([1, 0, 0]);
+    expect(out[0].toolCount).toBe(1);
+  });
+
   it("tool_post with an error marks the session error", () => {
     const out = applyLiveEvent(
       [card()],
