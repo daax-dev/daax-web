@@ -277,9 +277,9 @@ export async function jitProvision(
       `INSERT INTO users (subject, username, email, name, idp, last_seen)
        VALUES ($1, $2, $3, $4, $5, now())
        ON CONFLICT (subject) DO UPDATE
-         SET username = EXCLUDED.username,
-             email    = EXCLUDED.email,
-             name     = EXCLUDED.name,
+         SET username = COALESCE(EXCLUDED.username, users.username),
+             email    = COALESCE(EXCLUDED.email, users.email),
+             name     = COALESCE(EXCLUDED.name, users.name),
              idp      = COALESCE(EXCLUDED.idp, users.idp),
              last_seen = now()
        RETURNING (xmax = 0) AS is_new`,

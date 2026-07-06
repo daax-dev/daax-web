@@ -107,6 +107,22 @@ describe.skipIf(!configured)("RBAC on Postgres (F5 #101)", () => {
     expect(roles).toEqual(["user"]);
   });
 
+  it("JIT: a later login with NULL attributes PRESERVES previously-known email/username (no NULL clobber)", async () => {
+    const s = "11111111-0000-0000-0000-00000000000a";
+    // First login carries full attributes.
+    await jitProvision(identity(s, "keep@x.z", "keepme"));
+    // A later request omits email/username (forwarded headers absent). The
+    // upsert must COALESCE — NOT overwrite the known values with NULL — or the
+    // next boot reconcile's email/username allow-list match would silently break.
+    await jitProvision(identity(s, null, null));
+
+    const row = await query<{ email: string | null; username: string | null }>(
+      "SELECT email, username FROM users WHERE subject = $1",
+      [s],
+    );
+    expect(row.rows[0]).toEqual({ email: "keep@x.z", username: "keepme" });
+  });
+
   it("REVOKED user is NOT re-granted the default on a later request", async () => {
     const s = "22222222-0000-0000-0000-000000000002";
     await jitProvision(identity(s, "u2@x.z", "u2"));
