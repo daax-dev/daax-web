@@ -9,6 +9,14 @@
 # dev, export a value first (e.g. `export DAAX_PG_PASSWORD=$(openssl rand -hex 16)`
 # or any local-only value). NEVER reuse a local value for a network-reachable
 # deployment. `docker compose up` fails fast with a clear error if it is unset.
+#
+# DOCKER_GID (#185): the app runs as the non-root `node` user and reaches the
+# Docker socket by group membership. For a bare `docker compose up` (not via
+# ./rebuild.sh, which derives it), export the HOST socket GID first or spawning
+# fails — and the terminal server FAILS LOUD at boot if it is wrong:
+#   export DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)   # Linux
+#   export DOCKER_GID=$(stat -f '%g' /var/run/docker.sock)   # macOS/BSD (Docker Desktop)
+# The compose default (999) is only correct on hosts whose docker GID is 999.
 
 services:
   # Postgres — daax's single data engine (brain2daax Phase 0 #92).
@@ -36,11 +44,73 @@ services:
       # PGDATA off-volume and the image refuses to start.
       - daax-pg-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DAAX_PG_USER:-daax} -d ${DAAX_PG_DB:-daax}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DAAX_PG_USER:-daax} -d ${DAAX_PG_DB:-daax}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+    networks:
+      - daax-net
+
+  # Postgres backup (#103, brain2daax §4). Opt-in via `--profile backup` so a
+  # plain `docker compose up` is unaffected. Run once per invocation (intended
+  # to be driven by host cron), dumping into the persistent daax-pg-backups
+  # volume; restore with scripts/pg-restore.sh. Uses the SAME pinned Postgres
+  # image as the server so pg_dump matches the server version. See
+  # docs/postgres-backup-restore.md.
+  #   docker compose --profile backup run --rm pg-backup
+  pg-backup:
+    image: postgres:18-alpine@sha256:1b1689b20d16a014a3d195653381cf2caa75a41a92d93b255a9d6ea29fd353aa
+    container_name: daax-pg-backup
+    restart: "no"
+    profiles:
+      - backup
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Hardening. no-new-privileges + cap_drop:[ALL] bound the blast radius (it
+    # mounts only the backups volume + reaches postgres on daax-net; pg_dump as
+    # a TCP client writing to a root-owned volume needs no Linux capability).
+    # A non-root USER is intentionally NOT set: the fresh named volume mounts
+    # root:root:0755, so `user: postgres` (uid 999) cannot write to /backups.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Discrete PG* vars (not DATABASE_URL): pg_dump reads them natively from the
+    # environment, so the password never appears on argv, where any local user
+    # could read it via `ps` / /proc/*/cmdline for the whole dump.
+    environment:
+      - PGHOST=postgres
+      - PGPORT=5432
+      - PGDATABASE=${DAAX_PG_DB:-daax}
+      - PGUSER=${DAAX_PG_USER:-daax}
+      - PGPASSWORD=${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required}
+      - DAAX_BACKUP_RETENTION_DAYS=${DAAX_BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - daax-pg-backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    # `$$` escapes compose interpolation so the container shell expands these at
+    # runtime. Dump to a .partial then rename so a crash never leaves a truncated
+    # file that looks like a good backup; the trap removes a half-written .partial
+    # on any failure exit so no orphaned junk accumulates in the volume.
+    command:
+      - |
+        set -eu
+        stamp=$$(date -u +%Y%m%dT%H%M%SZ)
+        out="/backups/daax-$${stamp}.dump"
+        trap 'rm -f "$${out}.partial"' EXIT
+        echo "[pg-backup] dumping -> $$out"
+        pg_dump -Fc --no-owner --no-privileges -f "$${out}.partial"
+        mv "$${out}.partial" "$$out"
+        echo "[pg-backup] wrote $$out"
+        if [ "$${DAAX_BACKUP_RETENTION_DAYS}" -gt 0 ] 2>/dev/null; then
+          find /backups -maxdepth 1 -type f \( -name 'daax-*.dump' -o -name 'daax-*.dump.partial' \) -mtime "+$${DAAX_BACKUP_RETENTION_DAYS}" -delete || true
+        fi
     networks:
       - daax-net
 
@@ -74,20 +144,32 @@ services:
       migrate:
         condition: service_completed_successfully
 
-    # Hardening (#185). no-new-privileges blocks setuid/setgid escalation from
-    # any process inside the container (bounds the blast radius of an in-app RCE).
-    # NOT YET done (require verification we cannot do offline, and would break
-    # functionality if applied naively):
-    #   - Non-root USER: the app needs docker.sock access to spawn agent
-    #     containers; the socket is root:docker, so a non-root USER must join the
-    #     docker group with a GID matching the HOST socket (DOCKER_GID build arg +
-    #     group_add). Applying `USER node` without that alignment breaks spawning.
-    #   - cap_drop: [ALL]: the app writes the host-owned .claude.json mounted :rw,
-    #     which a uid-0 process needs CAP_DAC_OVERRIDE for — a blanket drop would
-    #     break MCP config writes. Requires per-capability analysis + a live test.
-    # See #185 follow-up: non-root + docker-GID alignment + scoped cap_drop.
+    # Hardening (#185). The image runs as the unprivileged `node` user (UID 1000,
+    # Dockerfile `USER node`); these options bound the blast radius of an in-app
+    # RCE given the mounted Docker socket.
+    #   - no-new-privileges: blocks setuid/setgid escalation from any process
+    #     inside the container.
+    #   - group_add ${DOCKER_GID}: grants docker.sock access by GROUP membership,
+    #     not uid-0. The socket is root:docker; the non-root `node` user joins the
+    #     host docker GID so the Docker SDK keeps working. Set DOCKER_GID to the
+    #     host socket GID (`stat -c '%g' /var/run/docker.sock`); 999 is a common
+    #     default fallback.
+    #   - cap_drop [ALL]: no Linux capability is required — socket access is
+    #     group-based, the app binds only high ports (4200/4201), and it runs as a
+    #     non-root uid, so nothing needs CAP_NET_BIND_SERVICE/CAP_CHOWN/etc. None
+    #     are re-added.
+    # DEFERRED read_only rootfs: the app writes several scattered paths under
+    # process.cwd() (/app/.secrets.json, /app/data, /app/.logs, /app/.data,
+    # /app/.next/cache) plus /home/node/.mcp-gateway; a read-only rootfs would need
+    # a tmpfs/volume for each and cannot be verified safe offline. Tracked for a
+    # follow-up once every write path is enumerated behind a mount.
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Docker socket access by group membership (paired with the non-root USER).
+    group_add:
+      - "${DOCKER_GID:-999}"
 
     ports:
       - "4200:4200"
@@ -126,11 +208,33 @@ services:
       # Generate: `openssl rand -hex 32`. Never commit it.
       - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
       - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
+      # _PREVIOUS is accepted too (#103): a ticket already minted under the old
+      # secret still verifies during rotation, so DAAX_WS_TOKEN_SECRET can rotate
+      # without dropping in-flight terminal sessions. Optional — unset = current-only.
+      - DAAX_WS_TOKEN_SECRET_PREVIOUS=${DAAX_WS_TOKEN_SECRET_PREVIOUS:-}
+      # LOCAL_OPERATOR bypass posture (F-C2, #184). The HTTP plane can't see the
+      # TCP peer (plain `next start`, no custom server), so the uncredentialed
+      # "trusted local operator" bypass is gated on deployment posture instead.
+      # HOST=0.0.0.0 marks this container as EXPOSED beyond loopback, so the
+      # bypass is DISABLED by default: an uncredentialed request gets 401 rather
+      # than being trusted as the operator (any tailnet peer could reach the port).
+      # The exposed bind ALSO refuses forwarded identity (X-Forwarded-User)
+      # while DAAX_PROXY_SECRET is unset — see the proxy-secret comment below —
+      # so a peer cannot self-authenticate with one spoofed header either.
+      # To run proxy-less on a trusted tailnet and intentionally trust EVERY peer
+      # that can reach 4200, set DAAX_TRUST_LOCAL_OPERATOR=1. Preferred instead:
+      # front with the Pocket ID proxy and set DAAX_REQUIRE_AUTH=1.
+      - HOST=0.0.0.0
+      - DAAX_TRUST_LOCAL_OPERATOR=${DAAX_TRUST_LOCAL_OPERATOR:-}
       # HTTP proxy-secret trust boundary (F1a, #94/#191). The app must receive the
       # SAME value Traefik injects as X-Daax-Proxy-Secret, or enabling strict mode
       # (DAAX_REQUIRE_AUTH=1) fails closed and locks out all forwarded identity.
-      # Opt-in: empty default keeps the boundary disabled (legacy behavior) and in
-      # sync with deploy-local.sh, which also renders an empty header when unset.
+      # The empty default stays in sync with deploy-local.sh (which also renders
+      # an empty header when unset), but on THIS compose file it is NOT legacy
+      # behavior: HOST=0.0.0.0 is an exposed bind, so with the secret unset,
+      # forwarded identity is REFUSED (fail-closed, #184 review) — any peer that
+      # can reach 4200 could forge X-Forwarded-User. Set the secret (with Traefik
+      # injecting it) to authenticate forwarded identity on this path.
       # _PREVIOUS is accepted too, so the secret can be rotated without an outage.
       - DAAX_PROXY_SECRET=${DAAX_PROXY_SECRET:-}
       - DAAX_PROXY_SECRET_PREVIOUS=${DAAX_PROXY_SECRET_PREVIOUS:-}
@@ -152,4 +256,7 @@ networks:
 
 volumes:
   daax-pg-data:
+    driver: local
+  # Persistent store for pg-backup dumps (#103). Survives compose down/restart.
+  daax-pg-backups:
     driver: local
