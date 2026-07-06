@@ -42,14 +42,17 @@ export const AUTH_GUARD_IMPORT_RE =
  * character, put the parser in expression position — so a following `/` begins a
  * REGEX LITERAL, not a division operator. `""` models start-of-input. This is
  * the conservative set from the audit hardening (`(` `,` `=` `!` `:` `[` `;`
- * `{` `?` and the trailing char of `&&`/`||`); `return` is handled separately as
- * a keyword. `{` (a block/object body opener) and `?` (ternary condition
+ * `{` `?` `>` and the trailing char of `&&`/`||`); `return` is handled separately
+ * as a keyword. `{` (a block/object body opener) and `?` (ternary condition
  * separator, nullish `??`) both put the parser in expression position, so a `/`
  * after either begins a regex — omitting them left an audit BYPASS
- * (`if (x) { /await requireRole(y)/.test(s) }` was not neutralized). Kept
- * deliberately minimal so a real division (whose left operand ends in an
- * identifier, `)`, `]`, or a digit) is never mis-scanned as a regex — none of
- * these tokens can be the tail of a division's left operand.
+ * (`if (x) { /await requireRole(y)/.test(s) }` was not neutralized). `>` covers
+ * the arrow `=>` (and comparison operators): `() => /await requireRole(y)/.test(s)`
+ * likewise leaves the parser in expression position, so the `/` begins a regex —
+ * omitting it was another BYPASS. Kept deliberately minimal so a real division
+ * (whose left operand ends in an identifier, `)`, `]`, or a digit) is never
+ * mis-scanned as a regex — none of these tokens can be the tail of a division's
+ * left operand (`>` is only ever a comparison/arrow, never a division's LHS tail).
  */
 const REGEX_PRECEDERS = new Set([
   "",
@@ -64,6 +67,7 @@ const REGEX_PRECEDERS = new Set([
   "|",
   "{",
   "?",
+  ">",
 ]);
 
 /**

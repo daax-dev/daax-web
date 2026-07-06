@@ -353,6 +353,36 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
       ).toBe(true);
     });
 
+    it("reports UNGUARDED when the ONLY `await requireRole(` is inside a REGEX literal after an arrow `=>` (`>` preceder)", () => {
+      // SECURITY regression (Copilot #101): a regex literal in expression
+      // position after an arrow `=>` — e.g.
+      // `const f = () => /await requireRole(y)/.test(s)` — was NOT neutralized
+      // because `>` was missing from REGEX_PRECEDERS, so the guard token inside
+      // the regex SOURCE misclassified this unguarded write route as guarded.
+      const regexAfterArrow = `
+        import { requireRole } from "@/lib/auth";
+        export async function POST(req: Request) {
+          const body = await req.text();
+          const hit = () => /await requireRole(y)/.test(body);
+          return new Response(String(hit()));
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        regexAfterArrow,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(false);
+      expect(protectedMethods).toEqual([]);
+      expect(
+        isUnprotectedWriteRoute({
+          path: "x",
+          methods: ["POST"],
+          hasAuthGuard,
+          protectedMethods,
+        }),
+      ).toBe(true);
+    });
+
     it("does NOT mis-scan a division after `)` as a regex, so a real guard survives", () => {
       // The conservative `)`/`]` heuristic must leave ordinary division intact:
       // `(a + b) / c` has a space after `/` and no regex-shaped tail, so it stays
