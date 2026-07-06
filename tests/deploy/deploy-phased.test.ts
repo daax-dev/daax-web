@@ -9,6 +9,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -510,5 +511,104 @@ describe("deploy.sh rollback — mid-flight failure", () => {
     expect(readFileSync(log, "utf8")).toMatch(
       /"phase":"rollback","status":"degraded"/,
     );
+  });
+});
+
+describe("deploy.sh snapshot retention — portable prune", () => {
+  it("keeps only the newest DAAX_SNAPSHOT_RETAIN snapshots (no GNU-only xargs)", () => {
+    const log = freshLog("retain");
+    resetDockerLog();
+    const backupDir = join(work, "backups-retain");
+    mkdirSync(backupDir, { recursive: true });
+    // Seed 5 pre-existing snapshots with strictly increasing mtimes (oldest
+    // first). Retention sorts by mtime (`ls -1t`), not by name.
+    for (let i = 1; i <= 5; i++) {
+      const f = join(backupDir, `pg-predeploy-2020010${i}T000000Z.sql`);
+      writeFileSync(f, `old-${i}`);
+      const t = new Date(2020, 0, i); // increasing dates -> increasing mtime
+      utimesSync(f, t, t);
+    }
+    const res = runDeploy(
+      "test",
+      {
+        TEST_SECRET_A: "x",
+        TEST_SECRET_B: "y",
+        DAAX_SKIP_PG_DUMP: "0", // create a fresh (newest) snapshot
+        DAAX_BACKUP_DIR: backupDir,
+        DAAX_SNAPSHOT_RETAIN: "3",
+      },
+      log,
+    );
+    expect(res.status).toBe(0);
+    const remaining = readdirSync(backupDir)
+      .filter((f) => /^pg-predeploy-.*\.sql$/.test(f))
+      .sort();
+    // Exactly the newest 3 survive: the just-created dump + the 2 newest seeds.
+    expect(remaining.length).toBe(3);
+    // The 3 OLDEST seeds are pruned.
+    expect(remaining).not.toContain("pg-predeploy-20200101T000000Z.sql");
+    expect(remaining).not.toContain("pg-predeploy-20200102T000000Z.sql");
+    expect(remaining).not.toContain("pg-predeploy-20200103T000000Z.sql");
+    // The 2 newest seeds survive.
+    expect(remaining).toContain("pg-predeploy-20200104T000000Z.sql");
+    expect(remaining).toContain("pg-predeploy-20200105T000000Z.sql");
+  });
+
+  it("no-ops retention when snapshots do not exceed the keep-count", () => {
+    const log = freshLog("retain-noop");
+    resetDockerLog();
+    const backupDir = join(work, "backups-retain-noop");
+    mkdirSync(backupDir, { recursive: true });
+    for (let i = 1; i <= 2; i++) {
+      const f = join(backupDir, `pg-predeploy-2020020${i}T000000Z.sql`);
+      writeFileSync(f, `old-${i}`);
+      const t = new Date(2020, 1, i);
+      utimesSync(f, t, t);
+    }
+    const res = runDeploy(
+      "test",
+      {
+        TEST_SECRET_A: "x",
+        TEST_SECRET_B: "y",
+        DAAX_SKIP_PG_DUMP: "0",
+        DAAX_BACKUP_DIR: backupDir,
+        DAAX_SNAPSHOT_RETAIN: "10", // 3 total (2 seeds + 1 new) < keep
+      },
+      log,
+    );
+    expect(res.status).toBe(0);
+    const remaining = readdirSync(backupDir).filter((f) =>
+      /^pg-predeploy-.*\.sql$/.test(f),
+    );
+    expect(remaining.length).toBe(3); // nothing pruned
+  });
+});
+
+describe("deploy.sh serialization lock — private per-user location", () => {
+  it("defaults the lock into a 0700 dir under XDG_RUNTIME_DIR (no /tmp symlink hijack)", () => {
+    // The real flock guard must engage; skip cleanly where flock is absent
+    // (the script already warns+continues in that case).
+    if (spawnSync("bash", ["-c", "command -v flock"]).status !== 0) return;
+    const log = freshLog("lock");
+    resetDockerLog();
+    const runtimeDir = mkdtempSync(join(tmpdir(), "daax-xdg-"));
+    const res = runDeploy(
+      "test",
+      {
+        TEST_SECRET_A: "x",
+        TEST_SECRET_B: "y",
+        DAAX_DEPLOY_NO_LOCK: "0", // engage the real flock guard
+        XDG_RUNTIME_DIR: runtimeDir,
+      },
+      log,
+    );
+    expect(res.status).toBe(0);
+    const lockDir = join(runtimeDir, "daax-deploy");
+    // A private 0700 directory we own — not a shared, world-writable /tmp path.
+    expect(existsSync(lockDir)).toBe(true);
+    expect(statSync(lockDir).mode & 0o777).toBe(0o700);
+    // The lock file lives INSIDE that private dir.
+    expect(existsSync(join(lockDir, "daax-deploy-daax.lock"))).toBe(true);
+    rmSync(runtimeDir, { recursive: true, force: true });
   });
 });

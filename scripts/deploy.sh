@@ -318,8 +318,18 @@ phase_migrate() {
       # dumps do not accumulate unbounded (mirrors scripts/pg-backup.sh).
       local keep="${DAAX_SNAPSHOT_RETAIN:-10}"
       if [[ "$keep" =~ ^[0-9]+$ && "$keep" -gt 0 ]]; then
-        ls -1t "$snap_dir"/pg-predeploy-*.sql 2>/dev/null \
-          | tail -n +"$((keep + 1))" | xargs -r rm -f --
+        # Portable prune (no GNU-only `xargs -r`, which BSD/macOS lacks and would
+        # abort under `set -e`): collect the newest-first list into an array and
+        # delete everything past the keep-count. `rm -f "${arr[@]:keep}"` no-ops
+        # when the slice is empty, so nothing is removed until snapshots exceed N.
+        local -a snaps=()
+        local snap_file
+        while IFS= read -r snap_file; do
+          snaps+=("$snap_file")
+        done < <(ls -1t "$snap_dir"/pg-predeploy-*.sql 2>/dev/null)
+        if ((${#snaps[@]} > keep)); then
+          rm -f -- "${snaps[@]:keep}"
+        fi
       fi
     else
       rm -f "$snap" 2>/dev/null || true
@@ -417,7 +427,18 @@ main() {
   elif ! command -v flock >/dev/null 2>&1; then
     err "WARNING: 'flock' not found — deploy serialization DISABLED. Install util-linux/flock; a concurrent deploy can corrupt rollback tags. Proceeding without a lock."
   else
-    local lock="${DAAX_DEPLOY_LOCK:-/tmp/daax-deploy-$PROJECT_NAME.lock}"
+    # Default the lock into a PRIVATE, per-user directory rather than a shared,
+    # world-writable /tmp path. `exec 9>"$lock"` follows symlinks, so a
+    # predictably-named /tmp target lets a hostile local user plant a symlink and
+    # redirect the open to clobber an arbitrary file. XDG_RUNTIME_DIR is already a
+    # per-user 0700 tmpfs; fall back to ~/.daax. The lock lives in a 0700 dir we
+    # own. DAAX_DEPLOY_LOCK still overrides the full path when set.
+    local lock_dir="${XDG_RUNTIME_DIR:-$HOME/.daax}/daax-deploy"
+    if ! mkdir -p "$lock_dir" 2>/dev/null; then
+      err "cannot create deploy lock dir: $lock_dir"; exit 3
+    fi
+    chmod 700 "$lock_dir" 2>/dev/null || true
+    local lock="${DAAX_DEPLOY_LOCK:-$lock_dir/daax-deploy-$PROJECT_NAME.lock}"
     exec 9>"$lock" || { err "cannot open deploy lock: $lock"; exit 3; }
     if ! flock -n 9; then
       err "another deploy is already running (lock: $lock)"
