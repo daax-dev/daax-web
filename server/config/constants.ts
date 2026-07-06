@@ -30,8 +30,21 @@ export const ERROR_WINDOW_MS = 60000; // 1 minute sliding window
 export const SHUTDOWN_TIMEOUT_MS = 5000;
 
 // Docker configuration
+//
+// The default agent image is pinned by manifest-list digest (not the mutable
+// `:latest` tag) so a compromised/typosquatted upstream push cannot silently
+// land arbitrary code in every future agent session (Fable M5 / issue #195).
+// This is the top-level manifest-list digest of `jpoley/daax-agents:latest`,
+// resolved via `docker buildx imagetools inspect` — it stays multi-arch
+// (linux/amd64 + linux/arm64) and can only be advanced by an intentional edit.
+// When bumping to a new image, also update PINNED_AGENT_DIGEST in
+// scripts/refresh-agent-images.sh and the digest guard in
+// tests/server/config/constants.test.ts.
+//
+// Operators can still override with CLAUDE_CONTAINER_IMAGE (tag or digest).
 export const DEFAULT_CONTAINER_IMAGE =
-  process.env.CLAUDE_CONTAINER_IMAGE || "jpoley/daax-agents:latest";
+  process.env.CLAUDE_CONTAINER_IMAGE ||
+  "jpoley/daax-agents@sha256:2153f137b3f47de007698d1e5f0d31a684cb45a7e1ebc1326f668ee458f55bc5";
 export const FALLBACK_CONTAINER_IMAGE = "daax-agents:local";
 export const DOCKER_NETWORK = process.env.DOCKER_NETWORK || "daax-net";
 
