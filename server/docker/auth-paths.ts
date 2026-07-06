@@ -120,16 +120,19 @@ export function initializeClaudeAuthDir(): {
       }
     }
   } catch (error) {
-    // Only show the non-root (UID 1000 / chown) guidance when a non-root uid is
-    // POSITIVELY detected. Where getuid is unavailable (e.g. Windows host-dev),
-    // uid can't be determined, so don't assert a non-root cause.
-    const runningNonRoot =
+    // Only emit the UID-1000 chown guidance when it actually applies:
+    //   (a) container mode — HOST_WORKSPACE_PATH is set (the file's container signal), AND
+    //   (b) a positively-known non-root uid — process.getuid is callable and returns != 0.
+    // Where getuid is unavailable (uid unknown) or in non-container/host runs, the
+    // UID-1000 specifics are misleading, so print generic permission guidance instead.
+    const knownNonRootUid =
       typeof process.getuid === "function" && process.getuid() !== 0;
+    const showUid1000Guidance = Boolean(HOST_WORKSPACE_PATH) && knownNonRootUid;
     console.error(
       `[Terminal Server] FATAL: cannot create the Claude auth directory at ${localPath}.`,
       error,
     );
-    if (runningNonRoot) {
+    if (showUid1000Guidance) {
       // #185: the container now runs as the non-root `node` user (UID 1000) with
       // cap_drop:[ALL], so it can only write host mounts owned by / writable by
       // UID 1000. A root-owned /workspace mount is the usual cause here.
