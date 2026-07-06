@@ -1,0 +1,244 @@
+# Daax Production Deployment
+#
+# This compose file is designed for deployment behind Traefik.
+# Ports are bound to localhost only - Traefik handles external access.
+#
+# Usage:
+#   docker compose up -d --build        # Build from local source
+#   docker compose up -d                # Use existing/cached image
+
+services:
+  # Postgres — daax's single data engine (brain2daax #92/#93). Mirrors the repo's
+  # deploy/docker-compose.yml service (digest-pinned image, parent-dir volume
+  # mount so postgres:18's versioned PGDATA persists, pg_isready gate).
+  postgres:
+    image: postgres:18-alpine@sha256:1b1689b20d16a014a3d195653381cf2caa75a41a92d93b255a9d6ea29fd353aa
+    container_name: daax-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${DAAX_PG_USER:-daax}
+      - POSTGRES_PASSWORD=${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required (set in /opt/daax/.env; never commit it)}
+      - POSTGRES_DB=${DAAX_PG_DB:-daax}
+    volumes:
+      # postgres:18 stores data under a version subdir; mount the PARENT so
+      # PGDATA (/var/lib/postgresql/<ver>/docker) lands on the volume and
+      # persists. Mounting /var/lib/postgresql/data instead silently moves
+      # PGDATA off-volume and the image refuses to start.
+      - daax-pg-data:/var/lib/postgresql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DAAX_PG_USER:-daax} -d ${DAAX_PG_DB:-daax}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - daax-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # One-shot migration runner (node-pg-migrate). The daax service waits for this
+  # to complete successfully, so a failed migration blocks the rollout
+  # (fail-closed) without coupling the app process to PG.
+  migrate:
+    image: daax:latest
+    container_name: daax-migrate
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required}@postgres:5432/${DAAX_PG_DB:-daax}
+    command: ["bun", "run", "db:migrate"]
+    networks:
+      - daax-net
+
+  daax:
+    build:
+      context: ../daax-web
+      dockerfile: Dockerfile
+    image: daax:latest
+    container_name: daax
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+    ports:
+      # Bind to localhost only - Traefik proxies external access
+      - "127.0.0.1:4200:4200" # Web UI
+      - "127.0.0.1:4201:4201" # Terminal WebSocket
+
+    volumes:
+      # Docker socket for spawning containers (DinD)
+      - /var/run/docker.sock:/var/run/docker.sock
+
+      # Workspace volume - projects to edit
+      # REQUIRED: Set DAAX_WORKSPACE to your projects directory
+      # Example: export DAAX_WORKSPACE="$HOME/prj"
+      - ${DAAX_WORKSPACE:?DAAX_WORKSPACE env var required (e.g. ~/prj)}:/workspace
+
+      # Persist application data
+      - daax-data:/app/data
+
+      # Environment file for secrets (optional). If DAAX_ENV_FILE is not set,
+      # /dev/null is mounted and no .env.local file will be loaded.
+      # IMPORTANT: Docker Compose does not expand ~ or support :-default syntax in volume paths.
+      # Example: export DAAX_ENV_FILE="$HOME/.daax.env"
+      - ${DAAX_ENV_FILE:-/dev/null}:/app/.env.local:ro
+
+      # Claude Code config file for MCP management (/mcp page)
+      # REQUIRED: Set CLAUDE_CONFIG_PATH to your Claude config file
+      # Example: export CLAUDE_CONFIG_PATH="$HOME/.claude.json"
+      - ${CLAUDE_CONFIG_PATH:?CLAUDE_CONFIG_PATH env var required (e.g. ~/.claude.json)}:/host-config/.claude.json:rw
+
+      # Home .mcp.json for additional MCP configurations (optional)
+      # If HOME_MCP_JSON_PATH is not set, /dev/null is mounted (no error)
+      # Example: export HOME_MCP_JSON_PATH="$HOME/.mcp.json"
+      - ${HOME_MCP_JSON_PATH:-/dev/null}:/host-config/.mcp.json:ro
+
+    environment:
+      # Bind to all interfaces inside container
+      - TERMINAL_HOST=0.0.0.0
+
+      # Terminal WS bearer-ticket secret (F1b, #95) — REQUIRED in container mode:
+      # WS upgrades reach the terminal server from the Docker bridge gateway (not
+      # loopback), so the single-use ticket path is the only auth path. The app
+      # (mints via POST /api/terminal/ticket) and the terminal server (verifies)
+      # run in this container and share this one value. Value lives in .env here
+      # (and canonically in ~/.secrets); never commit it.
+      - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth (F1b #95); set in /opt/daax/.env or source ~/.secrets}"
+
+      # Proxy-secret trust boundary (F1a, #94): forwarded identity (X-Forwarded-User
+      # from Pocket ID) is trusted ONLY when Traefik also injects a matching
+      # X-Daax-Proxy-Secret header (inject-proxy-secret middleware in
+      # /etc/traefik/dynamic/daax.yml). MUST match that middleware's value.
+      # Required by images built from main >= #181/#184 (default-deny middleware +
+      # posture gate) — without it every /api call 401s behind the proxy.
+      - "DAAX_PROXY_SECRET=${DAAX_PROXY_SECRET:?required behind Traefik/Pocket ID (F1a #94); must match inject-proxy-secret in /etc/traefik/dynamic/daax.yml; set in /opt/daax/.env}"
+
+      # Strict auth (#184): a real forward-auth proxy is in front, so the
+      # LOCAL_OPERATOR bypass must stay off and uncredentialed requests fail closed.
+      - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-1}
+
+      # Postgres — single data engine (#92/#93): catalog, releases, audit. The
+      # migrate service (above) applies schema before this service starts.
+      - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required}@postgres:5432/${DAAX_PG_DB:-daax}
+
+      # Claude Code config path (for MCP management)
+      - CLAUDE_CODE_CONFIG=/host-config/.claude.json
+
+      # Home .mcp.json path (for additional MCP configurations)
+      # NOTE: Only set when HOME_MCP_JSON_PATH is configured, otherwise app
+      # will scan /workspace for .mcp.json files instead
+      - HOME_MCP_JSON=${HOME_MCP_JSON_PATH:+/host-config/.mcp.json}
+
+      # WebSocket URL - set to your domain
+      - NEXT_PUBLIC_TERMINAL_WS_URL=${TERMINAL_WS_URL:-wss://daax.${HOSTNAME}.poley.dev/ws}
+
+      # Code-Server URL - set to your domain
+      - NEXT_PUBLIC_CODE_SERVER_URL=${CODE_SERVER_URL:-https://daax-code.${HOSTNAME}.poley.dev/?folder=/workspace}
+
+      # Container image for AI tools
+      - CLAUDE_CONTAINER_IMAGE=${CLAUDE_CONTAINER_IMAGE:-jpoley/daax-agents:latest}
+
+      # Docker network for spawned containers
+      - DOCKER_NETWORK=daax-net
+
+      # Host workspace path for volume mounts in spawned containers
+      - HOST_WORKSPACE_PATH=${DAAX_WORKSPACE:?DAAX_WORKSPACE required}
+
+      # Default mount path inside containers
+      - DEFAULT_MOUNT_PATH=/workspace
+
+      # GitHub token (optional)
+      - GITHUB_DAAX=${GITHUB_DAAX:-}
+
+      # Clawdbot gateway (optional - required for /bot page)
+      - CLAWD_GATEWAY_URL=${CLAWD_GATEWAY_URL:-}
+      - CLAWD_GATEWAY_TOKEN=${CLAWD_GATEWAY_TOKEN:-}
+
+    # Docker socket access
+    group_add:
+      - "${DOCKER_GID:-999}"
+
+    networks:
+      - daax-net
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4200/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Code-Server (VS Code in browser) with language runtimes (Go, Node, Python, Rust)
+  # Accessible via https://daax-code.HOSTNAME.poley.dev
+  code-server:
+    image: daax-code-server:latest
+    container_name: daax-code-server
+    restart: unless-stopped
+
+    ports:
+      # Traefik routes daax-code.HOSTNAME.poley.dev -> port 18080
+      - "127.0.0.1:18080:8080"
+
+    volumes:
+      # Same workspace as daax - edit the same files
+      - ${DAAX_WORKSPACE:?DAAX_WORKSPACE env var required}:/workspace
+      # Persist code-server settings and extensions
+      - daax-code-server-data:/home/coder/.local/share/code-server
+
+    command: ["--auth", "none", "--bind-addr", "0.0.0.0:8080", "/workspace"]
+
+    environment:
+      - CS_DISABLE_GETTING_STARTED_OVERRIDE=1
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional: whoami service for testing
+  whoami:
+    image: traefik/whoami
+    container_name: whoami
+    restart: unless-stopped
+    profiles:
+      - debug
+    ports:
+      - "127.0.0.1:8081:80"
+
+networks:
+  daax-net:
+    # Network must be created before first run: docker network create daax-net
+    # The install.sh script handles this automatically
+    external: true
+
+volumes:
+  daax-data:
+    driver: local
+  daax-code-server-data:
+    driver: local
+  daax-pg-data:
+    driver: local
