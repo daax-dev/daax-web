@@ -135,9 +135,24 @@ describe("requireRole enforcement (F5 #101)", () => {
     expect(res.authorized).toBe(false);
     if (!res.authorized) expect(res.response.status).toBe(403);
     expect(jitProvision).not.toHaveBeenCalled();
-    expect(writeAudit).toHaveBeenCalledWith(
-      expect.objectContaining({ outcome: "deny", detail: "db-unconfigured" }),
-    );
+    // With Postgres unconfigured there is no auth_audit table, so writeAuditSafe
+    // skips the write entirely (no DbConfigError spam). The 403 fail-closed
+    // decision is what matters here and is unchanged.
+    expect(writeAudit).not.toHaveBeenCalled();
+  });
+
+  it("stays QUIET for the local operator when Postgres is unconfigured (host-dev, no DB write)", async () => {
+    // Host-dev posture: local-operator bypass with NO database configured. The
+    // audit write must be SKIPPED (not attempted-and-failed) so requireRole does
+    // not emit a repeated DbConfigError on every call.
+    mockHeaders.mockReturnValue(mkHeaders({}));
+    isDbConfigured.mockReturnValue(false);
+
+    const res = await requireRole("admin:users:write");
+    expect(res.authorized).toBe(true);
+    if (res.authorized) expect(res.subject).toBeNull();
+    expect(jitProvision).not.toHaveBeenCalled();
+    expect(writeAudit).not.toHaveBeenCalled();
   });
 
   it("fails CLOSED (403) when the identity store errors (decision denied, not crashed)", async () => {

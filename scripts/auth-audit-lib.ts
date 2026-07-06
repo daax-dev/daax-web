@@ -42,17 +42,31 @@ export const AUTH_GUARD_IMPORT_RE =
  * character, put the parser in expression position — so a following `/` begins a
  * REGEX LITERAL, not a division operator. `""` models start-of-input. This is
  * the conservative set from the audit hardening (`(` `,` `=` `!` `:` `[` `;`
- * `{` `?` `>` and the trailing char of `&&`/`||`); `return` is handled separately
- * as a keyword. `{` (a block/object body opener) and `?` (ternary condition
- * separator, nullish `??`) both put the parser in expression position, so a `/`
- * after either begins a regex — omitting them left an audit BYPASS
+ * `{` `}` `?` `>` and the trailing char of `&&`/`||`); `return` is handled
+ * separately as a keyword. `{` (a block/object body opener) and `?` (ternary
+ * condition separator, nullish `??`) both put the parser in expression position,
+ * so a `/` after either begins a regex — omitting them left an audit BYPASS
  * (`if (x) { /await requireRole(y)/.test(s) }` was not neutralized). `>` covers
  * the arrow `=>` (and comparison operators): `() => /await requireRole(y)/.test(s)`
  * likewise leaves the parser in expression position, so the `/` begins a regex —
- * omitting it was another BYPASS. Kept deliberately minimal so a real division
- * (whose left operand ends in an identifier, `)`, `]`, or a digit) is never
- * mis-scanned as a regex — none of these tokens can be the tail of a division's
- * left operand (`>` is only ever a comparison/arrow, never a division's LHS tail).
+ * omitting it was another BYPASS.
+ *
+ * OBJECT-LITERAL CAVEAT for `}` (the deliberate exception): a `}` that closes a
+ * BLOCK legally begins a new statement, so a following `/` starts a regex —
+ * `if (x) { … } /await requireRole(y)/.test(s)` was a BYPASS while `}` was
+ * omitted. But a `}` can ALSO close an OBJECT LITERAL, after which `/` is
+ * DIVISION (`const o = {a:1} / 2`). Unlike every OTHER preceder here, `}` CAN
+ * therefore be the tail of a division's left operand, so adding it can mis-scan
+ * such a division as a regex and STRIP it. That direction is FAIL-SAFE for this
+ * audit: stripping real code can only DROP a nearby genuine guard call → the
+ * route is reported UNGUARDED (the loud/safe direction), never guarded (a
+ * bypass). Erring toward stripping is the accepted tradeoff; closing the `}`
+ * bypass is worth the rare, self-announcing false positive.
+ *
+ * Kept deliberately minimal so a real division (whose left operand ends in an
+ * identifier, `)`, `]`, or a digit) is never mis-scanned as a regex — none of
+ * these tokens EXCEPT `}` can be the tail of a division's left operand (`>` is
+ * only ever a comparison/arrow; `}` is the fail-safe exception noted above).
  */
 const REGEX_PRECEDERS = new Set([
   "",
@@ -66,6 +80,7 @@ const REGEX_PRECEDERS = new Set([
   "&",
   "|",
   "{",
+  "}",
   "?",
   ">",
 ]);
