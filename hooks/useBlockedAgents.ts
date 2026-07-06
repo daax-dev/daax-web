@@ -23,7 +23,13 @@
  *    not re-render every poll.
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useAttentionPoll } from "./useAttentionPoll";
 import {
   acknowledgeAll,
@@ -67,7 +73,10 @@ const MAX_INDIVIDUAL_NOTIFICATIONS = 3;
  */
 const BELL_POLL_MS = 8000;
 
-function keysEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+function keysEqual(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+): boolean {
   const ak = Object.keys(a);
   if (ak.length !== Object.keys(b).length) return false;
   for (const k of ak) if (!(k in b)) return false;
