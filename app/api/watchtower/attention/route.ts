@@ -53,6 +53,7 @@ import {
   type AttentionResponse,
 } from "@/lib/attention/adapter";
 import { getFresh, store as storeCache } from "@/lib/attention/cache";
+import { DEFAULT_SPARKLINE_BUCKETS } from "@/lib/attention/sparkline";
 
 /** Bound concurrent per-session tool fetches so a large fleet can't fan out unbounded. */
 const TOOLS_FETCH_CONCURRENCY = 6;
@@ -126,7 +127,9 @@ export async function GET(req: Request) {
           since: null,
           lastTool: null,
           toolCount: 0,
-          sparkline: [],
+          // Fixed-width zero sparkline (not []) so a malformed session keeps the
+          // same bucket layout as normal cards and the board stays stable.
+          sparkline: new Array<number>(DEFAULT_SPARKLINE_BUCKETS).fill(0),
         };
         return fallback;
       }
