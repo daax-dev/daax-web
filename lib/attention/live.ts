@@ -15,7 +15,7 @@
  */
 
 import type { AttentionCard } from "./adapter";
-import { bucketTimestamps } from "./sparkline";
+import { bucketIndexFor, bucketTimestamps } from "./sparkline";
 
 /**
  * Watchtower wire message (pkg/protocol/message.go). Only the envelope fields
@@ -173,7 +173,11 @@ export function applyLiveEvent(
       const hasError = asString(payload.error) !== undefined;
       return patchCard(cards, id, (c) => {
         const spark = c.sparkline.slice();
-        if (spark.length > 0) spark[spark.length - 1] += 1;
+        // Bucket the increment by the event's own timestamp so a delayed /
+        // out-of-order WS message lands in the correct bucket instead of always
+        // the newest one. Events older than the sparkline window are dropped.
+        const idx = bucketIndexFor(at, now, spark.length);
+        if (idx >= 0) spark[idx] += 1;
         return {
           ...c,
           status: hasError ? "error" : "working",

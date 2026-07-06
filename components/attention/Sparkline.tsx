@@ -29,6 +29,7 @@ export function Sparkline({ data, className }: SparklineProps) {
         return (
           <span
             key={i}
+            aria-hidden="true"
             className={cn("w-1 rounded-sm", v > 0 ? "bg-primary" : "bg-muted")}
             style={{ height: `${pct}%` }}
           />

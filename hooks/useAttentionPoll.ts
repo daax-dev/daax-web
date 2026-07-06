@@ -76,7 +76,6 @@ export function useAttentionPoll(
     // complete instead of being aborted every interval.
     if (inFlightRef.current) return;
     inFlightRef.current = true;
-    lastSnapshotAtRef.current = Date.now();
     const ac = new AbortController();
     abortRef.current = ac;
 
@@ -98,6 +97,10 @@ export function useAttentionPoll(
         setCards(data.sessions);
         setTruncated(data.truncated === true);
         setConn("connected");
+        // Track the last SUCCESSFUL snapshot. A failed fetch must NOT update
+        // this, or (while the WS is live) tick() would suppress REST resyncs
+        // for SAFETY_RESYNC_MS and leave the board stale on a transient error.
+        lastSnapshotAtRef.current = Date.now();
       } else {
         setCards([]);
         setTruncated(false);

@@ -308,6 +308,44 @@ describe("useAttentionPoll", () => {
       expect(result.current.cards[0].toolCount).toBe(1);
     });
 
+    it("keeps resyncing after a FAILED snapshot while the WS is live (no stale-board suppression)", async () => {
+      const sock = fakeSocket();
+      openTerminalWebSocket.mockResolvedValueOnce(sock as unknown as WebSocket);
+      // Every snapshot fetch fails (non-2xx). A failed fetch must NOT record a
+      // last-successful-snapshot time, so the safety-resync window never
+      // suppresses the next tick — otherwise a transient error would freeze the
+      // board for up to SAFETY_RESYNC_MS (~30s) even with the WS connected.
+      fetchMock = vi.fn(() =>
+        Promise.resolve({
+          ok: false,
+          status: 503,
+          json: () => Promise.resolve({}),
+        }),
+      );
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      // Default 2s poll, 30s safety resync.
+      renderHook(() => useAttentionPoll());
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(1); // mount snapshot (fails)
+
+      // WS connects → resync snapshot (also fails); wsLive is now true.
+      await act(async () => {
+        sock.onopen?.();
+      });
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      // A poll tick fires WELL WITHIN the 30s safety window. With the bug the
+      // failed fetch had stamped the resync clock and suppressed this retry; the
+      // fix stamps it only on success, so the board keeps trying to recover.
+      await act(async () => {
+        vi.advanceTimersByTime(DEFAULT_POLL_MS);
+      });
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
     it("removes a card when a session_end event arrives", async () => {
       const sock = fakeSocket();
       openTerminalWebSocket.mockResolvedValueOnce(sock as unknown as WebSocket);

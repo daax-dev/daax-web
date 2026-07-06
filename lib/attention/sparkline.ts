@@ -18,6 +18,31 @@ export const DEFAULT_SPARKLINE_WINDOW_MS = 10 * 60_000;
 export const DEFAULT_SPARKLINE_BUCKETS = 12;
 
 /**
+ * Which bucket a single timestamp falls into for a sparkline of `buckets`
+ * buckets covering `[now - windowMs, now]`, or -1 when `ts` is outside the
+ * window (future > now, or stale < window start) or the inputs are invalid.
+ *
+ * A timestamp exactly at `now` maps to the final bucket; one at the window
+ * start maps to the first. Shared by the REST builder (`bucketTimestamps`) and
+ * the live reducer so an out-of-order event lands in the correct bucket.
+ */
+export function bucketIndexFor(
+  ts: number,
+  now: number,
+  buckets: number,
+  opts: Pick<BucketOptions, "windowMs"> = {},
+): number {
+  const windowMs = opts.windowMs ?? DEFAULT_SPARKLINE_WINDOW_MS;
+  const n = Math.max(1, Math.floor(buckets));
+  if (!Number.isFinite(ts) || !Number.isFinite(now) || windowMs <= 0) return -1;
+  const start = now - windowMs;
+  if (ts < start || ts > now) return -1;
+  const bucketMs = windowMs / n;
+  // Clamp so ts === now maps to the last bucket rather than overflowing to n.
+  return Math.min(n - 1, Math.floor((ts - start) / bucketMs));
+}
+
+/**
  * Buckets `timestampsMs` into `buckets` counts covering `[now - windowMs, now]`.
  * Returns oldest-first (index 0 = oldest bucket, last = most recent).
  *
@@ -39,15 +64,9 @@ export function bucketTimestamps(
 
   if (!Number.isFinite(now) || windowMs <= 0) return counts;
 
-  const start = now - windowMs;
-  const bucketMs = windowMs / buckets;
-
   for (const ts of timestampsMs) {
-    if (!Number.isFinite(ts) || ts < start || ts > now) continue;
-    // Offset within the window, clamped so ts === now maps to the last bucket
-    // rather than overflowing to index `buckets`.
-    const idx = Math.min(buckets - 1, Math.floor((ts - start) / bucketMs));
-    counts[idx] += 1;
+    const idx = bucketIndexFor(ts, now, buckets, { windowMs });
+    if (idx >= 0) counts[idx] += 1;
   }
 
   return counts;
