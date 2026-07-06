@@ -58,6 +58,15 @@ import {
  */
 const MAX_INDIVIDUAL_NOTIFICATIONS = 3;
 
+/**
+ * The bell is mounted app-wide, so its cadence sets the floor for background
+ * polling on every page. It does not need the board's 2s freshness — a slower
+ * interval keeps app-wide load (and daax's intermittent 429s) down. When the
+ * board is also mounted, the shared source polls at the board's faster rate and
+ * the bell simply rides those updates for free.
+ */
+const BELL_POLL_MS = 8000;
+
 function keysEqual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
   const ak = Object.keys(a);
   if (ak.length !== Object.keys(b).length) return false;
@@ -101,7 +110,9 @@ export interface BlockedAgentsResult {
 
 export function useBlockedAgents(): BlockedAgentsResult {
   // Keep watching even when backgrounded — that is when a desktop alert matters.
-  const { cards, conn } = useAttentionPoll(undefined, { pauseWhenHidden: false });
+  const { cards, conn, truncated } = useAttentionPoll(BELL_POLL_MS, {
+    pauseWhenHidden: false,
+  });
 
   const [state, setState] = useState<NotifyState>(initialState);
   const stateRef = useRef(state);
@@ -143,7 +154,9 @@ export function useBlockedAgents(): BlockedAgentsResult {
       since: c.since,
       cwd: c.cwd,
     }));
-    const { state: next, toNotify } = reconcile(stateRef.current, mapped);
+    const { state: next, toNotify } = reconcile(stateRef.current, mapped, {
+      truncated,
+    });
 
     const firstConnected = !primedRef.current;
     primedRef.current = true;
@@ -165,7 +178,7 @@ export function useBlockedAgents(): BlockedAgentsResult {
       stateRef.current = next;
       setState(next);
     }
-  }, [cards, conn]);
+  }, [cards, conn, truncated]);
 
   const ackAll = useCallback(() => {
     const next = acknowledgeAll(stateRef.current);

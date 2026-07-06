@@ -9,7 +9,11 @@
 
 import type { NotifyCard } from "@/lib/attention/notifications";
 
-export type DesktopPermission = "granted" | "denied" | "default" | "unsupported";
+export type DesktopPermission =
+  | "granted"
+  | "denied"
+  | "default"
+  | "unsupported";
 
 /** True when the Notification API is usable in this environment. */
 export function desktopSupported(): boolean {
@@ -29,7 +33,18 @@ export function permissionState(): DesktopPermission {
 export async function requestPermission(): Promise<DesktopPermission> {
   if (!desktopSupported()) return "unsupported";
   try {
-    const result = await Notification.requestPermission();
+    const result = await new Promise<NotificationPermission>(
+      (resolve, reject) => {
+        // Callback-only (legacy) browsers resolve via the callback and return
+        // undefined; promise-based browsers return a thenable we chain onto.
+        const maybePromise = Notification.requestPermission((perm) =>
+          resolve(perm),
+        );
+        if (maybePromise && typeof maybePromise.then === "function") {
+          maybePromise.then(resolve, reject);
+        }
+      },
+    );
     return result as DesktopPermission;
   } catch {
     return permissionState();
@@ -46,7 +61,8 @@ export async function requestPermission(): Promise<DesktopPermission> {
  * is a silent no-op (the caller decides policy; this never throws).
  */
 export function fireBlockedNotification(card: NotifyCard): boolean {
-  if (!desktopSupported() || Notification.permission !== "granted") return false;
+  if (!desktopSupported() || Notification.permission !== "granted")
+    return false;
   const label = card.label || card.id.slice(0, 8);
   try {
     new Notification("Agent waiting for input", {
@@ -69,7 +85,8 @@ export function fireBlockedNotification(card: NotifyCard): boolean {
  * as fireBlockedNotification.
  */
 export function fireAggregateNotification(count: number): boolean {
-  if (!desktopSupported() || Notification.permission !== "granted") return false;
+  if (!desktopSupported() || Notification.permission !== "granted")
+    return false;
   try {
     new Notification(`${count} agents waiting for input`, {
       body: "Open daax to review the blocked sessions.",

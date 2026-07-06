@@ -27,6 +27,7 @@ vi.mock("@/lib/watchtower/client", () => ({
 
 import { GET } from "@/app/api/watchtower/attention/route";
 import { reset as resetCache } from "@/lib/attention/cache";
+import { DEFAULT_SPARKLINE_BUCKETS } from "@/lib/attention/sparkline";
 
 /** A fresh (non-aborted) request for the handler under test. */
 const req = () => new Request("http://localhost/api/watchtower/attention");
@@ -138,6 +139,45 @@ describe("GET /api/watchtower/attention", () => {
     expect(Object.keys(byId).sort()).toEqual(["sess-bad", "sess-good"]);
     expect(byId["sess-bad"].lastTool).toBeNull();
     expect(byId["sess-good"].lastTool).toBe("Read");
+  });
+
+  it("degrades a malformed session (non-string host) to a minimal card instead of a 500", async () => {
+    const now = Date.now();
+    mockFetchActiveSessions.mockResolvedValue({
+      reachable: true,
+      sessions: [
+        // Schema drift: numeric host makes buildCard throw (.trim on a number).
+        { id: "sess-malformed", host: 123, active: true },
+        {
+          id: "sess-good",
+          host: "h2",
+          active: true,
+          created_at: new Date(now - 5_000).toISOString(),
+        },
+      ],
+    });
+    mockFetchSessionTools.mockResolvedValue([]);
+
+    const res = await GET(req());
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.ok).toBe(true);
+    const byId = Object.fromEntries(
+      body.sessions.map((s: { id: string }) => [s.id, s]),
+    );
+    expect(Object.keys(byId).sort()).toEqual(["sess-good", "sess-malformed"]);
+    // Malformed record falls back to a static idle card, not a 500.
+    expect(byId["sess-malformed"]).toMatchObject({
+      id: "sess-malformed",
+      status: "idle",
+      lastTool: null,
+      toolCount: 0,
+    });
+    // Fallback keeps the normal fixed-width bucket layout (zero-filled), not an
+    // empty sparkline that would collapse the card's width on the board.
+    expect(byId["sess-malformed"].sparkline).toEqual(
+      new Array(DEFAULT_SPARKLINE_BUCKETS).fill(0),
+    );
   });
 
   it("does no upstream work when the client has already aborted", async () => {

@@ -15,10 +15,12 @@
 import type { RestSession, RestTool } from "@/lib/attention/adapter";
 
 /**
- * Max ms to wait for Watchtower before aborting a request. Deliberately below
- * the board's 2s poll interval so a slow upstream can't keep a handler running
- * past the point the client has already re-polled (avoids overlapping
- * executions stacking up server-side).
+ * Max ms to wait for Watchtower before aborting a single request. This bounds
+ * each fetch, not the whole aggregation: the attention handler runs a sessions
+ * fetch plus batched per-session tool fetches, so its end-to-end time can
+ * exceed the board's 2s poll interval. Overlap is prevented elsewhere — the
+ * client hook skips a tick while a request is in flight, and the server TTL
+ * cache amortizes a completed slow scan across polls.
  */
 const FETCH_TIMEOUT_MS = 1_500;
 
@@ -31,6 +33,11 @@ export function watchtowerBaseUrl(): string {
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+/** Returns the value when it is a string, else undefined (drops schema drift). */
+function asString(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
 }
 
 /**
@@ -85,11 +92,28 @@ export async function fetchActiveSessions(
       return { reachable: false, sessions: [] };
     }
     const raw: unknown = await res.json();
-    const list = Array.isArray(raw) ? raw : [];
+    if (!Array.isArray(raw)) {
+      // Contract: a non-array body is an unexpected shape, not "no sessions".
+      // Surface it as unreachable so the UI shows a disconnected state.
+      console.warn("[watchtower] /api/sessions/active → non-array body");
+      return { reachable: false, sessions: [] };
+    }
     const sessions: RestSession[] = [];
-    for (const s of list) {
+    for (const s of raw) {
       if (isPlainObject(s) && typeof s.id === "string" && s.id !== "") {
-        sessions.push(s as unknown as RestSession);
+        // Coerce optional fields: drop anything non-string so upstream schema
+        // drift (e.g. a numeric host) can't leak non-string values into the
+        // adapter, which calls string methods on them.
+        sessions.push({
+          id: s.id,
+          host: asString(s.host),
+          working_dir: asString(s.working_dir),
+          git_branch: asString(s.git_branch),
+          active: typeof s.active === "boolean" ? s.active : undefined,
+          created_at: asString(s.created_at),
+          updated_at: asString(s.updated_at),
+          ended_at: s.ended_at === null ? null : asString(s.ended_at),
+        });
       }
     }
     return { reachable: true, sessions };

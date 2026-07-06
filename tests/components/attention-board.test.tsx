@@ -43,6 +43,7 @@ vi.mock("motion/react", () => ({
 }));
 
 import { AttentionBoard } from "@/components/attention/AttentionBoard";
+import { __resetAttentionSource } from "@/lib/attention/source";
 
 interface FetchBody {
   ok: boolean;
@@ -81,8 +82,14 @@ const sampleCard: AttentionCardData = {
 describe("AttentionBoard", () => {
   const originalFetch = globalThis.fetch;
 
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // The Attention poller is now a process-wide singleton (issue #154 shared
+    // source); reset it so state does not leak between cases.
+    __resetAttentionSource();
+  });
   afterEach(() => {
+    __resetAttentionSource();
     (globalThis as typeof globalThis & { fetch: typeof fetch }).fetch =
       originalFetch;
     vi.restoreAllMocks();
