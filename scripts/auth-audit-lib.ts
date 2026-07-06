@@ -232,7 +232,12 @@ function looksLikeRegexAfterCloser(src: string, slashIdx: number): boolean {
   let j = end;
   while (j < src.length && /[a-z]/i.test(src[j])) j++;
   const rest = src.slice(j);
-  return /^\s*(?:\.(?:test|exec|match)\s*\(|[);,\]]|$)/.test(rest);
+  // Accept ANY property access after the literal (`.source`, `.toString()`,
+  // `.test(...)`, …) as evidence the `/…/` was a regex — not just the call
+  // methods. Restricting to `.test|exec|match` left a bypass: a guard token
+  // inside `/await requireRole(x)/.source` was not neutralized, so
+  // AUTH_GUARD_CALL_RE matched it and misclassified an unguarded route as guarded.
+  return /^\s*(?:\.[A-Za-z_$]|[);,\]]|$)/.test(rest);
 }
 
 /**
