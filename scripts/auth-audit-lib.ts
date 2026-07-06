@@ -33,7 +33,7 @@ export const AUTH_GUARD_CALL_RE =
  * so it cannot greedily swallow across an intervening statement terminator.
  */
 export const AUTH_GUARD_IMPORT_RE =
-  /import\s+[^;]*?require(?:Auth|Role)[^;]*?from/;
+  /import\s+[^;]*?require(?:Auth|Role|SuperAdmin)[^;]*?from/;
 
 /**
  * Strip line comments, block comments, and string/template literal CONTENT from
