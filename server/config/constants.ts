@@ -11,6 +11,19 @@ import { join } from "path";
 export const PORT = parseInt(process.env.TERMINAL_PORT || "4201", 10);
 export const HOST = process.env.TERMINAL_HOST || "localhost";
 
+/**
+ * Build a base URL for parsing a request's relative URL with `new URL(url, base)`.
+ * An IPv6 literal host (e.g. `::`, `::1`, `2001:db8::1`) MUST be bracketed or
+ * `new URL("http://::4201")` throws — which would mis-dispatch the connection.
+ * IPv4 addresses and hostnames contain no colon and are used verbatim; an
+ * already-bracketed host is left untouched.
+ */
+export function localBaseUrl(host: string, port: number): string {
+  const bracketed =
+    host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${bracketed}:${port}`;
+}
+
 // Error handling configuration
 export const MAX_GLOBAL_ERRORS = 10;
 export const ERROR_WINDOW_MS = 60000; // 1 minute sliding window

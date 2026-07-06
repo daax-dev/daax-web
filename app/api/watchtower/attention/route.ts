@@ -1,0 +1,145 @@
+/**
+ * GET /api/watchtower/attention  (issue #153)
+ *
+ * Aggregation endpoint powering the Attention board. In one request it:
+ *   1. lists active Watchtower sessions,
+ *   2. fetches each session's tool calls (bounded fan-out),
+ *   3. derives a glanceable status + activity sparkline per session.
+ *
+ * Auth: requireAuth() runs first — session tool data can contain prompts,
+ * command output and file contents. Unauthenticated requests get the 401 from
+ * the auth layer before any Watchtower communication.
+ *
+ * Failure semantics: transport failures never throw. The response always uses
+ * HTTP 200 (post-auth) and carries `ok` — `false` means Watchtower was
+ * unreachable, which the UI renders as a disconnected state (distinct from an
+ * empty board of zero sessions).
+ *
+ * Scope note: this queries Watchtower's ACTIVE sessions (the board is about
+ * what needs attention now). A session that ends leaves that list, so the ✅
+ * done state is only surfaced transiently — for a session that terminates while
+ * displayed (the derivation fully supports/tests `done`). Switching to the full
+ * `/api/sessions` list would keep historical done sessions on the board, which
+ * would be noise for an attention view.
+ *
+ * Scaling / load control:
+ *  - Sessions are capped server-side (MAX_SESSIONS); truncation is flagged in
+ *    the response (`truncated:true`) and logged — never silently dropped.
+ *  - The incoming request's AbortSignal is threaded into every Watchtower fetch
+ *    (combined with a per-fetch timeout), so a client disconnect cancels the
+ *    handler's in-flight work. The polling client itself never aborts a live
+ *    request — it skips ticks while one is outstanding — so overlapping
+ *    executions do not stack up.
+ *  - A TTL cache (lib/attention/cache.ts, TTL ≥ poll interval) coalesces
+ *    re-polls (e.g. several tabs) so the fleet is not re-scanned on every hit
+ *    and one completed slow scan is amortized across polls.
+ *
+ * Tool history is still fetched per session per poll (Watchtower's tools
+ * endpoint exposes no limit/range param); the derivation and sparkline only use
+ * recent activity, and each response is bounded and garbage-collected.
+ */
+
+import { NextResponse } from "next/server";
+import { requireAuth } from "@/lib/auth";
+import { mapPool } from "@/lib/concurrency";
+import {
+  fetchActiveSessions,
+  fetchSessionTools,
+  watchtowerBaseUrl,
+} from "@/lib/watchtower/client";
+import {
+  buildCard,
+  type AttentionCard,
+  type AttentionResponse,
+} from "@/lib/attention/adapter";
+import { getFresh, store as storeCache } from "@/lib/attention/cache";
+import { DEFAULT_SPARKLINE_BUCKETS } from "@/lib/attention/sparkline";
+
+/** Bound concurrent per-session tool fetches so a large fleet can't fan out unbounded. */
+const TOOLS_FETCH_CONCURRENCY = 6;
+
+/** Hard cap on sessions processed per request; excess is truncated + flagged. */
+const MAX_SESSIONS = 100;
+
+const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
+
+function json(body: AttentionResponse) {
+  return NextResponse.json(body, { headers: NO_STORE_HEADERS });
+}
+
+export async function GET(req: Request) {
+  const auth = await requireAuth();
+  if (!auth.authenticated) {
+    const authRes = auth.response.clone();
+    authRes.headers.set("Cache-Control", "no-store");
+    return authRes;
+  }
+
+  // Coalesce rapid re-polls (multiple tabs / faster-than-compute polling).
+  const cached = getFresh(Date.now());
+  if (cached) return json(cached);
+
+  // Client already gone — do no upstream work.
+  if (req.signal.aborted) {
+    return json({ ok: false, sessions: [], truncated: false });
+  }
+
+  const baseUrl = watchtowerBaseUrl();
+  const { reachable, sessions } = await fetchActiveSessions(
+    baseUrl,
+    req.signal,
+  );
+
+  if (!reachable) {
+    // Not cached: a disconnected/slow upstream should recover on the next poll.
+    return json({ ok: false, sessions: [], truncated: false });
+  }
+
+  const truncated = sessions.length > MAX_SESSIONS;
+  const capped = truncated ? sessions.slice(0, MAX_SESSIONS) : sessions;
+  if (truncated) {
+    console.warn(
+      `[attention] ${sessions.length} active sessions exceed cap ${MAX_SESSIONS}; truncating`,
+    );
+  }
+
+  const now = Date.now();
+  const cards = await mapPool(
+    capped,
+    TOOLS_FETCH_CONCURRENCY,
+    async (session) => {
+      // Non-poisoning: one session's tool fetch OR card build failing must not
+      // sink the whole batch. The fallback is a minimal static card — not a
+      // buildCard() retry, since buildCard itself may be what threw (e.g. a
+      // malformed session record) and re-invoking it would 500 the board.
+      try {
+        const tools = await fetchSessionTools(session.id, baseUrl, req.signal);
+        return buildCard(session, tools, { now });
+      } catch (err) {
+        console.warn(`[attention] card build failed for ${session.id}:`, err);
+        const fallback: AttentionCard = {
+          id: session.id,
+          label: session.id.slice(0, 8),
+          host: "",
+          cwd: "",
+          repoBranch: null,
+          status: "idle",
+          since: null,
+          lastTool: null,
+          toolCount: 0,
+          // Fixed-width zero sparkline (not []) so a malformed session keeps the
+          // same bucket layout as normal cards and the board stays stable.
+          sparkline: new Array<number>(DEFAULT_SPARKLINE_BUCKETS).fill(0),
+        };
+        return fallback;
+      }
+    },
+  );
+
+  const body: AttentionResponse = { ok: true, sessions: cards, truncated };
+  // Only cache a result computed to completion. If the client aborted mid-flight
+  // the per-session fetches degrade to empty tools; caching that would let a
+  // fresh poll within the TTL serve a partial/degraded board.
+  if (!req.signal.aborted) storeCache(Date.now(), body);
+  return json(body);
+}
