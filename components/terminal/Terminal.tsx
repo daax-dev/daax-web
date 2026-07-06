@@ -13,6 +13,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import { openTerminalWebSocket } from "@/lib/websocket-utils";
+import { createStreamMasker } from "@/lib/redaction/mask";
+import { getPresentationMode } from "@/lib/presentation-mode";
 
 export interface TerminalProps {
   wsUrl: string;
@@ -149,6 +151,29 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       // its orphaned socket instead of wiring handlers to a dead component.
       let disposed = false;
 
+      // Presentation mode (#155): visually redact secrets at the write boundary
+      // so sessions can be safely screen-shared. Best-effort, visual-only — the
+      // recording data is unchanged. The stream masker handles ANSI escapes and
+      // tokens split across WebSocket chunks. When masking is off, flush any
+      // carried (masked) bytes first so no output is lost, then write raw.
+      //
+      // Masking is PATTERN-BASED by design (#155): no `knownValues` are passed.
+      // The app's known secret values live only server-side (see `lib/secrets.ts`
+      // and the api-tools credentials store, whose APIs return masked values,
+      // never raw ones) and must NOT be shipped to the browser. Passing them here
+      // to enable exact-value masking would be a security regression, so the
+      // client masker relies solely on secret-shape patterns.
+      const masker = createStreamMasker();
+      const writeOutput = (data: string) => {
+        if (getPresentationMode()) {
+          term.write(masker.push(data));
+        } else {
+          const carried = masker.flush();
+          if (carried) term.write(carried);
+          term.write(data);
+        }
+      };
+
       // Function to setup WebSocket with all handlers (reusable for
       // reconnections). Async because each (re)connect mints a fresh single-use
       // bearer ticket via openTerminalWebSocket (F1b, #95).
@@ -251,10 +276,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
                 break;
 
               case "output":
-                term.write(msg.data);
+                writeOutput(msg.data);
                 break;
 
-              case "exit":
+              case "exit": {
+                // Flush any masked bytes held for a cross-chunk token so the
+                // final output is rendered before the exit notice.
+                const carried = masker.flush();
+                if (carried) term.write(carried);
                 term.writeln("");
                 term.writeln(
                   `\x1b[33mProcess exited with code ${msg.code}\x1b[0m`,
@@ -263,6 +292,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
                 setIsRecording(false);
                 onExitRef.current?.(msg.code, msg.signal);
                 break;
+              }
 
               case "recordingStarted":
                 setIsRecording(true);
@@ -286,6 +316,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
         };
 
         ws.onclose = (event) => {
+          // Render any masked bytes held for a cross-chunk token and clear the
+          // carry so nothing bleeds into a reconnect (#155).
+          const carried = masker.flush();
+          if (carried) term.write(carried);
           setConnected(false);
           console.log(
             `[Terminal] WebSocket closed: code=${event.code}, reason="${event.reason}", wsUrl=${wsUrl}`,

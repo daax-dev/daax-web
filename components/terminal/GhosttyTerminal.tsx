@@ -9,6 +9,8 @@ import {
   useImperativeHandle,
 } from "react";
 import { openTerminalWebSocket } from "@/lib/websocket-utils";
+import { createStreamMasker } from "@/lib/redaction/mask";
+import { getPresentationMode } from "@/lib/presentation-mode";
 
 export interface GhosttyTerminalProps {
   wsUrl: string;
@@ -81,6 +83,28 @@ export const GhosttyTerminal = forwardRef<
     let fitAddon: any = null;
     let dataDisposer: { dispose: () => void } | null = null;
     let resizeObserver: ResizeObserver | null = null;
+
+    // Presentation mode (#155): visually redact secrets at the write boundary.
+    // Best-effort, visual-only; handles ANSI escapes and tokens split across
+    // chunks. When off, flush carried bytes then write raw so nothing is lost.
+    //
+    // Masking is PATTERN-BASED by design (#155): no `knownValues` are passed.
+    // The app's known secret values live only server-side (see `lib/secrets.ts`
+    // and the api-tools credentials store, whose APIs return masked values, never
+    // raw ones) and must NOT be shipped to the browser. Passing them here to
+    // enable exact-value masking would be a security regression, so the client
+    // masker relies solely on secret-shape patterns.
+    const masker = createStreamMasker();
+    const writeOutput = (data: string) => {
+      if (!term) return;
+      if (getPresentationMode()) {
+        term.write(masker.push(data));
+      } else {
+        const carried = masker.flush();
+        if (carried) term.write(carried);
+        term.write(data);
+      }
+    };
 
     const initGhostty = async () => {
       try {
@@ -228,10 +252,12 @@ export const GhosttyTerminal = forwardRef<
                   break;
 
                 case "output":
-                  term?.write(msg.data);
+                  writeOutput(msg.data);
                   break;
 
-                case "exit":
+                case "exit": {
+                  const carried = masker.flush();
+                  if (carried) term?.write(carried);
                   term?.writeln("");
                   term?.writeln(
                     `\x1b[33mProcess exited with code ${msg.code}\x1b[0m`,
@@ -240,6 +266,7 @@ export const GhosttyTerminal = forwardRef<
                   setIsRecording(false);
                   onExitRef.current?.(msg.code, msg.signal);
                   break;
+                }
 
                 case "recordingStarted":
                   setIsRecording(true);
@@ -263,6 +290,10 @@ export const GhosttyTerminal = forwardRef<
           };
 
           newWs.onclose = (event: CloseEvent) => {
+            // Render any masked bytes held for a cross-chunk token and clear the
+            // carry so nothing bleeds into a reconnect (#155).
+            const carried = masker.flush();
+            if (carried) term?.write(carried);
             setConnected(false);
 
             // 1008 (policy violation) is an auth/origin/ticket rejection (F1b

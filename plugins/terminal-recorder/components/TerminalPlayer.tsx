@@ -12,6 +12,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Play, Pause, RotateCcw, FastForward } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
+import { createStreamMasker } from "@/lib/redaction/mask";
+import { usePresentationMode } from "@/lib/presentation-mode";
 import type { ParsedAsciinema, AsciinemaEvent } from "../types";
 
 import "@xterm/xterm/css/xterm.css";
@@ -64,6 +66,25 @@ export function TerminalPlayer({
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  // Presentation mode (#155): visually redact secrets during playback.
+  // Visual-only — the recording data on disk is never modified.
+  const { enabled: presentationEnabled } = usePresentationMode();
+  const presentationRef = useRef(presentationEnabled);
+  // Keep the ref in sync SYNCHRONOUSLY during render (not only in the toggle
+  // effect below). A scheduled playback timeout can fire between a
+  // presentation-mode toggle and the effect that reacts to it; if the ref were
+  // updated only in the effect, that timeout's writeChunk() would emit a chunk
+  // with the PREVIOUS masking state — an unmasked leak when toggling
+  // presentation mode ON mid-playback (#155). Assigning here guarantees
+  // writeChunk always reads the current mode.
+  presentationRef.current = presentationEnabled;
+  // Presentation-mode masking is PATTERN-BASED by design (#155): no
+  // `knownValues` are passed. The app's known secret values live only
+  // server-side (see `lib/secrets.ts` / the api-tools credentials store, whose
+  // APIs return masked values, never raw ones) and must NOT be shipped to the
+  // browser. Shipping them to enable exact-value masking would be a security
+  // regression, so the client masker relies solely on secret-shape patterns.
+  const maskerRef = useRef(createStreamMasker());
   const playbackRef = useRef<{
     timeoutId?: ReturnType<typeof setTimeout>;
     eventIndex: number;
@@ -134,6 +155,28 @@ export function TerminalPlayer({
   }, []);
 
   /**
+   * Write a recording output chunk, routing through the presentation-mode
+   * masker when active. Stateful across chunks so tokens split across asciinema
+   * events are still masked (ANSI-safe).
+   */
+  const writeChunk = useCallback((data: string) => {
+    const term = xtermRef.current;
+    if (!term) return;
+    if (presentationRef.current) {
+      term.write(maskerRef.current.push(data));
+    } else {
+      // Masking is off: flush any bytes the masker is still carrying (a partial
+      // token/escape held for a cross-chunk match while masking was on) before
+      // writing raw, so no carried bytes are lost or emitted late at the
+      // mode-off transition (#155). Mirrors the live Terminal/GhosttyTerminal
+      // write paths.
+      const carried = maskerRef.current.flush();
+      if (carried) term.write(carried);
+      term.write(data);
+    }
+  }, []);
+
+  /**
    * Play next event in sequence
    */
   const playNextEvent = useCallback(() => {
@@ -141,6 +184,9 @@ export function TerminalPlayer({
 
     const pb = playbackRef.current;
     if (pb.eventIndex >= parsed.events.length) {
+      // Flush any masked bytes held for a cross-event token at end of playback.
+      const carried = maskerRef.current.flush();
+      if (carried) xtermRef.current.write(carried);
       setPlaying(false);
       return;
     }
@@ -156,7 +202,7 @@ export function TerminalPlayer({
 
     pb.timeoutId = setTimeout(() => {
       if (eventType === "o") {
-        xtermRef.current?.write(eventData);
+        writeChunk(eventData);
       }
       // Input events ('i') are typically not displayed during playback
 
@@ -164,7 +210,7 @@ export function TerminalPlayer({
       pb.eventIndex++;
       playNextEvent();
     }, delay);
-  }, [parsed, speed]);
+  }, [parsed, speed, writeChunk]);
 
   /**
    * Start playback
@@ -203,6 +249,7 @@ export function TerminalPlayer({
     pb.startTime = 0;
     setCurrentTime(0);
     setPlaying(false);
+    maskerRef.current.reset();
     xtermRef.current?.reset();
     xtermRef.current?.clear();
   }, []);
@@ -221,6 +268,7 @@ export function TerminalPlayer({
       }
 
       // Clear terminal and replay up to target time
+      maskerRef.current.reset();
       xtermRef.current.reset();
       xtermRef.current.clear();
 
@@ -229,10 +277,13 @@ export function TerminalPlayer({
         const event = parsed.events[i];
         if (event[0] > time) break;
         if (event[1] === "o") {
-          xtermRef.current.write(event[2]);
+          writeChunk(event[2]);
         }
         eventIndex = i + 1;
       }
+      // Flush carried bytes so the seek target frame is fully rendered.
+      const carried = maskerRef.current.flush();
+      if (carried) xtermRef.current.write(carried);
 
       pb.eventIndex = eventIndex;
       pb.pausedAt = time;
@@ -244,8 +295,24 @@ export function TerminalPlayer({
         playNextEvent();
       }
     },
-    [parsed, playing, playNextEvent, speed],
+    [parsed, playing, playNextEvent, speed, writeChunk],
   );
+
+  // Toggling presentation mode re-renders the current frame with/without
+  // masking, so redaction is fully reversible during playback (AC3). Skips the
+  // initial mount and only re-seeks on an actual change.
+  const didMountToggleRef = useRef(false);
+  useEffect(() => {
+    // presentationRef is kept current synchronously during render (see above);
+    // this effect only handles the visible re-seek on an actual toggle.
+    if (!didMountToggleRef.current) {
+      didMountToggleRef.current = true;
+      return;
+    }
+    if (!xtermRef.current || !parsed) return;
+    seekTo(currentTime);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presentationEnabled]);
 
   if (!parsed) {
     return (
