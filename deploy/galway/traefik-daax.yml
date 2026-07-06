@@ -1,0 +1,136 @@
+# Daax Traefik Dynamic Configuration
+# Copy to: /etc/traefik/dynamic/daax.yml
+#
+# Routes for daax.galway.poley.dev
+#
+# Prerequisites:
+#   - Pocket ID running on port 1411 (for ForwardAuth)
+#   - Daax container on ports 4200 (web) + 4201 (ws)
+#   - Code-server container on port 18080
+#   - Clawdbot gateway on port 18789 (optional)
+
+http:
+  serversTransports:
+    h1-only:
+      disableHTTP2: true
+      forwardingTimeouts:
+        dialTimeout: 30s
+
+  middlewares:
+    # Defense-in-depth: strip auth identity headers from incoming requests
+    # so only Pocket ID ForwardAuth can populate them (prevents client spoofing).
+    # X-Daax-Proxy-Secret is stripped here too so a client cannot forge it; the
+    # real value is injected by inject-proxy-secret below (F1a, issue #94).
+    strip-forwarded-headers:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-User: ""
+          X-Forwarded-Email: ""
+          X-Forwarded-Username: ""
+          X-Forwarded-Name: ""
+          X-Forwarded-Groups: ""
+          X-Forwarded-Admin: ""
+          X-Daax-Proxy-Secret: ""
+
+    # Proxy-secret trust boundary (F1a, issue #94): inject the shared secret so
+    # the app can prove a forwarded identity traversed this proxy. Value matches
+    # DAAX_PROXY_SECRET in /opt/daax/.env (canonical copy in ~/.secrets) — it is
+    # NEVER committed. Applied to the HTTP main router only; the WS route
+    # forwards identity and is authenticated separately via bearer ticket (F1b).
+    inject-proxy-secret:
+      headers:
+        customRequestHeaders:
+          X-Daax-Proxy-Secret: "DAAX_PROXY_SECRET_PLACEHOLDER"
+
+    # Pocket ID ForwardAuth middleware
+    pocket-id-auth:
+      forwardAuth:
+        address: "http://127.0.0.1:1411/api/forward-auth/verify"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - X-Forwarded-User
+          - X-Forwarded-Email
+          - X-Forwarded-Username
+          - X-Forwarded-Name
+          - X-Forwarded-Groups
+          - X-Forwarded-Admin
+
+    # Allow clawd gateway UI to be embedded in daax iframe
+    # Strips X-Frame-Options and relaxes frame-ancestors CSP from the gateway
+    clawd-iframe-allow:
+      headers:
+        customResponseHeaders:
+          X-Frame-Options: ""
+          Content-Security-Policy: "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' ws: wss:; frame-ancestors https://daax.galway.poley.dev"
+
+  routers:
+    # WebSocket endpoint - higher priority to match before main route
+    daax-ws:
+      rule: Host(`daax.galway.poley.dev`) && PathPrefix(`/ws`)
+      service: daax-ws
+      priority: 100
+      middlewares:
+        - strip-forwarded-headers
+        - pocket-id-auth
+      tls:
+        certResolver: cloudflare
+      entryPoints:
+        - websecure
+
+    # Main web UI
+    daax:
+      rule: Host(`daax.galway.poley.dev`)
+      service: daax
+      middlewares:
+        - strip-forwarded-headers
+        - pocket-id-auth
+        - inject-proxy-secret
+      tls:
+        certResolver: cloudflare
+      entryPoints:
+        - websecure
+
+    # Code-Server (VS Code in browser)
+    daax-code:
+      rule: Host(`daax-code.galway.poley.dev`)
+      service: daax-code
+      middlewares:
+        - strip-forwarded-headers
+        - pocket-id-auth
+      tls:
+        certResolver: cloudflare
+      entryPoints:
+        - websecure
+
+    # Clawdbot Gateway (no auth - has its own token auth)
+    clawd:
+      rule: Host(`clawd.galway.poley.dev`)
+      service: clawd
+      middlewares:
+        - clawd-iframe-allow
+      tls:
+        certResolver: cloudflare
+      entryPoints:
+        - websecure
+
+  services:
+    daax:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:4200"
+
+    daax-ws:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:4201"
+
+    daax-code:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:18080"
+
+    clawd:
+      loadBalancer:
+        serversTransport: h1-only
+        servers:
+          - url: "http://127.0.0.1:18789"
