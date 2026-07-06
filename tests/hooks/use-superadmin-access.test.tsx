@@ -10,10 +10,19 @@
  * a fresh copy to avoid cross-test leakage.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+  afterAll,
+} from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
 const mockFetch = vi.fn();
+const originalFetch = global.fetch;
 global.fetch = mockFetch as unknown as typeof fetch;
 
 async function loadHook() {
@@ -28,6 +37,12 @@ describe("useSuperAdminAccess", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterAll(() => {
+    // Restore the real fetch so this file's global mock doesn't leak into
+    // later test files in the same Vitest worker.
+    global.fetch = originalFetch;
   });
 
   it("maps 401 to no super-admin access (not an error)", async () => {

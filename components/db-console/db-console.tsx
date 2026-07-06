@@ -178,6 +178,7 @@ export default function DbConsole() {
           <Button
             variant="outline"
             size="sm"
+            aria-label="Refresh"
             onClick={() =>
               selected ? loadRows(selected, offset) : loadTables()
             }
