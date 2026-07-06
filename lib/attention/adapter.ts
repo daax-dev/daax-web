@@ -159,7 +159,10 @@ export function buildCard(
     last && typeof last.name === "string" && last.name.length > 0
       ? last.name
       : last
-        ? String(last.name ?? "tool")
+        ? // On schema drift `name` may be absent or a non-string (object/number);
+          // String()-ing it can render "[object Object]". Use a stable generic
+          // label instead so the card stays readable.
+          "tool"
         : null;
 
   const host = session.host?.trim() || "";

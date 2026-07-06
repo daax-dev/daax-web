@@ -178,6 +178,20 @@ export function useAttentionPoll(
       const onDown = () => {
         wsLiveRef.current = false;
         if (wsRef.current === ws) wsRef.current = null;
+        // Detach handlers and explicitly close before scheduling a reconnect.
+        // `onerror` can fire WITHOUT a following `onclose` (browsers do this),
+        // which would otherwise leak this socket while a fresh one connects.
+        // Nulling the handlers first makes the close() idempotent — the ensuing
+        // `onclose` can no longer re-enter onDown (double-close guard).
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onclose = null;
+        ws.onerror = null;
+        try {
+          ws.close();
+        } catch {
+          /* noop — already closing/closed */
+        }
         scheduleReconnect();
       };
       ws.onclose = onDown;

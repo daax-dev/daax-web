@@ -130,8 +130,20 @@ export function handleAttentionBridge(
   // frame verbatim. No buffering: a slow browser simply drops behind, it cannot
   // grow server memory.
   upstream.on("message", (data: RawData) => {
-    if (client.readyState === WebSocket.OPEN) {
+    if (client.readyState !== WebSocket.OPEN) return;
+    try {
       client.send(rawDataToString(data));
+    } catch (err) {
+      // The client can transition to CLOSING/CLOSED between the readyState
+      // check and send(); `ws` then throws. Do NOT let that propagate — an
+      // unhandled throw here can crash the terminal-server process. Tear the
+      // bridge down for this client instead (clear the timer, close upstream).
+      console.warn(
+        "[attention-bridge] client send failed; tearing down bridge:",
+        err,
+      );
+      clearTimeout(handshakeTimer);
+      teardownUpstream(upstream);
     }
   });
 

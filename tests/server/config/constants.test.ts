@@ -1,5 +1,45 @@
 import { describe, it, expect } from "vitest";
-import { isAllowedOrigin } from "@/server/config/constants";
+import { isAllowedOrigin, localBaseUrl } from "@/server/config/constants";
+
+describe("localBaseUrl", () => {
+  it("leaves a hostname unbracketed and parseable", () => {
+    const base = localBaseUrl("localhost", 4201);
+    expect(base).toBe("http://localhost:4201");
+    expect(new URL("/?stream=attention", base).searchParams.get("stream")).toBe(
+      "attention",
+    );
+  });
+
+  it("leaves an IPv4 address unbracketed and parseable", () => {
+    const base = localBaseUrl("0.0.0.0", 4201);
+    expect(base).toBe("http://0.0.0.0:4201");
+    expect(() => new URL("/", base)).not.toThrow();
+  });
+
+  it("brackets an IPv6 unspecified literal (::) so new URL does not throw", () => {
+    const base = localBaseUrl("::", 4201);
+    expect(base).toBe("http://[::]:4201");
+    expect(new URL("/?stream=attention", base).searchParams.get("stream")).toBe(
+      "attention",
+    );
+  });
+
+  it("brackets an IPv6 loopback literal (::1)", () => {
+    const base = localBaseUrl("::1", 4201);
+    expect(base).toBe("http://[::1]:4201");
+    expect(() => new URL("/", base)).not.toThrow();
+  });
+
+  it("brackets a full IPv6 literal", () => {
+    const base = localBaseUrl("2001:db8::1", 4201);
+    expect(base).toBe("http://[2001:db8::1]:4201");
+    expect(() => new URL("/", base)).not.toThrow();
+  });
+
+  it("does not double-bracket an already-bracketed host", () => {
+    expect(localBaseUrl("[::1]", 4201)).toBe("http://[::1]:4201");
+  });
+});
 
 describe("isAllowedOrigin", () => {
   describe("undefined/null origin (raw / non-browser clients)", () => {

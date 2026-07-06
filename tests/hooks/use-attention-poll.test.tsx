@@ -272,6 +272,40 @@ describe("useAttentionPoll", () => {
       expect(fetchMock).toHaveBeenCalledTimes(3);
     });
 
+    it("closes the socket on onerror (no leak) and reconnects", async () => {
+      const sock1 = fakeSocket();
+      const sock2 = fakeSocket();
+      openTerminalWebSocket
+        .mockResolvedValueOnce(sock1 as unknown as WebSocket)
+        .mockResolvedValueOnce(sock2 as unknown as WebSocket);
+      fetchMock = snapshotFetch([sampleCard]);
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      renderHook(() => useAttentionPoll(1_000_000));
+      await flush();
+      await act(async () => {
+        sock1.onopen?.();
+      });
+      await flush();
+
+      // onerror WITHOUT a following onclose: the old socket must be explicitly
+      // closed so it does not leak while a reconnect is scheduled.
+      await act(async () => {
+        sock1.onerror?.();
+      });
+      expect(sock1.close).toHaveBeenCalledTimes(1);
+      // Handlers detached so a later onclose cannot re-enter (double-close guard).
+      expect(sock1.onclose).toBeNull();
+      expect(sock1.onerror).toBeNull();
+
+      // A reconnect is scheduled: after the backoff a second socket is opened.
+      await act(async () => {
+        vi.advanceTimersByTime(1_000);
+      });
+      await flush();
+      expect(openTerminalWebSocket).toHaveBeenCalledTimes(2);
+    });
+
     it("applies a relayed tool event to the matching card", async () => {
       const sock = fakeSocket();
       openTerminalWebSocket.mockResolvedValueOnce(sock as unknown as WebSocket);
