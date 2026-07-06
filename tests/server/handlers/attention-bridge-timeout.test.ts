@@ -78,6 +78,24 @@ describe("handleAttentionBridge upstream handshake timeout", () => {
     } as unknown as import("ws").WebSocket;
   }
 
+  // Client whose registered event handlers are captured so a test can drive the
+  // browser-side 'close'/'error' events.
+  function makeCapturingClient(): {
+    client: import("ws").WebSocket;
+    handlers: Record<string, ((...a: unknown[]) => void)[]>;
+  } {
+    const handlers: Record<string, ((...a: unknown[]) => void)[]> = {};
+    const client = {
+      readyState: FakeWebSocket.OPEN,
+      close: vi.fn(),
+      send: vi.fn(),
+      on: vi.fn((event: string, cb: (...a: unknown[]) => void) => {
+        (handlers[event] ??= []).push(cb);
+      }),
+    } as unknown as import("ws").WebSocket;
+    return { client, handlers };
+  }
+
   const req = {
     headers: {},
     socket: { remoteAddress: "127.0.0.1" },
@@ -125,5 +143,49 @@ describe("handleAttentionBridge upstream handshake timeout", () => {
     vi.advanceTimersByTime(1);
     expect(upstream.terminate).toHaveBeenCalledTimes(1);
     expect(client.close).toHaveBeenCalledWith(1011, "upstream timeout");
+  });
+
+  it("terminates (not just closes) a still-CONNECTING upstream when the client disconnects", () => {
+    const { client, handlers } = makeCapturingClient();
+    handleAttentionBridge(client, req);
+
+    const upstream = FakeWebSocket.instances[0];
+    expect(upstream.readyState).toBe(FakeWebSocket.CONNECTING);
+
+    // Browser drops before the upstream handshake completes.
+    handlers.close?.forEach((cb) => cb());
+
+    // close() would NOT abort a CONNECTING socket; the timer is already cleared,
+    // so terminate() is the only thing that prevents a leaked connection.
+    expect(upstream.terminate).toHaveBeenCalledTimes(1);
+    expect(upstream.close).not.toHaveBeenCalled();
+    expect(upstream.readyState).toBe(FakeWebSocket.CLOSED);
+  });
+
+  it("terminates a still-CONNECTING upstream when the client errors", () => {
+    const { client, handlers } = makeCapturingClient();
+    handleAttentionBridge(client, req);
+
+    const upstream = FakeWebSocket.instances[0];
+    expect(upstream.readyState).toBe(FakeWebSocket.CONNECTING);
+
+    handlers.error?.forEach((cb) => cb(new Error("boom")));
+
+    expect(upstream.terminate).toHaveBeenCalledTimes(1);
+    expect(upstream.close).not.toHaveBeenCalled();
+  });
+
+  it("closes (graceful) an already-OPEN upstream when the client disconnects", () => {
+    const { client, handlers } = makeCapturingClient();
+    handleAttentionBridge(client, req);
+
+    const upstream = FakeWebSocket.instances[0];
+    upstream.readyState = FakeWebSocket.OPEN;
+    upstream.emit("open");
+
+    handlers.close?.forEach((cb) => cb());
+
+    expect(upstream.close).toHaveBeenCalledTimes(1);
+    expect(upstream.terminate).not.toHaveBeenCalled();
   });
 });
