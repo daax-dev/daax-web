@@ -28,7 +28,7 @@
  *       terminal:exec, containers:write, mcp:manage, recording:write, settings:write
  * See ENFORCED_PERMISSIONS below for the machine-readable set.
  */
-export const PERMISSIONS = [
+export const PERMISSIONS = Object.freeze([
   // Forward-looking (not yet enforced at routes).
   "terminal:exec",
   "containers:write",
@@ -40,7 +40,7 @@ export const PERMISSIONS = [
   "admin:users:write",
   "admin:db:read",
   "admin:db:write",
-] as const;
+] as const);
 
 export type Permission = (typeof PERMISSIONS)[number];
 

@@ -428,7 +428,20 @@ export type AuthDecision =
  *   3. otherwise                         → deny (401)
  */
 export function evaluateAuthDecision(h: HeaderReader): AuthDecision {
-  const { rawUserHeader, user } = deriveAuthContext(h);
+  return evaluateAuthDecisionFromContext(deriveAuthContext(h));
+}
+
+/**
+ * Same trust decision as {@link evaluateAuthDecision}, but from an ALREADY-derived
+ * {@link AuthContext}. RBAC-guarded paths (`requireRole` / `resolveAccess`) need
+ * both the full context AND the decision; deriving once and passing it here avoids
+ * re-parsing the forward-auth headers (and re-firing any `deriveAuthContext`
+ * side-effects) twice per request. Behavior is identical to `evaluateAuthDecision`.
+ */
+export function evaluateAuthDecisionFromContext(
+  ctx: AuthContext,
+): AuthDecision {
+  const { rawUserHeader, user } = ctx;
 
   if (user.authenticated) {
     return { decision: "allow-user", user };

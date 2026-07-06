@@ -10,7 +10,11 @@ import { UNAUTHENTICATED_USER } from "./auth-types";
 // Single source of truth for the forward-auth trust decision. The pure
 // evaluator lives in ./auth-trust so the SAME logic backs both these
 // request-scoped guards and the default-deny middleware (#181) — no drift.
-import { deriveAuthContext, evaluateAuthDecision } from "./auth-trust";
+import {
+  deriveAuthContext,
+  evaluateAuthDecision,
+  evaluateAuthDecisionFromContext,
+} from "./auth-trust";
 import type { Permission } from "./rbac/permissions";
 import {
   permissionsForRoles,
@@ -202,8 +206,11 @@ export async function requireRole(
   opts?: { route?: string },
 ): Promise<RoleResult> {
   const h = await headers();
+  // Derive the forward-auth context ONCE and reuse it for both the trust
+  // decision and the role resolution below — evaluateAuthDecision() would
+  // otherwise re-parse the headers (and re-fire deriveAuthContext side-effects).
   const ctx = deriveAuthContext(h);
-  const decision = evaluateAuthDecision(h);
+  const decision = evaluateAuthDecisionFromContext(ctx);
   const { ip, ua } = auditNet(h);
   const route = opts?.route ?? null;
 
@@ -351,8 +358,9 @@ export interface AccessSummary {
  */
 export async function resolveAccess(): Promise<AccessSummary> {
   const h = await headers();
+  // Derive once, reuse for both the decision and the role resolution below.
   const ctx = deriveAuthContext(h);
-  const decision = evaluateAuthDecision(h);
+  const decision = evaluateAuthDecisionFromContext(ctx);
 
   if (decision.decision === "allow-operator") {
     // Host-dev operator: full local access; expose every permission for the UI.
