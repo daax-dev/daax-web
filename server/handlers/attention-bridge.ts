@@ -144,6 +144,11 @@ export function handleAttentionBridge(
       );
       clearTimeout(handshakeTimer);
       teardownUpstream(upstream);
+      // Also close the client so a still-OPEN browser doesn't sit on a dead
+      // relay — a recoverable code lets it fall back to polling / reconnect.
+      if (client.readyState === WebSocket.OPEN) {
+        client.close(1011, "relay error");
+      }
     }
   });
 
