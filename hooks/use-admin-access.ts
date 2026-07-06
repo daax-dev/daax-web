@@ -8,9 +8,12 @@ import type { Permission } from "@/lib/rbac/permissions";
  * comes from `/api/auth/access`, which resolves the caller's roles server-side
  * (docs §3 F5), so UI visibility and API authorization can never diverge.
  *
- * Fails SAFE: `isAdmin` defaults to `false` until the fetch resolves and on any
- * error (including a 401/403), so the admin surface is never flashed to a
- * non-admin.
+ * Fails SAFE: `isAdmin` defaults to `false` on a cold mount (no cache) until the
+ * fetch resolves, and on any error (including a 401/403), so the admin surface
+ * is never flashed to a non-admin on first load. Only a POSITIVE
+ * authenticated-admin summary is cached, so a warm mount within the TTL can
+ * initialize `isAdmin: true` immediately — a non-admin/unauthenticated result is
+ * never cached, so it can never be served stale after a logout / identity change.
  *
  * REVALIDATION (TTL): only a POSITIVE authenticated-admin summary is cached, for
  * `ACCESS_TTL_MS` and stamped with `cachedAt`. A mount past the TTL refetches, so

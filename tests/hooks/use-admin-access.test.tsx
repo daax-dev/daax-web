@@ -13,7 +13,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 
 const mockFetch = vi.fn();
-global.fetch = mockFetch as unknown as typeof fetch;
+// Stub via vi.stubGlobal so it's cleanly undone in afterEach — a bare
+// `global.fetch = …` would leak the mock into later files in the same worker.
+vi.stubGlobal("fetch", mockFetch);
 
 // Deterministic clock so we can step past the TTL without real time / fake
 // timers (fake timers would stall testing-library's waitFor).
@@ -59,12 +61,14 @@ function unauthAccess() {
 describe("useAdminAccess", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    vi.stubGlobal("fetch", mockFetch);
     now = 1_000_000;
     vi.spyOn(Date, "now").mockImplementation(() => now);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("resolves isAdmin from /api/auth/access and shares the cache within the TTL", async () => {

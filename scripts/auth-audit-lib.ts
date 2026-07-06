@@ -27,8 +27,9 @@ export const AUTH_GUARD_CALL_RE =
   /\bawait\s+(?:requireAuth(?:OrThrow)?|requireRole|requireSuperAdmin)\s*\(/;
 
 /**
- * An import statement that brings in an auth guard (`requireAuth*` or
- * `requireRole`). Uses `[^;]*?` (not `.`) between `import` and `from` so it
+ * An import statement that brings in an auth guard (`requireAuth*`,
+ * `requireRole`, or `requireSuperAdmin`). Uses `[^;]*?` (not `.`) between
+ * `import` and `from` so it
  * spans NEWLINES — a multiline `import {\n  requireAuth,\n} from "..."` block is
  * matched — while the negated `;` keeps it bounded to a single import statement,
  * so it cannot greedily swallow across an intervening statement terminator.
