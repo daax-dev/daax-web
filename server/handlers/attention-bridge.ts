@@ -103,9 +103,12 @@ export function handleAttentionBridge(
   // client with a recoverable code so the browser falls back to polling. The
   // timer is cleared on open/close/error below, and unref'd so it never keeps
   // the process alive on its own.
+  // Resolve the timeout ONCE so the delay and the warning log always agree, even
+  // if DAAX_ATTENTION_UPSTREAM_TIMEOUT_MS were to change between reads.
+  const handshakeTimeoutMs = upstreamHandshakeTimeoutMs();
   const handshakeTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
     console.warn(
-      `[attention-bridge] upstream handshake timed out after ${upstreamHandshakeTimeoutMs()}ms; closing`,
+      `[attention-bridge] upstream handshake timed out after ${handshakeTimeoutMs}ms; closing`,
     );
     try {
       upstream.terminate();
@@ -115,7 +118,7 @@ export function handleAttentionBridge(
     if (client.readyState === WebSocket.OPEN) {
       client.close(1011, "upstream timeout");
     }
-  }, upstreamHandshakeTimeoutMs());
+  }, handshakeTimeoutMs);
   (handshakeTimer as { unref?: () => void }).unref?.();
 
   upstream.on("open", () => {
