@@ -138,9 +138,11 @@ export function initializeClaudeAuthDir(): {
       // UID 1000. A root-owned /workspace mount is the usual cause here.
       console.error(
         "[Terminal Server] This container runs as the non-root 'node' user (UID 1000). " +
-          "The mounted /workspace (and /host-config/.claude.json) MUST be writable by UID 1000.\n" +
-          "  Fix on the HOST: chown -R 1000:1000 <your DAAX_WORKSPACE dir>  " +
-          "(and ensure ~/.claude.json is owned by / writable by UID 1000).",
+          "The mounted /workspace MUST be writable by UID 1000; the usual cause is a " +
+          "root-owned /workspace bind mount.\n" +
+          "  Fix on the HOST: chown -R 1000:1000 <your DAAX_WORKSPACE dir>.\n" +
+          "  (If this deploy also mounts /host-config/.claude.json, ensure it too is " +
+          "owned by / writable by UID 1000 — the split terminal service does not mount it.)",
       );
     } else {
       console.error(

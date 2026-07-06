@@ -5,7 +5,11 @@
 #
 # Prerequisites:
 #   - Pocket ID running on port 1411 (for ForwardAuth)
-#   - Daax container on ports 4200 (web) + 4201 (ws)
+#   - Daax WEB container (daax) on port 4200
+#   - Daax TERMINAL container (daax-terminal) on port 4201 (F3 split, #100):
+#     the WS plane is a separate service; the daax-ws service below still
+#     targets 127.0.0.1:4201, now published by daax-terminal, so this routing
+#     is unchanged by the split.
 #   - Code-server container on port 18080
 #   - Clawdbot gateway on port 18789 (optional)
 
@@ -137,6 +141,9 @@ http:
         servers:
           - url: "http://127.0.0.1:4200"
 
+    # Terminal WebSocket plane. Post-F3 (#100) this is the standalone
+    # daax-terminal container, which publishes 127.0.0.1:4201 (was the combined
+    # daax container before the split). URL unchanged.
     daax-ws:
       loadBalancer:
         servers:

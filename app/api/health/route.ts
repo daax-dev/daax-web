@@ -15,16 +15,22 @@ import { ping } from "@/lib/db/pg";
  * Public by design (no `requireAuth`) so container/Compose healthchecks and
  * cloud readiness probes can reach it without credentials (AC: auth-excluded).
  *
- * App + terminal share one container/host until F3 splits them, so the probe
- * targets loopback; F3 finalizes the per-plane (daax-terminal) wiring.
+ * Same-container/host-dev (bun dev, docker:run, local docker-compose.yml): the
+ * terminal listens on this process's loopback, so the probe defaults to
+ * 127.0.0.1. Split deploy (F3, #100): the terminal is a separate service, so
+ * the web service sets TERMINAL_INTERNAL_HOST=terminal to probe it across the
+ * daax-net bridge by service name.
  */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Host the terminal server is reachable on FROM this process. It binds
 // TERMINAL_HOST (0.0.0.0 in containers), but that is a bind address, not a
-// connect target — loopback is correct for same-container/same-host probing.
-const TERMINAL_PROBE_HOST = "127.0.0.1";
+// connect target. Defaults to loopback (same-container/host-dev); overridden by
+// TERMINAL_INTERNAL_HOST in the F3 split deploy where terminal is its own
+// service. An empty/whitespace value falls back to loopback (fail-safe).
+const TERMINAL_PROBE_HOST =
+  process.env.TERMINAL_INTERNAL_HOST?.trim() || "127.0.0.1";
 const TERMINAL_PROBE_TIMEOUT_MS = 1500;
 // Bound the DB probe response: shorter than the pool's connectionTimeoutMillis
 // (lib/db/pg.ts) so the endpoint answers fast on a black-hole Postgres host

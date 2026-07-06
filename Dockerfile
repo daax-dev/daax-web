@@ -1,7 +1,12 @@
 # Daax Container Image
 # Supports Docker-in-Docker for spawning AI coding containers
 #
-# Build: docker build -t daax .
+# Build (combined/default web+terminal image — matches rebuild.sh / package.json):
+#   docker build --target runner -t daax .
+# The final stage is `terminal`, so an untargeted `docker build .` yields a
+# terminal-only image; pass `--target runner` for the app image.
+# Build the terminal-only image explicitly with:
+#   docker build --target terminal -t daax-terminal .
 #
 # The image runs as the non-root `node` user (#185), so Docker-socket access is by
 # GROUP membership: pass --group-add with the HOST socket's GID (NOT uid 0), or
@@ -240,8 +245,12 @@ COPY --from=builder /app/config.toml ./config.toml
 # chown of /app is non-recursive: node only needs to CREATE entries in /app;
 # the root-owned copied assets (node_modules, .next server/static) stay
 # read-only, which is all the runtime needs.
-RUN mkdir -p /app/data /app/.logs/decisions /app/.data /app/.next/cache && \
-    chown node:node /app /app/data /app/.logs /app/.logs/decisions /app/.data && \
+# /home/node/.daax is pre-created node-owned for the same reason as /app/data:
+# the F3 split deploy (#100) mounts a shared named volume there
+# (daax-recordings) so the terminal plane's recordings reach the web plane; a
+# fresh named-volume mount inherits this ownership instead of root:root.
+RUN mkdir -p /app/data /app/.logs/decisions /app/.data /app/.next/cache /home/node/.daax && \
+    chown node:node /app /app/data /app/.logs /app/.logs/decisions /app/.data /home/node/.daax && \
     chown -R node:node /app/.next/cache
 
 # Drop to the unprivileged user for the app runtime (#185). Docker-socket access
@@ -266,5 +275,45 @@ ENV PORT=4200
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD curl -f http://localhost:4200/api/health || exit 1
 
-# Start both Next.js and terminal server in production mode
+# Start both Next.js and terminal server in production mode.
+# This default (both planes in one container) is what the single-container
+# convenience modes rely on: `bun run docker:run`, ./rebuild.sh, and the local
+# docker-compose.yml. The F3 production split (deploy/docker-compose.yml) does
+# NOT use this default — it runs the web plane via `command: start:web` and the
+# terminal plane from the `terminal` target below.
 CMD ["bun", "run", "start:prod"]
+
+# -----------------------------------------------------------
+# Terminal plane image (F3 frontend/backend split, #100)
+#
+# A distinct `daax-terminal` image that runs ONLY the terminal WebSocket server
+# (server/terminal-server.ts) — never Next.js. Built with:
+#     docker build --target terminal -t daax-terminal .
+# deploy/docker-compose.yml's `terminal` service uses this target; it holds the
+# Docker socket + workspace mount, so the socket-bearing plane is isolated from
+# the Traefik-facing web plane (which no longer mounts docker.sock).
+#
+# FROM runner (not base) so it inherits the EXACT runtime the terminal server
+# needs — full node_modules incl. node-pty + tsx, server/, lib/, and the
+# non-root `node` user + pre-created node-owned write dirs from #185 — with no
+# risk of a missed transitive file. Only the CMD and healthcheck differ.
+FROM runner AS terminal
+
+# Re-declare USER so the non-root guard (tests/deploy/nonroot-hardening) and any
+# reader see this stage runs unprivileged, matching runner. Docker-socket access
+# is group-based via compose `group_add: ${DOCKER_GID}` (paired with the boot
+# preflight in server/terminal-server.ts), NOT uid-0.
+USER node
+
+# Terminal WebSocket server only.
+EXPOSE 4201
+
+# TCP-connect healthcheck: the terminal server speaks WebSocket, not HTTP, so a
+# curl probe cannot work. A bare TCP connect to 4201 confirms the listener is up
+# without tripping the F1b (#95) WS upgrade auth. Node is always present (base).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+  CMD node -e "require('net').connect({port:parseInt(process.env.TERMINAL_PORT||'4201',10),host:'127.0.0.1'}).on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))" || exit 1
+
+# Run only the terminal server (TERMINAL_HOST=0.0.0.0 so it is reachable from
+# the web container / Traefik across the daax-net bridge).
+CMD ["bun", "run", "start:terminal"]

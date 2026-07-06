@@ -7,8 +7,21 @@
  * `GET` wrapper is a thin try/catch around this function.
  */
 
-import { describe, it, expect } from "vitest";
-import { listAndProbeSessions } from "@/app/api/ai/active-sessions/route";
+import { describe, it, expect, vi } from "vitest";
+
+// Seam for the HTTP handler's default exec: GET() shells out via
+// defaultDockerExec, so mock ONLY that binding (the core-function tests below
+// keep injecting explicit stubs and are unaffected).
+const { mockDefaultDockerExec } = vi.hoisted(() => ({
+  mockDefaultDockerExec: vi.fn(),
+}));
+
+vi.mock("@/lib/docker-exec", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/docker-exec")>();
+  return { ...actual, defaultDockerExec: mockDefaultDockerExec };
+});
+
+import { GET, listAndProbeSessions } from "@/app/api/ai/active-sessions/route";
 import type { DockerExec } from "@/lib/docker-exec";
 
 const NOW = Date.UTC(2026, 0, 2, 0, 0, 0);
@@ -195,5 +208,38 @@ describe("listAndProbeSessions", () => {
     await expect(listAndProbeSessions(exec, NOW)).rejects.toThrow(
       "docker daemon down",
     );
+  });
+});
+
+describe("GET /api/ai/active-sessions split-deploy degradation (#100)", () => {
+  it("returns the /api/containers-shaped 503 when the docker daemon is unreachable", async () => {
+    // The split web plane holds no /var/run/docker.sock — docker CLI errors
+    // with the daemon-unreachable message on stderr.
+    mockDefaultDockerExec.mockRejectedValue(
+      Object.assign(new Error("Command failed: docker ps"), {
+        stderr:
+          "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+      }),
+    );
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body).toEqual({
+      error: "Docker daemon not available",
+      details: expect.stringContaining("docker ps"),
+      hint: "Make sure Docker is running and the socket is accessible.",
+    });
+  });
+
+  it("keeps an ordinary docker failure as a 500", async () => {
+    mockDefaultDockerExec.mockRejectedValue(new Error("boom"));
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body).toEqual({ success: false, error: "boom" });
   });
 });

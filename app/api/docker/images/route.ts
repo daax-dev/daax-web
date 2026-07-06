@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { isValidDockerImageName } from "@/lib/docker-validation";
+import {
+  dockerUnavailableJson,
+  isDockerUnavailableError,
+} from "@/lib/docker-exec";
 import { imageRefForVariant } from "@/lib/settings";
 
 const execFileAsync = promisify(execFile);
@@ -72,7 +76,11 @@ export async function GET(request: NextRequest) {
         size: sizeMB,
         created: created ? new Date(created).toISOString() : undefined,
       });
-    } catch {
+    } catch (error) {
+      // Split deploy (F3 #100): no Docker socket on the web plane — return
+      // the same structured 503 as /api/containers rather than misreporting
+      // every image as merely "not found".
+      if (isDockerUnavailableError(error)) return dockerUnavailableJson(error);
       // Image not found locally
       results.push({
         id: imageId,

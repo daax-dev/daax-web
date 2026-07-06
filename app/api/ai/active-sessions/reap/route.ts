@@ -15,7 +15,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { isAiSessionName } from "@/lib/ai-session-name";
 import { mapPool } from "@/lib/concurrency";
-import { defaultDockerExec, type DockerExec } from "@/lib/docker-exec";
+import {
+  defaultDockerExec,
+  dockerUnavailableJson,
+  isDockerUnavailableError,
+  type DockerExec,
+} from "@/lib/docker-exec";
 
 const DAAX_NAME_PREFIX = "daax-";
 const DEFAULT_IDLE_THRESHOLD_SECONDS = 30 * 60;
@@ -157,6 +162,10 @@ export async function POST(req: NextRequest) {
       results,
     });
   } catch (error) {
+    // Split deploy (F3 #100): no Docker socket on the web plane — same
+    // structured 503 as /api/containers instead of a raw 500. Manual
+    // fallback: `docker ps` / `docker rm -f daax-<id>` on the host.
+    if (isDockerUnavailableError(error)) return dockerUnavailableJson(error);
     return NextResponse.json(
       {
         success: false,

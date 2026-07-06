@@ -7,17 +7,65 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { NextResponse } from "next/server";
 
 const execFileAsync = promisify(execFile);
 
 export type DockerExec = (
   args: string[],
-  opts?: { maxBuffer?: number },
+  opts?: { maxBuffer?: number; timeout?: number },
 ) => Promise<{ stdout: string; stderr: string }>;
 
 export const defaultDockerExec: DockerExec = async (args, opts) => {
-  // Default encoding is utf8, so stdout/stderr are strings at runtime; the
-  // promisified type widens them to string|Buffer, so coerce explicitly.
+  // execFile returns Buffers by default (no `encoding` option is set here), so
+  // coerce stdout/stderr to strings explicitly to satisfy the string-typed
+  // DockerExec contract.
   const { stdout, stderr } = await execFileAsync("docker", args, opts);
   return { stdout: stdout.toString(), stderr: stderr.toString() };
 };
+
+/**
+ * True when an error from a `docker` shell-out means the daemon/socket is
+ * unreachable — or the CLI itself is missing — as opposed to the docker
+ * command failing (no such image/container, etc.). This is the expected state
+ * of the split-deploy web container (F3 #100), which holds no
+ * /var/run/docker.sock.
+ */
+export function isDockerUnavailableError(error: unknown): boolean {
+  const err = error as NodeJS.ErrnoException & { stderr?: unknown };
+  if (err?.code === "ENOENT") return true; // docker CLI not on PATH
+  // execFile errors carry `stderr` (and sometimes `message`) as a Buffer/
+  // Uint8Array unless an explicit encoding is set, so coerce to UTF-8 before
+  // matching — otherwise a Buffer daemon-unreachable message misclassifies.
+  const asText = (x: unknown): string =>
+    Buffer.isBuffer(x) || x instanceof Uint8Array
+      ? Buffer.from(x).toString("utf8")
+      : String(x ?? "");
+  const text = `${asText(err?.message)} ${asText(err?.stderr)}`;
+  return /cannot connect to the docker daemon|is the docker daemon running|docker daemon is not running|error during connect|permission denied while trying to connect/i.test(
+    text,
+  );
+}
+
+/**
+ * The graceful 503 a docker-backed web route returns when the daemon is
+ * unreachable — the SAME shape as GET /api/containers, so the UI has one
+ * consistent "Docker unavailable" state instead of a raw 500. In the split
+ * deploy (F3 #100) the operator fallback for AI session cleanup is manual:
+ * `docker ps` / `docker rm -f daax-<id>` on the host.
+ *
+ * Named distinctly from `host-docker.ts`'s `dockerUnavailableResponse` (a
+ * dockerode ping-guard returning `Promise<NextResponse | null>`): this is a
+ * pure, socketless builder that always returns a `NextResponse` from a caught
+ * error. The two share the JSON shape but not the signature/semantics.
+ */
+export function dockerUnavailableJson(error: unknown): NextResponse {
+  return NextResponse.json(
+    {
+      error: "Docker daemon not available",
+      details: error instanceof Error ? error.message : String(error),
+      hint: "Make sure Docker is running and the socket is accessible.",
+    },
+    { status: 503 },
+  );
+}

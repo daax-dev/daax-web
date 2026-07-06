@@ -134,6 +134,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Explicit target (F3 #100): the Dockerfile's last stage is now `terminal`.
+      # This local-dev service runs a single combined container (default CMD
+      # start:prod = web + terminal), so it must pin the `runner` image.
+      target: runner
     image: daax:local
     container_name: daax
     restart: unless-stopped

@@ -28,7 +28,11 @@ services:
       # PGDATA off-volume and the image refuses to start.
       - daax-pg-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DAAX_PG_USER:-daax} -d ${DAAX_PG_DB:-daax}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DAAX_PG_USER:-daax} -d ${DAAX_PG_DB:-daax}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -108,7 +112,10 @@ services:
   # service waits for this to complete successfully, so a bad/failed migration
   # blocks the rollout (fail-closed) without coupling the app process to PG.
   migrate:
-    image: daax:latest
+    # GHCR-published web image (#100): deploy:kinsale/muckross `docker compose
+    # pull` fetches the published image, not a local `daax:latest` (which would
+    # resolve to Docker Hub and fail). Same image as the daax web service.
+    image: ghcr.io/daax-dev/daax-web:latest
     container_name: daax-migrate
     restart: "no"
     depends_on:
@@ -124,26 +131,44 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    image: daax:latest
+      # Explicit target (F3 #100): the Dockerfile's last stage is `terminal`, so
+      # the web plane must pin `runner` or it would build the terminal image.
+      target: runner
+    # GHCR-published web image (#100): the deploy path is pull-based
+    # (deploy:kinsale/muckross run `docker compose pull daax terminal`), so this
+    # must name the published GHCR ref. A local `daax:latest` would resolve to
+    # Docker Hub and fail the pull. `docker compose up --build` still builds
+    # locally and tags this same ref.
+    image: ghcr.io/daax-dev/daax-web:latest
     container_name: daax
     restart: unless-stopped
+
+    # F3 frontend/backend split (#100): the web plane runs ONLY Next.js
+    # (start:web). The terminal plane (server/terminal-server.ts) runs in the
+    # separate `terminal` service below. The image default CMD (start:prod =
+    # both planes) is overridden here so this Traefik-facing service never runs
+    # the terminal server and — critically — never mounts the Docker socket.
+    command: ["bun", "run", "start:web"]
 
     depends_on:
       postgres:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      # Web /api/health deep-probes the terminal plane (TCP connect to
+      # terminal:4201, see TERMINAL_INTERNAL_HOST below). Wait for it to be
+      # healthy so the web container doesn't flap unhealthy during terminal boot.
+      terminal:
+        condition: service_healthy
 
-    # Hardening (#185). The image runs as the unprivileged `node` user (UID 1000,
-    # Dockerfile `USER node`); these options bound the blast radius of an in-app
-    # RCE given the mounted Docker socket.
+    # Hardening (#185 + F3 #100). The image runs as the unprivileged `node` user
+    # (UID 1000, Dockerfile `USER node`). Post-split this service holds NO Docker
+    # socket, so it needs no `group_add` — the socket + spawn machinery live only
+    # on the `terminal` service. no-new-privileges + cap_drop [ALL] are kept as
+    # defense-in-depth for the internet(Traefik)-facing plane.
     #   - no-new-privileges: blocks setuid/setgid escalation inside the container.
-    #   - group_add ${DOCKER_GID} (below): grants docker.sock access by GROUP
-    #     membership, not uid-0 — now load-bearing since the process is non-root.
-    #     Set DOCKER_GID to the host socket GID (`stat -c '%g' /var/run/docker.sock`).
-    #   - cap_drop [ALL]: no capability is required — socket access is group-based,
-    #     the app binds only high ports (4200/4201), and it runs non-root; none are
-    #     re-added.
+    #   - cap_drop [ALL]: no capability is required — the app binds only a high
+    #     port (4200) and runs non-root; none are re-added.
     # DEFERRED read_only rootfs: the app writes several scattered paths under
     # process.cwd() (/app/.secrets.json, /app/data, /app/.logs, /app/.data,
     # /app/.next/cache) plus /home/node/.mcp-gateway and the mounted /app/data
@@ -158,21 +183,28 @@ services:
       - ALL
 
     ports:
-      # Bind to localhost only - Traefik proxies external access
+      # Bind to localhost only - Traefik proxies external access.
+      # 4201 (Terminal WebSocket) is now published by the `terminal` service.
       - "127.0.0.1:4200:4200" # Web UI
-      - "127.0.0.1:4201:4201" # Terminal WebSocket
 
     volumes:
-      # Docker socket for spawning containers (DinD)
-      - /var/run/docker.sock:/var/run/docker.sock
+      # No Docker socket here (F3 #100): the web plane does not spawn containers.
+      # The socket is mounted only on the `terminal` service.
 
-      # Workspace volume - projects to edit
+      # Workspace volume - projects to edit (read/write: the editor + MCP scan)
       # REQUIRED: Set DAAX_WORKSPACE to your projects directory
       # Example: export DAAX_WORKSPACE="$HOME/prj"
       - ${DAAX_WORKSPACE:?DAAX_WORKSPACE env var required (absolute path, e.g. $HOME/prj — Compose does not expand ~)}:/workspace
 
       # Persist application data
       - daax-data:/app/data
+
+      # Terminal recordings (F3 #100): the recorder runs in the `terminal`
+      # service and writes ~/.daax/recordings (= /home/node/.daax); this web
+      # plane serves GET /api/terminal-recordings from the SAME path. Share one
+      # named volume on BOTH services or the web API silently returns an empty
+      # list — it also persists recordings across terminal-container recreates.
+      - daax-recordings:/home/node/.daax
 
       # Environment file for secrets (optional). If DAAX_ENV_FILE is not set,
       # /dev/null is mounted and no .env.local file will be loaded.
@@ -192,10 +224,16 @@ services:
       - ${HOME_MCP_JSON_PATH:-/dev/null}:/host-config/.mcp.json:ro
 
     environment:
-      # Bind to all interfaces inside container
-      - TERMINAL_HOST=0.0.0.0
+      # F3 (#100): the terminal plane is a separate container. Probe it by
+      # service name over daax-net (not this process's loopback) so the deep
+      # /api/health check (brain2daax F7) reports terminal reachability correctly.
+      - TERMINAL_INTERNAL_HOST=terminal
 
-      # Terminal WS auth (F1b, #95). REQUIRED in container mode: a connection
+      # Terminal WS auth (F1b, #95). The web plane MINTS the single-use bearer
+      # ticket (POST /api/terminal/ticket); the terminal service VERIFIES it.
+      # Both MUST share the SAME DAAX_WS_TOKEN_SECRET (below) — the ticket is a
+      # stateless HMAC, so no shared memory is needed across the two containers.
+      # REQUIRED in container mode: a connection
       # through Docker's published port arrives from the bridge gateway (not
       # loopback), so the loopback bypass/forwarded path do not apply and the
       # terminal uses the bearer-ticket path — which needs this secret on both
@@ -253,26 +291,16 @@ services:
       # Code-Server URL - set to your domain
       - NEXT_PUBLIC_CODE_SERVER_URL=${CODE_SERVER_URL:-https://daax-code.${HOSTNAME}.poley.dev/?folder=/workspace}
 
-      # Container image for AI tools.
-      # #195 (Fable M5): the default is the digest-pinned image in
-      # server/config/constants.ts (DEFAULT_CONTAINER_IMAGE). This line ONLY
-      # forwards an explicit operator override — it deliberately does NOT default
-      # to a mutable `:latest` tag. When CLAUDE_CONTAINER_IMAGE is unset the
-      # container receives an empty value, and constants.ts falls through
-      # (`"" || <digest>`) to the pinned digest. Setting `:latest` here would
-      # override the pin on the real deploy path, so keep the fallback empty.
-      - CLAUDE_CONTAINER_IMAGE=${CLAUDE_CONTAINER_IMAGE:-}
-
-      # Docker network for spawned containers. Must track the real external
-      # network name (overridable via DAAX_NETWORK in deploy-local.sh) so
-      # spawned containers attach to the same network as daax itself.
+      # Docker network name — read by the web tier (lib/settings.ts). The spawn
+      # machinery that actually attaches containers to it runs in the `terminal`
+      # service (which also sets DOCKER_NETWORK). CLAUDE_CONTAINER_IMAGE and
+      # DEFAULT_MOUNT_PATH are spawn-only and now live solely on `terminal`
+      # (where #195's digest-pin fallback is applied).
       - DOCKER_NETWORK=${DAAX_NETWORK:-daax-net}
 
-      # Host workspace path for volume mounts in spawned containers
+      # Host workspace path — read by many web routes (workspace/editor, code
+      # server, devcontainers, backlog) to translate container↔host paths.
       - HOST_WORKSPACE_PATH=${DAAX_WORKSPACE:?DAAX_WORKSPACE required}
-
-      # Default mount path inside containers
-      - DEFAULT_MOUNT_PATH=/workspace
 
       # GitHub token (optional)
       - GITHUB_DAAX=${GITHUB_DAAX:-}
@@ -281,23 +309,128 @@ services:
       - CLAWD_GATEWAY_URL=${CLAWD_GATEWAY_URL:-}
       - CLAWD_GATEWAY_TOKEN=${CLAWD_GATEWAY_TOKEN:-}
 
-    # Docker socket access
-    group_add:
-      - "${DOCKER_GID:-999}"
-
+    # No group_add here (F3 #100): the web plane holds no Docker socket, so it
+    # needs no docker-group membership. Socket access is group-based on the
+    # `terminal` service only.
     networks:
       - daax-net
 
     # Deep probe (brain2daax F7, #98): /api/health checks Postgres + terminal
-    # reachability and returns 503 when a dependency is down. Longer start-period
-    # than the old shallow `/` check — the app must also reach DB + terminal at
-    # boot. (daax-terminal gets its own probe when F3 splits the services.)
+    # reachability and returns 503 when a dependency is down. Post-split (F3
+    # #100) the terminal check TCP-connects to the `terminal` service by name
+    # (TERMINAL_INTERNAL_HOST above), not loopback.
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4200/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Terminal plane (F3 frontend/backend split, #100).
+  #
+  # Runs ONLY server/terminal-server.ts (the `terminal` Dockerfile target =
+  # daax-terminal image). This is the sole holder of the Docker socket + the
+  # workspace spawn machinery, isolating it from the Traefik-facing web plane.
+  # Traefik's daax-ws router forwards wss://…/ws to 127.0.0.1:4201, now
+  # published by THIS service.
+  #
+  # Service contract with the web plane:
+  #   - shares DAAX_WS_TOKEN_SECRET (web mints the WS ticket, terminal verifies).
+  #   - shares the /workspace mount + HOST_WORKSPACE_PATH (host↔container path
+  #     translation for spawned-container volume mounts).
+  #   - needs NO Postgres (server/ imports no DB) and NO Claude-config mount
+  #     (it manages agent auth inside /workspace/.daax).
+  terminal:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: terminal
+    # GHCR-published terminal image (#100): deploy:kinsale/muckross `docker
+    # compose pull daax terminal` fetches this published ref. A local
+    # `daax-terminal:latest` would resolve to Docker Hub and fail the pull.
+    # `docker compose up --build` still builds locally and tags this same ref.
+    image: ghcr.io/daax-dev/daax-terminal:latest
+    container_name: daax-terminal
+    restart: unless-stopped
+
+    # Hardening (#185 pattern, applied to the socket-bearing plane).
+    #   - no-new-privileges: blocks setuid/setgid escalation inside the container.
+    #   - cap_drop [ALL]: socket access is group-based; it binds only high port
+    #     4201 and runs non-root, so no capability is needed.
+    #   - group_add ${DOCKER_GID}: grants docker.sock access by GROUP membership
+    #     (paired with the non-root `node` user + the boot preflight in
+    #     server/terminal-server.ts, which fails LOUD if DOCKER_GID is wrong).
+    #     Set DOCKER_GID to the host socket GID (`stat -c '%g' /var/run/docker.sock`).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    group_add:
+      - "${DOCKER_GID:-999}"
+
+    ports:
+      # Bind to localhost only - Traefik (daax-ws router) proxies external access.
+      - "127.0.0.1:4201:4201" # Terminal WebSocket
+
+    volumes:
+      # Docker socket for spawning AI-coding containers (DinD).
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Same workspace as the web plane — the terminal writes agent auth under
+      # /workspace/.daax and mounts subpaths into spawned containers.
+      - ${DAAX_WORKSPACE:?DAAX_WORKSPACE env var required (absolute path, e.g. $HOME/prj — Compose does not expand ~)}:/workspace
+      # Shared with the `daax` (web) service: the recorder here writes
+      # ~/.daax/recordings; the web plane reads it (see daax service above).
+      - daax-recordings:/home/node/.daax
+
+    environment:
+      # Bind to all interfaces so the web container / Traefik reach it over daax-net.
+      - TERMINAL_HOST=0.0.0.0
+
+      # WS ticket verification — MUST match the web plane's value (see daax above).
+      - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
+      - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
+
+      # Spawn machinery (terminal-only).
+      - DOCKER_NETWORK=${DAAX_NETWORK:-daax-net}
+      - HOST_WORKSPACE_PATH=${DAAX_WORKSPACE:?DAAX_WORKSPACE required}
+      - DEFAULT_MOUNT_PATH=/workspace
+      # #195 (Fable M5): the default is the digest-pinned image in
+      # server/config/constants.ts (DEFAULT_CONTAINER_IMAGE). This line ONLY
+      # forwards an explicit operator override — it deliberately does NOT default
+      # to a mutable `:latest` tag. When CLAUDE_CONTAINER_IMAGE is unset the
+      # container receives an empty value, and constants.ts falls through
+      # (`"" || <digest>`) to the pinned digest. Setting `:latest` here would
+      # override the pin on the real deploy path, so keep the fallback empty.
+      # Lives in the spawn lane (terminal service), same as before.
+      - CLAUDE_CONTAINER_IMAGE=${CLAUDE_CONTAINER_IMAGE:-}
+      # GitHub token (optional, used by spawned agent containers).
+      - GITHUB_DAAX=${GITHUB_DAAX:-}
+
+    networks:
+      - daax-net
+
+    # TCP-connect probe: the terminal speaks WebSocket, not HTTP. Confirms the
+    # listener is up without tripping the F1b (#95) WS upgrade auth. Honors
+    # TERMINAL_PORT (like the server + the Dockerfile healthcheck), defaulting to
+    # 4201, so a port override probes the right socket.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('net').connect({port:parseInt(process.env.TERMINAL_PORT||'4201',10),host:'127.0.0.1'}).on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
 
     logging:
       driver: "json-file"
@@ -382,6 +515,8 @@ networks:
 
 volumes:
   daax-data:
+    driver: local
+  daax-recordings:
     driver: local
   daax-code-server-data:
     driver: local
