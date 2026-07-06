@@ -70,6 +70,14 @@ function partialIntroducerSource(literal: string, body: string): string {
  * non-global `exec`, the leftmost match is the longest boundary-aligned suffix.
  * Ordinary words (no possible-introducer suffix) yield no match and flush
  * immediately, preserving live interactivity.
+ *
+ * NOTE: the `[0-9a-fA-F]+` (bare-hex) alternative means a boundary-aligned
+ * trailing hex-ish run — even a single hex digit at a chunk end, e.g. output
+ * ending " 0" or " abc" — DOES match and is therefore held until the next
+ * chunk or an explicit flush() completes it. This is bounded latency, not zero
+ * trailing-output latency: such a suffix could grow into a >=32-char hex secret,
+ * so it is carried until it is known safe. Non-hex ordinary words are unaffected
+ * and still flush immediately.
  */
 const PARTIAL_SECRET_TAIL = new RegExp(
   "(?<![A-Za-z0-9])(?:" +

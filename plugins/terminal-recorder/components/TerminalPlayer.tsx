@@ -70,6 +70,14 @@ export function TerminalPlayer({
   // Visual-only — the recording data on disk is never modified.
   const { enabled: presentationEnabled } = usePresentationMode();
   const presentationRef = useRef(presentationEnabled);
+  // Keep the ref in sync SYNCHRONOUSLY during render (not only in the toggle
+  // effect below). A scheduled playback timeout can fire between a
+  // presentation-mode toggle and the effect that reacts to it; if the ref were
+  // updated only in the effect, that timeout's writeChunk() would emit a chunk
+  // with the PREVIOUS masking state — an unmasked leak when toggling
+  // presentation mode ON mid-playback (#155). Assigning here guarantees
+  // writeChunk always reads the current mode.
+  presentationRef.current = presentationEnabled;
   // Presentation-mode masking is PATTERN-BASED by design (#155): no
   // `knownValues` are passed. The app's known secret values live only
   // server-side (see `lib/secrets.ts` / the api-tools credentials store, whose
@@ -295,7 +303,8 @@ export function TerminalPlayer({
   // initial mount and only re-seeks on an actual change.
   const didMountToggleRef = useRef(false);
   useEffect(() => {
-    presentationRef.current = presentationEnabled;
+    // presentationRef is kept current synchronously during render (see above);
+    // this effect only handles the visible re-seek on an actual toggle.
     if (!didMountToggleRef.current) {
       didMountToggleRef.current = true;
       return;
