@@ -291,6 +291,40 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
       ).toBe(true);
     });
 
+    it("reports UNGUARDED when a REGEX literal after `)` is followed by a NON-call property access (`.source`)", () => {
+      // SECURITY regression (Copilot #102): looksLikeRegexAfterCloser() only
+      // recognized `.test|exec|match(` after a `)`/`]` closer, so a regex whose
+      // tail is a plain property access — e.g. `/await requireRole(y)/.source`
+      // — was left intact and AUTH_GUARD_CALL_RE matched the guard token inside
+      // the regex SOURCE (audit BYPASS). Any `.<prop>` after the literal must be
+      // treated as consuming a regex → the guard is stripped → UNGUARDED.
+      // The regex sits directly after a `)` closer (from `if (body)`), NOT after
+      // a REGEX_PRECEDERS token — so ONLY looksLikeRegexAfterCloser can neutralize
+      // it, and only if it accepts the `.source` tail.
+      const regexThenSource = `
+        import { requireRole } from "@/lib/auth";
+        export async function POST(req: Request) {
+          const body = await req.text();
+          if (body) /await requireRole(y)/.source;
+          return new Response("ok");
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        regexThenSource,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(false);
+      expect(protectedMethods).toEqual([]);
+      expect(
+        isUnprotectedWriteRoute({
+          path: "x",
+          methods: ["POST"],
+          hasAuthGuard,
+          protectedMethods,
+        }),
+      ).toBe(true);
+    });
+
     it("reports UNGUARDED when the ONLY `await requireRole(` is inside a REGEX literal after a `{` block-body opener", () => {
       // SECURITY regression (Copilot #101): a regex literal in expression
       // position after a `{` block body — e.g.

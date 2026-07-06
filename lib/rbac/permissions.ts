@@ -17,11 +17,14 @@
  *
  * ENFORCEMENT STATUS (be precise — the catalog must not imply protection that
  * does not exist):
- *   - ENFORCED today (a route calls `requireRole` with it):
+ *   - ENFORCED at a ROUTE (a route handler calls `requireRole` with it):
  *       admin:db:read   — provenance-admin table/actions LIST + row/schema reads
  *       admin:db:write  — provenance-admin table row create/update/delete
- *       admin:users:read  — admin-UI gating (settings/provenance admin surface)
  *       admin:users:write — provenance-admin action mutations
+ *   - ENFORCED via the SERVER ACCESS SUMMARY only (no route `requireRole` call):
+ *       admin:users:read  — resolved by `resolveAccess()` / `/api/auth/access`
+ *                           and used for admin-UI gating (settings/provenance
+ *                           admin surface); it is NOT checked by a route handler.
  *   - FORWARD-LOOKING (declared for the model but NOT yet gated at any route;
  *     the corresponding routes are still `requireAuth`-only). Do NOT assume a
  *     holder is restricted by these until the route enforcement lands:
@@ -35,7 +38,8 @@ export const PERMISSIONS = Object.freeze([
   "mcp:manage",
   "recording:write",
   "settings:write",
-  // Enforced (a route calls requireRole with these).
+  // Enforced. admin:users:read via the server access summary (resolveAccess);
+  // the rest via a route requireRole call.
   "admin:users:read",
   "admin:users:write",
   "admin:db:read",
@@ -45,7 +49,10 @@ export const PERMISSIONS = Object.freeze([
 export type Permission = (typeof PERMISSIONS)[number];
 
 /**
- * The subset of {@link PERMISSIONS} that is actually enforced at a route today.
+ * The subset of {@link PERMISSIONS} that is actually enforced today — either by a
+ * route `requireRole` call (`admin:db:read`, `admin:db:write`,
+ * `admin:users:write`) or by the server-side access summary that gates the admin
+ * UI (`admin:users:read`, resolved via `resolveAccess()` / `/api/auth/access`).
  * Everything else in the catalog is forward-looking (declared for the RBAC model
  * but the route is still `requireAuth`-only), so a permission's presence in the
  * catalog does NOT by itself mean the surface is access-controlled.
