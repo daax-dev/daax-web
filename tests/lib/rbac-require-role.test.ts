@@ -43,6 +43,10 @@ describe("requireRole enforcement (F5 #101)", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Clear any env stubs leaked from other test files in this worker before
+    // establishing this suite's own environment — the local-operator bypass is
+    // env-sensitive and must not inherit another file's stubbed NODE_ENV/flags.
+    vi.unstubAllEnvs();
     isDbConfigured.mockReturnValue(true);
     delete process.env.DAAX_REQUIRE_AUTH;
     delete process.env.DAAX_PROXY_SECRET;
