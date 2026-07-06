@@ -17,8 +17,9 @@ export type DockerExec = (
 ) => Promise<{ stdout: string; stderr: string }>;
 
 export const defaultDockerExec: DockerExec = async (args, opts) => {
-  // Default encoding is utf8, so stdout/stderr are strings at runtime; the
-  // promisified type widens them to string|Buffer, so coerce explicitly.
+  // execFile returns Buffers by default (no `encoding` option is set here), so
+  // coerce stdout/stderr to strings explicitly to satisfy the string-typed
+  // DockerExec contract.
   const { stdout, stderr } = await execFileAsync("docker", args, opts);
   return { stdout: stdout.toString(), stderr: stderr.toString() };
 };
