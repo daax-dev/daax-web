@@ -6,8 +6,9 @@
  *   - loadSchemaCatalog / listTables discover the real RBAC + catalog tables;
  *   - inspectTable validates against the live catalog, paginates, and REJECTS an
  *     unknown/injected table name (it never reaches SQL);
- *   - executeWrite is refused when the write flag is OFF, and when ON it succeeds
- *     AND forces an auth_audit row in the SAME transaction (D4);
+ *   - executeWrite succeeds AND forces an auth_audit row in the SAME transaction
+ *     (D4) — the DAAX_DB_CONSOLE_WRITES opt-in is enforced by the route handler
+ *     BEFORE executeWrite is called, not inside executeWrite itself;
  *   - an audit-insert failure rolls the whole write back (write cannot outlive
  *     a failed audit).
  *
