@@ -356,10 +356,14 @@ export async function reconcile(
       GRANT_RECONCILE,
     ]);
 
+    // Only reconcile-owned pending grants are candidates for pruning — a
+    // UI/group-sync-created pending grant is never touched by reconcile.
     const existingPending = await client.query<{
       identifier: string;
       role: string;
-    }>("SELECT identifier, role FROM pending_grants");
+    }>("SELECT identifier, role FROM pending_grants WHERE granted_by = $1", [
+      GRANT_RECONCILE,
+    ]);
 
     const computed = computeReconcilePlan(
       entries,
@@ -399,10 +403,11 @@ export async function reconcile(
         [g.identifier, g.role, GRANT_RECONCILE],
       );
     }
+    // Prune ONLY reconcile-owned pending grants — UI / group grants survive.
     for (const g of computed.pendingGrantsToPrune) {
       await client.query(
-        "DELETE FROM pending_grants WHERE identifier = $1 AND role = $2",
-        [g.identifier, g.role],
+        "DELETE FROM pending_grants WHERE identifier = $1 AND role = $2 AND granted_by = $3",
+        [g.identifier, g.role, GRANT_RECONCILE],
       );
     }
     return computed;

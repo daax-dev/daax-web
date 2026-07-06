@@ -49,7 +49,14 @@ describe("requireRole enforcement (F5 #101)", () => {
   });
 
   afterEach(() => {
-    process.env = { ...savedEnv };
+    // Restore env IN PLACE — reassigning `process.env` swaps out Node's env
+    // proxy for the rest of the worker (breaking later tests that read it).
+    for (const k of Object.keys(process.env)) {
+      if (!(k in savedEnv)) delete process.env[k];
+    }
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v !== undefined) process.env[k] = v;
+    }
   });
 
   it("denies (401) an unauthenticated request in strict mode and audits it", async () => {

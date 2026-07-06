@@ -177,6 +177,31 @@ describe.skipIf(!configured)("RBAC on Postgres (F5 #101)", () => {
     expect((await getUserRoles(sB)).sort()).toEqual(["admin", "user"]); // UI admin survives
   });
 
+  it("reconcile prunes ONLY its own pending grants, never non-reconcile ones", async () => {
+    // A pending grant owned by a UI flow (granted_by='ui'), NOT by reconcile.
+    await query(
+      "INSERT INTO pending_grants (identifier, role, granted_by) VALUES ($1, 'admin', 'ui')",
+      ["ui-pending@x.z"],
+    );
+    // A reconcile-owned pending grant the (empty) allow-list no longer justifies.
+    await query(
+      "INSERT INTO pending_grants (identifier, role, granted_by) VALUES ($1, 'admin', 'reconcile')",
+      ["rec-pending@x.z"],
+    );
+
+    // Empty allow-list: reconcile must prune ONLY its own pending grant and
+    // leave the UI-owned pending grant untouched (invariant: reconcile prunes
+    // only grants it owns).
+    await reconcile(envWith(""));
+
+    const rows = await query<{ identifier: string; granted_by: string }>(
+      "SELECT identifier, granted_by FROM pending_grants ORDER BY identifier",
+    );
+    expect(rows.rows).toEqual([
+      { identifier: "ui-pending@x.z", granted_by: "ui" },
+    ]);
+  });
+
   it("maps Pocket-ID groups to roles at login and refreshes them (group-sync)", async () => {
     const s = "77777777-0000-0000-0000-00000000000c";
     const map = new Map([["daax-admins", new Set(["admin"])]]);
