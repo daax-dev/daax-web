@@ -192,6 +192,31 @@ describe("scripts/deploy-lib.sh unit helpers", () => {
     );
   });
 
+  it("rollback_tag_for derives repo:rollback for a :latest ref", () => {
+    expect(
+      bashEval("rollback_tag_for 'ghcr.io/daax-dev/daax-web:latest'"),
+    ).toBe("ghcr.io/daax-dev/daax-web:rollback");
+    expect(
+      bashEval("rollback_tag_for 'ghcr.io/daax-dev/daax-terminal:latest'"),
+    ).toBe("ghcr.io/daax-dev/daax-terminal:rollback");
+  });
+
+  it("rollback_tag_for strips a @sha256: digest suffix (no invalid @sha256:rollback ref)", () => {
+    // A naive "${ref%:*}" would truncate inside the digest, producing an
+    // invalid ref. The digest must be stripped first.
+    expect(
+      bashEval(
+        "rollback_tag_for 'ghcr.io/daax-dev/daax-web@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'",
+      ),
+    ).toBe("ghcr.io/daax-dev/daax-web:rollback");
+    // repo:tag@sha256:... form: strip digest, then the tag.
+    expect(
+      bashEval(
+        "rollback_tag_for 'ghcr.io/daax-dev/daax-web:latest@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'",
+      ),
+    ).toBe("ghcr.io/daax-dev/daax-web:rollback");
+  });
+
   it("assert_required_secrets fails on a present-but-EMPTY secret (fail-closed)", () => {
     const out = execFileSync(
       "bash",

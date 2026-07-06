@@ -183,6 +183,18 @@ assert_postgres_reachable() {
 #
 # State is written as `service<TAB>image-id` lines to the given state file.
 
+# rollback_tag_for <image-ref> — derive the stable ":rollback" pin for an image
+# ref, handling BOTH a plain "repo:tag" and a digest ref. A digest ref carries
+# its own ":" (e.g. "repo@sha256:deadbeef" or "repo:tag@sha256:deadbeef"), so a
+# naive "${ref%:*}" would truncate the digest and produce an invalid tag like
+# "repo@sha256:rollback". Strip any "@sha256:..." digest suffix first, then a
+# trailing ":tag" if present, then append ":rollback".
+rollback_tag_for() {
+  local repo="${1%@*}"   # drop @sha256:... digest suffix if present
+  repo="${repo%:*}"      # drop :tag if present (leaving the bare repo)
+  printf '%s:rollback' "$repo"
+}
+
 # capture_rollback_state <statefile> <service:image-tag>...
 # Each arg is "container_name=image_tag" (e.g. "daax=daax:latest").
 capture_rollback_state() {
@@ -196,7 +208,7 @@ capture_rollback_state() {
     if [[ -n "$imgid" ]]; then
       # Pin the running image under a stable rollback tag so a rebuild of `tag`
       # does not garbage away the bytes we may need to restore.
-      "$DOCKER_BIN" tag "$imgid" "${tag%:*}:rollback" >/dev/null 2>&1 || true
+      "$DOCKER_BIN" tag "$imgid" "$(rollback_tag_for "$tag")" >/dev/null 2>&1 || true
       printf '%s\t%s\t%s\n' "$name" "$tag" "$imgid" >>"$statefile"
     else
       # No prior container → nothing to restore for this service (fresh deploy).
