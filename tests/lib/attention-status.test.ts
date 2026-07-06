@@ -194,4 +194,18 @@ describe("deriveStatus — edge cases", () => {
     const events = [{ type: "tool_post", at: Number.NaN } as AttentionEvent];
     expect(deriveStatus(events, T0).status).toBe("idle");
   });
+
+  it("rejects events whose type is an inherited Object.prototype key", () => {
+    // "toString"/"constructor" are truthy under `key in map` but are not part
+    // of the declared event vocabulary; an own-property check must ignore them.
+    const events = [
+      { type: "toString", at: T0 + 1_000 } as unknown as AttentionEvent,
+      { type: "constructor", at: T0 + 2_000 } as unknown as AttentionEvent,
+    ];
+    // No valid events remain, so derivation degrades to idle with null since.
+    expect(deriveStatus(events, T0 + 2_500)).toEqual({
+      status: "idle",
+      since: null,
+    });
+  });
 });
