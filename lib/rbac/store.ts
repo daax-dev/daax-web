@@ -25,6 +25,7 @@ import {
   parseAdminAllowlist,
   parseGroupRoleMap,
   rolesForGroups,
+  canonicalizeSubject,
 } from "./allowlist";
 import { computeReconcilePlan, type ReconcilePlan } from "./reconcile-plan";
 import { DEFAULT_ROLE, ADMIN_ROLE } from "./permissions";
@@ -130,6 +131,12 @@ async function materializePendingGrants(
   client: PoolClient,
   id: JitIdentity,
 ): Promise<void> {
+  // Canonicalise the subject (lowercase UUID) so the SELECT and the DELETE below
+  // use the SAME identifier a lowercased subject allow-list entry was stored
+  // under. Without this, an uppercase forwarded subject could SELECT nothing (or,
+  // if matched loosely, be selected but not deleted — a pending row that never
+  // clears). Idempotent: jitProvision already passes a canonical subject.
+  const subject = canonicalizeSubject(id.subject);
   const email = id.email?.trim().toLowerCase() ?? null;
   const username = id.username?.trim().toLowerCase() ?? null;
   // Match pending identifiers against the subject or the lowercased attrs.
@@ -138,7 +145,7 @@ async function materializePendingGrants(
       WHERE identifier = $1
          OR ($2::text IS NOT NULL AND identifier = $2)
          OR ($3::text IS NOT NULL AND identifier = $3)`,
-    [id.subject, email, username],
+    [subject, email, username],
   );
   for (const row of res.rows) {
     // Provenance precedence (ui > reconcile > group-sync): a reconcile-owned
@@ -151,16 +158,17 @@ async function materializePendingGrants(
        VALUES ($1, $2, $3)
        ON CONFLICT (subject, role) DO UPDATE SET granted_by = EXCLUDED.granted_by
          WHERE EXCLUDED.granted_by = $4 AND user_roles.granted_by = $5`,
-      [id.subject, row.role, row.granted_by, GRANT_RECONCILE, GRANT_GROUP_SYNC],
+      [subject, row.role, row.granted_by, GRANT_RECONCILE, GRANT_GROUP_SYNC],
     );
   }
-  // Consume the pending rows we just matched.
+  // Consume the pending rows we just matched — SAME normalized subject as the
+  // SELECT so a selected row can never be left undeleted.
   await client.query(
     `DELETE FROM pending_grants
       WHERE identifier = $1
          OR ($2::text IS NOT NULL AND identifier = $2)
          OR ($3::text IS NOT NULL AND identifier = $3)`,
-    [id.subject, email, username],
+    [subject, email, username],
   );
 }
 
@@ -230,6 +238,15 @@ export async function jitProvision(
     process.env.DAAX_GROUP_ROLE_MAP,
   ),
 ): Promise<JitResult> {
+  // Canonicalise the subject to its stable identity key (lowercase UUID) BEFORE
+  // any DB access so the users upsert, user_roles grants, and pending-grant
+  // SELECT/DELETE all key on ONE value. A differently-cased forwarded subject
+  // can therefore never create a case-variant duplicate user/role, and a pending
+  // grant stored under the lowercased identifier is correctly materialised.
+  const cid: JitIdentity = {
+    ...id,
+    subject: canonicalizeSubject(id.subject),
+  };
   return withTransaction(async (client) => {
     const upsert = await client.query<{ is_new: boolean }>(
       `INSERT INTO users (subject, username, email, name, idp, last_seen)
@@ -241,7 +258,7 @@ export async function jitProvision(
              idp      = COALESCE(EXCLUDED.idp, users.idp),
              last_seen = now()
        RETURNING (xmax = 0) AS is_new`,
-      [id.subject, id.username, id.email, id.name, id.idp],
+      [cid.subject, cid.username, cid.email, cid.name, cid.idp],
     );
     const isNew = upsert.rows[0]?.is_new === true;
 
@@ -253,16 +270,16 @@ export async function jitProvision(
         `INSERT INTO user_roles (subject, role, granted_by)
          VALUES ($1, $2, $3)
          ON CONFLICT (subject, role) DO NOTHING`,
-        [id.subject, DEFAULT_ROLE, GRANT_JIT_DEFAULT],
+        [cid.subject, DEFAULT_ROLE, GRANT_JIT_DEFAULT],
       );
     }
 
-    await materializePendingGrants(client, id);
-    await syncGroupRoles(client, id, groupRoleMap);
+    await materializePendingGrants(client, cid);
+    await syncGroupRoles(client, cid, groupRoleMap);
 
     const rolesRes = await client.query<{ role: string }>(
       "SELECT role FROM user_roles WHERE subject = $1 ORDER BY role",
-      [id.subject],
+      [cid.subject],
     );
     return { isNew, roles: rolesRes.rows.map((r) => r.role) };
   });
@@ -272,7 +289,7 @@ export async function jitProvision(
 export async function getUserRoles(subject: string): Promise<string[]> {
   const res = await query<{ role: string }>(
     "SELECT role FROM user_roles WHERE subject = $1 ORDER BY role",
-    [subject],
+    [canonicalizeSubject(subject)],
   );
   return res.rows.map((r) => r.role);
 }
@@ -297,21 +314,23 @@ export async function grantRole(
      VALUES ($1, $2, $3)
      ON CONFLICT (subject, role) DO UPDATE SET granted_by = EXCLUDED.granted_by
        WHERE EXCLUDED.granted_by = $4 AND user_roles.granted_by <> $4`,
-    [subject, role, grantedBy, GRANT_UI],
+    [canonicalizeSubject(subject), role, grantedBy, GRANT_UI],
   );
 }
 
 /** Revoke a single role grant from a user. */
 export async function revokeRole(subject: string, role: string): Promise<void> {
   await query("DELETE FROM user_roles WHERE subject = $1 AND role = $2", [
-    subject,
+    canonicalizeSubject(subject),
     role,
   ]);
 }
 
 /** Revoke ALL role grants from a user (used to test revocation safety). */
 export async function revokeAllRoles(subject: string): Promise<void> {
-  await query("DELETE FROM user_roles WHERE subject = $1", [subject]);
+  await query("DELETE FROM user_roles WHERE subject = $1", [
+    canonicalizeSubject(subject),
+  ]);
 }
 
 /**

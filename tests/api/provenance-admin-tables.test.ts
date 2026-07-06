@@ -24,7 +24,10 @@ vi.mock("@/lib/auth", async () => {
   return {
     requireAuth: vi.fn(async () => ({ authenticated: true, user })),
     requireRole: vi.fn(async (permission: string) =>
-      rolesGrantPermission(rbacState.roles, permission as never)
+      rolesGrantPermission(
+        rbacState.roles,
+        permission as Parameters<typeof rolesGrantPermission>[1],
+      )
         ? { authorized: true, user, subject: "test-subject" }
         : {
             authorized: false,

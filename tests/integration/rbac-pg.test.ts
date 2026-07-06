@@ -158,6 +158,39 @@ describe.skipIf(!configured)("RBAC on Postgres (F5 #101)", () => {
     expect(jit.roles.sort()).toEqual(["admin", "user"]);
   });
 
+  it("subject-bootstrap is case-insensitive: an UPPERCASE forwarded subject materialises AND consumes a lowercased allow-list pending grant", async () => {
+    // Allow-list uses the canonical lowercase subject; the proxy later forwards
+    // the SAME UUID in uppercase. Both must resolve to one identity so the
+    // pending grant is materialised on first login and then deleted.
+    const lower = "cccccccc-0000-0000-0000-00000000000c";
+    const upper = lower.toUpperCase();
+
+    // reconcile stores the pending grant under the lowercased identifier.
+    const plan = await reconcile(envWith(upper)); // even an uppercase env entry
+    expect(plan.pendingGrantsToAdd).toEqual([
+      { identifier: lower, role: "admin" },
+    ]);
+    const pend = await query<{ identifier: string }>(
+      "SELECT identifier FROM pending_grants",
+    );
+    expect(pend.rows).toEqual([{ identifier: lower }]);
+
+    // First login forwards the UPPERCASE subject → materialised into admin.
+    const jit = await jitProvision(identity(upper, "case@example.com", "case"));
+    expect(jit.roles.sort()).toEqual(["admin", "user"]);
+
+    // Pending row CONSUMED (selected AND deleted under the same normalized key).
+    const pendAfter = await query("SELECT 1 FROM pending_grants");
+    expect(pendAfter.rowCount).toBe(0);
+
+    // Exactly ONE user row (no case-variant duplicate), keyed on the lowercase
+    // subject; roles are visible whether queried by upper- or lower-case subject.
+    const users = await query<{ subject: string }>("SELECT subject FROM users");
+    expect(users.rows).toEqual([{ subject: lower }]);
+    expect((await getUserRoles(upper)).sort()).toEqual(["admin", "user"]);
+    expect((await getUserRoles(lower)).sort()).toEqual(["admin", "user"]);
+  });
+
   it("reconcile prunes ONLY reconcile grants, never UI grants", async () => {
     // User A: admin granted by reconcile (via allow-list).
     const sA = "55555555-0000-0000-0000-00000000000a";

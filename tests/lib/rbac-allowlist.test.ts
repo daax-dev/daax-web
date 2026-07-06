@@ -6,9 +6,24 @@ import {
   isUserAllowlisted,
   parseGroupRoleMap,
   rolesForGroups,
+  canonicalizeSubject,
 } from "@/lib/rbac/allowlist";
 
 const SUBJECT = "11111111-2222-3333-4444-555555555555";
+
+describe("canonicalizeSubject (F5 #101)", () => {
+  it("lowercases a UUID subject so casing cannot fork the identity key", () => {
+    const upper = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
+    expect(canonicalizeSubject(upper)).toBe(upper.toLowerCase());
+    // idempotent for an already-lowercase UUID
+    expect(canonicalizeSubject(upper.toLowerCase())).toBe(upper.toLowerCase());
+  });
+
+  it("leaves a non-UUID subject untouched (never blindly lowercased)", () => {
+    expect(canonicalizeSubject("JPoley")).toBe("JPoley");
+    expect(canonicalizeSubject("Alice@Example.com")).toBe("Alice@Example.com");
+  });
+});
 
 describe("admin allow-list parsing + matching (F5 #101)", () => {
   it("classifies a UUID token as a subject match", () => {
