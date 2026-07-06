@@ -10,13 +10,17 @@ import { test, expect } from "@playwright/test";
  *   - the read-only DB console API is reachable (NOT 401/403);
  *   - the provenance admin surface renders the super-admin-only "Data" tab.
  *
- * The complementary "authenticated NON-super-admin does NOT see the Data tab /
- * is 403'd" half cannot run here: host-dev has no forwarded identity and no
+ * The complementary "NON-super-admin does NOT see the Data tab / is blocked"
+ * half cannot run here: host-dev has no forwarded identity and no
  * `DAAX_SUPERADMIN_USERS` allow-list to fall out of, so there is no way to BE a
- * non-super-admin. That negative is covered instead by the unit suite
- * (`tests/lib/db-console/super-admin.test.ts`: an admin not on the allow-list →
- * false) and the request-plane gate. The strict authenticated-non-super path is
- * honestly UNRUN in this environment, not faked.
+ * non-super-admin. That negative is covered by:
+ *   - `db-console.noauth.spec.ts` (unauthenticated ⇒ non-super-admin ⇒ every
+ *     DB-console route blocked 401/302/307), which runs only against a real
+ *     Traefik + Pocket ID deployment (DAAX_AUTH_BASE_URL);
+ *   - the unit suite (`tests/lib/db-console/super-admin.test.ts`: an admin not
+ *     on the allow-list → false) and the request-plane gate.
+ * The strict authenticated-non-super path is honestly UNRUN in this
+ * environment, not faked.
  */
 test.describe("Admin DB console (local operator = super-admin)", () => {
   test("access endpoint reports super-admin for the local operator", async ({
