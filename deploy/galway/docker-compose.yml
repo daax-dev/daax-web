@@ -80,23 +80,26 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
       # Workspace volume - projects to edit
-      # REQUIRED: Set DAAX_WORKSPACE to your projects directory
-      # Example: export DAAX_WORKSPACE="$HOME/prj"
-      - ${DAAX_WORKSPACE:?DAAX_WORKSPACE env var required (e.g. ~/prj)}:/workspace
+      # REQUIRED: Set DAAX_WORKSPACE to your projects directory as an ABSOLUTE
+      # path — Docker Compose does not expand ~ in volume paths.
+      # Example: export DAAX_WORKSPACE="/home/jpoley/jarvis/"
+      - ${DAAX_WORKSPACE:?DAAX_WORKSPACE env var required (absolute path, e.g. /home/jpoley/jarvis/)}:/workspace
 
       # Persist application data
       - daax-data:/app/data
 
       # Environment file for secrets (optional). If DAAX_ENV_FILE is not set,
       # /dev/null is mounted and no .env.local file will be loaded.
-      # IMPORTANT: Docker Compose does not expand ~ or support :-default syntax in volume paths.
+      # IMPORTANT: Docker Compose does not expand ~ in volume paths — use an
+      # absolute path (shell $HOME in the export below expands before compose).
       # Example: export DAAX_ENV_FILE="$HOME/.daax.env"
       - ${DAAX_ENV_FILE:-/dev/null}:/app/.env.local:ro
 
       # Claude Code config file for MCP management (/mcp page)
-      # REQUIRED: Set CLAUDE_CONFIG_PATH to your Claude config file
-      # Example: export CLAUDE_CONFIG_PATH="$HOME/.claude.json"
-      - ${CLAUDE_CONFIG_PATH:?CLAUDE_CONFIG_PATH env var required (e.g. ~/.claude.json)}:/host-config/.claude.json:rw
+      # REQUIRED: Set CLAUDE_CONFIG_PATH to your Claude config file as an
+      # ABSOLUTE path — Docker Compose does not expand ~ in volume paths.
+      # Example: export CLAUDE_CONFIG_PATH="/home/jpoley/.claude.json"
+      - ${CLAUDE_CONFIG_PATH:?CLAUDE_CONFIG_PATH env var required (absolute path, e.g. /home/jpoley/.claude.json)}:/host-config/.claude.json:rw
 
       # Home .mcp.json for additional MCP configurations (optional)
       # If HOME_MCP_JSON_PATH is not set, /dev/null is mounted (no error)
