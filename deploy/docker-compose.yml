@@ -45,6 +45,69 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Postgres backup (#103, brain2daax §4). Opt-in via `--profile backup` so a
+  # plain `docker compose up` is unaffected. Run once per invocation (drive it
+  # from host cron), dumping into the persistent daax-pg-backups volume; restore
+  # with scripts/pg-restore.sh. Uses the SAME pinned Postgres image as the server
+  # so pg_dump matches the server version. See docs/postgres-backup-restore.md.
+  #   docker compose --profile backup run --rm pg-backup
+  pg-backup:
+    image: postgres:18-alpine@sha256:1b1689b20d16a014a3d195653381cf2caa75a41a92d93b255a9d6ea29fd353aa
+    container_name: daax-pg-backup
+    restart: "no"
+    profiles:
+      - backup
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Hardening (matches the gh-185 posture). no-new-privileges + cap_drop:[ALL]
+    # bound the blast radius (it mounts only the backups volume + reaches postgres
+    # on daax-net; pg_dump as a TCP client writing to a root-owned volume needs no
+    # Linux capability). A non-root USER is intentionally NOT set: the fresh named
+    # volume mounts root:root:0755, so `user: postgres` (uid 999) cannot write to
+    # /backups.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Discrete PG* vars (not DATABASE_URL): pg_dump reads them natively from the
+    # environment, so the password never appears on argv, where any local user
+    # could read it via `ps` / /proc/*/cmdline for the whole dump.
+    environment:
+      - PGHOST=postgres
+      - PGPORT=5432
+      - PGDATABASE=${DAAX_PG_DB:-daax}
+      - PGUSER=${DAAX_PG_USER:-daax}
+      - PGPASSWORD=${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required}
+      - DAAX_BACKUP_RETENTION_DAYS=${DAAX_BACKUP_RETENTION_DAYS:-14}
+    volumes:
+      - daax-pg-backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    # `$$` escapes compose interpolation so the container shell expands these at
+    # runtime. Dump to a .partial then rename so a crash never leaves a truncated
+    # file that looks like a good backup; the trap removes a half-written .partial
+    # on any failure exit so no orphaned junk accumulates in the volume.
+    command:
+      - |
+        set -eu
+        stamp=$$(date -u +%Y%m%dT%H%M%SZ)
+        out="/backups/daax-$${stamp}.dump"
+        trap 'rm -f "$${out}.partial"' EXIT
+        echo "[pg-backup] dumping -> $$out"
+        pg_dump -Fc --no-owner --no-privileges -f "$${out}.partial"
+        mv "$${out}.partial" "$$out"
+        echo "[pg-backup] wrote $$out"
+        if [ "$${DAAX_BACKUP_RETENTION_DAYS}" -gt 0 ] 2>/dev/null; then
+          find /backups -maxdepth 1 -type f \( -name 'daax-*.dump' -o -name 'daax-*.dump.partial' \) -mtime "+$${DAAX_BACKUP_RETENTION_DAYS}" -delete || true
+        fi
+    networks:
+      - daax-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # One-shot migration runner: apply pending migrations, then exit. The daax
   # service waits for this to complete successfully, so a bad/failed migration
   # blocks the rollout (fail-closed) without coupling the app process to PG.
@@ -186,6 +249,10 @@ services:
       # to enforce identity (with Traefik/Pocket ID) on any untrusted exposure.
       - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
       - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
+      # _PREVIOUS is accepted too (#103): a ticket already minted under the old
+      # secret still verifies during rotation, so DAAX_WS_TOKEN_SECRET can rotate
+      # without dropping in-flight terminal sessions. Optional — unset = current-only.
+      - DAAX_WS_TOKEN_SECRET_PREVIOUS=${DAAX_WS_TOKEN_SECRET_PREVIOUS:-}
 
       # LOCAL_OPERATOR bypass posture (F-C2, #184). The HTTP plane cannot inspect
       # the TCP peer (plain `next start`, no custom server), so the uncredentialed
@@ -473,4 +540,7 @@ volumes:
   daax-code-server-data:
     driver: local
   daax-pg-data:
+    driver: local
+  # Persistent store for pg-backup dumps (#103). Survives compose down/restart.
+  daax-pg-backups:
     driver: local
