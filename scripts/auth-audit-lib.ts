@@ -78,10 +78,11 @@ const REGEX_PRECEDERS = new Set([
  * `const re = /await requireRole(x)/`) would still match and misclassify an
  * unguarded write route as guarded. Regex-literal source is data, never an
  * invoked guard, so neutralizing it can only make detection STRICTER. Regex
- * start is detected conservatively (only after {@link REGEX_PRECEDERS} or
- * `return`); if no closing `/` is found before end-of-line the `/` is treated as
- * division instead (regex literals never span newlines), so a mis-detected
- * division can never swallow a subsequent live guard call.
+ * start is detected conservatively (after {@link REGEX_PRECEDERS}, `return`, or a
+ * `)`/`]` closer whose run {@link looksLikeRegexAfterCloser}); if no closing `/`
+ * is found before end-of-line the `/` is treated as division instead (regex
+ * literals never span newlines), so a mis-detected division can never swallow a
+ * subsequent live guard call.
  */
 export function stripCommentsAndStrings(src: string): string {
   let out = "";
@@ -133,7 +134,7 @@ export function stripCommentsAndStrings(src: string): string {
     // Regex literal: only when a `/` appears in expression position (start of a
     // regex, not division). Conservative preceder check + newline-abort so a
     // real division never swallows live code.
-    if (c === "/" && isRegexStart(prevSig, out)) {
+    if (c === "/" && isRegexStart(prevSig, out, src, i)) {
       const end = scanRegexLiteral(src, i);
       if (end > i) {
         i = end;
@@ -155,8 +156,25 @@ export function stripCommentsAndStrings(src: string): string {
  * Is a `/` at expression position (regex-literal start) given the preceding
  * significant char and the code emitted so far? True after a `REGEX_PRECEDERS`
  * char, at start-of-input, or after the `return` keyword.
+ *
+ * AMBIGUOUS CLOSERS (`)` and `]`): a `/` here is USUALLY division
+ * (`(a + b) / c`, `arr[i] / n`), but a regex literal can legally start in
+ * statement/expression position after a closer — e.g. `if (x) /re/.test(s)`.
+ * Missing that case leaves an audit BYPASS: a regex whose source contains
+ * `await requireRole(` (e.g. `if (x) /await requireRole(y)/.test(s)`) is not
+ * neutralized, so `AUTH_GUARD_CALL_RE` matches inside the regex source and an
+ * unguarded write route is misclassified as guarded. We therefore treat a `/`
+ * after `)`/`]` as a regex when the run "looks like" a regex literal (see
+ * {@link looksLikeRegexAfterCloser}). Over-stripping a rare division can only
+ * make the gate STRICTER (it never hides a live guard call), so the heuristic is
+ * intentionally biased toward treating the ambiguous case as a regex.
  */
-function isRegexStart(prevSig: string, out: string): boolean {
+function isRegexStart(
+  prevSig: string,
+  out: string,
+  src: string,
+  slashIdx: number,
+): boolean {
   if (REGEX_PRECEDERS.has(prevSig)) return true;
   // `return /re/` — keyword preceder. prevSig is a letter here, so only pay for
   // the trailing-word extraction in that case.
@@ -164,7 +182,45 @@ function isRegexStart(prevSig: string, out: string): boolean {
     const m = out.match(/(^|[^A-Za-z0-9_$])(return)\s*$/);
     if (m) return true;
   }
+  if (prevSig === ")" || prevSig === "]") {
+    return looksLikeRegexAfterCloser(src, slashIdx);
+  }
   return false;
+}
+
+/**
+ * Heuristic for the ambiguous `/` after a `)`/`]`: does the run starting at
+ * `src[slashIdx] === "/"` look like a regex LITERAL rather than a division?
+ *
+ * Conservative, biased toward "regex" (over-stripping only tightens the audit
+ * gate). A regex is recognised when ALL hold:
+ *   1. the char immediately after the opening `/` is NOT whitespace — excludes
+ *      the common division form `(a + b) / c`;
+ *   2. a closing `/` exists on the SAME line (regex literals never span lines),
+ *      found via the shared {@link scanRegexLiteral} scanner; and
+ *   3. what follows the closing `/` (after optional flags) is a regex-consuming
+ *      method call (`.test(` / `.exec(` / `.match(`) or a statement/expression
+ *      boundary (`)`, `;`, `,`, `]`, whitespace, or end-of-input) — never an
+ *      operand that would make it a division chain.
+ */
+function looksLikeRegexAfterCloser(src: string, slashIdx: number): boolean {
+  const after = src[slashIdx + 1];
+  if (
+    after === undefined ||
+    after === " " ||
+    after === "\t" ||
+    after === "\n" ||
+    after === "\r"
+  ) {
+    return false;
+  }
+  const end = scanRegexLiteral(src, slashIdx);
+  if (end <= slashIdx) return false; // no same-line terminator → division
+  // Skip regex flags (e.g. the `i` in `/re/i`) before inspecting the tail.
+  let j = end;
+  while (j < src.length && /[a-z]/i.test(src[j])) j++;
+  const rest = src.slice(j);
+  return /^\s*(?:\.(?:test|exec|match)\s*\(|[);,\]]|$)/.test(rest);
 }
 
 /**

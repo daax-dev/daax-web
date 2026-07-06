@@ -260,6 +260,58 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
       ).toBe(true);
     });
 
+    it("reports UNGUARDED when the ONLY `await requireRole(` is inside a REGEX literal after a `)` closer", () => {
+      // SECURITY regression (Copilot F5/#102): a regex literal in expression
+      // position after `)` (prevSig === ")") — e.g. `if (x) /await requireRole(y)/.test(s)`
+      // — was NOT neutralized because isRegexStart() only fired after
+      // REGEX_PRECEDERS or `return`. AUTH_GUARD_CALL_RE then matched the guard
+      // token inside the regex SOURCE and misclassified this unguarded write
+      // route as guarded (audit BYPASS). The regex must be stripped → UNGUARDED.
+      const regexAfterCloser = `
+        import { requireRole } from "@/lib/auth";
+        export async function POST(req: Request) {
+          const body = await req.text();
+          if (body) /await requireRole(y)/.test(body);
+          return new Response("ok");
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        regexAfterCloser,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(false);
+      expect(protectedMethods).toEqual([]);
+      expect(
+        isUnprotectedWriteRoute({
+          path: "x",
+          methods: ["POST"],
+          hasAuthGuard,
+          protectedMethods,
+        }),
+      ).toBe(true);
+    });
+
+    it("does NOT mis-scan a division after `)` as a regex, so a real guard survives", () => {
+      // The conservative `)`/`]` heuristic must leave ordinary division intact:
+      // `(a + b) / c` has a space after `/` and no regex-shaped tail, so it stays
+      // division and the live guard that follows is still detected.
+      const divisionAfterCloserThenGuard = `
+        import { requireRole } from "@/lib/auth";
+        export async function POST() {
+          const ratio = (total + 1) / count;
+          const a = await requireRole("admin:users:write");
+          if (!a.authorized) return a.response;
+          return new Response(String(ratio));
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        divisionAfterCloserThenGuard,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(true);
+      expect(protectedMethods).toEqual(["POST"]);
+    });
+
     it("still detects a real guard even when a DIVISION precedes it (regex neutralization is conservative)", () => {
       // Guarantee the conservative regex-start detection never mis-scans a
       // division `/` as a regex and swallows the live guard call that follows.
