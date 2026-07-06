@@ -14,6 +14,9 @@ export default defineConfig({
     environment: "node",
     globals: true,
     include: ["tests/integration/**/*.test.ts"],
+    // Mock the `server-only` guard so server modules that import it (e.g. the
+    // DB-console data layer, F6 #102) can be imported in this Node-env suite.
+    setupFiles: ["./tests/integration/setup.ts"],
     // Container start + migrate round-trips need headroom beyond the 5s default.
     testTimeout: 60_000,
     hookTimeout: 120_000,

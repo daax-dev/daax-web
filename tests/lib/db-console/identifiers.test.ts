@@ -1,0 +1,160 @@
+import { describe, it, expect } from "vitest";
+import {
+  quoteIdent,
+  quoteRelation,
+  assertKnownTable,
+  assertKnownColumn,
+  assertCastableType,
+  InvalidIdentifierError,
+  type SchemaCatalog,
+  type TableSchema,
+} from "@/lib/db-console/identifiers";
+
+/** A fixed catalog whitelist standing in for the live information_schema snapshot. */
+function fixtureCatalog(): SchemaCatalog {
+  const users: TableSchema = {
+    schema: "public",
+    name: "users",
+    columns: [
+      { name: "subject", dataType: "text", isNullable: false },
+      { name: "email", dataType: "text", isNullable: true },
+      {
+        name: "last_seen",
+        dataType: "timestamp with time zone",
+        isNullable: false,
+      },
+    ],
+  };
+  const roles: TableSchema = {
+    schema: "public",
+    name: "roles",
+    columns: [
+      { name: "name", dataType: "text", isNullable: false },
+      { name: "is_system", dataType: "boolean", isNullable: false },
+    ],
+  };
+  return new Map([
+    ["users", users],
+    ["roles", roles],
+  ]);
+}
+
+describe("db-console identifier safety (F6 #102)", () => {
+  describe("quoteIdent (pgx.Identifier.Sanitize equivalent)", () => {
+    it("wraps a plain identifier in double quotes", () => {
+      expect(quoteIdent("users")).toBe('"users"');
+    });
+
+    it("DOUBLES an embedded double-quote (neutralises the classic break-out)", () => {
+      // `a"b` must become `"a""b"` — the inner quote cannot terminate the ident.
+      expect(quoteIdent('a"b')).toBe('"a""b"');
+      // An attempted break-out with a quote + injected SQL stays fully inside quotes.
+      const evil = 'x"; DROP TABLE users; --';
+      const quoted = quoteIdent(evil);
+      expect(quoted.startsWith('"')).toBe(true);
+      expect(quoted.endsWith('"')).toBe(true);
+      // Every internal quote is doubled → no unescaped quote to close the ident.
+      expect(quoted.slice(1, -1)).toBe('x""; DROP TABLE users; --');
+    });
+
+    it("rejects a NUL byte", () => {
+      expect(() => quoteIdent("a\0b")).toThrow(InvalidIdentifierError);
+    });
+
+    it("allows a space (a legal, quoted Postgres identifier)", () => {
+      // A space is NOT a NUL and is a valid identifier when double-quoted — the
+      // guard must reject only NUL, not spaces (guards against a too-broad check).
+      expect(quoteIdent("a b")).toBe('"a b"');
+    });
+
+    it("rejects an empty identifier", () => {
+      expect(() => quoteIdent("")).toThrow(InvalidIdentifierError);
+    });
+  });
+
+  describe("quoteRelation", () => {
+    it("qualifies and quotes both schema and table", () => {
+      const cat = fixtureCatalog();
+      expect(quoteRelation(cat.get("users")!)).toBe('"public"."users"');
+    });
+  });
+
+  describe("assertKnownTable — REJECTS anything not in the catalog", () => {
+    const cat = fixtureCatalog();
+
+    it("returns the schema for a known table", () => {
+      expect(assertKnownTable(cat, "users").name).toBe("users");
+    });
+
+    it.each([
+      ["users; DROP TABLE users", "SQL injection with trailing statement"],
+      ['"; --', "quote break-out attempt"],
+      ["users --", "trailing comment"],
+      ["pg_shadow", "non-existent (unexposed) table"],
+      ["nonexistent", "plain non-existent table"],
+      ["USERS", "wrong case (exact match only)"],
+      ["__proto__", "prototype-pollution style key"],
+      ["constructor", "Object.prototype key"],
+      ["toString", "inherited method name"],
+      ["", "empty string"],
+    ])("rejects %j (%s)", (name) => {
+      // The whitelist is a Map, so inherited-prototype keys (__proto__,
+      // constructor, toString) are NOT treated as present — they resolve via
+      // Map.get to undefined and are rejected like any unknown name.
+      expect(() => assertKnownTable(cat, name)).toThrow(InvalidIdentifierError);
+    });
+
+    it("rejects non-string inputs", () => {
+      expect(() => assertKnownTable(cat, 42)).toThrow(InvalidIdentifierError);
+      expect(() => assertKnownTable(cat, null)).toThrow(InvalidIdentifierError);
+      expect(() => assertKnownTable(cat, undefined)).toThrow(
+        InvalidIdentifierError,
+      );
+      expect(() => assertKnownTable(cat, { name: "users" })).toThrow(
+        InvalidIdentifierError,
+      );
+    });
+  });
+
+  describe("assertKnownColumn — REJECTS anything not on the table", () => {
+    const cat = fixtureCatalog();
+    const users = cat.get("users")!;
+
+    it("returns metadata for a known column", () => {
+      expect(assertKnownColumn(users, "email").dataType).toBe("text");
+    });
+
+    it.each(["email; DROP TABLE users", '"; --', "password", "SUBJECT", ""])(
+      "rejects unknown/injected column %j",
+      (name) => {
+        expect(() => assertKnownColumn(users, name)).toThrow(
+          InvalidIdentifierError,
+        );
+      },
+    );
+  });
+
+  describe("assertCastableType — REJECTS uncastable/exotic types", () => {
+    it.each([
+      "text",
+      "boolean",
+      "bigint",
+      "timestamp with time zone",
+      "character varying",
+      "double precision",
+    ])("accepts base type %j", (t) => {
+      expect(assertCastableType(t)).toBe(t);
+    });
+
+    it.each([
+      "USER-DEFINED",
+      "text[]",
+      "text); DROP TABLE users; --",
+      "int4range(",
+      "TEXT",
+      "",
+    ])("rejects %j", (t) => {
+      expect(() => assertCastableType(t)).toThrow(InvalidIdentifierError);
+    });
+  });
+});
