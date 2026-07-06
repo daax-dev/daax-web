@@ -501,7 +501,7 @@ export interface TranscriptSettings {
 // AI Coding container settings
 export interface AICodingSettings {
   // Default container image for AI coding sessions
-  defaultContainerImage: string; // e.g., "jpoley/daax-agents-gsd:latest"
+  defaultContainerImage: string; // e.g., "jpoley/daax-agents-gsd@sha256:..." (digest-pinned default)
   // Registry namespace/username prefix for images (e.g., "username" or "ghcr.io/username")
   containerRegistry: string;
   // Auto-pull latest image on session launch
@@ -544,14 +544,74 @@ export const CONTAINER_VARIANTS = [
   },
 ] as const;
 
+// Digest-pinned default agent images (issue #195, Fable M5). These mirror the
+// pinning rationale in server/config/constants.ts (DEFAULT_CONTAINER_IMAGE): the
+// built-in DEFAULT must reference an immutable manifest-list digest, not the
+// mutable `:latest` tag, so a compromised/typosquatted upstream push cannot
+// silently land arbitrary code in every future agent session. These are the
+// CLIENT-SAFE counterparts (lib/settings.ts is bundled into client components
+// such as components/terminal/TerminalManager.tsx, so it must not import the
+// os/path-bearing server/config/constants.ts).
+//
+// Both digests are the top-level manifest-list digest (linux/amd64 + linux/arm64)
+// resolved via `docker buildx imagetools inspect <image>:latest`. When bumping,
+// re-resolve and update PINNED_AGENT_DIGEST in scripts/refresh-agent-images.sh,
+// DEFAULT_CONTAINER_IMAGE in server/config/constants.ts (for the -agents digest),
+// and the guards in tests/server/config/constants.test.ts.
+//
+// -gsd is the UI default variant (DEFAULT_AI_CODING_SETTINGS.defaultContainerImage,
+// the "Get Shit Done" recommended bundle). DEFAULT_AGENT_IMAGE (-agents Full
+// Bundle) MUST match the -agents digest in server/config/constants.ts
+// (cross-checked by tests/server/config/constants.test.ts).
+//
+// Users/operators can still override either via the Settings UI; only the DEFAULT
+// changes.
+export const DEFAULT_AGENT_IMAGE_GSD =
+  "jpoley/daax-agents-gsd@sha256:2df736e58e6410f5d31b181c0150977d6415ce6f9c4fa3c6a1282e810c102ac3";
+export const DEFAULT_AGENT_IMAGE =
+  "jpoley/daax-agents@sha256:2153f137b3f47de007698d1e5f0d31a684cb45a7e1ebc1326f668ee458f55bc5";
+
 export const DEFAULT_AI_CODING_SETTINGS: AICodingSettings = {
-  defaultContainerImage: "jpoley/daax-agents-gsd:latest",
+  // Digest-pinned (issue #195) — see DEFAULT_AGENT_IMAGE_GSD above.
+  defaultContainerImage: DEFAULT_AGENT_IMAGE_GSD,
   // Registry is the username/namespace prefix for images (not hostname like docker.io).
   // Images are constructed as: {registry}/{variant}:latest -> jpoley/daax-agents-gsd:latest
   containerRegistry: "jpoley",
   autoPullLatest: false,
   usePrebuiltImage: true,
 };
+
+// Known variants pinned to an immutable manifest-list digest (issue #195).
+// Selecting or pulling one of these must write/pull the DIGEST reference, never
+// `${registry}/${id}:latest` — a click in Settings must not silently un-pin the
+// agent image. Unpinned known variants (core/flowspec/openspec) and custom
+// images keep the existing tag-based behavior.
+const PINNED_VARIANT_DIGESTS: Record<string, string> = {
+  "daax-agents": DEFAULT_AGENT_IMAGE,
+  "daax-agents-gsd": DEFAULT_AGENT_IMAGE_GSD,
+};
+
+// Build the image reference for a known variant id. Shared by the Settings
+// selector (select/pull) and /api/docker/images (availability check) so all
+// three always resolve the SAME reference for a variant.
+//
+// Pinning rule (issue #195): digests are pinned ONLY for the default `jpoley`
+// registry — the pinned digests identify jpoley-built manifests, which cannot
+// exist under a third-party namespace, so `${registry}/${id}@<jpoley-digest>`
+// would be a dead reference there. A custom registry therefore keeps the
+// previous `${registry}/${id}:latest` behavior (the operator's own builds);
+// that mutable tag is a deliberate, operator-owned exposure. Unpinned known
+// variants fall back to `:latest` everywhere.
+export function imageRefForVariant(registry: string, id: string): string {
+  const pinned =
+    registry === DEFAULT_AI_CODING_SETTINGS.containerRegistry
+      ? PINNED_VARIANT_DIGESTS[id]
+      : undefined;
+  if (pinned) {
+    return pinned;
+  }
+  return `${registry}/${id}:latest`;
+}
 
 // Backlog.md initialization defaults
 export type BacklogIntegrationMode = "mcp" | "cli" | "none";
@@ -637,7 +697,10 @@ const DEFAULT_SETTINGS: DaaxSettings = {
   // OpenCode defaults - format is "provider:model"
   opencodeModel: "copilot:gpt-4o",
   dockerNetwork: "daax-net",
-  containerImage: "jpoley/daax-agents:latest",
+  // Digest-pinned (issue #195) — the legacy top-level default agent image, still
+  // used as the spawn image on /shell (app/shell/page.tsx) and as the second
+  // fallback in TerminalManager.getContainerImage(). See DEFAULT_AGENT_IMAGE.
+  containerImage: DEFAULT_AGENT_IMAGE,
   // Default to container mode (production deployment)
   deploymentMode: "container",
   // Default project for code-server - empty means prompt to select
@@ -887,9 +950,25 @@ export function getSettings(): DaaxSettings {
         needsMigration = true;
       }
 
-      // Fix any invalid container images (node:20-alpine, etc.) - reset to default
+      // Migrate the previously shipped `:latest` default to the digest-pinned
+      // default (issue #195). Without this, existing installs keep the mutable
+      // tag forever — TerminalManager sends the persisted value as the WS image
+      // param, which wins over the pinned default. Scoped to the exact
+      // old-default string only; a deliberately chosen custom image is left
+      // untouched.
+      if (parsed.containerImage === "jpoley/daax-agents:latest") {
+        console.log(
+          "[Settings] Migrating old default containerImage to pinned digest",
+        );
+        parsed.containerImage = DEFAULT_AGENT_IMAGE;
+        needsMigration = true;
+      }
+
+      // Fix any invalid container images (node:20-alpine, etc.) - reset to default.
+      // Accepts the digest-pinned default (issue #195) as valid so it is not
+      // needlessly reset (and rewritten) on every load.
       const validImagePattern =
-        /^jpoley\/daax-agents:(latest|amd64|arm64|[\w.-]+)$/;
+        /^jpoley\/daax-agents(?::(latest|amd64|arm64|[\w.-]+)|@sha256:[0-9a-fA-F]{64})$/;
       if (
         parsed.containerImage &&
         !validImagePattern.test(parsed.containerImage)
@@ -956,6 +1035,21 @@ export function getSettings(): DaaxSettings {
         );
         parsed.aiCoding.defaultContainerImage =
           DEFAULT_AI_CODING_SETTINGS.defaultContainerImage;
+        needsMigration = true;
+      }
+
+      // Migrate the previously shipped -gsd `:latest` default to the digest-
+      // pinned default (issue #195). Same exact-match scoping as above: only
+      // the old shipped default is rewritten, never a user-chosen image.
+      if (
+        parsed.aiCoding &&
+        parsed.aiCoding.defaultContainerImage ===
+          "jpoley/daax-agents-gsd:latest"
+      ) {
+        console.log(
+          "[Settings] Migrating old AI Coding default image to pinned digest (migration)",
+        );
+        parsed.aiCoding.defaultContainerImage = DEFAULT_AGENT_IMAGE_GSD;
         needsMigration = true;
       }
 
