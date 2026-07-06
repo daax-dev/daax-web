@@ -50,6 +50,10 @@ describe("requireRole enforcement (F5 #101)", () => {
     isDbConfigured.mockReturnValue(true);
     delete process.env.DAAX_REQUIRE_AUTH;
     delete process.env.DAAX_PROXY_SECRET;
+    // Host-dev loopback posture (#184): the LOCAL_OPERATOR bypass now requires a
+    // safe posture (loopback bind), so the non-strict "operator allow" cases
+    // must model host-dev by binding loopback — mirrors tests/middleware.test.ts.
+    process.env.HOST = "127.0.0.1";
   });
 
   afterEach(() => {
@@ -67,6 +71,7 @@ describe("requireRole enforcement (F5 #101)", () => {
     // and mirrors this suite's beforeEach — clean on both entry and exit.
     delete process.env.DAAX_REQUIRE_AUTH;
     delete process.env.DAAX_PROXY_SECRET;
+    delete process.env.HOST;
   });
 
   it("denies (401) an unauthenticated request in strict mode and audits it", async () => {
