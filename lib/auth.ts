@@ -330,9 +330,19 @@ export async function requireRole(
 
 // writeAudit is already best-effort (never throws); this thin wrapper keeps the
 // call sites terse and defends against a synchronous import-time failure too.
+//
+// Postgres-unconfigured skip (host-dev quiet): when no DB is configured — the
+// common host-dev posture, where the local-operator bypass is expected to work
+// with NO database — there is no auth_audit table to write to, and attempting
+// the INSERT only produces a repeated `DbConfigError` on EVERY requireRole /
+// requireSuperAdmin call. Guarding on isDbConfigured() skips the write silently
+// in that case. When Postgres IS configured, auditing is unchanged: rows are
+// written exactly as before and a genuine write failure on a configured DB is
+// still handled by writeAudit's own best-effort logging (never swallowed here).
 async function writeAuditSafe(
   entry: Parameters<typeof writeAudit>[0],
 ): Promise<void> {
+  if (!isDbConfigured()) return;
   try {
     await writeAudit(entry);
   } catch {

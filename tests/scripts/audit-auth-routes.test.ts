@@ -357,6 +357,39 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
       ).toBe(true);
     });
 
+    it("reports UNGUARDED when the ONLY `await requireRole(` is inside a REGEX literal right after a `}` block close", () => {
+      // SECURITY regression (Copilot #101): a regex literal in expression
+      // position at the START of a new statement right after a `}` that closes a
+      // BLOCK — e.g. `if (body) { doThing(); } /await requireRole(y)/.test(body)`
+      // — was NOT neutralized because `}` was missing from REGEX_PRECEDERS. The
+      // `/` was treated as division, the regex source left intact, and
+      // AUTH_GUARD_CALL_RE matched the guard token inside it → this unguarded
+      // write route was misclassified as guarded (audit BYPASS). Adding `}` to
+      // REGEX_PRECEDERS strips the regex → UNGUARDED.
+      const regexAfterBlockClose = `
+        import { requireRole } from "@/lib/auth";
+        export async function POST(req: Request) {
+          const body = await req.text();
+          if (body) { doThing(); } /await requireRole(y)/.test(body);
+          return new Response("ok");
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        regexAfterBlockClose,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(false);
+      expect(protectedMethods).toEqual([]);
+      expect(
+        isUnprotectedWriteRoute({
+          path: "x",
+          methods: ["POST"],
+          hasAuthGuard,
+          protectedMethods,
+        }),
+      ).toBe(true);
+    });
+
     it("reports UNGUARDED when the ONLY `await requireRole(` is inside a REGEX literal in a ternary (`?` preceder)", () => {
       // SECURITY regression (Copilot #101): a regex literal in expression
       // position after a ternary `?` — e.g.
