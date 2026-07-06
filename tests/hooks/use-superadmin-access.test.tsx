@@ -158,6 +158,41 @@ describe("useSuperAdminAccess", () => {
     nowSpy.mockRestore();
   });
 
+  it("does not update state when the component unmounts before the fetch resolves", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // A controllable in-flight fetch: the promise is left pending until AFTER
+    // the component has unmounted, exercising the cancellation guard.
+    let resolveFetch: (value: unknown) => void = () => {};
+    mockFetch.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+
+    const useSuperAdminAccess = await loadHook();
+    const { result, unmount } = renderHook(() => useSuperAdminAccess());
+
+    // Still loading — the fetch has not resolved yet.
+    expect(result.current.loading).toBe(true);
+
+    // Unmount BEFORE the fetch settles, then resolve it. The cancellation guard
+    // must skip the setState so React never warns about updating an unmounted
+    // component (which would surface as a console.error) and the resolve is a
+    // clean no-op.
+    unmount();
+    resolveFetch({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ authenticated: true, superAdmin: true }),
+    });
+    // Flush the microtask queue so the (guarded) .then callback runs.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it("fails safe to no access on a transient (500) error", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });

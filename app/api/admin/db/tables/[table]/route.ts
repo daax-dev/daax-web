@@ -25,6 +25,24 @@ import {
 
 const ROUTE = "/api/admin/db/tables/[table]";
 
+/**
+ * EXPECTED client/data write failures the trusted super-admin can trigger with
+ * bad input: a Postgres data exception (SQLSTATE class 22, e.g. invalid text
+ * representation / numeric out of range) or an integrity-constraint violation
+ * (class 23, e.g. unique / foreign-key / not-null / check). These are the
+ * caller's bad data, so they map to 400 with the (safe) DB message.
+ *
+ * Everything else — a connection failure (Postgres/Docker unavailable, which has
+ * no SQLSTATE or a class-08/53/57 "server unavailable" code) or any unexpected
+ * error — is a SERVER condition, mapped to 503 WITHOUT leaking the raw text.
+ */
+function isExpectedWriteDataError(err: unknown): boolean {
+  const code = (err as { code?: unknown })?.code;
+  return (
+    typeof code === "string" && (code.startsWith("22") || code.startsWith("23"))
+  );
+}
+
 export async function GET(
   req: NextRequest,
   ctx: { params: Promise<{ table: string }> },
@@ -104,22 +122,28 @@ export async function POST(
   } catch (err) {
     if (
       err instanceof InvalidIdentifierError ||
-      err instanceof WriteValidationError
+      err instanceof WriteValidationError ||
+      isExpectedWriteDataError(err)
     ) {
-      return NextResponse.json({ error: err.message }, { status: 400 });
+      // EXPECTED client/data failures: an invalid identifier, a bad request
+      // shape, or a data/constraint violation — all the trusted super-admin's
+      // bad input. The audit row was rolled back with the mutation, so nothing
+      // was written. Return 400 with the (safe) message.
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        { status: 400 },
+      );
     }
-    // A constraint/type-cast failure is the trusted super-admin's bad data; the
-    // audit row was rolled back with the mutation, so nothing was written.
+    // Any other error is a SERVER condition (e.g. Postgres/Docker unavailable),
+    // not a client mistake. Log the detail server-side, but return a generic 503
+    // — mirror the GET handler and never leak the raw internal error text.
     console.error(
       "[db-console] write failed:",
       err instanceof Error ? err.message : err,
     );
     return NextResponse.json(
-      {
-        error: "Write failed",
-        message: err instanceof Error ? err.message : String(err),
-      },
-      { status: 400 },
+      { error: "Database unavailable" },
+      { status: 503 },
     );
   }
 }

@@ -58,6 +58,8 @@ export function useSuperAdminAccess(): UseSuperAdminAccessResult {
   const [loading, setLoading] = useState(() => !isCacheFresh());
 
   useEffect(() => {
+    let cancelled = false;
+
     if (isCacheFresh()) return;
 
     if (!fetchPromise) {
@@ -117,9 +119,18 @@ export function useSuperAdminAccess(): UseSuperAdminAccessResult {
     }
 
     fetchPromise.then((data) => {
+      // The in-flight promise may be shared across mounts and can settle after
+      // THIS component unmounts. Skip the state update when cancelled so React
+      // does not warn about setting state on an unmounted component (and tests
+      // that unmount before resolve stay deterministic).
+      if (cancelled) return;
       setAccess(data);
       setLoading(false);
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return {
