@@ -60,7 +60,16 @@ export function useSuperAdminAccess(): UseSuperAdminAccessResult {
   useEffect(() => {
     let cancelled = false;
 
-    if (isCacheFresh()) return;
+    // Serve a still-fresh cached decision without a network round-trip — and
+    // SYNC local state from it. The useState initializers read the cache at
+    // render, but the cache can become fresh between this component's render and
+    // its effect (another mount resolving in the interim); without this sync the
+    // instance would stay stuck at loading=true / access=null indefinitely.
+    if (isCacheFresh()) {
+      setAccess(cachedAccess);
+      setLoading(false);
+      return;
+    }
 
     if (!fetchPromise) {
       fetchPromise = fetch("/api/admin/db/access")

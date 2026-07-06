@@ -31,11 +31,13 @@ vi.mock("@/lib/db-console/console", () => ({
 }));
 
 import { executeWrite } from "@/lib/db-console/console";
+import { dbConsoleWritesEnabled } from "@/lib/db-console/super-admin";
 import { InvalidIdentifierError } from "@/lib/db-console/identifiers";
 import { WriteValidationError } from "@/lib/db-console/query-builder";
 import { POST } from "@/app/api/admin/db/tables/[table]/route";
 
 const mockExecuteWrite = vi.mocked(executeWrite);
+const mockWritesEnabled = vi.mocked(dbConsoleWritesEnabled);
 
 function postRequest(body: unknown): NextRequest {
   return new NextRequest("http://localhost/api/admin/db/tables/foo", {
@@ -49,6 +51,9 @@ const ctx = () => ({ params: Promise.resolve({ table: "foo" }) });
 describe("POST /api/admin/db/tables/[table] error classification", () => {
   beforeEach(() => {
     mockExecuteWrite.mockReset();
+    // Default to writes ENABLED so the classification tests reach executeWrite;
+    // the opt-in-off test overrides this.
+    mockWritesEnabled.mockReturnValue(true);
   });
 
   it("maps a Postgres integrity-constraint violation (23xxx) to 400", async () => {
@@ -120,5 +125,14 @@ describe("POST /api/admin/db/tables/[table] error classification", () => {
     const bodyText = JSON.stringify(await res.json());
     expect(bodyText).not.toContain("undefined");
     errorSpy.mockRestore();
+  });
+
+  it("refuses writes by default (opt-in flag OFF → 403) and never calls executeWrite", async () => {
+    mockWritesEnabled.mockReturnValue(false);
+
+    const res = await POST(postRequest({ op: "update" }), ctx());
+    expect(res.status).toBe(403);
+    // The opt-in gate must short-circuit BEFORE any write is attempted.
+    expect(mockExecuteWrite).not.toHaveBeenCalled();
   });
 });
