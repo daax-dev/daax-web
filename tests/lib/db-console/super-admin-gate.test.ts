@@ -83,7 +83,10 @@ describe("db-console super-admin GATE (requireSuperAdmin / resolveSuperAdmin) â€
     for (const [k, v] of Object.entries(savedEnv)) {
       if (v !== undefined) process.env[k] = v;
     }
-    delete process.env[SUPERADMIN_ENV];
+    // The in-place restore above already returns process.env to EXACTLY
+    // savedEnv, so SUPERADMIN_ENV is cleaned without a post-restore delete â€” an
+    // unconditional delete here would clobber a pre-existing DAAX_SUPERADMIN_USERS
+    // from the outer environment for later files in the same worker.
   });
 
   describe("requireSuperAdmin", () => {
