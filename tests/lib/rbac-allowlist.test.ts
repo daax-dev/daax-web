@@ -69,6 +69,30 @@ describe("admin allow-list parsing + matching (F5 #101)", () => {
     ).toBe(false);
   });
 
+  it("subject UUID entries match case-insensitively (canonical lowercase value)", () => {
+    const upper = SUBJECT.toUpperCase();
+    // Uppercase env entry is canonicalised to lowercase.
+    const upperEntry = classifyAllowlistToken(upper)!;
+    expect(upperEntry.value).toBe(SUBJECT); // lowercased
+    // Uppercase env entry matches a lowercase forwarded subject.
+    expect(
+      entryMatchesUser(upperEntry, {
+        subject: SUBJECT,
+        email: null,
+        username: null,
+      }),
+    ).toBe(true);
+    // Lowercase env entry matches an uppercase forwarded subject.
+    const lowerEntry = classifyAllowlistToken(SUBJECT)!;
+    expect(
+      entryMatchesUser(lowerEntry, {
+        subject: upper,
+        email: null,
+        username: null,
+      }),
+    ).toBe(true);
+  });
+
   it("attr entry matches email OR username case-insensitively", () => {
     const entry = classifyAllowlistToken("JP@Example.com")!;
     expect(

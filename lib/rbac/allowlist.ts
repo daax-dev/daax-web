@@ -5,7 +5,8 @@
  * `users` row (keyed on the stable subject) only exists after first login. So
  * the allow-list must accept EITHER a subject OR an email/username, matched with
  * documented semantics (docs/brain2daax.md §3 F5):
- *   - a subject-shaped entry is matched EXACTLY against `users.subject`;
+ *   - a subject-shaped entry is matched against `users.subject`
+ *     case-insensitively (UUIDs are case-insensitive);
  *   - anything else is matched case-insensitively against the mutable display
  *     attributes (email / username) — for GRANT purposes only, never as the key.
  *
@@ -28,11 +29,11 @@ export interface AllowlistEntry {
   /** The raw token as written by the operator (trimmed). */
   raw: string;
   /**
-   * How to match it. `subject` → exact against users.subject; `attr` →
-   * case-insensitive against email/username (stored lowercased in `value`).
+   * How to match it. `subject` → case-insensitive against users.subject; `attr`
+   * → case-insensitive against email/username (both stored lowercased in `value`).
    */
   kind: "subject" | "attr";
-  /** The comparison value (lowercased for `attr`, raw for `subject`). */
+  /** The comparison value (lowercased — canonical UUID for `subject`, email/username for `attr`). */
   value: string;
 }
 
@@ -50,7 +51,9 @@ export function classifyAllowlistToken(token: string): AllowlistEntry | null {
   const raw = token.trim();
   if (!raw) return null;
   if (UUID_RE.test(raw)) {
-    return { raw, kind: "subject", value: raw };
+    // Canonicalise UUID subjects to lowercase so an uppercase env entry still
+    // matches a lowercase forwarded subject (UUIDs are case-insensitive).
+    return { raw, kind: "subject", value: raw.toLowerCase() };
   }
   return { raw, kind: "attr", value: raw.toLowerCase() };
 }
@@ -84,13 +87,17 @@ export interface UserIdentity {
 
 /**
  * True when the given user matches the allow-list entry. Subject entries match
- * exactly; attribute entries match the lowercased email OR username.
+ * case-insensitively; attribute entries match the lowercased email OR username.
  */
 export function entryMatchesUser(
   entry: AllowlistEntry,
   user: UserIdentity,
 ): boolean {
-  if (entry.kind === "subject") return entry.value === user.subject;
+  // entry.value is a canonical lowercase UUID; compare case-insensitively so a
+  // differently-cased forwarded subject still matches (non-UUID subjects can
+  // never collide with a UUID entry, so lowercasing here is safe).
+  if (entry.kind === "subject")
+    return entry.value === user.subject.toLowerCase();
   const email = user.email?.trim().toLowerCase() || null;
   const username = user.username?.trim().toLowerCase() || null;
   return entry.value === email || entry.value === username;
