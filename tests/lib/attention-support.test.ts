@@ -150,6 +150,19 @@ describe("buildCard", () => {
     expect(card.lastTool).toBe("Bash");
   });
 
+  it("falls back to a stable label (not [object Object]) on tool-name schema drift", () => {
+    // Schema drift: the last tool's `name` is a non-string (e.g. an object).
+    // String()-ing it would render "[object Object]"; a stable generic label
+    // must be used instead.
+    const card = buildCard(
+      base,
+      [{ startedAt: T0 + 1_000, name: { nested: "x" } as unknown as string }],
+      { now: T0 + 2_000 },
+    );
+    expect(card.lastTool).toBe("tool");
+    expect(card.lastTool).not.toContain("object Object");
+  });
+
   it("clamps a future (clock-skewed) tool so status and sparkline agree", () => {
     const now = T0 + 10_000;
     // Tool timestamped 1 minute in the future.

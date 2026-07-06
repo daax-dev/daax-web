@@ -14,7 +14,7 @@
 import { WebSocketServer } from "ws";
 
 // Configuration
-import { PORT, HOST } from "./config/constants";
+import { PORT, HOST, localBaseUrl } from "./config/constants";
 import { WS_TICKET_SUBPROTOCOL } from "../lib/ws-ticket-protocol";
 
 // Docker/Auth initialization
@@ -101,7 +101,7 @@ if (
 wss.on("connection", (ws, req) => {
   let stream: string | null = null;
   try {
-    stream = new URL(req.url || "/", `http://${HOST}:${PORT}`).searchParams.get(
+    stream = new URL(req.url || "/", localBaseUrl(HOST, PORT)).searchParams.get(
       "stream",
     );
   } catch {

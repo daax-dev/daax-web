@@ -283,6 +283,18 @@ async function connectWs(): Promise<void> {
   const onDown = () => {
     wsLive = false;
     if (ws === socket) ws = null;
+    // Close this socket and detach its handlers on the down path. onerror can
+    // fire WITHOUT a following onclose in some browsers, which would leak the
+    // old socket while we schedule a reconnect. Idempotent for the onclose case.
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onclose = null;
+    socket.onerror = null;
+    try {
+      socket.close();
+    } catch {
+      /* noop */
+    }
     scheduleReconnect();
     schedule(false); // resume the fast poll fallback cadence
   };
