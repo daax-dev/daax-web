@@ -87,6 +87,13 @@ export const GhosttyTerminal = forwardRef<
     // Presentation mode (#155): visually redact secrets at the write boundary.
     // Best-effort, visual-only; handles ANSI escapes and tokens split across
     // chunks. When off, flush carried bytes then write raw so nothing is lost.
+    //
+    // Masking is PATTERN-BASED by design (#155): no `knownValues` are passed.
+    // The app's known secret values live only server-side (see `lib/secrets.ts`
+    // and the api-tools credentials store, whose APIs return masked values, never
+    // raw ones) and must NOT be shipped to the browser. Passing them here to
+    // enable exact-value masking would be a security regression, so the client
+    // masker relies solely on secret-shape patterns.
     const masker = createStreamMasker();
     const writeOutput = (data: string) => {
       if (!term) return;

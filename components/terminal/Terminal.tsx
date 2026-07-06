@@ -156,6 +156,13 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       // recording data is unchanged. The stream masker handles ANSI escapes and
       // tokens split across WebSocket chunks. When masking is off, flush any
       // carried (masked) bytes first so no output is lost, then write raw.
+      //
+      // Masking is PATTERN-BASED by design (#155): no `knownValues` are passed.
+      // The app's known secret values live only server-side (see `lib/secrets.ts`
+      // and the api-tools credentials store, whose APIs return masked values,
+      // never raw ones) and must NOT be shipped to the browser. Passing them here
+      // to enable exact-value masking would be a security regression, so the
+      // client masker relies solely on secret-shape patterns.
       const masker = createStreamMasker();
       const writeOutput = (data: string) => {
         if (getPresentationMode()) {

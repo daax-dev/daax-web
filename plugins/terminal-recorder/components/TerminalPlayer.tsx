@@ -70,6 +70,12 @@ export function TerminalPlayer({
   // Visual-only — the recording data on disk is never modified.
   const { enabled: presentationEnabled } = usePresentationMode();
   const presentationRef = useRef(presentationEnabled);
+  // Presentation-mode masking is PATTERN-BASED by design (#155): no
+  // `knownValues` are passed. The app's known secret values live only
+  // server-side (see `lib/secrets.ts` / the api-tools credentials store, whose
+  // APIs return masked values, never raw ones) and must NOT be shipped to the
+  // browser. Shipping them to enable exact-value masking would be a security
+  // regression, so the client masker relies solely on secret-shape patterns.
   const maskerRef = useRef(createStreamMasker());
   const playbackRef = useRef<{
     timeoutId?: ReturnType<typeof setTimeout>;
@@ -151,6 +157,13 @@ export function TerminalPlayer({
     if (presentationRef.current) {
       term.write(maskerRef.current.push(data));
     } else {
+      // Masking is off: flush any bytes the masker is still carrying (a partial
+      // token/escape held for a cross-chunk match while masking was on) before
+      // writing raw, so no carried bytes are lost or emitted late at the
+      // mode-off transition (#155). Mirrors the live Terminal/GhosttyTerminal
+      // write paths.
+      const carried = maskerRef.current.flush();
+      if (carried) term.write(carried);
       term.write(data);
     }
   }, []);
