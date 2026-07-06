@@ -370,7 +370,15 @@ cmd_deploy() {
   for p in 4200 4201; do
     local owner owner_ip owner_container own_bindings
     if [[ "$p" == 4201 ]]; then
-      owner_container="$TERMINAL_CONTAINER_NAME"; own_bindings="$terminal_bindings"
+      # Upgrade case (#100): before the web/terminal split, port 4201 was
+      # published by the combined `daax` container, and `daax-terminal` may
+      # not exist yet on the first post-split deploy. Accept 4201 held by
+      # EITHER our terminal container OR the legacy combined `daax` container
+      # so an in-place upgrade isn't blocked by a false "unexpected container"
+      # conflict. A force-recreate replaces whichever of ours holds it. 4201
+      # bound by a genuinely FOREIGN (non-daax) container is still rejected.
+      owner_container="$TERMINAL_CONTAINER_NAME or legacy $CONTAINER_NAME"
+      own_bindings="$(printf '%s\n%s' "$terminal_bindings" "$daax_bindings")"
     else
       owner_container="$CONTAINER_NAME"; own_bindings="$daax_bindings"
     fi
