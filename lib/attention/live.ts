@@ -85,8 +85,19 @@ function patchCard(
       continue;
     }
     const patched = next(card);
-    changed = true;
-    if (patched !== null) out.push(patched);
+    if (patched === null) {
+      // Card dropped (e.g. session_end) — this is a change.
+      changed = true;
+    } else if (patched !== card) {
+      // Reducer produced a new object — substitute it and mark changed.
+      changed = true;
+      out.push(patched);
+    } else {
+      // Idempotent event: reducer returned the same reference, so keep the
+      // original card and do NOT flag a change. This lets a duplicate/no-op
+      // WS event preserve the original array reference (React bails the render).
+      out.push(card);
+    }
   }
   return changed ? out : (cards as AttentionCard[]);
 }
