@@ -2,7 +2,8 @@
 /**
  * Auth Route Auditor
  *
- * Scans all app/api route.ts files and reports which ones use requireAuth().
+ * Scans all app/api route.ts files and reports which ones wire an auth guard
+ * (requireAuth/requireRole/requireSuperAdmin).
  * Run: bun run scripts/audit-auth-routes.ts
  *
  * Catches drift when new API routes are added without auth protection.
@@ -93,7 +94,7 @@ export async function scanRoutes(): Promise<RouteInfo[]> {
     routes.push({
       path: file.replace(/\/route\.ts$/, ""),
       methods,
-      hasRequireAuth: hasAuthGuard,
+      hasAuthGuard,
       protectedMethods,
     });
   }
@@ -107,15 +108,15 @@ async function main() {
   console.log("=== API Route Auth Audit ===\n");
 
   // Summary stats
-  const protectedCount = routes.filter((r) => r.hasRequireAuth).length;
+  const protectedCount = routes.filter((r) => r.hasAuthGuard).length;
   const unprotectedWithWrites = routes.filter(
     (r) =>
-      !r.hasRequireAuth &&
+      !r.hasAuthGuard &&
       r.methods.some((m) => ["POST", "PUT", "PATCH", "DELETE"].includes(m)),
   );
 
   console.log(`Total routes:     ${routes.length}`);
-  console.log(`With requireAuth: ${protectedCount}`);
+  console.log(`With auth guard:  ${protectedCount}`);
   console.log(`Unprotected:      ${routes.length - protectedCount}`);
   console.log(
     `Unprotected with write methods: ${unprotectedWithWrites.length}`,
@@ -124,7 +125,7 @@ async function main() {
 
   // Protected routes
   console.log("--- Protected Routes ---");
-  for (const route of routes.filter((r) => r.hasRequireAuth)) {
+  for (const route of routes.filter((r) => r.hasAuthGuard)) {
     const protMethods = route.protectedMethods.join(", ");
     const allMethods = route.methods.join(", ");
     const unprotected = route.methods.filter(
@@ -156,7 +157,7 @@ async function main() {
   console.log("--- Public Read-Only Routes ---");
   const readOnly = routes.filter(
     (r) =>
-      !r.hasRequireAuth &&
+      !r.hasAuthGuard &&
       r.methods.every((m) => ["GET", "HEAD", "OPTIONS"].includes(m)),
   );
   for (const route of readOnly) {
@@ -185,11 +186,11 @@ async function main() {
 
   if (offenders.length > 0) {
     console.log(
-      `\n[ERROR] ${offenders.length} NEW route(s) have write methods without requireAuth and are not in the baseline allowlist:`,
+      `\n[ERROR] ${offenders.length} NEW route(s) have write methods without an auth guard (requireAuth/requireRole/requireSuperAdmin) and are not in the baseline allowlist:`,
     );
     for (const p of offenders) console.log(`  /api/${p}  *** NO AUTH ***`);
     console.log(
-      "\nAdd requireAuth to these routes. Do NOT add new entries to " +
+      "\nAdd an auth guard (requireAuth/requireRole/requireSuperAdmin) to these routes. Do NOT add new entries to " +
         "scripts/auth-audit-allowlist.json without security review.",
     );
     process.exit(1);

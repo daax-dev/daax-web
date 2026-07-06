@@ -7,13 +7,23 @@
 export const WRITE_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
 
 /**
- * A real auth-guard CALL site. Recognises `requireAuth(`, `requireAuthOrThrow(`,
- * and `requireRole(` (F5, #101). `requireRole` is STRONGER than `requireAuth` —
- * it requires authentication AND a role — so a route guarded by it is guarded.
+ * A real auth-guard CALL site. Recognises an AWAITED invocation of
+ * `requireAuth(`, `requireAuthOrThrow(`, `requireRole(`, or `requireSuperAdmin(`
+ * (F5, #101). `requireRole`/`requireSuperAdmin` are STRONGER than `requireAuth` —
+ * they require authentication AND a role — so a route guarded by one is guarded.
+ *
+ * SECURITY: the `\bawait\s+` prefix is load-bearing. `stripCommentsAndStrings()`
+ * removes comments and string literals but NOT regex literals, so a bare
+ * `requireRole(` token inside a regex literal (e.g. `/requireRole\s*\(/`) would
+ * otherwise be miscounted as a guard call and let an unprotected write route slip
+ * past the audit gate. Every real guard in this codebase is invoked as
+ * `await requireAuth(...)` / `await requireRole(...)` / `await requireSuperAdmin(...)`,
+ * so requiring the `await` prefix excludes regex-literal (and other bare-token)
+ * false positives without losing any genuine call site.
  * No `g` flag, so `.test()` is stateless and safe to reuse.
  */
 export const AUTH_GUARD_CALL_RE =
-  /(?:requireAuth(?:OrThrow)?|requireRole)\s*\(/;
+  /\bawait\s+(?:requireAuth(?:OrThrow)?|requireRole|requireSuperAdmin)\s*\(/;
 
 /**
  * An import statement that brings in an auth guard (`requireAuth*` or
@@ -87,8 +97,8 @@ export function stripCommentsAndStrings(src: string): string {
 export interface RouteInfo {
   path: string;
   methods: string[];
-  /** True when the file wires an auth guard (requireAuth/OrThrow or requireRole). */
-  hasRequireAuth: boolean;
+  /** True when the file wires an auth guard (requireAuth/OrThrow, requireRole, or requireSuperAdmin). */
+  hasAuthGuard: boolean;
   protectedMethods: string[];
 }
 
@@ -133,9 +143,10 @@ export function detectRouteAuth(content: string, methods: string[]): RouteAuth {
 
 /**
  * A route is an "unprotected write" if it exposes a write method that is NOT
- * covered by requireAuth. This is checked per-method (via protectedMethods), so
- * a route that guards GET but leaves POST open is still flagged — a file-level
- * "has any requireAuth" check would miss that partial-guard case.
+ * covered by an auth guard (requireAuth/requireRole/requireSuperAdmin). This is
+ * checked per-method (via protectedMethods), so a route that guards GET but
+ * leaves POST open is still flagged — a file-level "has any auth guard" check
+ * would miss that partial-guard case.
  */
 export function isUnprotectedWriteRoute(route: RouteInfo): boolean {
   return route.methods.some(
