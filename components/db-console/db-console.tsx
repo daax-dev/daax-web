@@ -36,6 +36,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { computeCanNext, pageLabel } from "./pagination";
 import {
   Database,
   RefreshCw,
@@ -141,10 +142,8 @@ export default function DbConsole() {
     setOffset(0);
   };
 
-  const page = data ? Math.floor(data.offset / data.limit) + 1 : 1;
-  const totalPages = data ? Math.max(1, Math.ceil(data.total / data.limit)) : 1;
   const canPrev = offset > 0;
-  const canNext = data ? data.offset + data.rows.length < data.total : false;
+  const canNext = computeCanNext(data);
 
   return (
     <Card>
@@ -210,9 +209,7 @@ export default function DbConsole() {
                 {data.total}
                 {data.totalCapped ? "+" : ""} rows
               </span>
-              <span>
-                Page {page} of {totalPages}
-              </span>
+              <span>{pageLabel(data)}</span>
             </div>
             <ScrollArea className="w-full rounded-md border">
               <div className="max-h-[480px]">
