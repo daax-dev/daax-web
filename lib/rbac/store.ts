@@ -387,11 +387,36 @@ export async function reconcile(
       RECONCILE_LOCK_KEY,
     ]);
 
-    const users = await client.query<{
-      subject: string;
-      email: string | null;
-      username: string | null;
-    }>("SELECT subject, email, username FROM users");
+    // Load ONLY the users that could match the allow-list, not the whole table.
+    // computeReconcilePlan grants/prunes solely on allow-list matches, so a user
+    // matching no entry never affects the plan; fetching them would make boot
+    // cost scale with TOTAL user count. Narrow to the allow-listed subjects /
+    // emails / usernames (a superset the pure entryMatchesUser filter then
+    // refines exactly). When the allow-list is empty there is nothing to match,
+    // so skip the query entirely — pruning of existing reconcile grants does not
+    // depend on the users table.
+    const subjectValues = entries
+      .filter((e) => e.kind === "subject")
+      .map((e) => e.value);
+    const attrValues = entries
+      .filter((e) => e.kind === "attr")
+      .map((e) => e.value);
+    const userRows =
+      entries.length === 0
+        ? []
+        : (
+            await client.query<{
+              subject: string;
+              email: string | null;
+              username: string | null;
+            }>(
+              `SELECT subject, email, username FROM users
+                WHERE lower(subject) = ANY($1::text[])
+                   OR lower(email) = ANY($2::text[])
+                   OR lower(username) = ANY($3::text[])`,
+              [subjectValues, attrValues, attrValues],
+            )
+          ).rows;
 
     const existingUserRoles = await client.query<{
       subject: string;
@@ -411,7 +436,7 @@ export async function reconcile(
 
     const computed = computeReconcilePlan(
       entries,
-      users.rows,
+      userRows,
       existingUserRoles.rows,
       existingPending.rows,
       ADMIN_ROLE,

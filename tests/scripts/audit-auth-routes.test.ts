@@ -291,6 +291,68 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
       ).toBe(true);
     });
 
+    it("reports UNGUARDED when the ONLY `await requireRole(` is inside a REGEX literal after a `{` block-body opener", () => {
+      // SECURITY regression (Copilot #101): a regex literal in expression
+      // position after a `{` block body — e.g.
+      // `if (x) { /await requireRole(y)/.test(s) }` — was NOT neutralized
+      // because `{` was missing from REGEX_PRECEDERS. AUTH_GUARD_CALL_RE then
+      // matched the guard token inside the regex SOURCE and misclassified this
+      // unguarded write route as guarded (audit BYPASS). The regex must be
+      // stripped → UNGUARDED.
+      const regexAfterBlockBody = `
+        import { requireRole } from "@/lib/auth";
+        export async function POST(req: Request) {
+          const body = await req.text();
+          if (body) { /await requireRole(y)/.test(body); }
+          return new Response("ok");
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        regexAfterBlockBody,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(false);
+      expect(protectedMethods).toEqual([]);
+      expect(
+        isUnprotectedWriteRoute({
+          path: "x",
+          methods: ["POST"],
+          hasAuthGuard,
+          protectedMethods,
+        }),
+      ).toBe(true);
+    });
+
+    it("reports UNGUARDED when the ONLY `await requireRole(` is inside a REGEX literal in a ternary (`?` preceder)", () => {
+      // SECURITY regression (Copilot #101): a regex literal in expression
+      // position after a ternary `?` — e.g.
+      // `cond ? /await requireRole(y)/.test(s) : false` — was NOT neutralized
+      // because `?` was missing from REGEX_PRECEDERS, so the guard token inside
+      // the regex SOURCE misclassified this unguarded write route as guarded.
+      const regexInTernary = `
+        import { requireRole } from "@/lib/auth";
+        export async function POST(req: Request) {
+          const body = await req.text();
+          const hit = body ? /await requireRole(y)/.test(body) : false;
+          return new Response(String(hit));
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        regexInTernary,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(false);
+      expect(protectedMethods).toEqual([]);
+      expect(
+        isUnprotectedWriteRoute({
+          path: "x",
+          methods: ["POST"],
+          hasAuthGuard,
+          protectedMethods,
+        }),
+      ).toBe(true);
+    });
+
     it("does NOT mis-scan a division after `)` as a regex, so a real guard survives", () => {
       // The conservative `)`/`]` heuristic must leave ordinary division intact:
       // `(a + b) / c` has a space after `/` and no regex-shaped tail, so it stays
