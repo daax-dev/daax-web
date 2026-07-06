@@ -95,6 +95,14 @@ export_compose_env() {
   # reintroduce the supply-chain risk. Only forward an explicit operator override.
   export CLAUDE_CONTAINER_IMAGE="${CLAUDE_CONTAINER_IMAGE:-}"
 
+  # Deployed image refs (#104). The compose file reads ${DAAX_IMAGE}/
+  # ${DAAX_TERMINAL_IMAGE} with a GHCR default; export the SAME resolved values
+  # here so the deployed ref and the rollback-tag baseline (capture_rollback_state
+  # below reads these exact vars with the identical default) can never diverge —
+  # a rollback tag is always computed against the actually-deployed repo.
+  export DAAX_IMAGE="${DAAX_IMAGE:-ghcr.io/daax-dev/daax-web:latest}"
+  export DAAX_TERMINAL_IMAGE="${DAAX_TERMINAL_IMAGE:-ghcr.io/daax-dev/daax-terminal:latest}"
+
   # Postgres: compose-local by default (DAAX_PG_PASSWORD secret → compose builds
   # DATABASE_URL). Managed Postgres (DAAX_PG_MANAGED=1) is gated off in
   # preflight — not yet wired into compose.

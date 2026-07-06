@@ -184,15 +184,25 @@ assert_postgres_reachable() {
 # State is written as `service<TAB>image-id` lines to the given state file.
 
 # rollback_tag_for <image-ref> — derive the stable ":rollback" pin for an image
-# ref, handling BOTH a plain "repo:tag" and a digest ref. A digest ref carries
-# its own ":" (e.g. "repo@sha256:deadbeef" or "repo:tag@sha256:deadbeef"), so a
-# naive "${ref%:*}" would truncate the digest and produce an invalid tag like
-# "repo@sha256:rollback". Strip any "@sha256:..." digest suffix first, then a
-# trailing ":tag" if present, then append ":rollback".
+# ref, handling a plain "repo:tag", a digest ref, AND a ref whose registry host
+# carries a PORT (e.g. "localhost:5000/repo"). A digest ref carries its own ":"
+# (e.g. "repo@sha256:deadbeef" or "repo:tag@sha256:deadbeef") and a registry
+# port puts a ":" BEFORE the last "/", so a naive "${ref%:*}" would truncate the
+# digest or the port instead of the tag. Strip any "@sha256:..." digest suffix
+# first, then remove a trailing ":tag" ONLY when the colon lives in the final
+# path segment (after the last "/"), so a host:port prefix is preserved. Handles:
+#   ghcr.io/daax-dev/daax-web:latest      -> ghcr.io/daax-dev/daax-web:rollback
+#   localhost:5000/repo:tag               -> localhost:5000/repo:rollback
+#   localhost:5000/repo                   -> localhost:5000/repo:rollback
+#   ghcr.io/daax-dev/daax-web@sha256:...  -> ghcr.io/daax-dev/daax-web:rollback
 rollback_tag_for() {
-  local repo="${1%@*}"   # drop @sha256:... digest suffix if present
-  repo="${repo%:*}"      # drop :tag if present (leaving the bare repo)
-  printf '%s:rollback' "$repo"
+  local ref="${1%@*}"          # drop @sha256:... digest suffix if present
+  local last="${ref##*/}"      # final path segment (the only place a :tag lives)
+  local prefix="${ref%"$last"}" # everything up to and including the last "/"
+  # Strip :tag from the final segment ONLY — a "host:port/" prefix has no "/"
+  # after its colon, so it is never in $last and is preserved intact.
+  [[ "$last" == *:* ]] && last="${last%:*}"
+  printf '%s:rollback' "$prefix$last"
 }
 
 # capture_rollback_state <statefile> <service:image-tag>...

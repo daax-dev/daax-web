@@ -217,6 +217,24 @@ describe("scripts/deploy-lib.sh unit helpers", () => {
     ).toBe("ghcr.io/daax-dev/daax-web:rollback");
   });
 
+  it("rollback_tag_for preserves a registry host:port (colon before the last '/' is not a tag)", () => {
+    // A naive "${ref%:*}" truncates at the port colon. The tag lives only in the
+    // final path segment, so a host:port prefix must survive intact.
+    expect(bashEval("rollback_tag_for 'localhost:5000/repo:tag'")).toBe(
+      "localhost:5000/repo:rollback",
+    );
+    // No tag, but a registry port: must NOT strip the port; append :rollback.
+    expect(bashEval("rollback_tag_for 'localhost:5000/repo'")).toBe(
+      "localhost:5000/repo:rollback",
+    );
+    // host:port + digest, no tag.
+    expect(
+      bashEval(
+        "rollback_tag_for 'localhost:5000/repo@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'",
+      ),
+    ).toBe("localhost:5000/repo:rollback");
+  });
+
   it("assert_required_secrets fails on a present-but-EMPTY secret (fail-closed)", () => {
     const out = execFileSync(
       "bash",
