@@ -9,7 +9,7 @@ import {
 function route(partial: Partial<RouteInfo> & { path: string }): RouteInfo {
   return {
     methods: [],
-    hasRequireAuth: false,
+    hasAuthGuard: false,
     protectedMethods: [],
     ...partial,
   };
@@ -20,7 +20,7 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
     it("flags a write route with no requireAuth", () => {
       expect(
         isUnprotectedWriteRoute(
-          route({ path: "x", methods: ["POST"], hasRequireAuth: false }),
+          route({ path: "x", methods: ["POST"], hasAuthGuard: false }),
         ),
       ).toBe(true);
     });
@@ -31,7 +31,7 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
           route({
             path: "x",
             methods: ["POST"],
-            hasRequireAuth: true,
+            hasAuthGuard: true,
             protectedMethods: ["POST"],
           }),
         ),
@@ -41,7 +41,7 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
     it("does not flag a read-only route without auth", () => {
       expect(
         isUnprotectedWriteRoute(
-          route({ path: "x", methods: ["GET"], hasRequireAuth: false }),
+          route({ path: "x", methods: ["GET"], hasAuthGuard: false }),
         ),
       ).toBe(false);
     });
@@ -52,7 +52,7 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
           route({
             path: "x",
             methods: ["GET", "DELETE"],
-            hasRequireAuth: false,
+            hasAuthGuard: false,
           }),
         ),
       ).toBe(true);
@@ -66,7 +66,7 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
           route({
             path: "x",
             methods: ["GET", "POST"],
-            hasRequireAuth: true,
+            hasAuthGuard: true,
             protectedMethods: ["GET"],
           }),
         ),
@@ -79,7 +79,7 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
           route({
             path: "x",
             methods: ["GET", "POST"],
-            hasRequireAuth: true,
+            hasAuthGuard: true,
             protectedMethods: ["POST"],
           }),
         ),
@@ -193,7 +193,38 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
         isUnprotectedWriteRoute({
           path: "x",
           methods: ["POST"],
-          hasRequireAuth: hasAuthGuard,
+          hasAuthGuard,
+          protectedMethods,
+        }),
+      ).toBe(true);
+    });
+
+    it("reports a route as UNGUARDED when requireRole appears only inside a REGEX literal", () => {
+      // SECURITY regression: stripCommentsAndStrings() does not strip regex
+      // literals, so a bare `requireRole(` token inside a regex literal (here the
+      // regex source text literally contains "requireRole(") must NOT be counted
+      // as a guard call. Without the `await` prefix in AUTH_GUARD_CALL_RE this
+      // route is misclassified as GUARDED and its open POST slips past the gate.
+      const regexLiteralOnly = `
+        import { requireRole } from "@/lib/auth";
+        export async function POST(req: Request) {
+          const body = await req.text();
+          const mentionsGuard = /call requireRole(x)/.test(body);
+          return new Response(String(mentionsGuard));
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        regexLiteralOnly,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(false);
+      expect(protectedMethods).toEqual([]);
+      // And the drift logic flags the actually-open POST write route.
+      expect(
+        isUnprotectedWriteRoute({
+          path: "x",
+          methods: ["POST"],
+          hasAuthGuard,
           protectedMethods,
         }),
       ).toBe(true);
@@ -256,7 +287,7 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
         isUnprotectedWriteRoute({
           path: "x",
           methods: ["POST"],
-          hasRequireAuth: hasAuthGuard,
+          hasAuthGuard,
           protectedMethods,
         }),
       ).toBe(false);
@@ -282,7 +313,7 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
         isUnprotectedWriteRoute({
           path: "x",
           methods: ["GET", "POST"],
-          hasRequireAuth: hasAuthGuard,
+          hasAuthGuard,
           protectedMethods,
         }),
       ).toBe(true);
@@ -296,7 +327,7 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
       route({
         path: "guarded",
         methods: ["POST"],
-        hasRequireAuth: true,
+        hasAuthGuard: true,
         protectedMethods: ["POST"],
       }),
       route({ path: "readonly", methods: ["GET"] }),
