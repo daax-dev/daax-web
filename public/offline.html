@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0a0a0a" />
+    <title>daax — offline</title>
+    <style>
+      /* Standalone offline fallback: no app CSS is available here (the SW serves
+         this when the network is unreachable), so styles are inlined. Colors are
+         literal because this page cannot read the app's CSS variables. */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0a0a0a;
+        color: #ededed;
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+      }
+      .wrap {
+        min-height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 24px;
+        box-sizing: border-box;
+        gap: 12px;
+      }
+      .dot {
+        width: 56px;
+        height: 56px;
+        border-radius: 9999px;
+        background: #2f6fed;
+        opacity: 0.85;
+      }
+      h1 {
+        font-size: 1.15rem;
+        margin: 4px 0 0;
+      }
+      p {
+        margin: 0;
+        color: #a1a1a1;
+        font-size: 0.9rem;
+        max-width: 32ch;
+      }
+      button {
+        margin-top: 8px;
+        padding: 10px 18px;
+        border-radius: 10px;
+        border: 1px solid #2f6fed;
+        background: transparent;
+        color: #ededed;
+        font-size: 0.95rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="dot"></div>
+      <h1>You're offline</h1>
+      <p>
+        daax can't reach the network right now. Driving a terminal session from
+        your phone needs a live connection to the terminal server.
+      </p>
+      <button onclick="location.reload()">Retry</button>
+    </div>
+  </body>
+</html>

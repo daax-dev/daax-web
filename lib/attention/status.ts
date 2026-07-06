@@ -118,7 +118,9 @@ export function deriveStatus(
       e != null &&
       typeof e.at === "number" &&
       Number.isFinite(e.at) &&
-      e.type in FINALITY_WEIGHT,
+      // hasOwnProperty.call (not Object.hasOwn) for broad browser support —
+      // own-property check so inherited keys like "toString" aren't accepted.
+      Object.prototype.hasOwnProperty.call(FINALITY_WEIGHT, e.type),
   );
 
   if (valid.length === 0) return { status: "idle", since: null };
