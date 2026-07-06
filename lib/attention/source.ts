@@ -32,8 +32,11 @@
  */
 
 import type { AttentionCard, AttentionResponse } from "./adapter";
-import { applyLiveEvent, parseWsMessage } from "./live";
-import { buildTerminalWsUrl, openTerminalWebSocket } from "@/lib/websocket-utils";
+import { applyLiveEvent, mergeWaitingOnResync, parseWsMessage } from "./live";
+import {
+  buildTerminalWsUrl,
+  openTerminalWebSocket,
+} from "@/lib/websocket-utils";
 
 export type ConnState = "loading" | "connected" | "disconnected";
 
@@ -145,8 +148,12 @@ async function tick(): Promise<void> {
     } else {
       const data = (await res.json()) as AttentionResponse;
       if (data && data.ok && Array.isArray(data.sessions)) {
+        // Preserve WS-derived `waiting` across the resync (#156): the REST
+        // adapter can't source Notification events, so a verbatim replace would
+        // wipe a still-blocked session's bell/board state every ≥30s. The
+        // overlay clears when REST evidences newer activity or the session ends.
         update({
-          cards: data.sessions,
+          cards: mergeWaitingOnResync(snapshot.cards, data.sessions),
           truncated: data.truncated === true,
           conn: "connected",
         });

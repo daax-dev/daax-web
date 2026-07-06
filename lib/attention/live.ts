@@ -206,3 +206,73 @@ export function applyLiveEvent(
       return cards as AttentionCard[];
   }
 }
+
+/**
+ * Does the fresh REST card evidence activity that supersedes a WS-derived
+ * `waiting` state? Used by {@link mergeWaitingOnResync} to decide whether a
+ * carried-forward `waiting` overlay must be dropped so a genuinely-unblocked
+ * session clears. The REST adapter cannot source Notification events, so it can
+ * never itself report `waiting`; it can only report evidence that the agent
+ * moved ON from waiting (ran a tool, started a newer status run, or ended).
+ */
+function supersedesWaiting(
+  prevWaiting: AttentionCard,
+  fresh: AttentionCard,
+): boolean {
+  // Session ended → never keep it pinned to waiting.
+  if (fresh.status === "done") return true;
+  // A new tool ran since the session entered waiting → activity resumed.
+  // `toolCount` is monotonic and unchanged by notification/permission events,
+  // so an increase can only mean the agent did real work after being blocked.
+  if (fresh.toolCount > prevWaiting.toolCount) return true;
+  // A newer status run began after the waiting episode started. `since` is the
+  // waiting-enter time on the previous card; a later REST `since` means fresh
+  // activity supersedes it. (toolCount usually catches this first, but a
+  // status transition without a tool-count delta is covered here too.)
+  if (
+    prevWaiting.since != null &&
+    fresh.since != null &&
+    fresh.since > prevWaiting.since
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Preserve WS-derived `waiting` state across a REST safety resync (issue #156).
+ *
+ * The REST snapshot is the source of truth for the full card set, but the REST
+ * adapter CANNOT derive `waiting` (Watchtower exposes no Notification endpoint).
+ * A verbatim replace on every ≥30s resync would therefore WIPE any `waiting`
+ * a live Notification/permission_request event had applied, incorrectly clearing
+ * the bell/board while a session is still blocked.
+ *
+ * This carries the `waiting` status + its original `since` forward onto the
+ * matching fresh REST card — UNLESS the fresh data evidences newer activity
+ * (see {@link supersedesWaiting}) or the session is gone from REST (absent id →
+ * not carried). All other fields come from the fresh REST card, so richer
+ * REST-derived data (label, cwd, sparkline, tool count) is not lost. The overlay
+ * is never permanently pinned: a resumed or ended session clears normally.
+ */
+export function mergeWaitingOnResync(
+  prev: readonly AttentionCard[],
+  fresh: readonly AttentionCard[],
+): AttentionCard[] {
+  // Index the previous cards that were in `waiting`; nothing to do otherwise.
+  let waiting: Map<string, AttentionCard> | null = null;
+  for (const c of prev) {
+    if (c.status === "waiting") {
+      (waiting ??= new Map()).set(c.id, c);
+    }
+  }
+  if (!waiting) return fresh as AttentionCard[];
+
+  return fresh.map((card) => {
+    const prevWaiting = waiting.get(card.id);
+    if (!prevWaiting || supersedesWaiting(prevWaiting, card)) return card;
+    // Carry the waiting overlay: keep fresh REST fields, restore the waiting
+    // status and the original waiting-enter `since`.
+    return { ...card, status: "waiting", since: prevWaiting.since };
+  });
+}

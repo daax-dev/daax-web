@@ -348,4 +348,70 @@ describe("shared attention source — live WebSocket", () => {
     await vi.advanceTimersByTimeAsync(2000);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("keeps a WS-derived waiting session waiting across a REST resync with no newer activity (#156)", async () => {
+    const sock = fakeSocket();
+    openTerminalWebSocket.mockResolvedValue(sock as unknown as WebSocket);
+    // REST only ever knows the same (older) idle session — it cannot source the
+    // Notification event, so its resync payload never reports `waiting`.
+    useSnapshotFetch([
+      { ...sampleCard, status: "idle", toolCount: 0, since: 1 },
+    ]);
+
+    subscribe(noopSub({ intervalMs: 1_000_000, pauseWhenHidden: false }));
+    await vi.advanceTimersByTimeAsync(0);
+    sock.onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getSnapshot().cards[0].status).toBe("idle");
+
+    // A live Notification blocks the session on human input → waiting.
+    sock.onmessage?.({
+      data: JSON.stringify({
+        type: "notification",
+        session_id: "s1",
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    expect(getSnapshot().cards[0].status).toBe("waiting");
+    const waitSince = getSnapshot().cards[0].since;
+
+    // A safety resync returns the same session with no newer activity. The
+    // waiting overlay (and its original `since`) must survive the verbatim
+    // REST replace — otherwise the bell/board clears while still blocked.
+    refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getSnapshot().cards[0].status).toBe("waiting");
+    expect(getSnapshot().cards[0].since).toBe(waitSince);
+  });
+
+  it("clears a WS-derived waiting session on a resync that shows newer activity (#156)", async () => {
+    const sock = fakeSocket();
+    openTerminalWebSocket.mockResolvedValue(sock as unknown as WebSocket);
+    useSnapshotFetch([
+      { ...sampleCard, status: "idle", toolCount: 0, since: 1 },
+    ]);
+
+    subscribe(noopSub({ intervalMs: 1_000_000, pauseWhenHidden: false }));
+    await vi.advanceTimersByTimeAsync(0);
+    sock.onopen?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    sock.onmessage?.({
+      data: JSON.stringify({
+        type: "notification",
+        session_id: "s1",
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    expect(getSnapshot().cards[0].status).toBe("waiting");
+
+    // REST now evidences a newer tool (toolCount bumped) → the agent resumed;
+    // the waiting overlay must drop so the board reflects the real state.
+    useSnapshotFetch([
+      { ...sampleCard, status: "working", toolCount: 1, since: Date.now() },
+    ]);
+    refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getSnapshot().cards[0].status).toBe("working");
+  });
 });

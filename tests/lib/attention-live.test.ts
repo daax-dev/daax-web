@@ -9,6 +9,7 @@
 import { describe, it, expect } from "vitest";
 import {
   applyLiveEvent,
+  mergeWaitingOnResync,
   parseWsMessage,
   type WatchtowerWsMessage,
 } from "@/lib/attention/live";
@@ -226,6 +227,91 @@ describe("applyLiveEvent", () => {
       NOW,
     );
     expect(out[0].since).toBe(NOW);
+  });
+});
+
+describe("mergeWaitingOnResync (issue #156)", () => {
+  const WAIT_SINCE = 500_000;
+
+  it("carries WS-derived waiting onto a fresh REST card with no newer activity", () => {
+    const prev = [card({ status: "waiting", since: WAIT_SINCE, toolCount: 3 })];
+    // REST re-derives idle/working from the SAME (older) tools — no new work.
+    const fresh = [
+      card({ status: "idle", since: WAIT_SINCE - 10_000, toolCount: 3 }),
+    ];
+    const out = mergeWaitingOnResync(prev, fresh);
+    expect(out[0].status).toBe("waiting");
+    expect(out[0].since).toBe(WAIT_SINCE); // original waiting-enter time kept
+  });
+
+  it("keeps fresh REST fields while restoring the waiting overlay", () => {
+    const prev = [card({ status: "waiting", since: WAIT_SINCE, toolCount: 1 })];
+    const fresh = [
+      card({
+        status: "idle",
+        since: WAIT_SINCE - 1,
+        toolCount: 1,
+        cwd: "/new-path",
+        sparkline: [1, 2, 3],
+      }),
+    ];
+    const out = mergeWaitingOnResync(prev, fresh);
+    expect(out[0].status).toBe("waiting");
+    expect(out[0].cwd).toBe("/new-path"); // richer REST data preserved
+    expect(out[0].sparkline).toEqual([1, 2, 3]);
+  });
+
+  it("clears waiting when REST shows a newer tool (toolCount increased)", () => {
+    const prev = [card({ status: "waiting", since: WAIT_SINCE, toolCount: 2 })];
+    const fresh = [
+      card({ status: "working", since: WAIT_SINCE + 5_000, toolCount: 3 }),
+    ];
+    const out = mergeWaitingOnResync(prev, fresh);
+    expect(out[0].status).toBe("working");
+    expect(out[0].since).toBe(WAIT_SINCE + 5_000);
+  });
+
+  it("clears waiting when REST shows a newer status run (later since)", () => {
+    const prev = [card({ status: "waiting", since: WAIT_SINCE, toolCount: 4 })];
+    // Same toolCount but a newer run start — a fresh status transition.
+    const fresh = [
+      card({ status: "working", since: WAIT_SINCE + 1, toolCount: 4 }),
+    ];
+    expect(mergeWaitingOnResync(prev, fresh)[0].status).toBe("working");
+  });
+
+  it("clears waiting when the session has ended (REST status done)", () => {
+    const prev = [card({ status: "waiting", since: WAIT_SINCE, toolCount: 1 })];
+    const fresh = [
+      card({ status: "done", since: WAIT_SINCE - 100, toolCount: 1 }),
+    ];
+    expect(mergeWaitingOnResync(prev, fresh)[0].status).toBe("done");
+  });
+
+  it("drops the overlay when the session disappears from REST", () => {
+    const prev = [card({ status: "waiting", since: WAIT_SINCE })];
+    const out = mergeWaitingOnResync(prev, []); // session gone
+    expect(out).toHaveLength(0);
+  });
+
+  it("only carries cards that were waiting (others pass through untouched)", () => {
+    const prev = [
+      card({ id: "s1", status: "waiting", since: WAIT_SINCE, toolCount: 0 }),
+      card({ id: "s2", status: "working", since: 1, toolCount: 0 }),
+    ];
+    const fresh = [
+      card({ id: "s1", status: "idle", since: WAIT_SINCE - 1, toolCount: 0 }),
+      card({ id: "s2", status: "idle", since: 2, toolCount: 0 }),
+    ];
+    const out = mergeWaitingOnResync(prev, fresh);
+    expect(out.find((c) => c.id === "s1")?.status).toBe("waiting");
+    expect(out.find((c) => c.id === "s2")?.status).toBe("idle");
+  });
+
+  it("returns the fresh set unchanged when nothing was waiting", () => {
+    const prev = [card({ status: "idle" })];
+    const fresh = [card({ status: "working" })];
+    expect(mergeWaitingOnResync(prev, fresh)).toBe(fresh);
   });
 });
 
