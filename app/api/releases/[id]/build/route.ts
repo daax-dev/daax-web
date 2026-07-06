@@ -10,7 +10,7 @@ import { generateRealSbom } from "@/lib/sbom-syft";
 import { requireAuth } from "@/lib/auth";
 import {
   defaultDockerExec,
-  dockerUnavailableResponse,
+  dockerUnavailableJson,
   isDockerUnavailableError,
 } from "@/lib/docker-exec";
 
@@ -47,8 +47,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         timeout: 5000,
       });
     } catch (error) {
-      if (isDockerUnavailableError(error))
-        return dockerUnavailableResponse(error);
+      if (isDockerUnavailableError(error)) return dockerUnavailableJson(error);
       // Any other probe failure: fall through and let the build surface it.
     }
 

@@ -53,8 +53,13 @@ export function isDockerUnavailableError(error: unknown): boolean {
  * consistent "Docker unavailable" state instead of a raw 500. In the split
  * deploy (F3 #100) the operator fallback for AI session cleanup is manual:
  * `docker ps` / `docker rm -f daax-<id>` on the host.
+ *
+ * Named distinctly from `host-docker.ts`'s `dockerUnavailableResponse` (a
+ * dockerode ping-guard returning `Promise<NextResponse | null>`): this is a
+ * pure, socketless builder that always returns a `NextResponse` from a caught
+ * error. The two share the JSON shape but not the signature/semantics.
  */
-export function dockerUnavailableResponse(error: unknown): NextResponse {
+export function dockerUnavailableJson(error: unknown): NextResponse {
   return NextResponse.json(
     {
       error: "Docker daemon not available",

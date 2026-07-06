@@ -17,7 +17,7 @@ import { isAiSessionName } from "@/lib/ai-session-name";
 import { mapPool } from "@/lib/concurrency";
 import {
   defaultDockerExec,
-  dockerUnavailableResponse,
+  dockerUnavailableJson,
   isDockerUnavailableError,
   type DockerExec,
 } from "@/lib/docker-exec";
@@ -165,8 +165,7 @@ export async function POST(req: NextRequest) {
     // Split deploy (F3 #100): no Docker socket on the web plane — same
     // structured 503 as /api/containers instead of a raw 500. Manual
     // fallback: `docker ps` / `docker rm -f daax-<id>` on the host.
-    if (isDockerUnavailableError(error))
-      return dockerUnavailableResponse(error);
+    if (isDockerUnavailableError(error)) return dockerUnavailableJson(error);
     return NextResponse.json(
       {
         success: false,

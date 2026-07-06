@@ -15,7 +15,7 @@ import { requireAuth } from "@/lib/auth";
 import { isAiSessionName } from "@/lib/ai-session-name";
 import {
   defaultDockerExec,
-  dockerUnavailableResponse,
+  dockerUnavailableJson,
   isDockerUnavailableError,
   type DockerExec,
 } from "@/lib/docker-exec";
@@ -54,8 +54,7 @@ export async function DELETE(
   } catch (error) {
     // Split deploy (F3 #100): no Docker socket on the web plane — same
     // structured 503 as /api/containers. Manual fallback: `docker rm -f <name>`.
-    if (isDockerUnavailableError(error))
-      return dockerUnavailableResponse(error);
+    if (isDockerUnavailableError(error)) return dockerUnavailableJson(error);
     return NextResponse.json(
       {
         success: false,
