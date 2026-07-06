@@ -230,11 +230,14 @@ phase_preflight() {
 
   assert_required_secrets || fail preflight "required secret(s) missing/empty for target '$ENV_NAME'"
   assert_code_server_image "$BUILD_CODE_SERVER" || fail preflight "code-server image preflight failed"
-  assert_postgres_reachable || fail preflight "managed Postgres unreachable"
+  # NOTE: no managed-Postgres reachability gate here. Managed mode (DAAX_PG_MANAGED=1)
+  # fails closed above, so the only path reaching this point is compose-local
+  # Postgres, whose reachability is gated later in the DB phase (deploy.sh brings
+  # the container up, then gates on its health) — not at preflight.
 
   [[ -d "$DAAX_WORKSPACE" ]] || fail preflight "DAAX_WORKSPACE not found: $DAAX_WORKSPACE"
 
-  deploy_log "$LOGFILE" "$ENV_NAME" "preflight" "ok" "secrets present, code-server image ok, postgres gate ok"
+  deploy_log "$LOGFILE" "$ENV_NAME" "preflight" "ok" "secrets present, code-server image ok"
   ok "preflight passed"
 }
 
