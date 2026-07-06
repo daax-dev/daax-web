@@ -11,7 +11,7 @@ import {
   AlertTriangle,
   Edit2,
 } from "lucide-react";
-import { CONTAINER_VARIANTS } from "@/lib/settings";
+import { CONTAINER_VARIANTS, imageRefForVariant } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 
 interface ImageStatus {
@@ -89,7 +89,8 @@ export function ContainerImageSelector({
 
   // Pull an image
   const pullImage = async (imageId: string) => {
-    const fullName = `${registry}/${imageId}:latest`;
+    // Pull by pinned digest for known-pinned variants (issue #195), else :latest.
+    const fullName = imageRefForVariant(registry, imageId);
     setPullingImage(imageId);
     setPullProgress("");
     setPullError(null);
@@ -290,7 +291,10 @@ export function ContainerImageSelector({
                 )}
                 onClick={() => {
                   if (isClickable) {
-                    const fullName = `${registry}/${variant.id}:latest`;
+                    // Emit the pinned digest for known-pinned variants (issue
+                    // #195) so a click cannot un-pin the agent image; unpinned
+                    // variants keep :latest.
+                    const fullName = imageRefForVariant(registry, variant.id);
                     onSelect(variant.id, fullName);
                   }
                 }}

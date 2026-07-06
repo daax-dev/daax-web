@@ -120,11 +120,33 @@ export function initializeClaudeAuthDir(): {
       }
     }
   } catch (error) {
+    // Only emit the UID-1000 chown guidance when it actually applies:
+    //   (a) container mode — HOST_WORKSPACE_PATH is set (the file's container signal), AND
+    //   (b) a positively-known non-root uid — process.getuid is callable and returns != 0.
+    // Where getuid is unavailable (uid unknown) or in non-container/host runs, the
+    // UID-1000 specifics are misleading, so print generic permission guidance instead.
+    const knownNonRootUid =
+      typeof process.getuid === "function" && process.getuid() !== 0;
+    const showUid1000Guidance = Boolean(HOST_WORKSPACE_PATH) && knownNonRootUid;
     console.error(
-      `[Terminal Server] Failed to create Claude auth directory at ${localPath}. ` +
-        "Please check directory permissions and available disk space.",
+      `[Terminal Server] FATAL: cannot create the Claude auth directory at ${localPath}.`,
       error,
     );
+    if (showUid1000Guidance) {
+      // #185: the container now runs as the non-root `node` user (UID 1000) with
+      // cap_drop:[ALL], so it can only write host mounts owned by / writable by
+      // UID 1000. A root-owned /workspace mount is the usual cause here.
+      console.error(
+        "[Terminal Server] This container runs as the non-root 'node' user (UID 1000). " +
+          "The mounted /workspace (and /host-config/.claude.json) MUST be writable by UID 1000.\n" +
+          "  Fix on the HOST: chown -R 1000:1000 <your DAAX_WORKSPACE dir>  " +
+          "(and ensure ~/.claude.json is owned by / writable by UID 1000).",
+      );
+    } else {
+      console.error(
+        "[Terminal Server] Please check directory permissions and available disk space.",
+      );
+    }
     // Fail fast: this directory is required for Claude containers to work correctly
     process.exit(1);
   }

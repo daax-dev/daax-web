@@ -80,18 +80,21 @@ describe("settings migration: legacy default basePath", () => {
   });
 
   it("leaves ~/prj untouched when the host default is also ~/prj", async () => {
-    const { getSettings } = await loadSettings();
+    const { getSettings, DEFAULT_AGENT_IMAGE, DEFAULT_AGENT_IMAGE_GSD } =
+      await loadSettings();
     mockStored({
       basePath: "~/prj",
       // Pre-set the fields guarded by unrelated `=== undefined` migrations so
-      // this fixture isolates the basePath rule.
-      containerImage: "jpoley/daax-agents:latest",
+      // this fixture isolates the basePath rule. Image fields use the
+      // digest-pinned defaults (#195) — the old `:latest` defaults would
+      // themselves trigger a migration/re-save.
+      containerImage: DEFAULT_AGENT_IMAGE,
       terminalRecordingEnabled: true,
       autoWorktreeEnabled: true,
       autoWorktreeCleanup: true,
       autoWorktreePushBeforeCleanup: true,
       aiCoding: {
-        defaultContainerImage: "jpoley/daax-agents-gsd:latest",
+        defaultContainerImage: DEFAULT_AGENT_IMAGE_GSD,
         containerRegistry: "jpoley",
         autoPullLatest: false,
         usePrebuiltImage: true,

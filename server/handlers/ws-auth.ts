@@ -17,6 +17,7 @@
  */
 import type { IncomingMessage } from "http";
 
+import { isLoopbackAddress } from "../../lib/net/loopback";
 import { verifyTicket, getWsTokenSecret } from "../../lib/ws-ticket";
 import { WS_TICKET_SUBPROTOCOL } from "../../lib/ws-ticket-protocol";
 import { isAllowedOrigin } from "../config/constants";
@@ -54,13 +55,6 @@ export function _resetSeenJti(): void {
 
 function strictMode(): boolean {
   return process.env.DAAX_REQUIRE_AUTH === "1";
-}
-
-// Normalize IPv4-mapped IPv6 (`::ffff:127.0.0.1`) and IPv6 loopback (`::1`).
-function isLoopbackAddress(addr: string | undefined): boolean {
-  if (!addr) return false;
-  const a = addr.replace(/^::ffff:/i, "");
-  return a === "::1" || a === "127.0.0.1" || a.startsWith("127.");
 }
 
 let wsSecretMissingWarned = false;

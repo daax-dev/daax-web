@@ -17,6 +17,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { AuthUser } from "./auth-types";
 import { UNAUTHENTICATED_USER } from "./auth-types";
 import { canonicalizeSubject } from "./rbac/allowlist";
+import { isLoopbackAddress } from "./net/loopback";
 
 /**
  * Minimal headers-like reader satisfied by both the Web `Headers` object
@@ -58,12 +59,26 @@ const OIDC_PROVIDER_URL =
 // This is opt-in: when DAAX_PROXY_SECRET is unset the boundary is disabled and
 // legacy behavior is preserved — EXCEPT in strict mode (DAAX_REQUIRE_AUTH=1),
 // where an unset secret fails closed (forwarded identity is refused and a
-// ship-blocking warning is logged), mirroring reference-platform `validate()`.
+// ship-blocking warning is logged), mirroring reference-platform `validate()` —
+// AND except on an EXPOSED bind (#184 review): when HOST is an explicit
+// non-loopback address (e.g. the 0.0.0.0 compose containers) and the secret is
+// unset, forwarded identity is refused even in non-strict mode, because any
+// peer that can reach the port could send X-Forwarded-User and be
+// authenticated as that user with a single spoofed header.
 const PROXY_SECRET_HEADER =
   process.env.DAAX_AUTH_PROXY_SECRET_HEADER || "x-daax-proxy-secret";
 
 function proxySecretConfigured(): boolean {
   return !!process.env.DAAX_PROXY_SECRET;
+}
+
+// Whether the server is EXPOSED beyond loopback per the explicit HOST bind
+// signal (same signal the LOCAL_OPERATOR posture gate uses below — #184). An
+// unset/empty HOST is NOT exposed here: it carries no bind signal, and the
+// legacy no-secret behavior is only revoked on a provably exposed bind.
+function hostBindExposedBeyondLoopback(): boolean {
+  const host = (process.env.HOST ?? "").trim();
+  return host !== "" && !isLoopbackAddress(host);
 }
 
 // Constant-time string comparison. A length mismatch returns false without a
@@ -112,6 +127,90 @@ export function authRequired(): boolean {
   return process.env.DAAX_REQUIRE_AUTH === "1";
 }
 
+// LOCAL_OPERATOR bypass posture gate (F-C2, issue #184).
+//
+// The absent-header bypass below treats an uncredentialed request as the trusted
+// local operator. The WS plane (server/handlers/ws-auth.ts) only does this for a
+// LOOPBACK TCP peer, so a non-loopback tailnet peer can never be the "local"
+// operator. The HTTP plane CANNOT see the TCP peer: this app runs under plain
+// `next start` / `next dev` (no custom server — package.json:6/15), so route
+// handlers (`await headers()`) and middleware (`NextRequest`) never expose
+// `socket.remoteAddress`, and `X-Forwarded-For` is spoofable/absent without a
+// trusted proxy. There is therefore no per-request peer to check.
+//
+// Instead the HTTP plane gates the bypass on DEPLOYMENT POSTURE — whether the
+// server is exposed beyond loopback — which IS knowable at runtime. Fail SAFE:
+// an exposed or ambiguous production posture DENIES the bypass (→ 401), matching
+// the WS plane's "no bypass off-host" behavior. Precedence:
+//
+//   1. DAAX_TRUST_LOCAL_OPERATOR set → honored verbatim in BOTH directions
+//      (explicit opt-in to trust every peer that can reach the port, or explicit
+//      opt-out). This is the escape hatch for the proxy-less 0.0.0.0 Tailscale
+//      container run that intentionally trusts its tailnet.
+//   2. Else HOST bind is explicit → loopback bind (127.0.0.0/8, ::1, localhost)
+//      allows the bypass; any other bind (0.0.0.0, ::, a routable address) is
+//      exposed → deny. `next start -H 0.0.0.0` deployments set HOST=0.0.0.0
+//      (package.json start:prod / dev:tailscale) so this fires deterministically.
+//      HOSTNAME is intentionally NOT consulted: Docker sets it to a random
+//      container id and shells may export the machine hostname, so it is not a
+//      reliable bind signal.
+//   3. Else no explicit signal → allow ONLY when NODE_ENV is explicitly
+//      "development" (host-dev `next dev` sets NODE_ENV=development at runtime).
+//      An UNSET or ambiguous NODE_ENV, "test", and "production" all fail SAFE →
+//      deny (Copilot #184): an unset value carries NO posture signal, so it must
+//      not enable the bypass — "ambiguous → deny". Unit tests that want the
+//      bypass set the posture explicitly (HOST loopback or
+//      DAAX_TRUST_LOCAL_OPERATOR=1), never relying on a non-production NODE_ENV.
+//
+// A truthy value is 1/true/yes/on (case-insensitive); anything else is false.
+function envTruthy(v: string | undefined): boolean {
+  if (v === undefined) return false;
+  const s = v.trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes" || s === "on";
+}
+
+function envFalsy(v: string | undefined): boolean {
+  if (v === undefined) return false;
+  const s = v.trim().toLowerCase();
+  return s === "0" || s === "false" || s === "no" || s === "off";
+}
+
+// Why the LOCAL_OPERATOR bypass was denied, so the one-time warning can name the
+// ACTUAL cause instead of always blaming exposure (Copilot #184).
+export type OperatorBypassDenyReason =
+  | "explicit-opt-out" // DAAX_TRUST_LOCAL_OPERATOR set to a falsy value
+  | "exposed-beyond-loopback" // explicit non-loopback HOST bind (e.g. 0.0.0.0)
+  | "production-or-ambiguous"; // no signal + NODE_ENV not "development"
+
+export type OperatorBypassEvaluation =
+  | { allowed: true }
+  | { allowed: false; reason: OperatorBypassDenyReason };
+
+// Single evaluation of the posture gate that also reports WHY a bypass is denied.
+function evaluateLocalOperatorBypass(): OperatorBypassEvaluation {
+  // 1. Explicit operator override wins in both directions.
+  const trust = process.env.DAAX_TRUST_LOCAL_OPERATOR;
+  if (envTruthy(trust)) return { allowed: true };
+  if (envFalsy(trust)) return { allowed: false, reason: "explicit-opt-out" };
+
+  // 2. Explicit bind host: loopback → allowed; anything else → exposed → deny.
+  const host = (process.env.HOST ?? "").trim();
+  if (host !== "") {
+    return isLoopbackAddress(host)
+      ? { allowed: true }
+      : { allowed: false, reason: "exposed-beyond-loopback" };
+  }
+
+  // 3. No explicit signal → allow ONLY in explicit development (fail safe).
+  //    Unset/ambiguous NODE_ENV, "test", and "production" all deny.
+  if (process.env.NODE_ENV === "development") return { allowed: true };
+  return { allowed: false, reason: "production-or-ambiguous" };
+}
+
+export function localOperatorBypassAllowed(): boolean {
+  return evaluateLocalOperatorBypass().allowed;
+}
+
 // Synthetic user representing the trusted local operator when auth is bypassed.
 export const LOCAL_OPERATOR: AuthUser = {
   username: "local",
@@ -132,6 +231,32 @@ function warnAuthBypassedOnce(): void {
   );
 }
 
+let operatorBlockedWarned = false;
+function warnOperatorBypassBlockedOnce(reason: OperatorBypassDenyReason): void {
+  if (operatorBlockedWarned) return;
+  operatorBlockedWarned = true;
+  // State the ACTUAL deny reason (Copilot #184): the deny is not always caused by
+  // exposure — it can be an explicit opt-out or a production/ambiguous posture.
+  const cause: Record<OperatorBypassDenyReason, string> = {
+    "explicit-opt-out":
+      "DAAX_TRUST_LOCAL_OPERATOR is set to a falsy value (explicit opt-out)",
+    "exposed-beyond-loopback":
+      "the server is bound beyond loopback (HOST is not a loopback address) " +
+      "and DAAX_TRUST_LOCAL_OPERATOR is not set",
+    "production-or-ambiguous":
+      "the deployment posture is production or ambiguous (no loopback HOST " +
+      "bind, no DAAX_TRUST_LOCAL_OPERATOR, and NODE_ENV is not 'development')",
+  };
+  console.warn(
+    "[auth] No forward-auth header present, but the LOCAL_OPERATOR bypass is " +
+      `DISABLED — ${cause[reason]} — request REJECTED (401). This prevents any ` +
+      "peer that can reach the port from being trusted as the local operator " +
+      "(issue #184). To restore trust set DAAX_TRUST_LOCAL_OPERATOR=1 (trusts " +
+      "every peer that can reach the port), or put a Pocket ID proxy in front " +
+      "and set DAAX_REQUIRE_AUTH=1.",
+  );
+}
+
 let proxySecretMissingWarned = false;
 function warnProxySecretMissingOnce(): void {
   if (proxySecretMissingWarned) return;
@@ -141,6 +266,20 @@ function warnProxySecretMissingOnce(): void {
       "the HTTP proxy-secret trust boundary is NOT enforced. Forwarded identity " +
       "(X-Forwarded-User) is being REFUSED (fail-closed). Set DAAX_PROXY_SECRET " +
       "and inject X-Daax-Proxy-Secret at the proxy to authenticate forwarded identity.",
+  );
+}
+
+let exposedIdentityRefusedWarned = false;
+function warnForwardedIdentityRefusedExposedOnce(): void {
+  if (exposedIdentityRefusedWarned) return;
+  exposedIdentityRefusedWarned = true;
+  console.warn(
+    "[auth] Forwarded identity (X-Forwarded-User) REFUSED: the server is bound " +
+      "beyond loopback (HOST is not a loopback address) but DAAX_PROXY_SECRET is " +
+      "unset, so the header carries no proof it traversed a trusted proxy — any " +
+      "peer that can reach the port could forge it (issue #184). Set " +
+      "DAAX_PROXY_SECRET and inject X-Daax-Proxy-Secret at the proxy (plus " +
+      "DAAX_REQUIRE_AUTH=1 behind a real proxy) to authenticate forwarded identity.",
   );
 }
 
@@ -207,8 +346,18 @@ export function deriveAuthContext(h: HeaderReader): AuthContext {
       // Strict mode + secret unset → fail closed (refuse forwarded identity).
       warnProxySecretMissingOnce();
       identityTrusted = false;
+    } else if (hostBindExposedBeyondLoopback()) {
+      // Non-strict + secret unset + EXPOSED bind (HOST beyond loopback) → fail
+      // closed (#184 review): on a proxy-less exposed container any peer that
+      // can reach the port could set X-Forwarded-User and be authenticated as
+      // that user with one spoofed header. The hardened deploy path requires
+      // DAAX_PROXY_SECRET (deploy/docker-compose.yml) and host-dev sends no
+      // forwarded headers, so only the unprotected exposed posture is affected.
+      warnForwardedIdentityRefusedExposedOnce();
+      identityTrusted = false;
     }
-    // else: non-strict + secret unset → boundary disabled, legacy behavior.
+    // else: non-strict + secret unset + not provably exposed → boundary
+    // disabled, legacy behavior.
   }
 
   const authenticated = userId !== null && identityTrusted;
@@ -286,12 +435,19 @@ export function evaluateAuthDecision(h: HeaderReader): AuthDecision {
   }
 
   // Bypass to a local operator only when the user header is truly absent
-  // (rawUserHeader === null → no proxy) and strict auth is not required. A
-  // present-but-empty or whitespace-only header is a malformed credential and
-  // always denies.
+  // (rawUserHeader === null → no proxy), strict auth is not required, AND the
+  // deployment posture permits it (server is not exposed beyond loopback, or the
+  // operator explicitly opted in — see localOperatorBypassAllowed / issue #184).
+  // A present-but-empty or whitespace-only header is a malformed credential and
+  // always denies. An exposed posture with no header denies too (401), matching
+  // the WS plane's "no bypass off-host" behavior instead of trusting any peer.
   if (!authRequired() && rawUserHeader === null) {
-    warnAuthBypassedOnce();
-    return { decision: "allow-operator", user: LOCAL_OPERATOR };
+    const bypass = evaluateLocalOperatorBypass();
+    if (bypass.allowed) {
+      warnAuthBypassedOnce();
+      return { decision: "allow-operator", user: LOCAL_OPERATOR };
+    }
+    warnOperatorBypassBlockedOnce(bypass.reason);
   }
 
   return { decision: "deny", status: 401 };

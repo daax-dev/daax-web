@@ -7,7 +7,7 @@
  * DAAX_API_GUARD escape hatch. Env is reset per test (mirrors
  * tests/lib/auth.test.ts) so DAAX_* state never leaks between cases.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 
 import { middleware } from "@/middleware";
@@ -23,21 +23,22 @@ function isPassThrough(res: { headers: Headers }): boolean {
 
 describe("default-deny /api middleware (#181)", () => {
   beforeEach(() => {
-    delete process.env.DAAX_REQUIRE_AUTH;
-    delete process.env.DAAX_PROXY_SECRET;
-    delete process.env.DAAX_PROXY_SECRET_PREVIOUS;
-    delete process.env.DAAX_API_GUARD;
+    // All mutated env goes through vi.stubEnv so vi.unstubAllEnvs() restores the
+    // runner's originals (Copilot #184) — a bare delete would permanently clear
+    // vars the runner may have set, leaking into later tests in this worker.
+    vi.stubEnv("DAAX_REQUIRE_AUTH", undefined);
+    vi.stubEnv("DAAX_PROXY_SECRET", undefined);
+    vi.stubEnv("DAAX_PROXY_SECRET_PREVIOUS", undefined);
+    vi.stubEnv("DAAX_API_GUARD", undefined);
+    vi.stubEnv("DAAX_TRUST_LOCAL_OPERATOR", undefined);
+    // Default host-dev loopback posture (Copilot #184): under vitest
+    // NODE_ENV="test", so the operator bypass now requires an explicit safe
+    // posture. These non-strict cases model host-dev, which binds loopback.
+    vi.stubEnv("HOST", "127.0.0.1");
   });
 
-  // These tests set DAAX_REQUIRE_AUTH / DAAX_PROXY_SECRET per case. process.env
-  // is shared across all test files in a worker, so without cleanup after the
-  // file's LAST test those values leak into later files and break env-sensitive
-  // auth/RBAC assertions (e.g. the local-operator bypass). Clear them here too.
   afterEach(() => {
-    delete process.env.DAAX_REQUIRE_AUTH;
-    delete process.env.DAAX_PROXY_SECRET;
-    delete process.env.DAAX_PROXY_SECRET_PREVIOUS;
-    delete process.env.DAAX_API_GUARD;
+    vi.unstubAllEnvs();
   });
 
   describe("public allowlist", () => {
@@ -75,6 +76,19 @@ describe("default-deny /api middleware (#181)", () => {
     it("strict mode + no identity → 401", () => {
       process.env.DAAX_REQUIRE_AUTH = "1";
       const res = middleware(req("http://localhost/api/config"));
+      expect(res.status).toBe(401);
+    });
+
+    it("exposed posture (HOST=0.0.0.0) + no operator header → 401 (default-deny)", () => {
+      // Drive the exposed posture through middleware() itself (issue #184): a
+      // non-loopback bind with no DAAX_TRUST_LOCAL_OPERATOR opt-in must DENY the
+      // LOCAL_OPERATOR bypass even when strict mode is OFF, matching the WS
+      // plane's "no bypass off-host" behavior. POST with NO Origin bypasses the
+      // CSRF gate so the request falls through to the posture-gated auth check.
+      vi.stubEnv("HOST", "0.0.0.0");
+      const res = middleware(
+        req("http://localhost/api/config", { method: "POST" }),
+      );
       expect(res.status).toBe(401);
     });
 

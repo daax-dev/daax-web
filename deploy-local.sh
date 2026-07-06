@@ -235,8 +235,23 @@ compose() {
     || die "DAAX_ENV_FILE not found: $env_file"
 
   local docker_gid
-  docker_gid="$(getent group docker | awk -F: '{print $3}')"
-  [[ -n "$docker_gid" ]] || die "cannot resolve docker group GID"
+  # Non-fatal: under `set -Eeuo pipefail`, a missing `docker` group (getent
+  # exits non-zero) or absent `getent` (macOS) would otherwise trip errexit
+  # here and skip the socket-stat fallback below. `|| true` lets resolution
+  # fall through to the socket stat, then the explicit `die`.
+  docker_gid="$(getent group docker 2>/dev/null | awk -F: '{print $3}' || true)"
+  # Fallback (#185, M3): snap/rootless/custom-socket hosts may have no `docker`
+  # group entry; use the GID that actually owns the socket so group_add still
+  # grants access. DOCKER_SOCKET is a unix:// URL — strip the scheme for stat.
+  if [[ -z "$docker_gid" ]]; then
+    # Non-fatal socket-GID lookup: `stat` exits non-zero on a missing socket and
+    # GNU `stat -c` is unsupported on macOS. Guard both (BSD `stat -f` fallback,
+    # trailing `|| true`) so a failure can't trip `set -Eeuo pipefail` before the
+    # explicit `die` below gives a clear, actionable error.
+    docker_gid="$(stat -c '%g' "${DOCKER_SOCKET#unix://}" 2>/dev/null \
+      || stat -f '%g' "${DOCKER_SOCKET#unix://}" 2>/dev/null || true)"
+  fi
+  [[ -n "$docker_gid" ]] || die "cannot resolve docker group GID (set DOCKER_GID explicitly)"
 
   # Explicitly export every variable the compose file interpolates, so the
   # caller's environment doesn't leak in unexpected values.
@@ -248,7 +263,7 @@ compose() {
   HOSTNAME="$DAAX_HOSTNAME" \
   TERMINAL_WS_URL="${TERMINAL_WS_URL:-wss://daax.${DAAX_HOSTNAME}.poley.dev/ws}" \
   CODE_SERVER_URL="${CODE_SERVER_URL:-https://daax-code.${DAAX_HOSTNAME}.poley.dev/?folder=/workspace}" \
-  CLAUDE_CONTAINER_IMAGE="${CLAUDE_CONTAINER_IMAGE:-jpoley/daax-agents:latest}" \
+  CLAUDE_CONTAINER_IMAGE="${CLAUDE_CONTAINER_IMAGE:-}" \
   GITHUB_DAAX="${GITHUB_DAAX:-}" \
   CLAWD_GATEWAY_URL="${CLAWD_GATEWAY_URL:-}" \
   CLAWD_GATEWAY_TOKEN="${CLAWD_GATEWAY_TOKEN:-}" \
@@ -361,11 +376,41 @@ cmd_deploy() {
 
   log "building daax image..."
   compose build --pull daax
+  ensure_daax_data_owner
   log "starting daax (force-recreate)..."
   compose up -d --force-recreate --wait --wait-timeout 120 daax
   ok "daax is up"
   printf '    local  : http://localhost:4200\n'
   printf '    traefik: https://daax.%s.poley.dev (requires install-traefik-config)\n' "$DAAX_HOSTNAME"
+}
+
+# Idempotently fix ownership of the persistent app-data volume (#185, H1).
+# The app now runs as the non-root `node` user (UID 1000). A daax-data volume
+# first populated by the OLD root image stays root:root across an upgrade, so
+# node(1000) writing mcp-registry.json / releases backups would EACCES — and
+# boot/health never touch those, so it looks healthy until the first /api/mcp
+# POST. This chowns the volume to 1000:1000 BEFORE `compose up`.
+# Idempotent + cheap: no-op when the volume is absent (fresh deploy — compose
+# seeds it node-owned from the image) or already owned by 1000; only chowns when
+# actually stale. Uses the just-built daax image (present, has chown/stat).
+ensure_daax_data_owner() {
+  local vol="${PROJECT_NAME}_daax-data"
+  docker volume inspect "$vol" >/dev/null 2>&1 || return 0
+
+  local img="daax:latest"
+  docker image inspect "$img" >/dev/null 2>&1 || img="alpine"
+
+  local owner
+  owner="$(docker run --rm -v "$vol:/d" "$img" stat -c '%u' /d 2>/dev/null || echo unknown)"
+  if [[ "$owner" == "1000" ]]; then
+    return 0
+  fi
+  log "chowning volume $vol to 1000:1000 (was uid=$owner) for non-root app (#185)..."
+  # --user 0:0: the daax image defaults to USER node (uid 1000, no CAP_CHOWN),
+  # which cannot chown the stale root-owned volume — the exact case being
+  # remediated. Root inside this throwaway maintenance container does not
+  # weaken the runtime hardening of the app itself.
+  docker run --rm --user 0:0 -v "$vol:/d" "$img" chown -R 1000:1000 /d >/dev/null
 }
 
 # Idempotently create the external docker network the compose file expects.
@@ -476,6 +521,7 @@ cmd_migrate_daax() {
   # Bring up daax on native
   log "building daax on native daemon..."
   compose build --pull daax
+  ensure_daax_data_owner
   log "starting daax on native daemon..."
   compose up -d --force-recreate --wait --wait-timeout 120 daax
 
