@@ -10,7 +10,7 @@ import {
   useRef,
 } from "react";
 import dynamic from "next/dynamic";
-import { getSettings } from "@/lib/settings";
+import { getSettings, DEFAULT_AGENT_IMAGE_GSD } from "@/lib/settings";
 import { buildTerminalWsUrl } from "@/lib/websocket-utils";
 import type { TerminalRef } from "./Terminal";
 import { getProjectInfo } from "@/lib/project-utils";
@@ -67,13 +67,15 @@ const Terminal = dynamic(
 // override and reverse-proxy detection live there now.
 
 // Get container image from settings
-// Prefers aiCoding.defaultContainerImage, falls back to legacy containerImage
+// Prefers aiCoding.defaultContainerImage, falls back to legacy containerImage.
+// The final hard-coded fallback is the digest-pinned default (issue #195) so no
+// code path defaults to a mutable `:latest` tag if both settings fields are empty.
 function getContainerImage(): string {
   const settings = getSettings();
   return (
     settings.aiCoding?.defaultContainerImage ||
     settings.containerImage ||
-    "jpoley/daax-agents:latest"
+    DEFAULT_AGENT_IMAGE_GSD
   );
 }
 

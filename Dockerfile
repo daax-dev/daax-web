@@ -3,11 +3,23 @@
 #
 # Build: docker build -t daax .
 #
+# The image runs as the non-root `node` user (#185), so Docker-socket access is by
+# GROUP membership: pass --group-add with the HOST socket's GID (NOT uid 0), or
+# spawning fails with a socket permission-denied. Resolve it with:
+#     stat -c '%g' /var/run/docker.sock   # Linux
+#     stat -f '%g' /var/run/docker.sock   # macOS/BSD (Docker Desktop)
+# --security-opt no-new-privileges and --cap-drop ALL match the compose hardening.
+#
 # Run (minimal):
-#   docker run -p 4200:4200 -p 4201:4201 -v /var/run/docker.sock:/var/run/docker.sock daax
+#   docker run -p 4200:4200 -p 4201:4201 \
+#     --group-add "$(stat -c '%g' /var/run/docker.sock)" \
+#     --security-opt no-new-privileges:true --cap-drop ALL \
+#     -v /var/run/docker.sock:/var/run/docker.sock daax
 #
 # Run (with MCP config access - required for /mcp page):
 #   docker run -p 4200:4200 -p 4201:4201 \
+#     --group-add "$(stat -c '%g' /var/run/docker.sock)" \
+#     --security-opt no-new-privileges:true --cap-drop ALL \
 #     -v /var/run/docker.sock:/var/run/docker.sock \
 #     -v ~/.claude.json:/host-config/.claude.json:rw \
 #     -v ~/.mcp.json:/host-config/.mcp.json:ro \
@@ -16,7 +28,9 @@
 #     daax
 # Notes:
 # - ~/.claude.json must be mounted read-write (:rw) because the app updates this file
-#   to enable/disable tools and persist configuration changes.
+#   to enable/disable tools and persist configuration changes. As the container runs
+#   as UID 1000, ~/.claude.json and any mounted workspace must be writable by UID 1000
+#   (chown to 1000:1000 if needed).
 # - ~/.mcp.json is only read by the app to discover MCP servers, so read-only (:ro)
 #   access is sufficient and recommended.
 
@@ -175,8 +189,11 @@ ENV NEXT_PUBLIC_BUILD_HOST=${BUILD_HOST:-unknown}
 ENV NEXT_PUBLIC_BUILD_BRANCH=${BUILD_BRANCH:-unknown}
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# For Docker-in-Docker to work, we need root access to the socket
-# In a Tailscale-only environment this is acceptable
+# Docker-socket access is group-based, NOT uid-0-based (#185): the final stage
+# runs as the unprivileged `node` user (UID 1000) and joins the host docker
+# group at runtime via compose `group_add: ${DOCKER_GID}`. UID 1000 also matches
+# the typical host user that owns the :rw-mounted ~/.claude.json, so MCP config
+# writes work without CAP_DAC_OVERRIDE.
 WORKDIR /app
 
 # Copy built assets and deps with native modules
@@ -206,7 +223,31 @@ COPY --from=builder /app/postcss.config.mjs ./postcss.config.mjs
 COPY --from=builder /app/instrumentation.ts ./instrumentation.ts
 COPY --from=builder /app/config.toml ./config.toml
 
-# Running as root for Docker socket access (Tailscale-only deployment)
+# Non-root hardening (#185). Create the runtime write paths owned by the `node`
+# user BEFORE dropping privileges. All app writes are under process.cwd() (/app)
+# or the node home:
+#   - /app/data            releases-db backups, mcp-registry.json, mcp-gateway
+#   - /app/.logs/decisions decision-logger JSONL
+#   - /app/.data           api-tools storage
+#   - /app/.next/cache     Next.js runtime/incremental cache (`next start`)
+#   - /app (dir itself)    lib/secrets.ts writes /app/.secrets.json at the root
+#   - /home/node/.mcp-gateway is under the node-owned home (already node:node)
+# /app/data is pre-created node-owned so a fresh named-volume mount (deploy
+# compose `daax-data:/app/data`) inherits node ownership instead of root:root.
+# NOTE (existing deploys): a daax-data volume created by a prior root-running
+# image stays root-owned; recreate it once (`docker volume rm daax-data`) or
+# chown it to 1000:1000 after upgrading, or app data writes will EACCES.
+# chown of /app is non-recursive: node only needs to CREATE entries in /app;
+# the root-owned copied assets (node_modules, .next server/static) stay
+# read-only, which is all the runtime needs.
+RUN mkdir -p /app/data /app/.logs/decisions /app/.data /app/.next/cache && \
+    chown node:node /app /app/data /app/.logs /app/.logs/decisions /app/.data && \
+    chown -R node:node /app/.next/cache
+
+# Drop to the unprivileged user for the app runtime (#185). Docker-socket access
+# is granted at runtime via compose `group_add: ${DOCKER_GID}` (host docker GID),
+# so this stays group-based and requires no uid-0 process.
+USER node
 
 # Expose ports
 # 4200 - Next.js web UI

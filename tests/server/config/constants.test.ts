@@ -1,5 +1,100 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { isAllowedOrigin } from "@/server/config/constants";
+import {
+  DEFAULT_SETTINGS,
+  DEFAULT_AI_CODING_SETTINGS,
+  DEFAULT_AGENT_IMAGE,
+  DEFAULT_AGENT_IMAGE_GSD,
+} from "@/lib/settings";
+
+describe("DEFAULT_CONTAINER_IMAGE digest pin (issue #195, Fable M5)", () => {
+  // Guard against a silent regression back to a mutable `:latest` tag. A
+  // compromised/typosquatted upstream push must not be able to land arbitrary
+  // code in every future agent session, so the BUILT-IN DEFAULT must always be
+  // pinned by a sha256 digest.
+  //
+  // The guard targets the module default ONLY. Operators MAY override the image
+  // via CLAUDE_CONTAINER_IMAGE with a tag OR a digest (a supported config — see
+  // server/config/constants.ts, e.g. local debugging), so an ambient override
+  // must not make this test fail. We clear that env var and re-import the module
+  // fresh before reading DEFAULT_CONTAINER_IMAGE, asserting the module's default
+  // is digest-pinned regardless of the ambient environment. We deliberately make
+  // no assertion about an operator override's format.
+  const savedOverride = process.env.CLAUDE_CONTAINER_IMAGE;
+
+  beforeEach(() => {
+    delete process.env.CLAUDE_CONTAINER_IMAGE;
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    if (savedOverride === undefined) {
+      delete process.env.CLAUDE_CONTAINER_IMAGE;
+    } else {
+      process.env.CLAUDE_CONTAINER_IMAGE = savedOverride;
+    }
+    vi.resetModules();
+  });
+
+  async function loadDefault(): Promise<string> {
+    const mod = await import("@/server/config/constants");
+    return mod.DEFAULT_CONTAINER_IMAGE;
+  }
+
+  it("references a sha256 digest, not just a tag", async () => {
+    expect(await loadDefault()).toMatch(/@sha256:[0-9a-f]{64}$/);
+  });
+
+  it("does not use the mutable :latest tag by default", async () => {
+    const def = await loadDefault();
+    expect(def).not.toMatch(/:latest$/);
+    expect(def.endsWith(":latest")).toBe(false);
+  });
+
+  // The daax-agents digest is pinned in TWO client-safe places (lib/settings.ts
+  // cannot import this os/path-bearing module) — DEFAULT_AGENT_IMAGE must stay
+  // byte-identical to the module default here, or the /shell spawn path (which
+  // reads DEFAULT_SETTINGS.containerImage) would drift from the server default.
+  it("DEFAULT_AGENT_IMAGE (lib/settings) matches DEFAULT_CONTAINER_IMAGE (constants)", async () => {
+    expect(DEFAULT_AGENT_IMAGE).toBe(await loadDefault());
+  });
+});
+
+describe("UI-default agent image digest pin (issue #195, Copilot #195)", () => {
+  // The MAIN container-session spawn path uses the UI setting, not the server
+  // constant: components/terminal/TerminalManager.tsx sends
+  // aiCoding.defaultContainerImage, which defaults to the -gsd variant in
+  // lib/settings.ts. That default MUST be digest-pinned too, or the effective UI
+  // default silently reverts to a mutable `:latest` tag. Guard both settings
+  // defaults that feed a container spawn.
+
+  it("aiCoding.defaultContainerImage is digest-pinned, not :latest", () => {
+    expect(DEFAULT_AI_CODING_SETTINGS.defaultContainerImage).toMatch(
+      /@sha256:[0-9a-f]{64}$/,
+    );
+    expect(DEFAULT_AI_CODING_SETTINGS.defaultContainerImage).not.toMatch(
+      /:latest$/,
+    );
+    // The UI default is the -gsd ("Get Shit Done") variant.
+    expect(DEFAULT_AI_CODING_SETTINGS.defaultContainerImage).toBe(
+      DEFAULT_AGENT_IMAGE_GSD,
+    );
+  });
+
+  it("legacy top-level containerImage default is digest-pinned, not :latest", () => {
+    // Used directly as the spawn image on /shell (app/shell/page.tsx) and as the
+    // second fallback in TerminalManager.getContainerImage().
+    expect(DEFAULT_SETTINGS.containerImage).toMatch(/@sha256:[0-9a-f]{64}$/);
+    expect(DEFAULT_SETTINGS.containerImage).not.toMatch(/:latest$/);
+    expect(DEFAULT_SETTINGS.containerImage).toBe(DEFAULT_AGENT_IMAGE);
+  });
+
+  it("both pinned constants are valid digest references (no mutable tag)", () => {
+    for (const ref of [DEFAULT_AGENT_IMAGE_GSD, DEFAULT_AGENT_IMAGE]) {
+      expect(ref).toMatch(/^jpoley\/daax-agents[\w-]*@sha256:[0-9a-f]{64}$/);
+    }
+  });
+});
 
 describe("isAllowedOrigin", () => {
   describe("undefined/null origin (raw / non-browser clients)", () => {

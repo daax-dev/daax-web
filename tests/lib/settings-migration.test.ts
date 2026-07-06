@@ -110,18 +110,21 @@ describe("settings migration: legacy container plugin IDs", () => {
   });
 
   it("is idempotent: already-migrated settings do not trigger a re-save", async () => {
-    const { getSettings } = await loadSettings();
+    const { getSettings, DEFAULT_AGENT_IMAGE, DEFAULT_AGENT_IMAGE_GSD } =
+      await loadSettings();
     // Include the fields guarded by unrelated `=== undefined` migrations so
     // this fixture isolates the container-ID migration as the only trigger.
+    // Image fields use the digest-pinned defaults (#195) — the old `:latest`
+    // defaults would themselves trigger a migration.
     mockStored({
       basePath: "~/prj",
-      containerImage: "jpoley/daax-agents:latest",
+      containerImage: DEFAULT_AGENT_IMAGE,
       terminalRecordingEnabled: true,
       autoWorktreeEnabled: true,
       autoWorktreeCleanup: true,
       autoWorktreePushBeforeCleanup: true,
       aiCoding: {
-        defaultContainerImage: "jpoley/daax-agents-gsd:latest",
+        defaultContainerImage: DEFAULT_AGENT_IMAGE_GSD,
         containerRegistry: "jpoley",
         autoPullLatest: false,
         usePrebuiltImage: true,
@@ -143,18 +146,20 @@ describe("settings migration: legacy ~/ps basePath", () => {
   });
 
   // Fixture with every `=== undefined`-guarded field pre-set, so basePath is
-  // the ONLY thing that can trigger a migration/re-save.
+  // the ONLY thing that can trigger a migration/re-save. Image fields use
+  // deliberately custom (non-default) values so the #195 old-default→pinned
+  // migrations cannot fire either.
   function baseFixture(basePath: string) {
     return {
       basePath,
-      containerImage: "jpoley/daax-agents:latest",
+      containerImage: "jpoley/daax-agents:arm64",
       terminalRecordingEnabled: true,
       autoWorktreeEnabled: true,
       autoWorktreeCleanup: true,
       autoWorktreePushBeforeCleanup: true,
       aiCoding: {
-        defaultContainerImage: "jpoley/daax-agents-gsd:latest",
-        containerRegistry: "jpoley",
+        defaultContainerImage: "ghcr.io/acme/daax-agents-gsd:latest",
+        containerRegistry: "ghcr.io/acme",
         autoPullLatest: false,
         usePrebuiltImage: true,
       },
@@ -190,5 +195,114 @@ describe("settings migration: legacy ~/ps basePath", () => {
 
     expect(result.basePath).toBe("~/prj/myrepo");
     expect(localStorage.setItem).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("settings migration: legacy :latest agent-image defaults (#195)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Fixture with every other migration-guarded field pre-set, so the two
+  // agent-image fields are the ONLY possible migration triggers.
+  function imageFixture(
+    containerImage: string,
+    defaultContainerImage: string,
+    containerRegistry = "jpoley",
+  ) {
+    return {
+      basePath: "~/prj",
+      containerImage,
+      terminalRecordingEnabled: true,
+      autoWorktreeEnabled: true,
+      autoWorktreeCleanup: true,
+      autoWorktreePushBeforeCleanup: true,
+      aiCoding: {
+        defaultContainerImage,
+        containerRegistry,
+        autoPullLatest: false,
+        usePrebuiltImage: true,
+      },
+    };
+  }
+
+  it("migrates the old default containerImage 'jpoley/daax-agents:latest' to the pinned digest", async () => {
+    const { getSettings, DEFAULT_AGENT_IMAGE, DEFAULT_AGENT_IMAGE_GSD } =
+      await loadSettings();
+    mockStored(
+      imageFixture("jpoley/daax-agents:latest", DEFAULT_AGENT_IMAGE_GSD),
+    );
+
+    const result = getSettings();
+
+    expect(result.containerImage).toBe(DEFAULT_AGENT_IMAGE);
+    expect(result.containerImage).toMatch(/@sha256:[0-9a-f]{64}$/);
+
+    // Migration must be persisted so the pin survives the next load.
+    expect(localStorage.setItem).toHaveBeenCalledTimes(1);
+    const saved = JSON.parse(
+      vi.mocked(localStorage.setItem).mock.calls[0][1] as string,
+    );
+    expect(saved.containerImage).toBe(DEFAULT_AGENT_IMAGE);
+  });
+
+  it("migrates the old aiCoding default 'jpoley/daax-agents-gsd:latest' to the pinned digest", async () => {
+    const { getSettings, DEFAULT_AGENT_IMAGE, DEFAULT_AGENT_IMAGE_GSD } =
+      await loadSettings();
+    mockStored(
+      imageFixture(DEFAULT_AGENT_IMAGE, "jpoley/daax-agents-gsd:latest"),
+    );
+
+    const result = getSettings();
+
+    expect(result.aiCoding.defaultContainerImage).toBe(DEFAULT_AGENT_IMAGE_GSD);
+    expect(result.aiCoding.defaultContainerImage).toMatch(
+      /@sha256:[0-9a-f]{64}$/,
+    );
+
+    expect(localStorage.setItem).toHaveBeenCalledTimes(1);
+    const saved = JSON.parse(
+      vi.mocked(localStorage.setItem).mock.calls[0][1] as string,
+    );
+    expect(saved.aiCoding.defaultContainerImage).toBe(DEFAULT_AGENT_IMAGE_GSD);
+  });
+
+  it("preserves a valid digest that uses uppercase hex (not reset to default)", async () => {
+    const { getSettings, DEFAULT_AGENT_IMAGE_GSD } = await loadSettings();
+    // A valid @sha256 digest may use uppercase hex per the Docker reference
+    // grammar (lib/docker-validation.ts VALID_IMAGE_NAME_PATTERN allows A-F).
+    // The persisted-settings validImagePattern must accept it too, otherwise a
+    // legitimate pinned image is wrongly reset to the default on load.
+    const upperHexDigest =
+      "jpoley/daax-agents@sha256:2153F137B3F47DE007698D1E5F0D31A684CB45A7E1EBC1326F668EE458F55BC5";
+    mockStored(imageFixture(upperHexDigest, DEFAULT_AGENT_IMAGE_GSD));
+
+    const result = getSettings();
+
+    // Must survive untouched — not reset, not re-saved.
+    expect(result.containerImage).toBe(upperHexDigest);
+    expect(localStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("does NOT rewrite genuinely custom user-chosen images", async () => {
+    const { getSettings } = await loadSettings();
+    // Values a user could have picked deliberately: a valid non-default tag
+    // for containerImage, and a third-party image for aiCoding. Neither
+    // byte-equals a previously shipped default, so both must survive.
+    mockStored(
+      imageFixture(
+        "jpoley/daax-agents:arm64",
+        "ghcr.io/acme/daax-agents-gsd:latest",
+        "ghcr.io/acme",
+      ),
+    );
+
+    const result = getSettings();
+
+    expect(result.containerImage).toBe("jpoley/daax-agents:arm64");
+    expect(result.aiCoding.defaultContainerImage).toBe(
+      "ghcr.io/acme/daax-agents-gsd:latest",
+    );
+    expect(localStorage.setItem).not.toHaveBeenCalled();
   });
 });

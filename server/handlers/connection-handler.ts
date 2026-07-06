@@ -20,6 +20,7 @@ import {
   resolveContainerImage,
   DEFAULT_CONTAINER_IMAGE,
 } from "../docker/image-manager";
+import { buildPtyEnv } from "../sessions/pty-env";
 import { getPty } from "../sessions/pty-loader";
 import {
   TerminalSession,
@@ -37,10 +38,7 @@ import {
 } from "../recording/recorder";
 import { handleMessage, MessageHandlerContext } from "./message-handler";
 import { scheduleCommand } from "./command-handler";
-import {
-  resolveWorkspaceRoot,
-  isValidPath,
-} from "../../lib/worktree-manager";
+import { resolveWorkspaceRoot, isValidPath } from "../../lib/worktree-manager";
 
 // Auth paths are initialized in terminal-server.ts and passed here
 let claudeAuthHostPath: string;
@@ -216,11 +214,13 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     cols: DEFAULT_TERMINAL_COLS,
     rows: DEFAULT_TERMINAL_ROWS,
     cwd: mode === "local" ? cwd : undefined,
+    // buildPtyEnv strips the compose-set HOST posture var so it never leaks
+    // into workbench terminals (#184 review).
     env: {
-      ...process.env,
+      ...buildPtyEnv(),
       TERM: "xterm-256color",
       COLORTERM: "truecolor",
-    } as Record<string, string>,
+    },
   });
 
   // Store recording config but don't start until first output
@@ -600,16 +600,56 @@ function buildShellCommand(
         "--rm",
         "--name",
         `daax-${sessionId.slice(0, 8)}`,
+        // SECURITY / issue #195 (Fable M5): agent containers reach `postgres`
+        // via daax-net. Evaluated for segregation and DEFERRED, not fixed here:
+        // daax-net is the shared plane for daax's own services (code-server, the
+        // MCP gateway, etc.) that agent sessions legitimately use, so moving
+        // agents to an isolated network risks breaking those integrations. The
+        // Postgres exposure is mitigated separately by requiring a real
+        // DAAX_PG_PASSWORD in the deploy compose (the `daax` default is
+        // local-throwaway only). A dedicated agent network with an explicit
+        // allow-list to just the services agents need is the follow-up.
         "--network",
         DOCKER_NETWORK,
         "-u",
         "vscode",
         "-v",
         `${mountPath}:${containerPath}`,
+        // SECURITY / issue #195 (Fable M5): credential mounts are read-WRITE by
+        // necessity, documented accepted risk. Write-back is REQUIRED and `:ro`
+        // would break auth persistence (AC#4):
+        //   - Claude Code performs OAuth token refresh and rewrites
+        //     `.claude/.credentials.json`; a read-only mount breaks auth over
+        //     time as the access token expires.
+        //   - Both tools persist the INITIAL login here — the dir is created
+        //     empty (see server/docker/auth-paths.ts) and populated by
+        //     `claude login` / `opencode auth login` INSIDE the container; a
+        //     read-only mount would discard that, so no session could ever
+        //     authenticate.
+        // Mitigation scope differs by tool/mode — be precise:
+        //   - Claude: a daax-DEDICATED store, never the operator's global
+        //     `~/.claude`. Host mode uses `~/.daax-claude`; container mode uses
+        //     `${workspace}/.daax/claude`. Exfiltration here leaks only the
+        //     daax-scoped Claude credential.
+        //   - OpenCode, CONTAINER mode: daax-scoped to
+        //     `${workspace}/.daax/opencode`.
+        //   - OpenCode, HOST mode: NOT daax-scoped. auth-paths.ts resolves this
+        //     to the operator's REAL global `~/.local/share/opencode` (or
+        //     $XDG_DATA_HOME/opencode) and mounts it read-WRITE into agent
+        //     containers. So the residual risk for OpenCode host mode is
+        //     exfiltration of the operator's REAL OpenCode credential (their
+        //     actual OpenCode identity), not a daax-scoped copy.
+        // Residual risk: untrusted agent code can read/exfiltrate the long-lived
+        // token in whichever store is mounted, and the store is shared across
+        // daax agent sessions — with OpenCode host mode being the operator's real
+        // global credential (see above). Follow-up (tracked in the #195 decision
+        // log): a daax-scoped OpenCode store for host mode, plus per-session,
+        // short-lived scoped tokens so a compromised session cannot exfiltrate a
+        // durable credential or read another session's token.
         "-v",
-        `${claudeAuthHostPath}:/home/vscode/.claude`, // Persist Claude auth
+        `${claudeAuthHostPath}:/home/vscode/.claude`, // Persist Claude auth (RW required — see note above)
         "-v",
-        `${openCodeAuthHostPath}:/home/vscode/.local/share/opencode`, // Persist OpenCode auth
+        `${openCodeAuthHostPath}:/home/vscode/.local/share/opencode`, // Persist OpenCode auth (RW required — see note above)
         "-w",
         containerPath,
         "-e",
