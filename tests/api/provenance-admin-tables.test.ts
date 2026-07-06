@@ -51,9 +51,15 @@ import {
   DELETE as deleteRow,
 } from "@/app/api/provenance-admin/tables/[...path]/route";
 
-// Mock fetch globally to simulate provenance backend responses
+// Mock fetch globally to simulate provenance backend responses. Stub via
+// vi.stubGlobal (in a file-level beforeEach) and undo with vi.unstubAllGlobals
+// (afterEach) rather than a bare `global.fetch = …` — a raw module-scope
+// assignment is never restored and would leak the mock into later test files in
+// the same Vitest worker (order-dependent failures). These file-level hooks wrap
+// the per-describe hooks below.
 const mockFetch = vi.fn();
-global.fetch = mockFetch as unknown as typeof fetch;
+beforeEach(() => vi.stubGlobal("fetch", mockFetch));
+afterEach(() => vi.unstubAllGlobals());
 
 describe("provenance-admin requireRole RBAC gate (F5, #101)", () => {
   // `mockFetch` and `global.fetch` are module-scoped and shared across every
