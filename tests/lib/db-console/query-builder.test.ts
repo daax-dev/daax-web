@@ -90,11 +90,13 @@ describe("db-console query builder (F6 #102)", () => {
   });
 
   describe("buildBoundedCount", () => {
-    it("caps the count and binds the cap as a param", () => {
+    it("binds cap+1 as the LIMIT param so exactly-cap is distinguishable from capped", () => {
       const q = buildBoundedCount(users, 100);
       expect(q.text).toContain('FROM "public"."users"');
       expect(q.text).toContain("LIMIT $1::bigint");
-      expect(q.params).toEqual([100]);
+      // cap+1: a table with exactly `cap` rows returns `cap` (exact, not capped);
+      // only `cap+1` signals the true total exceeds the cap.
+      expect(q.params).toEqual([101]);
     });
   });
 

@@ -144,13 +144,18 @@ export async function inspectTable(
     query<Record<string, unknown>>(select.text, select.params),
     query<{ n: string }>(count.text, count.params),
   ]);
-  const total = Number(countRes.rows[0]?.n ?? 0);
+  // buildBoundedCount fetches cap+1: n > COUNT_CAP means the true total exceeds
+  // the cap (capped); n <= COUNT_CAP is the exact total. Clamp the DISPLAYED
+  // total back to COUNT_CAP so a capped table never reports cap+1.
+  const rawCount = Number(countRes.rows[0]?.n ?? 0);
+  const totalCapped = rawCount > COUNT_CAP;
+  const total = totalCapped ? COUNT_CAP : rawCount;
   return {
     table: table.name,
     columns: table.columns,
     rows: rowsRes.rows,
     total,
-    totalCapped: total >= COUNT_CAP,
+    totalCapped,
     limit,
     offset,
   };

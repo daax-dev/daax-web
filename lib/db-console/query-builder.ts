@@ -104,7 +104,14 @@ export function buildSelectRows(
 /**
  * Bounded exact count: `SELECT count(*) FROM (SELECT 1 FROM rel LIMIT $1)`.
  * Exact for tables up to `cap` rows; caps out (fast) on huge tables so the
- * console never triggers a full-table COUNT. Returns `total >= cap` as capped.
+ * console never triggers a full-table COUNT.
+ *
+ * The inner LIMIT is `cap + 1`, NOT `cap`, so the caller can tell "EXACTLY cap
+ * rows" (returns `cap` → exact, NOT capped) apart from "more than cap" (returns
+ * `cap + 1` → capped). A plain `LIMIT cap` returns `cap` in BOTH cases, which
+ * would wrongly mark an exact `cap`-row table as capped and show a phantom next
+ * page. Callers interpret `n > cap` as capped and clamp the displayed total to
+ * `cap`.
  */
 export function buildBoundedCount(
   table: TableSchema,
@@ -113,7 +120,7 @@ export function buildBoundedCount(
   const rel = quoteRelation(table);
   return {
     text: `SELECT count(*)::bigint AS n FROM (SELECT 1 FROM ${rel} LIMIT $1::bigint) _capped`,
-    params: [cap],
+    params: [cap + 1],
   };
 }
 
