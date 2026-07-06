@@ -95,9 +95,7 @@ function preflightDockerSocket(): void {
         "This container runs as the non-root 'node' user (UID 1000) and reaches the " +
         "socket by GROUP membership, so DOCKER_GID must equal the host socket's group.\n" +
         `  Required: DOCKER_GID=${requiredGid}   (host: stat -c '%g' ${socketPath} on Linux; stat -f '%g' ${socketPath} on macOS/BSD)\n` +
-        "  A bare `docker compose up` needs `export DOCKER_GID=$(stat -c '%g' " +
-        "/var/run/docker.sock)` first (Linux) or `export DOCKER_GID=$(stat -f '%g' " +
-        "/var/run/docker.sock)` (macOS/BSD); rebuild.sh and deploy-local.sh derive it automatically.",
+        `  A bare \`docker compose up\` needs \`export DOCKER_GID=$(stat -c '%g' ${socketPath})\` first (Linux) or \`export DOCKER_GID=$(stat -f '%g' ${socketPath})\` (macOS/BSD); rebuild.sh and deploy-local.sh derive it automatically.`,
     );
     process.exit(1);
   }
