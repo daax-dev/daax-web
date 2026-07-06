@@ -75,6 +75,40 @@ describe("useSuperAdminAccess", () => {
     errorSpy.mockRestore();
   });
 
+  it("maps a redirected response (proxy login page) to no access, silently and cached", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Upstream forward-auth redirected the unauthenticated caller to an HTML
+    // login page: res.redirected is true and res.json() would throw. This must
+    // be treated exactly like 401/403 — fail safe to false, no console.error,
+    // and TTL-cached (so a second mount does not refetch in a tight loop).
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      redirected: true,
+      json: () => Promise.reject(new SyntaxError("Unexpected token < in JSON")),
+    });
+
+    const useSuperAdminAccess = await loadHook();
+
+    const first = renderHook(() => useSuperAdminAccess());
+    await waitFor(() => expect(first.result.current.loading).toBe(false));
+    expect(first.result.current.isSuperAdmin).toBe(false);
+    // A redirect to the login page is the expected "no access" answer, not an
+    // error, so it must NOT be logged.
+    expect(errorSpy).not.toHaveBeenCalled();
+    first.unmount();
+
+    // The no-access result was TTL-cached: a fresh mount within the TTL serves
+    // it without issuing another request.
+    const second = renderHook(() => useSuperAdminAccess());
+    await waitFor(() => expect(second.result.current.loading).toBe(false));
+    expect(second.result.current.isSuperAdmin).toBe(false);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
   it("reflects a server super-admin=true decision", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,

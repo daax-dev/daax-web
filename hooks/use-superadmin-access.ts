@@ -63,6 +63,17 @@ export function useSuperAdminAccess(): UseSuperAdminAccessResult {
     if (!fetchPromise) {
       fetchPromise = fetch("/api/admin/db/access")
         .then(async (res) => {
+          // A redirected response means an upstream proxy / forward-auth sent
+          // the unauthenticated caller to an HTML login page (fetch followed the
+          // redirect, so res.redirected is true and the body is HTML, not JSON).
+          // Like 401/403 this is the EXPECTED "no super-admin access" answer, not
+          // an error: fail safe SILENTLY and TTL-cache it so it is not retried in
+          // a tight loop or logged repeatedly.
+          if (res.redirected) {
+            cachedAccess = EMPTY_ACCESS;
+            cachedAt = Date.now();
+            return EMPTY_ACCESS;
+          }
           // 401/403 are the EXPECTED "not authenticated / not super-admin"
           // answers from the default-deny middleware + super-admin gate, not
           // error states: the caller simply has no super-admin access. Cache
@@ -73,8 +84,22 @@ export function useSuperAdminAccess(): UseSuperAdminAccessResult {
             cachedAt = Date.now();
             return EMPTY_ACCESS;
           }
+          // A genuine transient failure (e.g. 500) is a real error: rethrow so
+          // it is logged and left uncached (retried on the next mount).
           if (!res.ok) throw new Error(`access: ${res.status}`);
-          const data = (await res.json()) as SuperAdminAccess;
+          // A 200 whose body is not JSON (e.g. an HTML login page served via an
+          // internal rewrite that did not mark the response redirected) makes
+          // res.json() throw. That is another EXPECTED "no access" outcome, not a
+          // transient error — fail safe SILENTLY and TTL-cache it rather than
+          // logging and retrying.
+          let data: SuperAdminAccess;
+          try {
+            data = (await res.json()) as SuperAdminAccess;
+          } catch {
+            cachedAccess = EMPTY_ACCESS;
+            cachedAt = Date.now();
+            return EMPTY_ACCESS;
+          }
           cachedAccess = data;
           cachedAt = Date.now();
           return data;
