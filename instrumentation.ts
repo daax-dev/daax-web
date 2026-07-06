@@ -33,6 +33,35 @@ export async function register() {
 
     console.log("[Instrumentation] Starting server initialization...");
 
+    // Boot RBAC reconcile (F5, #101): project DAAX_ADMIN_USERS onto the identity
+    // store under a pg advisory lock so a never-logged-in admin is authorised on
+    // first login (no lockout) and stale reconcile grants are pruned. Guarded to
+    // when Postgres is configured — host-dev (`bun dev`) without a DB is
+    // unaffected and stays usable. Failure is logged, not fatal (fail-open on
+    // boot: a failed reconcile must not block the server; enforcement itself
+    // fails closed at requireRole time).
+    try {
+      const { isDbConfigured } = await import("@/lib/db/config");
+      if (isDbConfigured()) {
+        const { reconcile } = await import("@/lib/rbac/store");
+        const plan = await reconcile();
+        console.log(
+          `[Instrumentation] RBAC reconcile applied: +${plan.userRoleGrantsToAdd.length} grants, ` +
+            `-${plan.userRoleGrantsToPrune.length} pruned, ` +
+            `+${plan.pendingGrantsToAdd.length} pending, -${plan.pendingGrantsToPrune.length} pending-pruned`,
+        );
+      } else {
+        console.log(
+          "[Instrumentation] RBAC reconcile skipped (Postgres not configured).",
+        );
+      }
+    } catch (error) {
+      console.error(
+        "[Instrumentation] RBAC reconcile failed (non-fatal):",
+        error instanceof Error ? error.message : error,
+      );
+    }
+
     try {
       await initializeBacklogStore(workspacePath);
       setBacklogHealth(true);

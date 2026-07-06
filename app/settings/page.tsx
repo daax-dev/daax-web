@@ -102,8 +102,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 
-// Admin mode: show admin features. Set NEXT_PUBLIC_ADMIN_MODE=false in release builds to hide.
-const isAdminMode = process.env.NEXT_PUBLIC_ADMIN_MODE !== "false";
+import { useAdminAccess } from "@/hooks/use-admin-access";
 import { useProject } from "@/lib/project-context";
 import { buildProjectTree, type ProjectTreeNode } from "@/lib/project-tree";
 
@@ -277,6 +276,9 @@ function SettingsInner() {
   const { refreshDirectories: refreshProjectList } = useProject();
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Admin visibility resolves server-side (F5, #101), retiring the build-time
+  // NEXT_PUBLIC_ADMIN_MODE so UI gating and API authorization share one source.
+  const { isAdmin: isAdminMode } = useAdminAccess();
   // The active tab is driven by the ?tab= query so the User Settings / Projects
   // / Admin tabs can live in the shared 2nd-level settings nav (see layout.tsx).
   const rawTab = searchParams.get("tab");

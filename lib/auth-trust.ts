@@ -16,6 +16,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import type { AuthUser } from "./auth-types";
 import { UNAUTHENTICATED_USER } from "./auth-types";
+import { canonicalizeSubject } from "./rbac/allowlist";
 import { isLoopbackAddress } from "./net/loopback";
 
 /**
@@ -294,6 +295,19 @@ function warnForwardedIdentityRefusedExposedOnce(): void {
 export interface AuthContext {
   rawUserHeader: string | null;
   user: AuthUser;
+  /**
+   * The TRUSTED, stable Pocket ID subject (X-Forwarded-User) — non-null ONLY
+   * when the forwarded identity was present AND passed the proxy-secret trust
+   * boundary. This is the RBAC identity key (docs §3 F5); it is deliberately
+   * separate from `user.username` (a display fallback) so authorization never
+   * keys on a mutable attribute. Null for the local-operator bypass and for any
+   * rejected/absent identity.
+   */
+  subject: string | null;
+  /** Raw forwarded username (mutable display attr), pre display-fallback. */
+  rawUsername: string | null;
+  /** Raw forwarded display name (X-Forwarded-Name). */
+  displayName: string | null;
 }
 
 /**
@@ -355,7 +369,13 @@ export function deriveAuthContext(h: HeaderReader): AuthContext {
   // absent identity (userId === null) is left to the existing shape below so the
   // local-operator bypass and non-identity handling are unchanged.
   if (userId !== null && !identityTrusted) {
-    return { rawUserHeader, user: { ...UNAUTHENTICATED_USER } };
+    return {
+      rawUserHeader,
+      user: { ...UNAUTHENTICATED_USER },
+      subject: null,
+      rawUsername: null,
+      displayName: null,
+    };
   }
 
   // Prefer displayName > username > "User" (avoid showing raw UUID)
@@ -365,6 +385,14 @@ export function deriveAuthContext(h: HeaderReader): AuthContext {
 
   return {
     rawUserHeader,
+    // `subject` is the trusted identity key: only meaningful when authenticated.
+    // Canonicalise UUID subjects to lowercase here (the trust boundary) so a
+    // differently-cased forwarded subject resolves to ONE stable RBAC identity
+    // key and matches lowercased subject allow-list entries. Non-UUID subjects
+    // are left untouched (mirrors allowlist.ts canonicalization).
+    subject: authenticated ? canonicalizeSubject(userId!) : null,
+    rawUsername: username,
+    displayName,
     user: {
       username: displayUsername,
       email,
@@ -400,7 +428,20 @@ export type AuthDecision =
  *   3. otherwise                         → deny (401)
  */
 export function evaluateAuthDecision(h: HeaderReader): AuthDecision {
-  const { rawUserHeader, user } = deriveAuthContext(h);
+  return evaluateAuthDecisionFromContext(deriveAuthContext(h));
+}
+
+/**
+ * Same trust decision as {@link evaluateAuthDecision}, but from an ALREADY-derived
+ * {@link AuthContext}. RBAC-guarded paths (`requireRole` / `resolveAccess`) need
+ * both the full context AND the decision; deriving once and passing it here avoids
+ * re-parsing the forward-auth headers (and re-firing any `deriveAuthContext`
+ * side-effects) twice per request. Behavior is identical to `evaluateAuthDecision`.
+ */
+export function evaluateAuthDecisionFromContext(
+  ctx: AuthContext,
+): AuthDecision {
+  const { rawUserHeader, user } = ctx;
 
   if (user.authenticated) {
     return { decision: "allow-user", user };

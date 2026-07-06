@@ -1,0 +1,119 @@
+/**
+ * Boot-reconcile diff logic (F5 — issue #101) — PURE, DB-free, unit-testable.
+ *
+ * Reconcile projects the admin allow-list (`DAAX_ADMIN_USERS`) onto the identity
+ * store on every boot (docs/brain2daax.md §3 F5 / §4). It must:
+ *   - grant the admin role to allow-listed users that already exist (a direct
+ *     user_roles grant, granted_by='reconcile');
+ *   - pre-create a PENDING grant for an allow-listed admin who has never logged
+ *     in (no users row exists to FK to) so they are authorised on first login
+ *     (no fresh-DB lockout);
+ *   - prune ONLY grants it previously made (granted_by='reconcile') that the
+ *     allow-list no longer justifies — UI grants (granted_by='ui') and default /
+ *     group-sync grants are never touched.
+ *
+ * This module computes the diff; `store.ts` applies it inside a transaction
+ * under `pg_advisory_xact_lock`. Keeping the diff pure makes the tricky
+ * add/prune-only-reconcile-grants logic directly testable without a database.
+ */
+
+import type { AllowlistEntry, UserIdentity } from "./allowlist";
+import { entryMatchesUser } from "./allowlist";
+import { ADMIN_ROLE } from "./permissions";
+
+/** A concrete (subject, role) grant living in `user_roles`. */
+export interface UserRoleGrant {
+  subject: string;
+  role: string;
+}
+
+/** A concrete (identifier, role) grant living in `pending_grants`. */
+export interface PendingGrant {
+  identifier: string;
+  role: string;
+}
+
+export interface ReconcilePlan {
+  /** user_roles rows to INSERT (granted_by='reconcile'). */
+  userRoleGrantsToAdd: UserRoleGrant[];
+  /** user_roles rows (granted_by='reconcile' only) to DELETE. */
+  userRoleGrantsToPrune: UserRoleGrant[];
+  /** pending_grants rows to INSERT (granted_by='reconcile'). */
+  pendingGrantsToAdd: PendingGrant[];
+  /** pending_grants rows to DELETE. */
+  pendingGrantsToPrune: PendingGrant[];
+  /** Allow-list entries that matched neither an existing user nor produced a
+   *  pending grant (informational; currently every unmatched entry becomes a
+   *  pending grant, so this stays empty — reserved for the dry-run report). */
+  unmatched: AllowlistEntry[];
+}
+
+const grantKey = (g: UserRoleGrant) => `${g.subject}\u0000${g.role}`;
+const pendKey = (g: PendingGrant) => `${g.identifier}\u0000${g.role}`;
+
+/**
+ * Compute the reconcile diff.
+ *
+ * @param entries                    parsed `DAAX_ADMIN_USERS` allow-list.
+ * @param existingUsers              current `users` rows (subject/email/username).
+ * @param existingReconcileUserRoles current `user_roles` rows WHERE granted_by='reconcile'.
+ * @param existingPendingGrants      current `pending_grants` rows (all granted_by='reconcile').
+ * @param adminRole                  role to grant (defaults to ADMIN_ROLE).
+ */
+export function computeReconcilePlan(
+  entries: readonly AllowlistEntry[],
+  existingUsers: readonly UserIdentity[],
+  existingReconcileUserRoles: readonly UserRoleGrant[],
+  existingPendingGrants: readonly PendingGrant[],
+  adminRole: string = ADMIN_ROLE,
+): ReconcilePlan {
+  // Desired state derived from the allow-list.
+  const desiredUserRoles = new Map<string, UserRoleGrant>();
+  const desiredPending = new Map<string, PendingGrant>();
+
+  for (const entry of entries) {
+    const matches = existingUsers.filter((u) => entryMatchesUser(entry, u));
+    if (matches.length > 0) {
+      // Grant directly to every existing user the entry matches.
+      for (const u of matches) {
+        const g: UserRoleGrant = { subject: u.subject, role: adminRole };
+        desiredUserRoles.set(grantKey(g), g);
+      }
+    } else {
+      // No user yet → pending grant keyed to the entry's comparison value.
+      const p: PendingGrant = { identifier: entry.value, role: adminRole };
+      desiredPending.set(pendKey(p), p);
+    }
+  }
+
+  const existingUrSet = new Map<string, UserRoleGrant>();
+  for (const g of existingReconcileUserRoles) existingUrSet.set(grantKey(g), g);
+  const existingPendSet = new Map<string, PendingGrant>();
+  for (const g of existingPendingGrants) existingPendSet.set(pendKey(g), g);
+
+  const userRoleGrantsToAdd: UserRoleGrant[] = [];
+  for (const [k, g] of desiredUserRoles) {
+    if (!existingUrSet.has(k)) userRoleGrantsToAdd.push(g);
+  }
+  const userRoleGrantsToPrune: UserRoleGrant[] = [];
+  for (const [k, g] of existingUrSet) {
+    if (!desiredUserRoles.has(k)) userRoleGrantsToPrune.push(g);
+  }
+
+  const pendingGrantsToAdd: PendingGrant[] = [];
+  for (const [k, g] of desiredPending) {
+    if (!existingPendSet.has(k)) pendingGrantsToAdd.push(g);
+  }
+  const pendingGrantsToPrune: PendingGrant[] = [];
+  for (const [k, g] of existingPendSet) {
+    if (!desiredPending.has(k)) pendingGrantsToPrune.push(g);
+  }
+
+  return {
+    userRoleGrantsToAdd,
+    userRoleGrantsToPrune,
+    pendingGrantsToAdd,
+    pendingGrantsToPrune,
+    unmatched: [],
+  };
+}

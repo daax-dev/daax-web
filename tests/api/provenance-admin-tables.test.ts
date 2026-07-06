@@ -5,23 +5,44 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 
-// These routes are now gated by requireAuth (F4, #96). Mock it as authenticated
-// so these tests exercise the proxy behavior (auth is covered separately).
-vi.mock("@/lib/auth", () => ({
-  requireAuth: vi.fn(async () => ({
+// The provenance-admin routes are RBAC-gated by requireRole (F5, #101). Rather
+// than stub requireRole as always-authorized, mock it to run the REAL permission
+// catalog against a mutable role set (`rbacState.roles`) so these tests actually
+// prove that a non-admin (`user`) is DENIED — the very control F5 exists for.
+// Default 'admin' so the proxy-behavior tests below exercise the happy path.
+const rbacState = vi.hoisted(() => ({ roles: ["admin"] as string[] }));
+vi.mock("@/lib/auth", async () => {
+  const { NextResponse: NR } = await import("next/server");
+  const { rolesGrantPermission } = await import("@/lib/rbac/permissions");
+  const user = {
+    username: "test",
+    email: null,
+    groups: [],
     authenticated: true,
-    user: {
-      username: "test",
-      email: null,
-      groups: [],
-      authenticated: true,
-      pictureUrl: null,
-    },
-  })),
-}));
+    pictureUrl: null,
+  };
+  return {
+    requireAuth: vi.fn(async () => ({ authenticated: true, user })),
+    requireRole: vi.fn(async (permission: string) =>
+      rolesGrantPermission(
+        rbacState.roles,
+        permission as Parameters<typeof rolesGrantPermission>[1],
+      )
+        ? { authorized: true, user, subject: "test-subject" }
+        : {
+            authorized: false,
+            response: NR.json(
+              { error: "Forbidden", message: "insufficient role" },
+              { status: 403 },
+            ),
+          },
+    ),
+  };
+});
 
-import { requireAuth } from "@/lib/auth";
+import { requireRole } from "@/lib/auth";
 import { GET as listTables } from "@/app/api/provenance-admin/tables/route";
+import { GET as listActions } from "@/app/api/provenance-admin/actions/route";
 import {
   GET as getTableData,
   POST as createRow,
@@ -30,16 +51,28 @@ import {
   DELETE as deleteRow,
 } from "@/app/api/provenance-admin/tables/[...path]/route";
 
-// Mock fetch globally to simulate provenance backend responses
+// Mock fetch globally to simulate provenance backend responses. Stub via
+// vi.stubGlobal (in a file-level beforeEach) and undo with vi.unstubAllGlobals
+// (afterEach) rather than a bare `global.fetch = …` — a raw module-scope
+// assignment is never restored and would leak the mock into later test files in
+// the same Vitest worker (order-dependent failures). These file-level hooks wrap
+// the per-describe hooks below.
 const mockFetch = vi.fn();
-global.fetch = mockFetch as unknown as typeof fetch;
+beforeEach(() => vi.stubGlobal("fetch", mockFetch));
+afterEach(() => vi.unstubAllGlobals());
 
-describe("provenance-admin auth gate (F4, #96)", () => {
+describe("provenance-admin requireRole RBAC gate (F5, #101)", () => {
+  // `mockFetch` and `global.fetch` are module-scoped and shared across every
+  // describe in this file. Under a shuffled run a preceding sibling test (e.g.
+  // one that proxies a DELETE) can leave a call recorded on mockFetch, so this
+  // suite must reset it on ENTRY — not just clear on exit — or the
+  // `not.toHaveBeenCalled()` assertion below inherits that stale call.
+  beforeEach(() => mockFetch.mockReset());
   afterEach(() => vi.clearAllMocks());
 
-  it("returns the requireAuth 401 response when unauthenticated", async () => {
-    vi.mocked(requireAuth).mockResolvedValueOnce({
-      authenticated: false,
+  it("returns the requireRole 401 response when unauthenticated", async () => {
+    vi.mocked(requireRole).mockResolvedValueOnce({
+      authorized: false,
       response: NextResponse.json(
         { error: "Authentication required" },
         { status: 401 },
@@ -47,8 +80,80 @@ describe("provenance-admin auth gate (F4, #96)", () => {
     });
     const response = await listTables();
     expect(response.status).toBe(401);
-    // The proxy fetch must never run for an unauthenticated request.
+    // The proxy fetch must never run for an unauthorized request.
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("provenance-admin RBAC: non-admin (role 'user') is DENIED (F5, #101)", () => {
+  beforeEach(() => {
+    rbacState.roles = ["user"]; // a logged-in NON-admin
+    mockFetch.mockReset();
+  });
+  afterEach(() => {
+    rbacState.roles = ["admin"]; // restore default for other suites
+    vi.clearAllMocks();
+  });
+
+  const ctx = () => ({ params: Promise.resolve({ path: ["base_images"] }) });
+  const rowCtx = () => ({
+    params: Promise.resolve({ path: ["base_images", "1"] }),
+  });
+  const req = (method: string) =>
+    new NextRequest(
+      "http://localhost/api/provenance-admin/tables/base_images",
+      {
+        method,
+        body: method === "GET" || method === "DELETE" ? undefined : "{}",
+      },
+    );
+
+  it("403s GET table list (admin:db:read not held)", async () => {
+    const res = await listTables();
+    expect(res.status).toBe(403);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("403s GET table rows on the CRUD catch-all", async () => {
+    const res = await getTableData(req("GET"), ctx());
+    expect(res.status).toBe(403);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("403s POST create row (admin:db:write not held)", async () => {
+    const res = await createRow(req("POST"), ctx());
+    expect(res.status).toBe(403);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("403s PUT/PATCH update row", async () => {
+    expect((await updateRow(req("PUT"), rowCtx())).status).toBe(403);
+    expect((await patchRow(req("PATCH"), rowCtx())).status).toBe(403);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("403s DELETE row", async () => {
+    const res = await deleteRow(req("DELETE"), rowCtx());
+    expect(res.status).toBe(403);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("403s GET actions list", async () => {
+    const res = await listActions();
+    expect(res.status).toBe(403);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("allows the SAME requests once the role is 'admin' (positive control)", async () => {
+    rbacState.roles = ["admin"];
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Map([["content-type", "application/json"]]),
+      json: () => Promise.resolve({ ok: true }),
+    });
+    expect((await createRow(req("POST"), ctx())).status).toBe(200);
+    expect(mockFetch).toHaveBeenCalled();
   });
 });
 

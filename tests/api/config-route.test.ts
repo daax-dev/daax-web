@@ -99,6 +99,10 @@ describe("/api/config", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    // This suite stubs NODE_ENV via vi.stubEnv; without unstubbing, vitest's
+    // env-stub registry leaks into later test files in the same worker and can
+    // clobber env-dependent assertions (e.g. the RBAC local-operator bypass).
+    vi.unstubAllEnvs();
   });
 
   describe("successful config loading", () => {
