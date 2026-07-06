@@ -135,6 +135,18 @@ describe("applyLiveEvent", () => {
     expect(out).toBe(existing); // unchanged reference
   });
 
+  it("an idempotent event (reducer returns the same card) preserves the array reference", () => {
+    // First notification transitions idle → waiting at `at` (a real change).
+    const waitingAt = NOW - 500; // matches msg() default timestamp
+    const existing = [card({ status: "waiting", since: waitingAt })];
+    // A duplicate notification for the same session at the same instant is a
+    // no-op in the reducer (returns the same card object), so applyLiveEvent
+    // must hand back the ORIGINAL array — no new reference, no rerender.
+    const out = applyLiveEvent(existing, msg({ type: "notification" }), NOW);
+    expect(out).toBe(existing);
+    expect(out[0]).toBe(existing[0]);
+  });
+
   it("ignores unknown/future message types (forward-compatible)", () => {
     const existing = [card()];
     for (const type of ["subagent_stop", "pre_compact", "interrupt", "wat"]) {

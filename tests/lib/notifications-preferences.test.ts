@@ -24,10 +24,9 @@ beforeEach(() => {
   });
 });
 
-// vitest is not configured to auto-restore mocks, so the localStorage spies
-// above would otherwise leak their in-memory implementations into later tests
-// and cause order-dependent failures. Restore them after each test.
 afterEach(() => {
+  // Restore the localStorage spies so the global mock from tests/setup.ts is
+  // not leaked into later suites (Vitest config does not enable restoreMocks).
   vi.restoreAllMocks();
 });
 
