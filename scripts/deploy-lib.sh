@@ -9,6 +9,9 @@
 #   DOCKER_BIN  (default: docker)   — docker CLI + `docker compose`
 #   CURL_BIN    (default: curl)     — post-deploy F7 health probe
 #   TCP_CHECK   (default: internal) — Postgres reachability (bash /dev/tcp)
+# Exception: assert_code_server_image may invoke scripts/build-code-server.sh,
+# which shells out to `docker` DIRECTLY (it does not honor DOCKER_BIN). Tests
+# that stub DOCKER_BIN should avoid triggering that build path.
 #
 # Guardrail: no `set -e` here — callers own their error strategy. Functions
 # return non-zero on failure so the orchestrator can gate/rollback on it.
