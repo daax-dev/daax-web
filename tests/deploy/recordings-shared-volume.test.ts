@@ -28,8 +28,10 @@ interface ComposeDoc {
 const RECORDINGS_MOUNT_PATH = "/home/node/.daax";
 
 /** The named-volume source mounted at /home/node/.daax, if any. */
-function recordingsVolumeSource(svc: ComposeService): string | undefined {
-  return (svc.volumes ?? [])
+function recordingsVolumeSource(
+  svc: ComposeService | undefined,
+): string | undefined {
+  return (svc?.volumes ?? [])
     .map((v) => v.split(":"))
     .find(([, target]) => target === RECORDINGS_MOUNT_PATH)?.[0];
 }

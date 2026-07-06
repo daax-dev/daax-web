@@ -33,7 +33,9 @@ function dockerfileStages(dockerfile: string): Record<string, string[]> {
   for (const line of lines) {
     const from = line.match(/^\s*FROM\s+\S+(?:\s+AS\s+(\S+))?/i);
     if (from) {
-      current = from[1] ? from[1].trim() : `__anon_${Object.keys(stages).length}`;
+      current = from[1]
+        ? from[1].trim()
+        : `__anon_${Object.keys(stages).length}`;
       stages[current] = [];
     }
     if (current) stages[current].push(line);
@@ -139,8 +141,11 @@ interface ComposeService {
  * Raw (un-interpolated) value of an env var in a compose service's
  * `environment` (supports both the list `KEY=val` and the map form).
  */
-function envValue(svc: ComposeService, key: string): string | undefined {
-  const env = svc.environment;
+function envValue(
+  svc: ComposeService | undefined,
+  key: string,
+): string | undefined {
+  const env = svc?.environment;
   if (!env) return undefined;
   if (Array.isArray(env)) {
     const entry = env.find((e) => e.startsWith(`${key}=`));
@@ -161,14 +166,16 @@ function loadServices(file: string): Record<string, ComposeService> {
   return doc.services ?? {};
 }
 
-function mountsDockerSocket(svc: ComposeService): boolean {
-  return (svc.volumes ?? []).some((v) => v.includes("/var/run/docker.sock"));
+function mountsDockerSocket(svc: ComposeService | undefined): boolean {
+  return (svc?.volumes ?? []).some((v) => v.includes("/var/run/docker.sock"));
 }
 
-function expectSocketHardened(svc: ComposeService): void {
-  expect(svc.security_opt ?? []).toContain("no-new-privileges:true");
-  expect(svc.cap_drop ?? []).toContain("ALL");
-  const groups = (svc.group_add ?? []).map(String);
+function expectSocketHardened(svc: ComposeService | undefined): void {
+  // Fail with a readable assertion (not a TypeError) if the service is missing.
+  expect(svc).toBeDefined();
+  expect(svc?.security_opt ?? []).toContain("no-new-privileges:true");
+  expect(svc?.cap_drop ?? []).toContain("ALL");
+  const groups = (svc?.group_add ?? []).map(String);
   expect(groups.length).toBeGreaterThan(0);
   // Must reference the host docker GID env var, not a hardcoded root/0.
   expect(groups.some((g) => g.includes("DOCKER_GID"))).toBe(true);

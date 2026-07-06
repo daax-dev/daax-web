@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   isDockerUnavailableError,
-  dockerUnavailableResponse,
+  dockerUnavailableJson,
 } from "@/lib/docker-exec";
 
 /**
@@ -74,9 +74,9 @@ describe("isDockerUnavailableError", () => {
   });
 });
 
-describe("dockerUnavailableResponse", () => {
+describe("dockerUnavailableJson", () => {
   it("returns the /api/containers-shaped 503", async () => {
-    const res = dockerUnavailableResponse(new Error("daemon down"));
+    const res = dockerUnavailableJson(new Error("daemon down"));
     expect(res.status).toBe(503);
     const body = await res.json();
     expect(body).toEqual({
