@@ -54,6 +54,19 @@ export function watchtowerWsUrl(): string {
 }
 
 /**
+ * Bounded upstream-handshake timeout (ms). If Watchtower's WS never completes
+ * its handshake — e.g. the upstream is blackholed: SYN accepted but no HTTP
+ * upgrade — the socket would otherwise sit in CONNECTING forever, pinning server
+ * resources until the browser gives up. Override with
+ * DAAX_ATTENTION_UPSTREAM_TIMEOUT_MS; defaults to 10s.
+ */
+function upstreamHandshakeTimeoutMs(): number {
+  const raw = process.env.DAAX_ATTENTION_UPSTREAM_TIMEOUT_MS;
+  const n = raw ? Number(raw) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 10_000;
+}
+
+/**
  * Handle a browser upgrade for the Attention live stream. Authenticates first
  * (same posture as the terminal WS), then relays Watchtower's broadcast feed.
  */
@@ -85,6 +98,30 @@ export function handleAttentionBridge(
     return;
   }
 
+  // Bound the upstream handshake: if `open` never fires (blackholed upstream:
+  // SYN accepted, no upgrade), terminate the CONNECTING socket and close the
+  // client with a recoverable code so the browser falls back to polling. The
+  // timer is cleared on open/close/error below, and unref'd so it never keeps
+  // the process alive on its own.
+  const handshakeTimer: ReturnType<typeof setTimeout> = setTimeout(() => {
+    console.warn(
+      `[attention-bridge] upstream handshake timed out after ${upstreamHandshakeTimeoutMs()}ms; closing`,
+    );
+    try {
+      upstream.terminate();
+    } catch {
+      // already closing/closed
+    }
+    if (client.readyState === WebSocket.OPEN) {
+      client.close(1011, "upstream timeout");
+    }
+  }, upstreamHandshakeTimeoutMs());
+  (handshakeTimer as { unref?: () => void }).unref?.();
+
+  upstream.on("open", () => {
+    clearTimeout(handshakeTimer);
+  });
+
   // Relay upstream → browser. Watchtower's bus rebroadcasts every message it
   // receives from other clients (agents) to this passive consumer; forward each
   // frame verbatim. No buffering: a slow browser simply drops behind, it cannot
@@ -96,12 +133,14 @@ export function handleAttentionBridge(
   });
 
   upstream.on("close", () => {
+    clearTimeout(handshakeTimer);
     if (client.readyState === WebSocket.OPEN) {
       client.close(1011, "upstream closed");
     }
   });
 
   upstream.on("error", (err) => {
+    clearTimeout(handshakeTimer);
     console.warn("[attention-bridge] upstream error:", err);
     if (client.readyState === WebSocket.OPEN) {
       client.close(1011, "upstream error");
@@ -110,6 +149,7 @@ export function handleAttentionBridge(
 
   // Browser is read-only: ignore inbound frames (do NOT forward to the bus).
   client.on("close", () => {
+    clearTimeout(handshakeTimer);
     if (
       upstream.readyState === WebSocket.OPEN ||
       upstream.readyState === WebSocket.CONNECTING
@@ -119,6 +159,7 @@ export function handleAttentionBridge(
   });
 
   client.on("error", (err) => {
+    clearTimeout(handshakeTimer);
     console.warn("[attention-bridge] client error:", err);
     try {
       upstream.close();
