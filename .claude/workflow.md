@@ -47,7 +47,7 @@ A task is done only when:
 - [ ] Unit tests pass: `bun run test` (Vitest). For changes touching UI flows or server handlers, also run `bun run test:e2e` (Playwright) or the full suite `bun run test:all` (Vitest + Playwright + agent quick-verify).
 - [ ] Type check passes: `bun run typecheck` (`tsc --noEmit`).
 - [ ] Linter passes: `bun run lint` (ESLint). Formatter clean: `bun run format:check` (Prettier).
-- [ ] Both deployment modes still build (`bun run build`; `docker build -t daax .` when the change touches the Dockerfile, server, or runtime config).
+- [ ] Both deployment modes still build (`bun run build`; `docker build --target runner -t daax .` when the change touches the Dockerfile, server, or runtime config).
 - [ ] PR opened with problem statement, approach, and test evidence.
 - [ ] Non-trivial decisions logged in `.logs/decisions/` per `.claude/history.md`.
 - [ ] Validation pass by a separate model — cross-provider (Claude ↔ Codex) where possible — recorded in the PR description as `Validation:` producer model + validator model + verdict (note if cross-provider was not possible).
