@@ -90,10 +90,20 @@ export function useSuperAdminAccess(): UseSuperAdminAccessResult {
           // error states: the caller simply has no super-admin access. Cache
           // the no-access result with a TTL (do not log) so a later
           // re-authentication or role grant revalidates instead of sticking.
+          // Distinguish the two to honor the route contract ({ authenticated,
+          // superAdmin }): a 403 means the caller IS authenticated but not
+          // allow-listed (authenticated:true), whereas a 401 means unauthenticated
+          // (authenticated:false). Both yield superAdmin:false — the only field
+          // the hook surfaces — but the cached shape stays truthful for
+          // diagnostics / future consumers.
           if (res.status === 401 || res.status === 403) {
-            cachedAccess = EMPTY_ACCESS;
+            const noAccess: SuperAdminAccess = {
+              authenticated: res.status === 403,
+              superAdmin: false,
+            };
+            cachedAccess = noAccess;
             cachedAt = Date.now();
-            return EMPTY_ACCESS;
+            return noAccess;
           }
           // A genuine transient failure (e.g. 500) is a real error: rethrow so
           // it is logged and left uncached (retried on the next mount).

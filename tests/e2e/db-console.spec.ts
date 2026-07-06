@@ -48,11 +48,13 @@ test.describe("Admin DB console (local operator = super-admin)", () => {
     const res = await request.post("/api/admin/db/tables/user_roles", {
       data: { op: "insert", values: { subject: "x", role: "user" } },
     });
-    // Authorized (not 401/403) but writes are OFF by default → 403 with the
-    // writes-disabled message, OR 503 if the DB is unconfigured before the flag
-    // check is reached. Never a silent 200 write.
-    expect(res.status()).not.toBe(200);
-    expect(res.status()).not.toBe(201);
+    // Writes are OFF by default. In the loopback E2E posture the super-admin gate
+    // is satisfied WITHOUT a DB round-trip (local-operator bypass + env allow-list),
+    // so the route reaches the opt-in flag check and returns exactly 403
+    // (writes-disabled) — before any DB access. Asserting the precise 403 (not a
+    // loose "not 200") means a regression that moved the flag check AFTER a DB
+    // call, or dropped the gate, would fail this test instead of slipping through.
+    expect(res.status()).toBe(403);
   });
 
   test("provenance admin surface renders the super-admin Data tab", async ({
