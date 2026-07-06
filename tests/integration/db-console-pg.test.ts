@@ -174,18 +174,18 @@ describe.skipIf(!configured)("DB console on Postgres (F6 #102)", () => {
     expect(roles.rowCount).toBe(0);
   });
 
-  it("write flag OFF refuses the write; ON performs it AND audits (D4)", async () => {
+  it("write flag ON performs the write AND forces an audit row (D4); OFF is reported disabled", async () => {
     await query("INSERT INTO users (subject) VALUES ($1)", ["s-flag"]);
     const prev = process.env[DB_CONSOLE_WRITES_ENV];
     try {
-      // OFF (default): the gate the route enforces refuses — no write happens.
+      // OFF (default): the flag helper reports disabled. NOTE: executeWrite
+      // itself has NO flag check — the opt-in is enforced by the ROUTE handler
+      // (403 before executeWrite is ever called), which is exercised directly in
+      // tests/api/admin-db-tables-route.test.ts. Calling executeWrite here with
+      // the flag off would still write, so this branch deliberately does NOT
+      // call it; it asserts only the gate value that the route consults.
       delete process.env[DB_CONSOLE_WRITES_ENV];
       expect(dbConsoleWritesEnabled()).toBe(false);
-      // (Route returns 403 without calling executeWrite; assert nothing written.)
-      const before = await query(
-        "SELECT 1 FROM user_roles WHERE subject = 's-flag'",
-      );
-      expect(before.rowCount).toBe(0);
 
       // ON: the write proceeds and forces an audit row.
       process.env[DB_CONSOLE_WRITES_ENV] = "1";
