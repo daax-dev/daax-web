@@ -79,6 +79,7 @@ import { cn } from "@/lib/utils";
 // agent-order reorder control in AI Coding settings.
 const AI_AGENT_LABELS: Record<string, string> = {
   claude: "Claude Code",
+  "herdr-claude": "Herdr + Claude",
   codex: "Codex CLI",
   opencode: "OpenCode",
   copilot: "GitHub Copilot",

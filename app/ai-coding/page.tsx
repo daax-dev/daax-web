@@ -56,7 +56,7 @@ import { AgentTabsLayout } from "./AgentTabsLayout";
 import { McpStatusBar } from "@/components/session/McpStatusBar";
 
 // AI Tools available in the container
-// Ordered: Claude, OpenCode, Copilot, Codex, Gemini.
+// Ordered: Claude, Herdr + Claude, OpenCode, Copilot, Codex, Gemini.
 // Icons are the real brand marks (see components/icons/AgentIcons).
 // `accent` is each tool's fixed BRAND color (matches AgentTabsLayout TOOL_META),
 // intentionally exempt from the semantic-token rule so the tree view shows the
@@ -69,6 +69,14 @@ const AI_TOOLS = [
     accent: "text-orange-500",
     command: "claude",
     description: "Anthropic Claude CLI",
+  },
+  {
+    id: "herdr-claude" as AIToolId,
+    name: "Herdr + Claude",
+    icon: Terminal,
+    accent: "text-lime-500",
+    command: "herdr-claude",
+    description: "Herdr session with Claude started inside the same container",
   },
   {
     id: "opencode" as AIToolId,

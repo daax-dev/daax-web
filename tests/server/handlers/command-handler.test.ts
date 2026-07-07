@@ -54,6 +54,33 @@ describe("buildFullCommand", () => {
     });
   });
 
+  describe("herdr-claude command", () => {
+    const claudePath = "/home/vscode/.local/share/pnpm/claude";
+
+    it("starts Herdr, launches Claude as a Herdr agent, then attaches to the Herdr session", () => {
+      const result = buildFullCommand("herdr-claude");
+
+      expect(result).toContain("command -v herdr");
+      expect(result).toContain("herdr server");
+      expect(result).toContain('herdr workspace create --cwd "$PWD"');
+      expect(result).toContain(
+        `herdr agent start claude --cwd "$PWD" --focus -- ${claudePath}`,
+      );
+      expect(result).toContain("exec herdr --session daax");
+      expect(result).not.toContain("docker run");
+    });
+
+    it("passes Claude arguments through to the Herdr-started Claude agent", () => {
+      const result = buildFullCommand(
+        "herdr-claude --dangerously-skip-permissions",
+      );
+
+      expect(result).toContain(
+        `herdr agent start claude --cwd "$PWD" --focus -- ${claudePath} --dangerously-skip-permissions`,
+      );
+    });
+  });
+
   describe("opencode command", () => {
     it("sets PATH with /usr/local/bin first for bare command", () => {
       const result = buildFullCommand("opencode");

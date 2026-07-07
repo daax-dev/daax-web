@@ -11,6 +11,7 @@ import {
   ChevronDown,
   MonitorSmartphone,
   AlertTriangle,
+  SquareTerminal,
 } from "lucide-react";
 import {
   ClaudeIcon,
@@ -40,7 +41,13 @@ import {
   type AIToolId as ManagerAIToolId,
 } from "@/components/terminal/TerminalManager";
 
-export type AIToolId = "claude" | "opencode" | "copilot" | "gemini" | "codex";
+export type AIToolId =
+  | "claude"
+  | "herdr-claude"
+  | "opencode"
+  | "copilot"
+  | "gemini"
+  | "codex";
 
 // Tool icon + accent color mapping. Each AI tool gets an associated Lucide
 // glyph (some are brand marks, e.g. GitHub for Copilot) and a fixed accent
@@ -54,10 +61,15 @@ const TOOL_META: Record<
   }
 > = {
   // Intentional fixed palette: these accents are per-tool BRAND identity for the
-  // five AI tools, not theme state. They are deliberately exempt from the
+  // AI tools, not theme state. They are deliberately exempt from the
   // semantic-token rule — collapsing them to one token would erase the visual
   // distinction between tools. Brand hues stay constant across light/dark.
   claude: { Icon: ClaudeIcon, accent: "text-orange-500", label: "Claude" },
+  "herdr-claude": {
+    Icon: SquareTerminal,
+    accent: "text-lime-500",
+    label: "Herdr + Claude",
+  },
   copilot: { Icon: CopilotIcon, accent: "text-emerald-500", label: "Copilot" },
   gemini: { Icon: GeminiIcon, accent: "text-blue-500", label: "Gemini" },
   // OpenAI's mark is monochrome; text-foreground = white on dark, black on light.
@@ -578,6 +590,7 @@ export function AgentTabsLayout() {
                 {sortByAgentOrder(
                   [
                     { id: "claude", label: "Claude Code" },
+                    { id: "herdr-claude", label: "Herdr + Claude" },
                     { id: "opencode", label: "OpenCode" },
                     { id: "copilot", label: "GitHub Copilot" },
                     { id: "gemini", label: "Gemini CLI" },

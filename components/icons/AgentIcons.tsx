@@ -1,6 +1,7 @@
 "use client";
 
 import type { ComponentType, SVGProps } from "react";
+import { SquareTerminal } from "lucide-react";
 
 // Real brand marks for the AI coding agents shown in the agents menu.
 // These are monochrome, single-path glyphs that render with `fill="currentColor"`
@@ -98,11 +99,18 @@ export function OpenCodeIcon({ className, ...props }: IconProps) {
 // `AIToolId` union used across the AI-coding menus; the `satisfies` clauses
 // below make both maps self-validating — a missing or unknown key is a
 // compile error, and the inferred literal type stays indexable by callers.
-type AgentIconId = "claude" | "codex" | "gemini" | "copilot" | "opencode";
+type AgentIconId =
+  | "claude"
+  | "herdr-claude"
+  | "codex"
+  | "gemini"
+  | "copilot"
+  | "opencode";
 
 // Canonical AIToolId -> brand icon component map (single source of truth).
 export const AGENT_ICONS = {
   claude: ClaudeIcon,
+  "herdr-claude": SquareTerminal,
   codex: CodexIcon,
   gemini: GeminiIcon,
   copilot: CopilotIcon,
@@ -116,6 +124,7 @@ export const AGENT_ICONS = {
 // from here so the per-tool colors never drift apart.
 export const AGENT_ACCENTS = {
   claude: "text-orange-500",
+  "herdr-claude": "text-lime-500",
   codex: "text-foreground",
   gemini: "text-blue-500",
   copilot: "text-emerald-500",

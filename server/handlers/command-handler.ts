@@ -13,6 +13,22 @@ import { hasSession } from "../sessions/session-manager";
  * Build the full command string, handling special cases for AI tools.
  */
 export function buildFullCommand(command: string): string {
+  if (command === "herdr-claude" || command.startsWith("herdr-claude ")) {
+    const claudePath = "/home/vscode/.local/share/pnpm/claude";
+    const claudeArgs = command.replace(/^herdr-claude\s*/, "");
+    const claudeCommand = `${claudePath}${claudeArgs ? " " + claudeArgs : ""}`;
+
+    return [
+      "export PATH=/usr/local/bin:/home/vscode/.local/share/pnpm:/home/vscode/.local/bin:$PATH",
+      'command -v herdr >/dev/null 2>&1 || { echo "Herdr is not installed in this container image. Pull or rebuild the configured Daax agent image."; exec /bin/zsh -l; }',
+      "herdr server >/tmp/daax-herdr-server.log 2>&1 &",
+      `for i in $(seq 1 100); do herdr status server --json 2>/dev/null | grep -q '"running":true' && break; sleep 0.1; done`,
+      'herdr workspace create --cwd "$PWD" --label "Daax" --no-focus >/tmp/daax-herdr-workspace.log 2>&1 || true',
+      `(herdr agent start claude --cwd "$PWD" --focus -- ${claudeCommand} >/tmp/daax-herdr-claude.log 2>&1 || { cat /tmp/daax-herdr-claude.log 2>/dev/null || true; })`,
+      "exec herdr --session daax",
+    ].join(" && ");
+  }
+
   // For claude command, use full path to avoid PATH issues during shell init
   if (command === "claude" || command.startsWith("claude ")) {
     const claudePath = "/home/vscode/.local/share/pnpm/claude";

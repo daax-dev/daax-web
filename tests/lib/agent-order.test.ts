@@ -18,8 +18,22 @@ import {
 } from "@/lib/settings";
 
 // Literal orders as they appear in the two AI-coding components.
-const TREE_ORDER = ["claude", "opencode", "copilot", "codex", "gemini"];
-const TABS_ORDER = ["claude", "opencode", "copilot", "gemini", "codex"];
+const TREE_ORDER = [
+  "claude",
+  "herdr-claude",
+  "opencode",
+  "copilot",
+  "codex",
+  "gemini",
+];
+const TABS_ORDER = [
+  "claude",
+  "herdr-claude",
+  "opencode",
+  "copilot",
+  "gemini",
+  "codex",
+];
 
 describe("agent order helpers", () => {
   it("normalizeAgentOrder falls back to the canonical default when unset", () => {
@@ -33,6 +47,7 @@ describe("agent order helpers", () => {
     expect(normalizeAgentOrder(["codex", "bogus", "claude"])).toEqual([
       "codex",
       "claude",
+      "herdr-claude",
       "opencode",
       "copilot",
       "gemini",
@@ -49,7 +64,14 @@ describe("agent order helpers", () => {
   });
 
   it("tree and tabs match under a custom saved order too", () => {
-    const custom = ["gemini", "claude", "codex", "copilot", "opencode"];
+    const custom = [
+      "gemini",
+      "claude",
+      "herdr-claude",
+      "codex",
+      "copilot",
+      "opencode",
+    ];
     const byId = (id: string) => id;
     const tree = sortByAgentOrder(TREE_ORDER, byId, custom);
     const tabs = sortByAgentOrder(TABS_ORDER, byId, custom);

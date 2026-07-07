@@ -78,7 +78,13 @@ function getContainerImage(): string {
 }
 
 type SessionType = "claude" | "btop" | "zsh";
-type AIToolId = "claude" | "opencode" | "gemini" | "copilot" | "codex";
+type AIToolId =
+  | "claude"
+  | "herdr-claude"
+  | "opencode"
+  | "gemini"
+  | "copilot"
+  | "codex";
 
 interface TerminalSession {
   id: string;
@@ -166,6 +172,7 @@ export function useTerminalManager() {
 // AI tool definitions - must match what's in jpoley/daax-agents container
 const AI_TOOLS: Record<AIToolId, { name: string; command: string }> = {
   claude: { name: "Claude Code", command: "claude" },
+  "herdr-claude": { name: "Herdr + Claude", command: "herdr-claude" },
   opencode: { name: "OpenCode", command: "opencode" },
   gemini: { name: "Gemini CLI", command: "gemini" },
   copilot: { name: "GitHub Copilot", command: "copilot" },
@@ -267,7 +274,10 @@ export function TerminalManagerProvider({ children }: { children: ReactNode }) {
       }
 
       // For Claude, add --dangerously-skip-permissions if enabled in settings
-      if (toolId === "claude" && settings.claudeSkipPermissions) {
+      if (
+        (toolId === "claude" || toolId === "herdr-claude") &&
+        settings.claudeSkipPermissions
+      ) {
         params.set("command", `${tool.command} --dangerously-skip-permissions`);
       } else {
         params.set("command", tool.command);
