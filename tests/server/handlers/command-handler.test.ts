@@ -70,6 +70,20 @@ describe("buildFullCommand", () => {
       expect(result).not.toContain("docker run");
     });
 
+    it("never places a backgrounded command directly before the && join separator (regression: invalid shell syntax)", () => {
+      // A bare `&` (backgrounding `herdr server`) immediately followed by
+      // `&&` is a syntax error in both bash and zsh (`cmd & && next`) and
+      // previously broke this command end-to-end. `herdr server &` must be
+      // followed by the poll loop directly, not by another `&&`-joined
+      // array element.
+      const result = buildFullCommand("herdr-claude");
+
+      expect(result).not.toMatch(/&\s*&&/);
+      expect(result).toContain(
+        `herdr server >/tmp/daax-herdr-server.log 2>&1 & for i in $(seq 1 100);`,
+      );
+    });
+
     it("passes Claude arguments through to the Herdr-started Claude agent", () => {
       const result = buildFullCommand(
         "herdr-claude --dangerously-skip-permissions",

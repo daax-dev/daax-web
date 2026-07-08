@@ -31,16 +31,10 @@ import { cn } from "@/lib/utils";
 import { useProject } from "@/lib/project-context";
 import {
   useTerminalManager,
-  type AIToolId as ManagerAIToolId,
+  type AIToolId,
 } from "@/components/terminal/TerminalManager";
 
-export type AIToolId =
-  | "claude"
-  | "herdr-claude"
-  | "opencode"
-  | "copilot"
-  | "gemini"
-  | "codex";
+export type { AIToolId };
 
 // Tool icon + accent color mapping. Icons and accents are read from the
 // canonical AGENT_ICONS/AGENT_ACCENTS maps (components/icons/AgentIcons) so
@@ -152,12 +146,12 @@ export function AgentTabsLayout() {
     (tool: AIToolId) => {
       const projectPath = getProjectPath();
       if (activeProject) {
-        createAISession(tool as ManagerAIToolId, {
+        createAISession(tool, {
           projectName: activeProject,
           mountPath: projectPath,
         });
       } else {
-        createAISession(tool as ManagerAIToolId, { mountPath: basePath });
+        createAISession(tool, { mountPath: basePath });
       }
       setLaunchDialogOpen(false);
     },

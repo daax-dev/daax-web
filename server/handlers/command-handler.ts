@@ -32,6 +32,10 @@ export function buildFullCommand(command: string): string {
       // nothing to attach to.
       `herdr server >/tmp/daax-herdr-server.log 2>&1 & for i in $(seq 1 100); do herdr status server --json 2>/dev/null | grep -q '"running":true' && break; sleep 0.1; done`,
       'herdr status server --json 2>/dev/null | grep -q \'"running":true\' || { echo "Herdr server failed to start:"; cat /tmp/daax-herdr-server.log 2>/dev/null; exec /bin/zsh -l; }',
+      // --no-focus here is intentional: focusing an empty workspace before
+      // Claude exists in it would just be replaced a moment later by the
+      // `--focus` on the agent-start step below, which is what actually
+      // lands the attached session on the running agent.
       'herdr workspace create --cwd "$PWD" --label "Daax" --no-focus >/tmp/daax-herdr-workspace.log 2>&1 || true',
       // On failure, print the Claude/agent log and drop to a shell rather than
       // swallowing the error and attaching to a session with no Claude agent.
