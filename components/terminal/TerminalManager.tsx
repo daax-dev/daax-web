@@ -77,8 +77,8 @@ function getContainerImage(): string {
   );
 }
 
-type SessionType = "claude" | "btop" | "zsh";
-type AIToolId =
+export type SessionType = "claude" | "btop" | "zsh";
+export type AIToolId =
   | "claude"
   | "herdr-claude"
   | "opencode"
@@ -95,7 +95,7 @@ interface TerminalSession {
 }
 
 // Extended session for AI coding with persistence across navigation
-interface AISession {
+export interface AISession {
   id: string;
   toolId: AIToolId;
   name: string;
@@ -752,8 +752,6 @@ interface PersistentTerminalProps {
   className?: string;
   onSessionStart?: (sessionId: string, mode: string) => void;
 }
-
-export type { SessionType, AIToolId, AISession };
 
 export function PersistentTerminal({
   type,
