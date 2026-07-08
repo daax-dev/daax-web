@@ -21,10 +21,21 @@ export function buildFullCommand(command: string): string {
     return [
       "export PATH=/usr/local/bin:/home/vscode/.local/share/pnpm:/home/vscode/.local/bin:$PATH",
       'command -v herdr >/dev/null 2>&1 || { echo "Herdr is not installed in this container image. Pull or rebuild the configured Daax agent image."; exec /bin/zsh -l; }',
-      "herdr server >/tmp/daax-herdr-server.log 2>&1 &",
-      `for i in $(seq 1 100); do herdr status server --json 2>/dev/null | grep -q '"running":true' && break; sleep 0.1; done`,
+      // `herdr server & <poll loop>` must stay a single array element: a
+      // backgrounded command (`&`) cannot be directly followed by this
+      // array's `&&` join separator — `cmd & && next` is a shell syntax
+      // error in both bash and zsh, which broke this command entirely.
+      // The loop below always exits 0 (its last statement is either `break`
+      // or `sleep`), so a timeout looks identical to success. The explicit
+      // re-check afterwards bails into an interactive shell (printing the
+      // server log) instead of proceeding to a workspace/agent that has
+      // nothing to attach to.
+      `herdr server >/tmp/daax-herdr-server.log 2>&1 & for i in $(seq 1 100); do herdr status server --json 2>/dev/null | grep -q '"running":true' && break; sleep 0.1; done`,
+      'herdr status server --json 2>/dev/null | grep -q \'"running":true\' || { echo "Herdr server failed to start:"; cat /tmp/daax-herdr-server.log 2>/dev/null; exec /bin/zsh -l; }',
       'herdr workspace create --cwd "$PWD" --label "Daax" --no-focus >/tmp/daax-herdr-workspace.log 2>&1 || true',
-      `(herdr agent start claude --cwd "$PWD" --focus -- ${claudeCommand} >/tmp/daax-herdr-claude.log 2>&1 || { cat /tmp/daax-herdr-claude.log 2>/dev/null || true; })`,
+      // On failure, print the Claude/agent log and drop to a shell rather than
+      // swallowing the error and attaching to a session with no Claude agent.
+      `herdr agent start claude --cwd "$PWD" --focus -- ${claudeCommand} >/tmp/daax-herdr-claude.log 2>&1 || { echo "Failed to start Claude via Herdr:"; cat /tmp/daax-herdr-claude.log 2>/dev/null; exec /bin/zsh -l; }`,
       "exec herdr --session daax",
     ].join(" && ");
   }

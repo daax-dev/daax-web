@@ -13,7 +13,6 @@ import {
   X,
   Bot,
   Code,
-  Terminal,
   FolderOpen,
   ShieldOff,
   ShieldCheck,
@@ -44,70 +43,63 @@ import { tailscaleHosts } from "@/lib/tailscale-hosts";
 import { OsIcon } from "@/components/icons/OsIcons";
 import { TailscaleIcon } from "@/components/icons/TailscaleIcon";
 import { CloudProviderIcon } from "@/components/icons/CloudProviderIcons";
-import {
-  ClaudeIcon,
-  CodexIcon,
-  GeminiIcon,
-  CopilotIcon,
-  OpenCodeIcon,
-} from "@/components/icons/AgentIcons";
+import { AGENT_ICONS, AGENT_ACCENTS } from "@/components/icons/AgentIcons";
 import { TerminalRecordingsPanel } from "@/plugins/terminal-recorder";
 import { AgentTabsLayout } from "./AgentTabsLayout";
 import { McpStatusBar } from "@/components/session/McpStatusBar";
 
 // AI Tools available in the container
 // Ordered: Claude, Herdr + Claude, OpenCode, Copilot, Codex, Gemini.
-// Icons are the real brand marks (see components/icons/AgentIcons).
-// `accent` is each tool's fixed BRAND color (matches AgentTabsLayout TOOL_META),
-// intentionally exempt from the semantic-token rule so the tree view shows the
-// same per-tool brand hues as the tab view. Constant across light/dark.
+// Icons and accents come from the canonical AGENT_ICONS/AGENT_ACCENTS maps
+// (components/icons/AgentIcons) so the tree view, tab view, and settings page
+// never drift apart. Most icons are real brand marks; herdr-claude uses that
+// map's Lucide fallback since Herdr has no embeddable brand mark.
 const AI_TOOLS = [
   {
     id: "claude" as AIToolId,
     name: "Claude Code",
-    icon: ClaudeIcon,
-    accent: "text-orange-500",
+    icon: AGENT_ICONS.claude,
+    accent: AGENT_ACCENTS.claude,
     command: "claude",
     description: "Anthropic Claude CLI",
   },
   {
     id: "herdr-claude" as AIToolId,
     name: "Herdr + Claude",
-    icon: Terminal,
-    accent: "text-lime-500",
+    icon: AGENT_ICONS["herdr-claude"],
+    accent: AGENT_ACCENTS["herdr-claude"],
     command: "herdr-claude",
     description: "Herdr session with Claude started inside the same container",
   },
   {
     id: "opencode" as AIToolId,
     name: "OpenCode",
-    icon: OpenCodeIcon,
-    accent: "text-cyan-500",
+    icon: AGENT_ICONS.opencode,
+    accent: AGENT_ACCENTS.opencode,
     command: "opencode",
     description: "Multi-provider AI CLI (Copilot/Grok)",
   },
   {
     id: "copilot" as AIToolId,
     name: "GitHub Copilot",
-    icon: CopilotIcon,
-    accent: "text-emerald-500",
+    icon: AGENT_ICONS.copilot,
+    accent: AGENT_ACCENTS.copilot,
     command: "copilot",
     description: "GitHub Copilot CLI (@github/copilot)",
   },
   {
     id: "codex" as AIToolId,
     name: "Codex CLI",
-    icon: CodexIcon,
-    // OpenAI's mark is monochrome; text-foreground = white on dark, black on light.
-    accent: "text-foreground",
+    icon: AGENT_ICONS.codex,
+    accent: AGENT_ACCENTS.codex,
     command: "codex",
     description: "OpenAI Codex CLI",
   },
   {
     id: "gemini" as AIToolId,
     name: "Gemini CLI",
-    icon: GeminiIcon,
-    accent: "text-blue-500",
+    icon: AGENT_ICONS.gemini,
+    accent: AGENT_ACCENTS.gemini,
     command: "gemini",
     description: "Google Gemini CLI",
   },
