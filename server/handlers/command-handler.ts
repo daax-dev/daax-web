@@ -13,7 +13,7 @@ import { hasSession } from "../sessions/session-manager";
  * Build the full command string, handling special cases for AI tools.
  */
 export function buildFullCommand(command: string): string {
-  if (command === "herdr-claude" || command.startsWith("herdr-claude ")) {
+  if (/^herdr-claude(?:\s|$)/.test(command)) {
     const claudePath = "/home/vscode/.local/share/pnpm/claude";
     const claudeArgs = command.replace(/^herdr-claude\s*/, "");
     const claudeCommand = `${claudePath}${claudeArgs ? " " + claudeArgs : ""}`;

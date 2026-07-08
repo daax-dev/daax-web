@@ -84,6 +84,20 @@ describe("buildFullCommand", () => {
       );
     });
 
+    it("matches any whitespace separator, not just a literal space (consistent with the arg-stripping regex)", () => {
+      const result = buildFullCommand(
+        "herdr-claude\t--dangerously-skip-permissions",
+      );
+
+      expect(result).toContain(
+        `herdr agent start claude --cwd "$PWD" --focus -- ${claudePath} --dangerously-skip-permissions`,
+      );
+    });
+
+    it("does not match herdr-claude-test (word boundary)", () => {
+      expect(buildFullCommand("herdr-claude-test")).toBe("herdr-claude-test");
+    });
+
     it("passes Claude arguments through to the Herdr-started Claude agent", () => {
       const result = buildFullCommand(
         "herdr-claude --dangerously-skip-permissions",
