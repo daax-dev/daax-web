@@ -8,7 +8,7 @@ specific feedback so you don't get the same result. Log all decisions and key th
 to `.logs/` in jsonl format, always.
 
 Always use a git worktree / branch name that contains the GH issue #. Do not ever
-rename a branch.
+rename a branch.  also always rename the session to match this - so it becomes easy to coorelate.
 
 ## Coding
 
@@ -22,8 +22,7 @@ rename a branch.
 
 ## Sandboxing
 
-Use vagrant sandboxes (to isolate creation of a KVM/VM) — this is how you get root in
-an ephemeral environment (and fully test). Use the vagrant skill plugin.
+Use proper sandboxing in container / microvm as needed, if you need host level access (root) then Use vagrant sandboxes (to isolate creation of a KVM/VM) — this is how you get root in an ephemeral environment (and fully test). Use the vagrant skill plugin.
 
 ## Review
 
