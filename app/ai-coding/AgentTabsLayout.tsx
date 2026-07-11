@@ -12,13 +12,7 @@ import {
   MonitorSmartphone,
   AlertTriangle,
 } from "lucide-react";
-import {
-  ClaudeIcon,
-  CodexIcon,
-  GeminiIcon,
-  CopilotIcon,
-  OpenCodeIcon,
-} from "@/components/icons/AgentIcons";
+import { AGENT_ICONS, AGENT_ACCENTS } from "@/components/icons/AgentIcons";
 import { getSettings, sortByAgentOrder } from "@/lib/settings";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,14 +31,15 @@ import { cn } from "@/lib/utils";
 import { useProject } from "@/lib/project-context";
 import {
   useTerminalManager,
-  type AIToolId as ManagerAIToolId,
+  type AIToolId,
 } from "@/components/terminal/TerminalManager";
 
-export type AIToolId = "claude" | "opencode" | "copilot" | "gemini" | "codex";
+export type { AIToolId };
 
-// Tool icon + accent color mapping. Each AI tool gets an associated Lucide
-// glyph (some are brand marks, e.g. GitHub for Copilot) and a fixed accent
-// color that serves as the tool's per-tool BRAND identity in the tab strip.
+// Tool icon + accent color mapping. Icons and accents are read from the
+// canonical AGENT_ICONS/AGENT_ACCENTS maps (components/icons/AgentIcons) so
+// the tab strip, tree view, and settings page never drift apart; only the
+// tab-specific display `label` lives here.
 const TOOL_META: Record<
   AIToolId,
   {
@@ -53,16 +48,36 @@ const TOOL_META: Record<
     label: string;
   }
 > = {
-  // Intentional fixed palette: these accents are per-tool BRAND identity for the
-  // five AI tools, not theme state. They are deliberately exempt from the
-  // semantic-token rule — collapsing them to one token would erase the visual
-  // distinction between tools. Brand hues stay constant across light/dark.
-  claude: { Icon: ClaudeIcon, accent: "text-orange-500", label: "Claude" },
-  copilot: { Icon: CopilotIcon, accent: "text-emerald-500", label: "Copilot" },
-  gemini: { Icon: GeminiIcon, accent: "text-blue-500", label: "Gemini" },
-  // OpenAI's mark is monochrome; text-foreground = white on dark, black on light.
-  codex: { Icon: CodexIcon, accent: "text-foreground", label: "Codex" },
-  opencode: { Icon: OpenCodeIcon, accent: "text-cyan-500", label: "OpenCode" },
+  claude: {
+    Icon: AGENT_ICONS.claude,
+    accent: AGENT_ACCENTS.claude,
+    label: "Claude",
+  },
+  "herdr-claude": {
+    Icon: AGENT_ICONS["herdr-claude"],
+    accent: AGENT_ACCENTS["herdr-claude"],
+    label: "Herdr + Claude",
+  },
+  copilot: {
+    Icon: AGENT_ICONS.copilot,
+    accent: AGENT_ACCENTS.copilot,
+    label: "Copilot",
+  },
+  gemini: {
+    Icon: AGENT_ICONS.gemini,
+    accent: AGENT_ACCENTS.gemini,
+    label: "Gemini",
+  },
+  codex: {
+    Icon: AGENT_ICONS.codex,
+    accent: AGENT_ACCENTS.codex,
+    label: "Codex",
+  },
+  opencode: {
+    Icon: AGENT_ICONS.opencode,
+    accent: AGENT_ACCENTS.opencode,
+    label: "OpenCode",
+  },
 };
 
 export function AgentTabsLayout() {
@@ -131,12 +146,12 @@ export function AgentTabsLayout() {
     (tool: AIToolId) => {
       const projectPath = getProjectPath();
       if (activeProject) {
-        createAISession(tool as ManagerAIToolId, {
+        createAISession(tool, {
           projectName: activeProject,
           mountPath: projectPath,
         });
       } else {
-        createAISession(tool as ManagerAIToolId, { mountPath: basePath });
+        createAISession(tool, { mountPath: basePath });
       }
       setLaunchDialogOpen(false);
     },
@@ -578,6 +593,7 @@ export function AgentTabsLayout() {
                 {sortByAgentOrder(
                   [
                     { id: "claude", label: "Claude Code" },
+                    { id: "herdr-claude", label: "Herdr + Claude" },
                     { id: "opencode", label: "OpenCode" },
                     { id: "copilot", label: "GitHub Copilot" },
                     { id: "gemini", label: "Gemini CLI" },

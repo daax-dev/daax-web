@@ -644,10 +644,11 @@ export interface BacklogInitDefaults {
   autoInit: boolean;
 }
 
-// Canonical AI coding agent order (by AIToolId). Codex is 2nd by default.
+// Canonical AI coding agent order (by AIToolId).
 // Used as the fallback ordering when a saved order is missing an agent.
 export const DEFAULT_AI_AGENT_ORDER = [
   "claude",
+  "herdr-claude",
   "codex",
   "opencode",
   "copilot",
@@ -768,7 +769,7 @@ const DEFAULT_SETTINGS: DaaxSettings = {
   },
   // AI Coding layout - default to tree (current sidebar design)
   aiCodingLayout: "tree",
-  // AI coding agent display order (Codex 2nd by default). See DEFAULT_AI_AGENT_ORDER.
+  // AI coding agent display order. See DEFAULT_AI_AGENT_ORDER.
   aiAgentOrder: [...DEFAULT_AI_AGENT_ORDER],
   // Git worktree settings - enabled by default for isolated AI sessions
   autoWorktreeEnabled: true,

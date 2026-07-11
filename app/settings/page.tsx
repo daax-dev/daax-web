@@ -76,14 +76,17 @@ import { AGENT_ICONS, AGENT_ACCENTS } from "@/components/icons/AgentIcons";
 import { cn } from "@/lib/utils";
 
 // Display labels for the AI coding agents (keyed by AIToolId) — used by the
-// agent-order reorder control in AI Coding settings.
-const AI_AGENT_LABELS: Record<string, string> = {
+// agent-order reorder control in AI Coding settings. `satisfies` makes this
+// self-validating like AGENT_ICONS/AGENT_ACCENTS: adding a new agent id
+// without a label here is a compile error.
+const AI_AGENT_LABELS = {
   claude: "Claude Code",
+  "herdr-claude": "Herdr + Claude",
   codex: "Codex CLI",
   opencode: "OpenCode",
   copilot: "GitHub Copilot",
   gemini: "Gemini CLI",
-};
+} satisfies Record<keyof typeof AGENT_ICONS, string>;
 import {
   Bot,
   Code,
@@ -1671,7 +1674,9 @@ function SettingsInner() {
                           AGENT_ICONS[id as keyof typeof AGENT_ICONS];
                         const accent =
                           AGENT_ACCENTS[id as keyof typeof AGENT_ACCENTS];
-                        const label = AI_AGENT_LABELS[id] ?? id;
+                        const label =
+                          AI_AGENT_LABELS[id as keyof typeof AI_AGENT_LABELS] ??
+                          id;
                         const move = (dir: -1 | 1) => {
                           const target = index + dir;
                           if (target < 0 || target >= arr.length) return;

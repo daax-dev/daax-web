@@ -54,6 +54,61 @@ describe("buildFullCommand", () => {
     });
   });
 
+  describe("herdr-claude command", () => {
+    const claudePath = "/home/vscode/.local/share/pnpm/claude";
+
+    it("starts Herdr, launches Claude as a Herdr agent, then attaches to the Herdr session", () => {
+      const result = buildFullCommand("herdr-claude");
+
+      expect(result).toContain("command -v herdr");
+      expect(result).toContain("herdr server");
+      expect(result).toContain('herdr workspace create --cwd "$PWD"');
+      expect(result).toContain(
+        `herdr agent start claude --cwd "$PWD" --focus -- ${claudePath}`,
+      );
+      expect(result).toContain("exec herdr --session daax");
+      expect(result).not.toContain("docker run");
+    });
+
+    it("never places a backgrounded command directly before the && join separator (regression: invalid shell syntax)", () => {
+      // A bare `&` (backgrounding `herdr server`) immediately followed by
+      // `&&` is a syntax error in both bash and zsh (`cmd & && next`) and
+      // previously broke this command end-to-end. `herdr server &` must be
+      // followed by the poll loop directly, not by another `&&`-joined
+      // array element.
+      const result = buildFullCommand("herdr-claude");
+
+      expect(result).not.toMatch(/&\s*&&/);
+      expect(result).toContain(
+        `herdr server >/tmp/daax-herdr-server.log 2>&1 & for i in $(seq 1 100);`,
+      );
+    });
+
+    it("matches any whitespace separator, not just a literal space (consistent with the arg-stripping regex)", () => {
+      const result = buildFullCommand(
+        "herdr-claude\t--dangerously-skip-permissions",
+      );
+
+      expect(result).toContain(
+        `herdr agent start claude --cwd "$PWD" --focus -- ${claudePath} --dangerously-skip-permissions`,
+      );
+    });
+
+    it("does not match herdr-claude-test (word boundary)", () => {
+      expect(buildFullCommand("herdr-claude-test")).toBe("herdr-claude-test");
+    });
+
+    it("passes Claude arguments through to the Herdr-started Claude agent", () => {
+      const result = buildFullCommand(
+        "herdr-claude --dangerously-skip-permissions",
+      );
+
+      expect(result).toContain(
+        `herdr agent start claude --cwd "$PWD" --focus -- ${claudePath} --dangerously-skip-permissions`,
+      );
+    });
+  });
+
   describe("opencode command", () => {
     it("sets PATH with /usr/local/bin first for bare command", () => {
       const result = buildFullCommand("opencode");
