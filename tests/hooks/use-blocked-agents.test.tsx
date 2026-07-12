@@ -117,7 +117,11 @@ describe("useBlockedAgents", () => {
     setPoll([]); // prime empty
     const { rerender } = renderHook(() => useBlockedAgents());
     act(() =>
-      setPoll([card("a", "waiting"), card("b", "waiting"), card("c", "waiting")]),
+      setPoll([
+        card("a", "waiting"),
+        card("b", "waiting"),
+        card("c", "waiting"),
+      ]),
     );
     rerender();
     expect(fireBlockedNotification).toHaveBeenCalledTimes(3);

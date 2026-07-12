@@ -86,20 +86,23 @@ vi.mock("@/lib/github-app", () => ({
   getGitHubToken: mockGetGitHubToken,
 }));
 
-vi.mock("@/plugins/terminal-recorder/lib/html-export", async (importOriginal) => {
-  // Keep the real `slugifyFilenamePart` export (needed by the create-pr
-  // route's branch-name slugging) while still stubbing the heavier
-  // HTML/filename generators used elsewhere in this suite.
-  const actual =
-    await importOriginal<
-      typeof import("@/plugins/terminal-recorder/lib/html-export")
-    >();
-  return {
-    ...actual,
-    generateRecordingHtml: mockGenerateRecordingHtml,
-    generateExportFilename: mockGenerateExportFilename,
-  };
-});
+vi.mock(
+  "@/plugins/terminal-recorder/lib/html-export",
+  async (importOriginal) => {
+    // Keep the real `slugifyFilenamePart` export (needed by the create-pr
+    // route's branch-name slugging) while still stubbing the heavier
+    // HTML/filename generators used elsewhere in this suite.
+    const actual =
+      await importOriginal<
+        typeof import("@/plugins/terminal-recorder/lib/html-export")
+      >();
+    return {
+      ...actual,
+      generateRecordingHtml: mockGenerateRecordingHtml,
+      generateExportFilename: mockGenerateExportFilename,
+    };
+  },
+);
 
 import { GET, DELETE } from "@/app/api/terminal-recordings/[id]/route";
 import { GET as EXPORT_GET } from "@/app/api/terminal-recordings/[id]/export/route";

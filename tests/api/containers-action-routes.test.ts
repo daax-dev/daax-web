@@ -18,6 +18,8 @@ const {
   mockRemove,
   mockInspect,
   mockLogs,
+  mockStats,
+  mockImageInspect,
   mockRequireAuth,
 } = vi.hoisted(() => ({
   mockPing: vi.fn(),
@@ -27,6 +29,8 @@ const {
   mockRemove: vi.fn(),
   mockInspect: vi.fn(),
   mockLogs: vi.fn(),
+  mockStats: vi.fn(),
+  mockImageInspect: vi.fn(),
   mockRequireAuth: vi.fn(),
 }));
 
@@ -40,7 +44,9 @@ vi.mock("dockerode", () => {
       remove: mockRemove,
       inspect: mockInspect,
       logs: mockLogs,
+      stats: mockStats,
     });
+    getImage = () => ({ inspect: mockImageInspect });
   }
   return { default: MockDocker };
 });
@@ -58,6 +64,7 @@ import {
   DELETE as remove,
 } from "@/app/api/containers/[id]/route";
 import { GET as logs } from "@/app/api/containers/[id]/logs/route";
+import { GET as stats } from "@/app/api/containers/[id]/stats/route";
 
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 const authed = () => mockRequireAuth.mockResolvedValue({ authenticated: true });
@@ -85,6 +92,7 @@ describe("host container action routes", () => {
         [remove, reqG],
         [inspect, reqG],
         [logs, reqG],
+        [stats, reqG],
       ] as const) {
         const res = await fn(req, params("abc"));
         expect(res.status).toBe(401);
@@ -97,6 +105,7 @@ describe("host container action routes", () => {
         mockRemove,
         mockInspect,
         mockLogs,
+        mockStats,
       ]) {
         expect(op).not.toHaveBeenCalled();
       }
@@ -188,12 +197,102 @@ describe("host container action routes", () => {
       const res = await logs(new Request("http://localhost/x"), params("c1"));
       expect(await res.text()).toBe(raw.toString("utf-8"));
     });
+
+    it("stats computes cpu%, memory, network, block I/O and pids", async () => {
+      authed();
+      mockInspect.mockResolvedValue({
+        Id: "deadbeef",
+        Name: "/web",
+        Image: "sha256:img1",
+        Config: { Image: "nginx" },
+        State: { Status: "running", Running: true },
+      });
+      mockStats.mockResolvedValue({
+        cpu_stats: {
+          cpu_usage: { total_usage: 2_000_000_000 },
+          system_cpu_usage: 20_000_000_000,
+          online_cpus: 2,
+        },
+        precpu_stats: {
+          cpu_usage: { total_usage: 1_000_000_000 },
+          system_cpu_usage: 10_000_000_000,
+        },
+        memory_stats: {
+          usage: 100_000_000,
+          limit: 500_000_000,
+          stats: { cache: 20_000_000 },
+        },
+        networks: {
+          eth0: { rx_bytes: 1000, tx_bytes: 2000 },
+          eth1: { rx_bytes: 500, tx_bytes: 250 },
+        },
+        blkio_stats: {
+          io_service_bytes_recursive: [
+            { op: "Read", value: 4096 },
+            { op: "Write", value: 8192 },
+            { op: "Read", value: 100 },
+          ],
+        },
+        pids_stats: { current: 7 },
+      });
+      mockImageInspect.mockResolvedValue({ Size: 142_000_000 });
+
+      const res = await stats(new Request("http://localhost/x"), params("c1"));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.cpuPercent).toBeCloseTo(20, 5); // (1e9/10e9)*2*100
+      expect(body.memory).toEqual({
+        usageBytes: 80_000_000,
+        limitBytes: 500_000_000,
+        percent: 16,
+      });
+      expect(body.network).toEqual({ rxBytes: 1500, txBytes: 2250 });
+      expect(body.blockIO).toEqual({ readBytes: 4196, writeBytes: 8192 });
+      expect(body.pids).toBe(7);
+      expect(body.imageSizeBytes).toBe(142_000_000);
+      expect(mockImageInspect).toHaveBeenCalledOnce();
+    });
+
+    it("stats degrades to nulls when a stopped container has no live cpu stats", async () => {
+      authed();
+      mockInspect.mockResolvedValue({
+        Id: "deadbeef",
+        Name: "/web",
+        Image: "sha256:img1",
+        Config: { Image: "nginx" },
+        State: { Status: "exited", Running: false },
+      });
+      mockStats.mockResolvedValue({
+        cpu_stats: {},
+        precpu_stats: {},
+        memory_stats: {},
+        networks: {},
+        blkio_stats: {},
+        pids_stats: {},
+      });
+      mockImageInspect.mockRejectedValue(new Error("no such image"));
+
+      const res = await stats(new Request("http://localhost/x"), params("c1"));
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.cpuPercent).toBeNull();
+      expect(body.memory).toEqual({
+        usageBytes: null,
+        limitBytes: null,
+        percent: null,
+      });
+      expect(body.network).toEqual({ rxBytes: null, txBytes: null });
+      expect(body.blockIO).toEqual({ readBytes: null, writeBytes: null });
+      expect(body.pids).toBeNull();
+      expect(body.imageSizeBytes).toBeNull();
+    });
   });
 
   describe("503 when Docker is unavailable", () => {
     it.each([
       ["stop (mutating)", stop, "POST"],
       ["logs (read)", logs, "GET"],
+      ["stats (read)", stats, "GET"],
     ])("returns 503 for %s when ping fails", async (_label, fn, method) => {
       authed();
       mockPing.mockRejectedValue(new Error("no docker"));
@@ -204,6 +303,7 @@ describe("host container action routes", () => {
       expect(res.status).toBe(503);
       expect(mockStop).not.toHaveBeenCalled();
       expect(mockLogs).not.toHaveBeenCalled();
+      expect(mockStats).not.toHaveBeenCalled();
     });
   });
 });
