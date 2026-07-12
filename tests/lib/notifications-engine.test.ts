@@ -42,10 +42,7 @@ function run(snapshots: NotifyCard[][]): {
 
 describe("reconcile — transition & dedup", () => {
   it("fires exactly once on not-waiting → waiting", () => {
-    const { fired } = run([
-      [card("a", "working")],
-      [card("a", "waiting")],
-    ]);
+    const { fired } = run([[card("a", "working")], [card("a", "waiting")]]);
     expect(fired).toEqual([[], ["a"]]);
   });
 
@@ -173,7 +170,11 @@ describe("truncation-aware auto-clear", () => {
     // was truncated, so the entry must be preserved (no clear).
     r = reconcile(state, [card("z", "waiting")], { truncated: true });
     expect(r.toNotify.map((c) => c.id)).toEqual(["z"]); // z is new
-    expect(entryList(r.state).map((e) => e.id).sort()).toEqual(["a", "z"]);
+    expect(
+      entryList(r.state)
+        .map((e) => e.id)
+        .sort(),
+    ).toEqual(["a", "z"]);
     state = r.state;
 
     // Poll 3: 'a' reappears still waiting — must NOT re-fire (same episode).

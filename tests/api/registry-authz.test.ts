@@ -572,7 +572,11 @@ describe("registry/catalog/release mutation routes require auth (#197)", () => {
 
       expect(res.status).not.toBe(401);
       // approveSubmission(id, reviewedBy, reviewNotes) — 2nd arg is the actor.
-      expect(m.approveSubmission).toHaveBeenCalledWith("x", "tester", undefined);
+      expect(m.approveSubmission).toHaveBeenCalledWith(
+        "x",
+        "tester",
+        undefined,
+      );
       expect(m.approveSubmission.mock.calls[0]?.[1]).toBe("tester");
       expect(m.approveSubmission.mock.calls[0]?.[1]).not.toBe("attacker");
     });

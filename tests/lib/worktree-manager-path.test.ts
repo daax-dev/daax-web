@@ -34,7 +34,9 @@ vi.mock("fs", async (importOriginal) => {
   const wrapped = Object.assign(
     (p: Parameters<typeof actual.realpathSync>[0], ...rest: unknown[]) => {
       if (failRealpathFor.has(String(p))) {
-        const err = new Error("ELOOP: too many symbolic links") as NodeJS.ErrnoException;
+        const err = new Error(
+          "ELOOP: too many symbolic links",
+        ) as NodeJS.ErrnoException;
         err.code = "ELOOP";
         throw err;
       }

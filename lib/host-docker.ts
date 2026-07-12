@@ -25,9 +25,7 @@ function getDockerOptions(
   if (dockerHost.startsWith("unix://")) {
     const url = new URL(dockerHost);
     return {
-      socketPath: decodeURIComponent(
-        `${url.pathname}${url.search}${url.hash}`,
-      ),
+      socketPath: decodeURIComponent(`${url.pathname}${url.search}${url.hash}`),
     };
   }
 
