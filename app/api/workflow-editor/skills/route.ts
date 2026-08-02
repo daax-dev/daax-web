@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
-import { confineToRoot, PathConfinementError } from "@/lib/path-confine";
+import { confineToRealRoot, PathConfinementError } from "@/lib/path-confine";
 import { requireAuth } from "@/lib/auth";
 
 // Base paths for skill files (relative to project root)
@@ -272,6 +272,11 @@ async function loadWorkflowConfig(): Promise<WorkflowConfig> {
 
 // GET - Load workflow configuration with prompts
 export async function GET(request: NextRequest) {
+  // Defense-in-depth (A3): this read returns workflow skill content; require auth
+  // in-handler so a disabled/bypassed middleware is not a total disclosure.
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const { searchParams } = new URL(request.url);
     const mode = searchParams.get("mode") || "full";
@@ -351,7 +356,7 @@ export async function PUT(request: NextRequest) {
     const projectRoot = getProjectRoot();
     let resolvedPath: string;
     try {
-      resolvedPath = confineToRoot(projectRoot, targetPath);
+      resolvedPath = confineToRealRoot(projectRoot, targetPath);
     } catch (err) {
       if (err instanceof PathConfinementError) {
         return NextResponse.json(
@@ -440,7 +445,7 @@ export async function POST(request: NextRequest) {
 
     let targetPath: string;
     try {
-      targetPath = confineToRoot(confineRoot, ...segments);
+      targetPath = confineToRealRoot(confineRoot, ...segments);
     } catch (err) {
       if (err instanceof PathConfinementError) {
         return NextResponse.json(

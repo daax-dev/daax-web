@@ -160,4 +160,32 @@
 
 ---
 
-*These are findings and recommendations, not applied code changes. Per repo workflow, remediation should be planned and validated separately; a second-model validation pass before any fix PR is recommended.*
+*The original findings above stand as recorded. Remediation was subsequently implemented — see §6.*
+
+---
+
+## 6. Remediation status (2026-08-02)
+
+Implemented on branch `cursor/security-premortem-review-f038` (producer: claude-opus-4-8). Plan: `security-premortem-2026-08-remediation-plan.md`; decision: `.logs/decisions/security-premortem-2026-08.jsonl`.
+
+| # | Status | What landed |
+|---|--------|-------------|
+| A1 | **Documented (operator decision)** | Single-operator posture is now explicit (CLAUDE.md "Authorization posture"; decision log). No RBAC change — multi-user gating happens at the IdP/Tailscale layer; per-route `requireRole` + restricted `user` baseline deferred (must fail closed if adopted). |
+| A2 | **Fixed** | `lib/ssrf-guard.ts` resolves the host and rejects loopback/link-local/`169.254.169.254`/RFC1918/ULA and single-label internal names (loopback/private opt-in via `DAAX_MCP_ALLOWED_HOSTS` — the lever for a legit local HTTP MCP); wired into `mcp/tools`, `mcp/config` (via tools), and `mcp-inspector` (registered + ad-hoc `serverUrl`). The `mcp/tools` server-side fetch also uses `redirect: "error"` so a public host cannot 3xx-redirect into a private/metadata target. **Residuals (documented in the module):** DNS-rebinding (fetch re-resolves at connect time) and redirect-following by the spawned `mcp-inspector` child (outside daax's inline control — only the initial host is validated there; **accepted** because under the single-operator posture an authenticated caller already has `/shell` + `docker exec`, so it grants no new reach). The IP classifier also blocks NAT64 `64:ff9b::/96` private-embedded (public-embedded allowed), 6to4 private-embedded, `fec0::/10` site-local, and IPv4 special-use (`198.18/15`, `192.0.0/24`, TEST-NET). |
+| A3/A4 | **Fixed** | In-handler `requireAuth` added to the mutating middleware-only routes `devcontainer` (GET+POST), `backlog/status` (POST), `workflow-editor/load` (GET). |
+| A5 | **Fixed** | `lib/mcp-gateway-proxy.ts` spawn env now routes through `buildChildEnv` (no full `process.env`). |
+| A6 | **Fixed** | `docker exec` container name constrained to the daax session shape (`isAiSessionName`) and `--` prepended before the positional (`connection-handler.ts`). |
+| A7 | **Fixed** | `docker`/`docker-compose` removed from the mcp-inspector ad-hoc launcher allowlist. |
+| A8 | **Fixed (prod) / documented (local)** | `deploy/docker-compose.yml` now `:?`-requires `DAAX_REQUIRE_AUTH` (web + terminal) — a bare `docker compose up` fails closed. The local convenience `docker-compose.yml` stays opt-in by design (posture-gated loopback), now documented as such. |
+| A9 | **Fixed** | `workflow-editor/load` + `backlog/status` confined via `confineToRoot` (absolute-`projectName` root-replacement closed). |
+| A10 | **Fixed** | `workspace?basePath=` confined to the allowed root (home in host mode, `/workspace` in container mode). |
+| R1 | **Fixed** | `confineToRealRoot` (realpath-dereferencing) added to `lib/path-confine.ts` and applied to the `workflow-editor` writers (save/create/agents/prompts/skills). |
+| R2 | **Fixed** | `auth_audit` is now append-only at the DB (migration `1785632484332_auth-audit-append-only`): a row-level `BEFORE UPDATE OR DELETE` trigger raises `insufficient_privilege`; INSERT unaffected. Scoped to UPDATE/DELETE — the vectors the admin console (whitelisted DML) can reach; TRUNCATE is not blocked (needs owner privilege that can disable any trigger, and blocking it broke the integration-suite fixture reset). Verified against real Postgres + `bun run test:integration`. Best-effort-audit decision documented in `lib/auth.ts`. |
+| R3 | **Partially fixed** | `.secrets.json` written `0600` (+chmod); pg dumps get `umask 077` + `chmod 600` (script + both compose backup services). **`read_only` rootfs remains deferred** — the app writes scattered paths and it cannot be verified safe offline; landing it blindly risks breaking both deploy modes. |
+| R4 | **Fixed** | OpenCode host mode now uses a daax-scoped `~/.daax-opencode` store, not the operator's real `~/.local/share/opencode`. |
+| R5 | **Partially fixed** | Trivy CRITICAL (fixable) now blocks CI; HIGH still reported. **GH Actions SHA-pinning and code-server/`:latest` digest-pinning remain deferred** (Low; require live registry/SHA lookups and risk breaking CI — tracked follow-up). |
+| R6 | **Documented** | Terminal-plane single-instance constraint recorded in CLAUDE.md (split-topology). |
+
+**Tests:** SSRF guard, realpath confinement, route guards (load/backlog/workspace/devcontainer), exec-container allowlist, secrets file mode, and the auth_audit append-only migration round-trip are covered by unit/integration tests; full `bun run test` green.
+
+**Deferred residuals (tracked):** A1 privilege separation, R3 read-only rootfs, R5 SHA/digest pinning, A2 DNS-rebinding hardening, per-session short-lived OpenCode tokens (R4 follow-up).

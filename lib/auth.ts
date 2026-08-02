@@ -328,6 +328,18 @@ export async function requireRole(
   return { authorized: true, user: ctx.user, subject };
 }
 
+// Deliberate decision (R2): the audit write is best-effort AFTER the authz
+// decision, which itself already fails CLOSED on a DB fault — role resolution
+// (jitProvision) runs against the same Postgres and returns 403 if it is
+// unreachable, so a privileged ALLOW never proceeds while the DB is down. The
+// only residual window is "role resolution succeeded but the audit INSERT
+// failed" on the same connection, which is anomalous; failing closed there
+// would let a transient audit hiccup lock out the operator for no security gain.
+// Integrity of the rows that ARE written is now enforced at the DB itself: the
+// auth_audit table is append-only via a trigger (migration
+// 1785632484332_auth-audit-append-only), so a super-admin console cannot rewrite
+// or delete history even though this write path is best-effort.
+//
 // writeAudit is already best-effort (never throws); this thin wrapper keeps the
 // call sites terse and defends against a synchronous import-time failure too.
 //

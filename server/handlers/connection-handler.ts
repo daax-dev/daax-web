@@ -39,6 +39,7 @@ import {
 import { handleMessage, MessageHandlerContext } from "./message-handler";
 import { scheduleCommand } from "./command-handler";
 import { resolveWorkspaceRoot, isValidPath } from "../../lib/worktree-manager";
+import { isAiSessionName } from "../../lib/ai-session-name";
 
 // Auth paths are initialized in terminal-server.ts and passed here
 let claudeAuthHostPath: string;
@@ -90,6 +91,17 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
   const requestedImage =
     url.searchParams.get("image") || DEFAULT_CONTAINER_IMAGE;
   const containerName = url.searchParams.get("containerName") || "";
+  // Security (A6): when the client asks to exec into an EXISTING container, that
+  // name is passed straight to `docker exec <containerName>`. Restrict it to the
+  // daax AI-session shape (`daax-<8 hex>`) so a WS-authenticated user cannot exec
+  // into `postgres`, sibling infrastructure, or another agent's container, and a
+  // leading-`-` name can never be parsed as a docker option (buildShellCommand
+  // also prepends `--` as defense-in-depth).
+  if (containerName && !isAiSessionName(containerName)) {
+    console.log(`Rejected exec into non-session container: ${containerName}`);
+    ws.close(1008, "Invalid container");
+    return;
+  }
   // Resolve the container image with fallback logic only when starting a new container
   // Skip for local mode, docker exec mode (containerName set), or other non-container scenarios
   const containerImage =
@@ -572,9 +584,11 @@ function buildShellCommand(
     shell = "docker";
 
     if (containerName) {
-      // Exec into existing container
+      // Exec into existing container. `--` terminates docker's option parsing so
+      // the positional container name can never be read as a flag (A6); the
+      // caller has already allowlisted the name to the daax session shape.
       console.log(`Exec into container: ${containerName}`);
-      shellArgs = ["exec", "-it", containerName, "/bin/bash", "-l"];
+      shellArgs = ["exec", "-it", "--", containerName, "/bin/bash", "-l"];
     } else {
       // Run new container as vscode user (for pnpm-installed tools)
       // node-pty provides a PTY, so docker -it should work
@@ -633,19 +647,18 @@ function buildShellCommand(
         //     daax-scoped Claude credential.
         //   - OpenCode, CONTAINER mode: daax-scoped to
         //     `${workspace}/.daax/opencode`.
-        //   - OpenCode, HOST mode: NOT daax-scoped. auth-paths.ts resolves this
-        //     to the operator's REAL global `~/.local/share/opencode` (or
-        //     $XDG_DATA_HOME/opencode) and mounts it read-WRITE into agent
-        //     containers. So the residual risk for OpenCode host mode is
-        //     exfiltration of the operator's REAL OpenCode credential (their
-        //     actual OpenCode identity), not a daax-scoped copy.
+        //   - OpenCode, HOST mode: now daax-scoped to `~/.daax-opencode` (R4).
+        //     auth-paths.ts NO LONGER mounts the operator's REAL global
+        //     `~/.local/share/opencode`; the daax store is created empty and
+        //     populated by `opencode auth login` INSIDE a daax container, so an
+        //     agent compromise leaks only the daax-scoped OpenCode credential,
+        //     not the operator's real OpenCode identity.
         // Residual risk: untrusted agent code can read/exfiltrate the long-lived
-        // token in whichever store is mounted, and the store is shared across
-        // daax agent sessions — with OpenCode host mode being the operator's real
-        // global credential (see above). Follow-up (tracked in the #195 decision
-        // log): a daax-scoped OpenCode store for host mode, plus per-session,
-        // short-lived scoped tokens so a compromised session cannot exfiltrate a
-        // durable credential or read another session's token.
+        // token in whichever daax-scoped store is mounted, and the store is
+        // shared across daax agent sessions. Follow-up (tracked in the #195
+        // decision log): per-session, short-lived scoped tokens so a compromised
+        // session cannot exfiltrate a durable credential or read another
+        // session's token.
         "-v",
         `${claudeAuthHostPath}:/home/vscode/.claude`, // Persist Claude auth (RW required — see note above)
         "-v",
