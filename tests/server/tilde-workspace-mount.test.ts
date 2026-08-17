@@ -101,6 +101,23 @@ describe("tildeToHostWorkspace", () => {
     expect(tildeToHostWorkspace("~", HOST_WORKSPACE)).toBeNull();
   });
 
+  it("rescues the project/worktree branch when the client sends a stale basePath", () => {
+    // resolveMountPaths()'s projectName branch replaces a `basePathParam`
+    // prefix with the host root. When the client sends a basePath that does not
+    // prefix the mount (a stale tab, or the "~/prj" default against a "jarvis"
+    // workspace), that branch fell through to "use as-is" and handed Docker a
+    // literal "~/..." bind source. The same mapping now catches it.
+    expect(
+      tildeToHostWorkspace(
+        "~/jarvis/jp/flowspec/.worktrees/serene-harbor-ykx0",
+        HOST_WORKSPACE,
+      ),
+    ).toBe("/srv/daax-host/jarvis/jp/flowspec/.worktrees/serene-harbor-ykx0");
+    // And a genuinely foreign absolute path is still left alone (null), so the
+    // branch keeps its "use as-is" fallback and confinement decides.
+    expect(tildeToHostWorkspace("/var/lib/secrets", HOST_WORKSPACE)).toBeNull();
+  });
+
   it("does not widen confinement: the mapped path stays under the host root", () => {
     // The mapping only ever appends the remainder after the workspace segment,
     // so it cannot produce a path outside HOST_WORKSPACE_PATH. Traversal input
