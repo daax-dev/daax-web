@@ -10,6 +10,24 @@ import { IPty } from "../sessions/types";
 import { hasSession } from "../sessions/session-manager";
 
 /**
+ * Commands whose expansion is run as the container's OWN command instead of
+ * being typed into an already-running shell.
+ *
+ * `herdr-claude` expands to a ~700-character multi-stage bootstrap (PATH export,
+ * presence check, background server + poll loop, workspace create, agent start,
+ * exec). Typing that into the PTY makes the shell ECHO the whole wall of text at
+ * the user before anything happens — pure noise in the session they asked for.
+ * Running it as the container command produces the same result with nothing
+ * echoed: the first thing the user sees is herdr itself.
+ *
+ * Only commands that end by exec'ing their long-running process belong here; a
+ * command that returns would exit the container.
+ */
+export function isInlineBootstrapCommand(command: string): boolean {
+  return /^herdr-claude(?:\s|$)/.test(command);
+}
+
+/**
  * Build the full command string, handling special cases for AI tools.
  */
 export function buildFullCommand(command: string): string {
