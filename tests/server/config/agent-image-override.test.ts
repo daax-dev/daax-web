@@ -35,9 +35,8 @@ describe("AGENT_IMAGE_OVERRIDE", () => {
   it("is independent of CLAUDE_CONTAINER_IMAGE (the default, not an override)", async () => {
     vi.stubEnv("CLAUDE_CONTAINER_IMAGE", "jpoley/daax-agents:some-default");
     vi.stubEnv("DAAX_AGENT_IMAGE_OVERRIDE", "daax-agents:claude-current");
-    const { AGENT_IMAGE_OVERRIDE, DEFAULT_CONTAINER_IMAGE } = await import(
-      "@/server/config/constants"
-    );
+    const { AGENT_IMAGE_OVERRIDE, DEFAULT_CONTAINER_IMAGE } =
+      await import("@/server/config/constants");
     expect(DEFAULT_CONTAINER_IMAGE).toBe("jpoley/daax-agents:some-default");
     expect(AGENT_IMAGE_OVERRIDE).toBe("daax-agents:claude-current");
     // The override is what a session must end up using when both are present.

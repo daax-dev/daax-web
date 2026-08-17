@@ -60,8 +60,7 @@ export const FALLBACK_CONTAINER_IMAGE = "daax-agents:local";
 // narrows client control rather than widening it, so it adds no attack surface;
 // the mount-confinement and auth checks are untouched. Leave it unset (the
 // default) to keep per-session image selection in the UI.
-export const AGENT_IMAGE_OVERRIDE =
-  process.env.DAAX_AGENT_IMAGE_OVERRIDE || "";
+export const AGENT_IMAGE_OVERRIDE = process.env.DAAX_AGENT_IMAGE_OVERRIDE || "";
 export const DOCKER_NETWORK = process.env.DOCKER_NETWORK || "daax-net";
 
 // Host workspace path for volume mounts when running in container

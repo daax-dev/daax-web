@@ -64,7 +64,25 @@ export function buildFullCommand(command: string): string {
   // Uses start-of-string anchor followed by whitespace or end-of-string to avoid matching "copilot" as part of longer words like "copilot-test"
   if (/^copilot(?:\s|$)/.test(command)) {
     const copilotArgs = command.replace(/^copilot\s*/, "");
-    return `node /home/vscode/.local/share/pnpm/global/5/node_modules/@github/copilot/index.js${copilotArgs ? " " + copilotArgs : ""}`;
+    const args = copilotArgs ? " " + copilotArgs : "";
+    // The old hardcoded path pinned pnpm's global store version:
+    //   .../pnpm/global/5/node_modules/@github/copilot/index.js
+    // pnpm has since moved that store to `global/v11`, so the path does not
+    // exist in any current agent image and every copilot session died on
+    // "cannot find module". Resolve the entrypoint at run time instead of
+    // pinning a store version, and fall back to the `copilot` shim on PATH when
+    // no JS entrypoint is present (verified working, GitHub Copilot CLI 1.0.67).
+    // The JS path is still preferred first because it is the musl workaround the
+    // original code existed for — the shim tries a glibc native binary first.
+    // `find` with a QUOTED pattern, not a shell glob: the command runs under
+    // zsh, which aborts on an unmatched glob ("no matches found") instead of
+    // passing it through, printing that error straight into the user's session.
+    // `;` rather than `&&` so a non-zero find never skips the fallback.
+    return (
+      `export PATH=/usr/local/bin:/home/vscode/.local/share/pnpm:/home/vscode/.local/bin:$PATH; ` +
+      `COPILOT_JS=$(find /home/vscode/.local/share/pnpm/global -maxdepth 4 -path '*/@github/copilot/index.js' 2>/dev/null | head -1); ` +
+      `if [ -n "$COPILOT_JS" ]; then exec node "$COPILOT_JS"${args}; else exec copilot${args}; fi`
+    );
   }
 
   // For gemini command, use full path (pnpm-installed)
