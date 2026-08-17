@@ -13,6 +13,7 @@ import {
   DOCKER_NETWORK,
   DEFAULT_TERMINAL_COLS,
   DEFAULT_TERMINAL_ROWS,
+  AGENT_IMAGE_OVERRIDE,
   expandPath,
 } from "../config/constants";
 import { authenticateConnection } from "./ws-auth";
@@ -87,8 +88,18 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
   const mode = url.searchParams.get("mode") || "container"; // "local" | "container"
   const command = url.searchParams.get("command") || "";
   const cwd = url.searchParams.get("cwd") || process.cwd();
-  const requestedImage =
-    url.searchParams.get("image") || DEFAULT_CONTAINER_IMAGE;
+  // An operator override (DAAX_AGENT_IMAGE_OVERRIDE) wins over the client's
+  // choice; see AGENT_IMAGE_OVERRIDE in server/config/constants.ts for why a
+  // server-side lever is needed at all (the published image defaults are
+  // digest-pinned in the CLIENT bundle, so they cannot be advanced without a
+  // registry push or every user editing Settings by hand).
+  const clientImage = url.searchParams.get("image") || DEFAULT_CONTAINER_IMAGE;
+  const requestedImage = AGENT_IMAGE_OVERRIDE || clientImage;
+  if (AGENT_IMAGE_OVERRIDE && clientImage !== AGENT_IMAGE_OVERRIDE) {
+    console.log(
+      `Agent image overridden by operator: ${clientImage} -> ${AGENT_IMAGE_OVERRIDE}`,
+    );
+  }
   const containerName = url.searchParams.get("containerName") || "";
   // Resolve the container image with fallback logic only when starting a new container
   // Skip for local mode, docker exec mode (containerName set), or other non-container scenarios
