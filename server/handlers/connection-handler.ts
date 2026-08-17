@@ -38,7 +38,11 @@ import {
   recordOutput,
 } from "../recording/recorder";
 import { handleMessage, MessageHandlerContext } from "./message-handler";
-import { scheduleCommand } from "./command-handler";
+import {
+  scheduleCommand,
+  buildFullCommand,
+  isInlineBootstrapCommand,
+} from "./command-handler";
 import { resolveWorkspaceRoot, isValidPath } from "../../lib/worktree-manager";
 
 // Auth paths are initialized in terminal-server.ts and passed here
@@ -429,8 +433,11 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     // Don't propagate - just log
   });
 
-  // If a command was specified, run it after shell initialization
-  if (command) {
+  // If a command was specified, run it after shell initialization. Inline-
+  // bootstrap commands are already the container's command (see
+  // buildShellCommand), so typing them again would run them twice and echo the
+  // wall of text this avoids.
+  if (command && !isInlineBootstrapCommand(command)) {
     const commandTimeout = scheduleCommand(command, sessionId, ptyProcess, ws);
     // Store timeout on session so the main close handler can clear it
     // This avoids race conditions from having multiple close handlers
@@ -720,12 +727,21 @@ function buildShellCommand(
         // Use zsh with custom PS1 (zsh-style prompt escapes: %F{color}...%f)
         // SECURITY: Use $FALCON_DISPLAY_PATH env var instead of interpolating displayPath
         // directly to prevent command injection via projectName or basePath
+        //
+        // Inline-bootstrap commands (herdr-claude) run as the container's OWN
+        // command rather than being typed into this shell afterwards, so their
+        // long multi-stage expansion is never echoed at the user. The script is
+        // passed as its own argv element, so the single quotes inside it need no
+        // re-quoting. Everything else keeps the interactive shell and has its
+        // (short) command typed in by scheduleCommand().
         shellArgs.push(
           containerImage,
           "/bin/zsh",
           "-l",
           "-c",
-          `export PATH=/home/vscode/.local/share/pnpm:$PATH && export PS1='%F{blue}$FALCON_DISPLAY_PATH%f > ' && exec /bin/zsh`,
+          isInlineBootstrapCommand(command)
+            ? `export PS1='%F{blue}$FALCON_DISPLAY_PATH%f > ' && ${buildFullCommand(command)}`
+            : `export PATH=/home/vscode/.local/share/pnpm:$PATH && export PS1='%F{blue}$FALCON_DISPLAY_PATH%f > ' && exec /bin/zsh`,
         );
       }
     }

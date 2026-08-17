@@ -10,7 +10,11 @@ import {
   useRef,
 } from "react";
 import dynamic from "next/dynamic";
-import { getSettings, DEFAULT_AGENT_IMAGE_GSD } from "@/lib/settings";
+import {
+  getSettings,
+  DEFAULT_AGENT_IMAGE_GSD,
+  resolveHerdrImage,
+} from "@/lib/settings";
 import { buildTerminalWsUrl } from "@/lib/websocket-utils";
 import type { TerminalRef } from "./Terminal";
 import { getProjectInfo } from "@/lib/project-utils";
@@ -258,9 +262,16 @@ export function TerminalManagerProvider({ children }: { children: ReactNode }) {
       const settings = getSettings();
       const tool = AI_TOOLS[toolId];
 
-      // Container mode for AI tools
+      // Container mode for AI tools. Herdr-backed sessions must land on an
+      // image that actually contains herdr — it ships only in the Full Bundle,
+      // not in the default `-gsd` variant (see resolveHerdrImage).
       params.set("mode", "container");
-      params.set("image", getContainerImage());
+      params.set(
+        "image",
+        toolId === "herdr-claude"
+          ? resolveHerdrImage(getContainerImage())
+          : getContainerImage(),
+      );
       params.set("sessionType", `ai-${toolId}`);
 
       // Always send the operator's configured workspace root. The server uses it

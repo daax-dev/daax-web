@@ -571,6 +571,32 @@ export const DEFAULT_AGENT_IMAGE_GSD =
 export const DEFAULT_AGENT_IMAGE =
   "jpoley/daax-agents@sha256:2153f137b3f47de007698d1e5f0d31a684cb45a7e1ebc1326f668ee458f55bc5";
 
+// `herdr` is installed ONLY in the Full Bundle (`daax-agents`) image. Every
+// other variant — including `daax-agents-gsd`, which is the UI default and the
+// most-spawned image — ships without it, so a "Herdr + Claude" session started
+// on the default image dies immediately with the pre-flight message
+// "Herdr is not installed in this container image."
+//
+// The negative lookahead on `-` is what separates the Full Bundle from its
+// siblings: `jpoley/daax-agents@sha256:…` and `daax-agents:some-tag` match,
+// while `jpoley/daax-agents-gsd@sha256:…` and `daax-agents-core:latest` do not.
+// A locally built or retagged Full Bundle (e.g. `daax-agents:claude-current`)
+// still matches, so an operator override is not overridden back.
+const HERDR_CAPABLE_IMAGE = /(^|\/)daax-agents(?=[@:]|$)/;
+
+/**
+ * Resolve the image a Herdr-backed session must run on.
+ *
+ * Returns the configured image when it is a Full Bundle (which carries herdr),
+ * otherwise falls back to the Full Bundle default. Without this, selecting
+ * "Herdr + Claude" on the default `-gsd` image can only ever fail.
+ */
+export function resolveHerdrImage(configuredImage: string): string {
+  return HERDR_CAPABLE_IMAGE.test(configuredImage)
+    ? configuredImage
+    : DEFAULT_AGENT_IMAGE;
+}
+
 export const DEFAULT_AI_CODING_SETTINGS: AICodingSettings = {
   // Digest-pinned (issue #195) — see DEFAULT_AGENT_IMAGE_GSD above.
   defaultContainerImage: DEFAULT_AGENT_IMAGE_GSD,
