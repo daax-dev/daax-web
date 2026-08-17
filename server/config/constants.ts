@@ -46,6 +46,22 @@ export const DEFAULT_CONTAINER_IMAGE =
   process.env.CLAUDE_CONTAINER_IMAGE ||
   "jpoley/daax-agents@sha256:2153f137b3f47de007698d1e5f0d31a684cb45a7e1ebc1326f668ee458f55bc5";
 export const FALLBACK_CONTAINER_IMAGE = "daax-agents:local";
+
+// Authoritative operator override for the AI-agent container image.
+//
+// CLAUDE_CONTAINER_IMAGE above is only a DEFAULT: it applies when a session
+// arrives with no `image` query param, and AI-tool sessions always send one
+// (from browser localStorage). So an operator who needs every session moved to a
+// different image — the published defaults are digest-pinned and cannot be
+// advanced without a registry push — has no server-side lever, and each user
+// must edit Settings by hand.
+//
+// When this is set it WINS over the client-supplied image. That deliberately
+// narrows client control rather than widening it, so it adds no attack surface;
+// the mount-confinement and auth checks are untouched. Leave it unset (the
+// default) to keep per-session image selection in the UI.
+export const AGENT_IMAGE_OVERRIDE =
+  process.env.DAAX_AGENT_IMAGE_OVERRIDE || "";
 export const DOCKER_NETWORK = process.env.DOCKER_NETWORK || "daax-net";
 
 // Host workspace path for volume mounts when running in container
