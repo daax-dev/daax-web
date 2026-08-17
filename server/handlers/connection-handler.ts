@@ -15,6 +15,7 @@ import {
   DEFAULT_TERMINAL_ROWS,
   expandPath,
 } from "../config/constants";
+import { tildeToHostWorkspace } from "../../lib/path-utils";
 import { authenticateConnection } from "./ws-auth";
 import {
   resolveContainerImage,
@@ -488,8 +489,15 @@ function resolveMountPaths(
         } else if (requestedMountNormalized === basePathNormalized) {
           mountPath = HOST_WORKSPACE_PATH;
         } else {
-          // Absolute path or other format - use as-is
-          mountPath = requestedMount;
+          // Same tilde-vs-container-home trap as the no-project branch below: a
+          // "~/<workspace>/..." mount whose prefix does not match the supplied
+          // basePath would otherwise be used verbatim (a literal "~/..." as a
+          // Docker bind source). Map it onto the host root when the tilde
+          // segment names the mounted workspace dir.
+          mountPath =
+            tildeToHostWorkspace(requestedMount, HOST_WORKSPACE_PATH) ??
+            // Absolute path or other format - use as-is
+            requestedMount;
         }
       } else {
         // Host mode - just expand ~
@@ -504,6 +512,10 @@ function resolveMountPaths(
     if (HOST_WORKSPACE_PATH) {
       // Container mode - translate paths to host paths
       // The HOST_WORKSPACE_PATH should correspond to the user's basePath on the host
+      const tildeHostPath = tildeToHostWorkspace(
+        requestedMount,
+        HOST_WORKSPACE_PATH,
+      );
       if (requestedMount.startsWith("/workspace/")) {
         mountPath = requestedMount.replace("/workspace", HOST_WORKSPACE_PATH);
       } else if (requestedMount.startsWith("/workspace")) {
@@ -520,6 +532,16 @@ function resolveMountPaths(
         mountPath = requestedMount.replace(basePathParam, HOST_WORKSPACE_PATH);
       } else if (requestedMount === basePathParam) {
         mountPath = HOST_WORKSPACE_PATH;
+      } else if (tildeHostPath) {
+        // The tilde segment names the mounted workspace directory itself
+        // (e.g. "~/jarvis" with HOST_WORKSPACE_PATH="/home/jpoley/jarvis"), so
+        // map it onto the host root regardless of the client-supplied basePath.
+        // Without this, a request that omits `basePath` falls back to the
+        // hardcoded "~/prj" default and expands the tilde against the CONTAINER's
+        // home ("/home/node/jarvis") — a container path used as a host bind-mount
+        // source, which the #186 confinement then rejects with "Path not allowed".
+        // Same mapping translatePath() (lib/worktree-manager.ts) already performs.
+        mountPath = tildeHostPath;
       } else if (requestedMount.startsWith("~/")) {
         // Expand ~ and check if it's under the base path
         const expandedMount = expandPath(requestedMount);
