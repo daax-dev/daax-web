@@ -1,0 +1,12 @@
+{
+  "mcpStates": {},
+  "config": {
+    "autoDiscovery": true,
+    "discoveryPaths": [],
+    "activeContext": null,
+    "maxConcurrentConnections": 10,
+    "connectionTimeout": 30000
+  },
+  "lastUpdated": "2026-08-17T01:12:49.091Z",
+  "version": "1.0.0"
+}

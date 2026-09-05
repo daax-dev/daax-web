@@ -219,6 +219,9 @@ export function TerminalManagerProvider({ children }: { children: ReactNode }) {
       if (type === "claude") {
         params.set("mode", "container");
         params.set("image", getContainerImage());
+        // Same reason as buildAIWsUrl: the server needs the workspace root to
+        // resolve a "~/" mount against the host path behind /workspace.
+        params.set("basePath", settings.basePath);
         if (options?.mountPath) {
           params.set("mount", options.mountPath);
         }
@@ -260,10 +263,18 @@ export function TerminalManagerProvider({ children }: { children: ReactNode }) {
       params.set("image", getContainerImage());
       params.set("sessionType", `ai-${toolId}`);
 
+      // Always send the operator's configured workspace root. The server uses it
+      // to translate a "~/"-prefixed mount into the host path backing /workspace;
+      // without it the server falls back to a hardcoded "~/prj" and expands the
+      // tilde against the CONTAINER's home (e.g. "~/jarvis" -> "/home/node/jarvis"),
+      // which then fails the #186 mount confinement with "Path not allowed".
+      // This was previously only sent on the project-selected path, so every
+      // no-project session was rejected.
+      params.set("basePath", options.basePath);
+
       // Use project-based mounting if project info is provided
       if (options.projectName) {
         params.set("project", options.projectName);
-        params.set("basePath", options.basePath);
         if (options.projectType) {
           params.set("projectType", options.projectType);
         }
