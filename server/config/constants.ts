@@ -44,7 +44,7 @@ export const SHUTDOWN_TIMEOUT_MS = 5000;
 // Operators can still override with CLAUDE_CONTAINER_IMAGE (tag or digest).
 export const DEFAULT_CONTAINER_IMAGE =
   process.env.CLAUDE_CONTAINER_IMAGE ||
-  "jpoley/daax-agents@sha256:2153f137b3f47de007698d1e5f0d31a684cb45a7e1ebc1326f668ee458f55bc5";
+  "jpoley/daax-agents@sha256:bd80594f01811b6ebe3e30e588ad7599fb34e9b078da24fca2e8767755a96d32";
 export const FALLBACK_CONTAINER_IMAGE = "daax-agents:local";
 export const DOCKER_NETWORK = process.env.DOCKER_NETWORK || "daax-net";
 

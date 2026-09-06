@@ -567,9 +567,9 @@ export const CONTAINER_VARIANTS = [
 // Users/operators can still override either via the Settings UI; only the DEFAULT
 // changes.
 export const DEFAULT_AGENT_IMAGE_GSD =
-  "jpoley/daax-agents-gsd@sha256:2df736e58e6410f5d31b181c0150977d6415ce6f9c4fa3c6a1282e810c102ac3";
+  "jpoley/daax-agents-gsd@sha256:2a631fe021ad95f83acbadd96dbda663ee3c4fac6baa665060aa47bca2438003";
 export const DEFAULT_AGENT_IMAGE =
-  "jpoley/daax-agents@sha256:2153f137b3f47de007698d1e5f0d31a684cb45a7e1ebc1326f668ee458f55bc5";
+  "jpoley/daax-agents@sha256:bd80594f01811b6ebe3e30e588ad7599fb34e9b078da24fca2e8767755a96d32";
 
 export const DEFAULT_AI_CODING_SETTINGS: AICodingSettings = {
   // Digest-pinned (issue #195) — see DEFAULT_AGENT_IMAGE_GSD above.

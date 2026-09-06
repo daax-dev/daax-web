@@ -32,14 +32,14 @@ TAG="${DAAX_AGENT_TAG:-latest}"
 # digest here (content-addressed, immutable) and verify the mutable `:latest`
 # tag still resolves to it — a mismatch means an upstream push has moved
 # `:latest` ahead of the pin and constants.ts should be reviewed/bumped.
-PINNED_AGENT_DIGEST="${DAAX_PINNED_AGENT_DIGEST:-sha256:2153f137b3f47de007698d1e5f0d31a684cb45a7e1ebc1326f668ee458f55bc5}"
+PINNED_AGENT_DIGEST="${DAAX_PINNED_AGENT_DIGEST:-sha256:bd80594f01811b6ebe3e30e588ad7599fb34e9b078da24fca2e8767755a96d32}"
 
 # Digest the UI-DEFAULT agent image (-gsd, "Get Shit Done") is pinned to (issue
 # #195). This is the MOST-spawned image: DEFAULT_AI_CODING_SETTINGS.defaultContainerImage
 # resolves to it. MUST stay in sync with DEFAULT_AGENT_IMAGE_GSD in lib/settings.ts
 # (the client-safe pin); see also the -agents pin in server/config/constants.ts.
 # Pulled by digest and drift-checked below with the same logic as -agents.
-PINNED_GSD_DIGEST="${DAAX_PINNED_GSD_DIGEST:-sha256:2df736e58e6410f5d31b181c0150977d6415ce6f9c4fa3c6a1282e810c102ac3}"
+PINNED_GSD_DIGEST="${DAAX_PINNED_GSD_DIGEST:-sha256:2a631fe021ad95f83acbadd96dbda663ee3c4fac6baa665060aa47bca2438003}"
 
 # Authoritative variant list — keep in sync with CONTAINER_VARIANTS in
 # lib/settings.ts. Every AI-coding image variant is pulled on every run.
