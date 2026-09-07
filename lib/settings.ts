@@ -263,6 +263,12 @@ export const DEFAULT_PLUGINS: PluginConfig[] = [
         description: "Active and orphaned (stray) AI coding container sessions",
         maturity: "beta",
       },
+      {
+        id: "agentview",
+        name: "Agent View",
+        description: "Coding agents as observed by the dist-agent daemon",
+        maturity: "beta",
+      },
       // Agent categories (shown on main AI Coding page)
       {
         id: "local-agents",

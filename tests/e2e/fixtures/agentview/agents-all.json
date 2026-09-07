@@ -1,0 +1,197 @@
+{
+  "agents": [
+    {
+      "agent_id": "chamonix-5d63c187/claude/1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "agent_type": "claude",
+      "node_id": "chamonix-5d63c187",
+      "session_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "cwd": "/repo/observatory",
+      "git_branch": "e2e-playwright",
+      "state": "AGENT_STATE_ACTIVE",
+      "capabilities": {
+        "signals": {
+          "agent_events": {
+            "level": "CAPABILITY_LEVEL_AVAILABLE"
+          },
+          "agent_prompts": {
+            "level": "CAPABILITY_LEVEL_AVAILABLE"
+          },
+          "control": {
+            "level": "CAPABILITY_LEVEL_UNAVAILABLE",
+            "detail": "this daemon's authenticator admits everybody: no --auth was given, so this daemon authenticates nobody. Every control action is recorded with the principal that asked for it, and the honest value of that here is nobody, so control is unavailable for every agent on this daemon (ADR 0017 §2)"
+          },
+          "filesystem_reported": {
+            "level": "CAPABILITY_LEVEL_LIMITED",
+            "detail": "derived from agent-reported tool calls, not observed on disk"
+          },
+          "model_calls": {
+            "level": "CAPABILITY_LEVEL_AVAILABLE"
+          },
+          "open_files": {
+            "level": "CAPABILITY_LEVEL_UNAVAILABLE",
+            "detail": "permanently unavailable: agents open and close files within milliseconds, so sampling cannot observe the descriptor; which files changed is answered by filesystem_observed"
+          },
+          "sent_dropped": {
+            "level": "CAPABILITY_LEVEL_LIMITED",
+            "detail": "every compaction boundary this adapter reads is recorded exactly, from the vendor's own record and never inferred from an occupancy drop; but a session file untouched for longer than the max-age window is never followed, only the last 4 MiB of a file seen for the first time is read, and eviction inside a context window is not observed at all"
+          },
+          "subagents": {
+            "level": "CAPABILITY_LEVEL_AVAILABLE"
+          },
+          "terminal": {
+            "level": "CAPABILITY_LEVEL_UNAVAILABLE",
+            "detail": "terminal attach not implemented before phase 3"
+          },
+          "tool_calls": {
+            "level": "CAPABILITY_LEVEL_AVAILABLE"
+          }
+        }
+      },
+      "model": "claude-opus-5",
+      "last_activity": "2026-09-07T22:33:26.128Z",
+      "is_subagent": true,
+      "parent_session_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "stats": {
+        "input_tokens": "10",
+        "output_tokens": "5",
+        "total_output_tokens": "45",
+        "context_tokens": "10",
+        "context_window": "200000",
+        "context_window_source": "CONTEXT_WINDOW_SOURCE_ASSUMED",
+        "context_used_percent": 0.005,
+        "turn_count": 9,
+        "last_model_response": "2026-09-07T22:33:26.128Z"
+      },
+      "spawn_depth": 1,
+      "subagent_type": "sweep-store"
+    },
+    {
+      "agent_id": "chamonix-5d63c187/claude/6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "agent_type": "claude",
+      "node_id": "chamonix-5d63c187",
+      "session_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "cwd": "/repo/observatory",
+      "git_branch": "e2e-playwright",
+      "state": "AGENT_STATE_IDLE",
+      "capabilities": {
+        "signals": {
+          "agent_events": {
+            "level": "CAPABILITY_LEVEL_AVAILABLE"
+          },
+          "agent_prompts": {
+            "level": "CAPABILITY_LEVEL_AVAILABLE"
+          },
+          "control": {
+            "level": "CAPABILITY_LEVEL_UNAVAILABLE",
+            "detail": "this daemon's authenticator admits everybody: no --auth was given, so this daemon authenticates nobody. Every control action is recorded with the principal that asked for it, and the honest value of that here is nobody, so control is unavailable for every agent on this daemon (ADR 0017 §2)"
+          },
+          "filesystem_reported": {
+            "level": "CAPABILITY_LEVEL_LIMITED",
+            "detail": "derived from agent-reported tool calls, not observed on disk"
+          },
+          "model_calls": {
+            "level": "CAPABILITY_LEVEL_AVAILABLE"
+          },
+          "open_files": {
+            "level": "CAPABILITY_LEVEL_UNAVAILABLE",
+            "detail": "permanently unavailable: agents open and close files within milliseconds, so sampling cannot observe the descriptor; which files changed is answered by filesystem_observed"
+          },
+          "sent_dropped": {
+            "level": "CAPABILITY_LEVEL_LIMITED",
+            "detail": "every compaction boundary this adapter reads is recorded exactly, from the vendor's own record and never inferred from an occupancy drop; but a session file untouched for longer than the max-age window is never followed, only the last 4 MiB of a file seen for the first time is read, and eviction inside a context window is not observed at all"
+          },
+          "subagents": {
+            "level": "CAPABILITY_LEVEL_AVAILABLE"
+          },
+          "terminal": {
+            "level": "CAPABILITY_LEVEL_UNAVAILABLE",
+            "detail": "terminal attach not implemented before phase 3"
+          },
+          "tool_calls": {
+            "level": "CAPABILITY_LEVEL_AVAILABLE"
+          }
+        }
+      },
+      "model": "claude-opus-5",
+      "last_activity": "2026-09-07T22:21:18.812Z",
+      "stats": {
+        "input_tokens": "2",
+        "output_tokens": "10",
+        "total_output_tokens": "30",
+        "context_tokens": "2",
+        "context_window": "200000",
+        "context_window_source": "CONTEXT_WINDOW_SOURCE_ASSUMED",
+        "context_used_percent": 0.001,
+        "turn_count": 3,
+        "tool_call_count": 3,
+        "subagent_count": 3,
+        "last_model_response": "2026-09-07T22:21:18.812Z"
+      }
+    },
+    {
+      "agent_id": "chamonix-5d63c187/claude/9a37d5e8-6c14-4f92-8b70-3d18ae52c6b5",
+      "agent_type": "claude",
+      "node_id": "chamonix-5d63c187",
+      "session_id": "9a37d5e8-6c14-4f92-8b70-3d18ae52c6b5",
+      "cwd": "/repo/observatory",
+      "git_branch": "e2e-playwright",
+      "state": "AGENT_STATE_IDLE",
+      "capabilities": {
+        "signals": {
+          "agent_events": {
+            "level": "CAPABILITY_LEVEL_AVAILABLE"
+          },
+          "agent_prompts": {
+            "level": "CAPABILITY_LEVEL_AVAILABLE"
+          },
+          "control": {
+            "level": "CAPABILITY_LEVEL_UNAVAILABLE",
+            "detail": "this daemon's authenticator admits everybody: no --auth was given, so this daemon authenticates nobody. Every control action is recorded with the principal that asked for it, and the honest value of that here is nobody, so control is unavailable for every agent on this daemon (ADR 0017 §2)"
+          },
+          "filesystem_reported": {
+            "level": "CAPABILITY_LEVEL_LIMITED",
+            "detail": "derived from agent-reported tool calls, not observed on disk"
+          },
+          "model_calls": {
+            "level": "CAPABILITY_LEVEL_AVAILABLE"
+          },
+          "open_files": {
+            "level": "CAPABILITY_LEVEL_UNAVAILABLE",
+            "detail": "permanently unavailable: agents open and close files within milliseconds, so sampling cannot observe the descriptor; which files changed is answered by filesystem_observed"
+          },
+          "sent_dropped": {
+            "level": "CAPABILITY_LEVEL_LIMITED",
+            "detail": "every compaction boundary this adapter reads is recorded exactly, from the vendor's own record and never inferred from an occupancy drop; but a session file untouched for longer than the max-age window is never followed, only the last 4 MiB of a file seen for the first time is read, and eviction inside a context window is not observed at all"
+          },
+          "subagents": {
+            "level": "CAPABILITY_LEVEL_AVAILABLE"
+          },
+          "terminal": {
+            "level": "CAPABILITY_LEVEL_UNAVAILABLE",
+            "detail": "terminal attach not implemented before phase 3"
+          },
+          "tool_calls": {
+            "level": "CAPABILITY_LEVEL_AVAILABLE"
+          }
+        }
+      },
+      "model": "claude-opus-5",
+      "last_activity": "2026-09-07T22:21:18.812Z",
+      "is_subagent": true,
+      "parent_session_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "stats": {
+        "input_tokens": "10",
+        "output_tokens": "5",
+        "total_output_tokens": "5",
+        "context_tokens": "10",
+        "context_window": "200000",
+        "context_window_source": "CONTEXT_WINDOW_SOURCE_ASSUMED",
+        "context_used_percent": 0.005,
+        "turn_count": 1,
+        "last_model_response": "2026-09-07T22:21:18.812Z"
+      },
+      "spawn_depth": 1,
+      "subagent_type": "sweep-ui"
+    }
+  ]
+}

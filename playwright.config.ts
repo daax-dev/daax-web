@@ -87,5 +87,15 @@ export default defineConfig({
         url: "http://localhost:4200",
         reuseExistingServer: true,
         timeout: 60000,
+        // The Agent View tab's proxy (app/api/agentview) reads this at request
+        // time; tests/e2e/agentview.spec.ts starts a fixture daemon on 7793 and
+        // skips with a sentence when the URL is aimed anywhere else. Note that
+        // reuseExistingServer means an already-running `bun dev` keeps whatever
+        // environment it was started with — start it with this variable set.
+        // Playwright merges this over process.env, so nothing else is lost.
+        env: {
+          AGENTVIEW_DAEMON_URL:
+            process.env.AGENTVIEW_DAEMON_URL ?? "http://127.0.0.1:7793",
+        },
       },
 });

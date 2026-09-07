@@ -1,0 +1,16 @@
+{
+  "data_dir": "/var/folders/hw/287_hw6n42b43w3qtdgnm9kr0000gn/T/dist-agent-e2e-7794/data",
+  "data_dir_detail": "",
+  "data_dir_state": "present",
+  "event_count": 307,
+  "last_sequence": 307,
+  "pid": 25471,
+  "prompt_index": {
+    "indexed": 3,
+    "pending": 0,
+    "failed": 0,
+    "unextracted": 2
+  },
+  "status": "ok",
+  "version": "dev"
+}

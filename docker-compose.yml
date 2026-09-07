@@ -250,6 +250,10 @@ services:
       # Note: Use https:// for iframe embedding (not wss:// which is for WebSocket)
       - CLAWD_GATEWAY_URL=${CLAWD_GATEWAY_URL:-https://clawd.${HOSTNAME}.poley.dev}
       - CLAWD_GATEWAY_TOKEN=${CLAWD_GATEWAY_TOKEN:-}
+      # Agent View (dist-agent daemon). Optional: the proxy at /api/agentview
+      # defaults to http://host.docker.internal:7717 in container mode; set this
+      # to reach a daemon elsewhere. Read by lib/agentview/server.ts.
+      - AGENTVIEW_DAEMON_URL=${AGENTVIEW_DAEMON_URL:-}
 
     networks:
       - daax-net

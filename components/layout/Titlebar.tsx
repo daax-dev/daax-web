@@ -36,6 +36,7 @@ import {
   Container,
   Boxes,
   FlaskConical,
+  Radar,
 } from "lucide-react";
 import { McpIcon } from "@/components/icons/McpIcon";
 import { cn } from "@/lib/utils";
@@ -105,6 +106,12 @@ const DEFAULT_AI_CODING_ITEMS: SubNavItem[] = [
     label: "Sessions",
     icon: Boxes,
     subFeatureId: "sessions",
+  },
+  {
+    href: "/agentview",
+    label: "Agent View",
+    icon: Radar,
+    subFeatureId: "agentview",
   },
   {
     href: "/workflow-editor",
@@ -198,6 +205,7 @@ const securityItems: SubNavItem[] = [
 // Routes that should show the AI Coding submenu
 const aiCodingRoutes = [
   "/ai-coding",
+  "/agentview",
   "/code-server",
   "/mcp",
   "/workflow-editor",
