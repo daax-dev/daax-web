@@ -73,11 +73,14 @@ export const DETAIL_ARGUMENT_KEYS = [
   "text_preview",
   "command",
   "arguments_preview",
+  "pattern",
   "path",
   "query",
   "url",
   "subject",
   "branch",
+  "subagent_prompt",
+  "description",
   "result_preview",
   "executable",
   "changed_files",
@@ -104,6 +107,18 @@ export const eventSummary = (event: AgentEvent): string => {
     .slice(0, 3)
     .map(([k, v]) => `${k}=${truncate(collapse(v), 40)}`)
     .join("  ");
+};
+
+/**
+ * An absolute local timestamp beside an age, so "14h ago" also says which
+ * evening: an age alone cannot tell a reader how stale a finished session is
+ * once it is older than a day, and the daemon reports the instant exactly.
+ */
+export const formatStamp = (iso: string): string => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 
 /** Sort newest first by numeric sequence. */

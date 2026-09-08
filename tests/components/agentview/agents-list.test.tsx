@@ -26,8 +26,28 @@ const renderList = (
 };
 
 describe("AgentsList", () => {
-  it("renders one card per agent with the stripped state and the full enum as data", () => {
+  it("hides idle and finished sessions by default and says how many it hid", () => {
     renderList([ACTIVE_AGENT, IDLE_AGENT]);
+    const cards = screen.getAllByTestId("agentview-agent");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toHaveAttribute("data-state", "AGENT_STATE_ACTIVE");
+    expect(screen.getByTestId("agentview-agents-count")).toHaveTextContent(
+      "1 · 1 inactive hidden",
+    );
+  });
+
+  it("shows the absolute instant beside the age, so staleness reads past a day", () => {
+    renderList([ACTIVE_AGENT]);
+    const activity = screen.getByTestId("agentview-agent-activity");
+    expect(activity).toHaveAttribute("title", ACTIVE_AGENT.last_activity);
+    // YYYY-MM-DD HH:MM in local time, after the age.
+    expect(activity.textContent).toMatch(
+      /ago · \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/,
+    );
+  });
+
+  it("renders one card per agent with the stripped state and the full enum as data", () => {
+    renderList([ACTIVE_AGENT, IDLE_AGENT], { includeFinished: true });
     const cards = screen.getAllByTestId("agentview-agent");
     expect(cards).toHaveLength(2);
     expect(cards[0]).toHaveAttribute("data-agent-id", ACTIVE_AGENT.agent_id);
@@ -82,7 +102,7 @@ describe("AgentsList", () => {
   it("offers the finished toggle", () => {
     const { onToggleFinished } = renderList([]);
     const toggle = screen.getByTestId("agentview-toggle-finished");
-    expect(toggle).toHaveTextContent("show finished");
+    expect(toggle).toHaveTextContent("show inactive");
     fireEvent.click(toggle);
     expect(onToggleFinished).toHaveBeenCalledTimes(1);
   });

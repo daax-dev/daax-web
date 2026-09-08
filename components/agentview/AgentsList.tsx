@@ -16,7 +16,13 @@ import { AGENT_ICONS, AGENT_ACCENTS } from "@/components/icons/AgentIcons";
 import { formatAge, stripEnum } from "@/lib/agentview/client";
 import type { AgentInstance } from "@/lib/agentview/types";
 import { cn } from "@/lib/utils";
-import { agentSubject, stateClasses } from "./format";
+import { agentSubject, formatStamp, stateClasses } from "./format";
+
+/** The states a card is shown for without asking. Compared by full enum. */
+const ACTIVE_STATES = new Set<string>([
+  "AGENT_STATE_ACTIVE",
+  "AGENT_STATE_WAITING",
+]);
 
 interface AgentsListProps {
   agents: AgentInstance[];
@@ -119,8 +125,16 @@ function AgentCard({
         </div>
       )}
       {agent.last_activity && (
-        <p className="text-[11px] text-muted-foreground">
+        <p
+          className="text-[11px] text-muted-foreground"
+          title={agent.last_activity}
+          data-testid="agentview-agent-activity"
+        >
           last activity {formatAge(agent.last_activity, now)}
+          <span className="font-mono">
+            {" "}
+            · {formatStamp(agent.last_activity)}
+          </span>
         </p>
       )}
     </Card>
@@ -136,13 +150,25 @@ export function AgentsList({
   now: nowProp,
 }: AgentsListProps) {
   const now = nowProp ?? Date.now();
+  // What is worth a card by default is what is running now: ACTIVE, or
+  // WAITING on the operator. A session that is idle or has finished still has
+  // a history worth reading — that is what the toggle is for — but a list that
+  // led with them buried the one thing an operator opens this page to see.
+  const shown = includeFinished
+    ? agents
+    : agents.filter((a) => ACTIVE_STATES.has(a.state));
+  const hidden = agents.length - shown.length;
   return (
     <section className="space-y-2" data-testid="agentview-agents">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-medium">
           agents{" "}
-          <span className="font-mono text-xs text-muted-foreground">
-            {agents.length}
+          <span
+            className="font-mono text-xs text-muted-foreground"
+            data-testid="agentview-agents-count"
+          >
+            {shown.length}
+            {hidden > 0 && ` · ${hidden} inactive hidden`}
           </span>
         </h2>
         <Button
@@ -158,10 +184,10 @@ export function AgentsList({
           ) : (
             <Eye className="mr-1 h-3.5 w-3.5" aria-hidden />
           )}
-          {includeFinished ? "hide finished" : "show finished"}
+          {includeFinished ? "hide inactive" : "show inactive"}
         </Button>
       </div>
-      {agents.length === 0 ? (
+      {shown.length === 0 ? (
         <p
           className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground"
           data-testid="agentview-agents-empty"
@@ -170,7 +196,7 @@ export function AgentsList({
         </p>
       ) : (
         <div className="space-y-2">
-          {agents.map((agent) => (
+          {shown.map((agent) => (
             <AgentCard
               key={agent.agent_id}
               agent={agent}

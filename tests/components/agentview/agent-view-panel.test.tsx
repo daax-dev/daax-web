@@ -107,8 +107,12 @@ describe("AgentViewPanel", () => {
 
     render(<AgentViewPanel />);
 
+    // The idle session is fetched but not shown until asked for.
     const cards = await screen.findAllByTestId("agentview-agent");
-    expect(cards).toHaveLength(2);
+    expect(cards).toHaveLength(1);
+    expect(screen.getByTestId("agentview-agents-count")).toHaveTextContent(
+      "1 · 1 inactive hidden",
+    );
     expect(screen.getByTestId("agentview-node")).toHaveTextContent(
       "chamonix.local",
     );
@@ -143,12 +147,17 @@ describe("AgentViewPanel", () => {
     );
 
     render(<AgentViewPanel />);
-    const cards = await screen.findAllByTestId("agentview-agent");
+    await screen.findAllByTestId("agentview-agent");
     expect(mocks.fetchEvents).toHaveBeenLastCalledWith(
       expect.objectContaining({ agentId: undefined }),
     );
 
-    fireEvent.click(cards[1]);
+    // The idle card is behind the toggle; showing it is what makes it clickable.
+    fireEvent.click(screen.getByTestId("agentview-toggle-finished"));
+    await waitFor(() =>
+      expect(screen.getAllByTestId("agentview-agent")).toHaveLength(2),
+    );
+    fireEvent.click(screen.getAllByTestId("agentview-agent")[1]);
 
     await waitFor(() =>
       expect(mocks.fetchEvents).toHaveBeenLastCalledWith(
@@ -160,10 +169,13 @@ describe("AgentViewPanel", () => {
       expect(rows).toHaveLength(1);
       expect(rows[0]).toHaveAttribute("data-agent-id", IDLE_AGENT.agent_id);
     });
-    expect(cards[1]).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getAllByTestId("agentview-agent")[1]).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
 
     // A second click deselects and the full list returns.
-    fireEvent.click(cards[1]);
+    fireEvent.click(screen.getAllByTestId("agentview-agent")[1]);
     await waitFor(() =>
       expect(mocks.fetchEvents).toHaveBeenLastCalledWith(
         expect.objectContaining({ agentId: undefined }),
