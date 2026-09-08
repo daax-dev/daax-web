@@ -67,7 +67,9 @@ test.describe("Admin DB console (local operator = super-admin)", () => {
     await expect(adminTab).toBeVisible({ timeout: 15_000 });
     await adminTab.click();
 
-    const dataTab = page.getByRole("tab", { name: "Data" });
+    // exact: the accessible-name match is a substring match, and the sibling
+    // "Database" tab contains "Data" — two matches is a strict-mode violation.
+    const dataTab = page.getByRole("tab", { name: "Data", exact: true });
     await expect(dataTab).toBeVisible({ timeout: 15_000 });
     await dataTab.click();
     await expect(
