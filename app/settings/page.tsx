@@ -3006,13 +3006,26 @@ function SettingsInner() {
                                           )
                                             return;
 
-                                          const currentOrder =
+                                          // A stored order (config.toml or an
+                                          // earlier drag) may predate a
+                                          // sub-feature; anything it omits is
+                                          // appended in default order, the
+                                          // same rule the titlebar renders by,
+                                          // so a new tab can be dragged rather
+                                          // than silently ignored.
+                                          const storedOrder =
                                             settings.subFeatureOrder[
                                               plugin.id
-                                            ] ||
-                                            plugin.subFeatures!.map(
-                                              (sf) => sf.id,
-                                            );
+                                            ] || [];
+                                          const currentOrder = [
+                                            ...storedOrder,
+                                            ...plugin
+                                              .subFeatures!.map((sf) => sf.id)
+                                              .filter(
+                                                (id) =>
+                                                  !storedOrder.includes(id),
+                                              ),
+                                          ];
                                           const newOrder = [...currentOrder];
                                           const dragIdx = newOrder.indexOf(
                                             draggedSubFeature.subFeatureId,

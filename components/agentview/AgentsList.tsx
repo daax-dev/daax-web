@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { AGENT_ICONS } from "@/components/icons/AgentIcons";
+import { AGENT_ICONS, AGENT_ACCENTS } from "@/components/icons/AgentIcons";
 import { formatAge, stripEnum } from "@/lib/agentview/client";
 import type { AgentInstance } from "@/lib/agentview/types";
 import { cn } from "@/lib/utils";
@@ -46,6 +46,12 @@ function AgentCard({
   now: number;
 }) {
   const Icon = ICONS[agent.agent_type] ?? Bot;
+  // The brand accent beside the brand mark, from the same canonical map the
+  // AI Coding tab strip reads, so Claude is orange here as it is there and on
+  // the daemon's own page rather than the text colour of whatever is around it.
+  const accent =
+    (AGENT_ACCENTS as Record<string, string>)[agent.agent_type] ??
+    "text-muted-foreground";
   const subject = agentSubject(agent);
   const pct = agent.stats?.context_used_percent;
   return (
@@ -69,7 +75,10 @@ function AgentCard({
       data-state={agent.state}
     >
       <div className="flex items-center gap-2">
-        <Icon className="h-4 w-4 shrink-0" />
+        <Icon
+          className={cn("h-4 w-4 shrink-0", accent)}
+          data-testid="agentview-agent-icon"
+        />
         <span className="truncate text-sm font-medium">{agent.agent_type}</span>
         <Badge
           variant="outline"

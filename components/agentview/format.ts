@@ -58,13 +58,44 @@ export const truncate = (s: string, max: number): string =>
  * One line from an event's attributes, in order of how much it says:
  * the tool, the command, the executable, the path — or nothing.
  */
+/**
+ * The same rule the daemon's own page uses for a timeline row
+ * (DETAIL_SUBJECT_KEY and DETAIL_ARGUMENT_KEYS in internal/api/web/index.html):
+ * the subject is the tool's name when there is one, and the argument is the
+ * first attribute, in most-specific-first order, that says what was done — a
+ * command line before a serialized argument list, a preview of what the model
+ * said before nothing. A row that showed only "Bash" for a tool call and
+ * nothing for a model response was reporting the event type twice and the
+ * event not at all.
+ */
+export const DETAIL_ARGUMENT_KEYS = [
+  "prompt_preview",
+  "text_preview",
+  "command",
+  "arguments_preview",
+  "path",
+  "query",
+  "url",
+  "subject",
+  "branch",
+  "result_preview",
+  "executable",
+  "changed_files",
+  "error",
+] as const;
+
+/** Previews arrive capped at 512 characters by the adapters; one row is one line. */
+export const DETAIL_VALUE_MAX = 120;
+
+const collapse = (v: string): string => v.replace(/\s+/g, " ").trim();
+
 export const eventSummary = (event: AgentEvent): string => {
   const a = event.attributes ?? {};
-  if (a.tool_name) return a.tool_name;
-  if (a.command) return truncate(a.command, 80);
-  if (a.executable) return a.executable;
-  if (a.path) return a.path;
-  return "";
+  const subject = a.tool_name ? collapse(a.tool_name) : "";
+  const key = DETAIL_ARGUMENT_KEYS.find((k) => a[k]);
+  const argument = key ? truncate(collapse(a[key]!), DETAIL_VALUE_MAX) : "";
+  if (subject && argument) return `${subject} · ${argument}`;
+  return subject || argument;
 };
 
 /** Sort newest first by numeric sequence. */
