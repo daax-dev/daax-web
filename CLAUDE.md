@@ -158,6 +158,8 @@ bun run db:export         # One-time SQLite→Postgres data export (catalog.db +
 bun run test         # Vitest (unit/component, headless)
 bun run test:integration # Postgres migration round-trip (spins up throwaway PG via Docker; skips if absent)
 bun run test:e2e     # Playwright (tests/e2e)
+bun run test:e2e:ci-local # The CI e2e job's environment locally: production mode, trusted local operator, Agent View fixture daemon (scripts/ci-local-e2e.sh)
+                          # Must be green before a PR carries the `e2e` label
 bun run test:all     # Vitest + Playwright + agent quick-verify
 
 # Components

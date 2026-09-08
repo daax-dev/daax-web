@@ -47,6 +47,7 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug",
     "test:e2e:report": "playwright show-report",
+    "test:e2e:ci-local": "./scripts/ci-local-e2e.sh",
     "test:verify": "./scripts/agent-tests/quick-verify.sh",
     "test:agent": "./scripts/agent-tests/run-ui-tests.sh",
     "test:all": "vitest run && playwright test && ./scripts/agent-tests/quick-verify.sh",
