@@ -262,7 +262,15 @@ test.describe("Agent View against a daemon that refuses", () => {
     await openOverview(page);
     const notice = page.getByTestId("agentview-refused");
     await expect(notice).toBeVisible();
-    await expect(notice).toContainText("refused");
+    // Not merely "refused": every 401 the browser sees renders as this notice,
+    // including daax's own middleware refusing the proxy route when the app
+    // runs in a posture that trusts nobody. Only the proxy echoes the daemon's
+    // body as `detail`, and only the fixture answers with this body, so the
+    // literal below can be produced by no 401 other than the one under test.
+    await expect(notice).toContainText(
+      'the daemon refused this request (HTTP 401): {"error":"no session"}',
+    );
+    await expect(notice).not.toContainText("Authentication required");
     await expect(page.getByTestId("agentview-agents-empty")).toHaveCount(0);
     await expect(page.getByTestId("agentview-event")).toHaveCount(0);
     await expect(page.getByTestId("agentview-events-empty")).toHaveCount(0);
