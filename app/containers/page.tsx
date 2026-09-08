@@ -181,8 +181,12 @@ function imageRegistryUrl(image: string): string | null {
       : `https://hub.docker.com/r/${path}`;
   }
   if (host === "ghcr.io") {
-    const pkg = path.split("/").pop();
-    return `https://github.com/${path.split("/")[0]}/${pkg}/pkgs/container/${pkg}`;
+    const parts = path.split("/");
+    if (parts.length < 2) return null;
+    const owner = parts[0];
+    const repo = parts[1];
+    const pkg = parts[parts.length - 1];
+    return `https://github.com/${owner}/${repo}/pkgs/container/${pkg}`;
   }
   return `https://${host}/${path}`;
 }
