@@ -1,0 +1,620 @@
+{
+  "events": [
+    {
+      "event_id": "2cde3890e8c3af66d2602de6b23ca726",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:31:26.791952Z",
+      "sequence": "1",
+      "event_type": "EVENT_TYPE_NODE_STARTED",
+      "attributes": {
+        "arch": "arm64",
+        "hostname": "chamonix.local",
+        "os": "darwin",
+        "version": "dev"
+      },
+      "collector": "node"
+    },
+    {
+      "event_id": "524264e308ed122bede790e1e982e342",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:31:17.812Z",
+      "sequence": "2",
+      "event_type": "EVENT_TYPE_SUB_AGENT_SPAWNED",
+      "agent_id": "chamonix-5d63c187/claude/1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "session_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "correlation_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "attributes": {
+        "agent_name": "sweep-store",
+        "agent_type": "claude",
+        "claude_version": "2.1.232",
+        "cwd": "/repo/observatory",
+        "git_branch": "e2e-playwright",
+        "is_sidechain": "false",
+        "spawn_depth": "1",
+        "subagent_type": "sweep-store",
+        "team_name": "session-9c1f2a44"
+      },
+      "collector": "claude"
+    },
+    {
+      "event_id": "25a7f701b9ea640c749124aa6fd76300",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:31:18.812Z",
+      "sequence": "3",
+      "event_type": "EVENT_TYPE_MODEL_RESPONSE",
+      "agent_id": "chamonix-5d63c187/claude/1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "session_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "correlation_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "parent_event_ids": [
+        "48420f53a765568ec2fd90cb94035602"
+      ],
+      "attributes": {
+        "cache_creation_tokens": "0",
+        "cache_read_tokens": "0",
+        "client_version": "2.1.232",
+        "context_tokens": "10",
+        "context_used_percent": "0.0",
+        "input_tokens": "10",
+        "is_sidechain": "false",
+        "model": "claude-opus-5",
+        "output_tokens": "5",
+        "raw_payload_bytes": "532",
+        "role": "assistant",
+        "source_offset": "351",
+        "text_preview": "working"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    },
+    {
+      "event_id": "f61a43a3837f5356189407fbb08c2fcf",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:21:18.811Z",
+      "sequence": "4",
+      "event_type": "EVENT_TYPE_AGENT_SESSION_STARTED",
+      "agent_id": "chamonix-5d63c187/claude/6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "session_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "correlation_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "attributes": {
+        "agent_type": "claude",
+        "claude_version": "2.1.232",
+        "cwd": "/repo/observatory",
+        "git_branch": "e2e-playwright",
+        "is_sidechain": "false"
+      },
+      "collector": "claude"
+    },
+    {
+      "event_id": "49a49131f0d0c273cf3882d76f6519ff",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:21:18.811Z",
+      "sequence": "5",
+      "event_type": "EVENT_TYPE_MODEL_RESPONSE",
+      "agent_id": "chamonix-5d63c187/claude/6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "session_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "correlation_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "attributes": {
+        "cache_creation_tokens": "0",
+        "cache_read_tokens": "0",
+        "client_version": "2.1.232",
+        "context_tokens": "2",
+        "context_used_percent": "0.0",
+        "input_tokens": "2",
+        "is_sidechain": "false",
+        "model": "claude-opus-5",
+        "output_tokens": "10",
+        "raw_payload_bytes": "619",
+        "role": "assistant",
+        "source_offset": "0",
+        "stop_reason": "tool_use"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    },
+    {
+      "event_id": "6e299dc63719e1a0f96a22b3c33ede3d",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:21:18.811Z",
+      "sequence": "6",
+      "event_type": "EVENT_TYPE_SUB_AGENT_SPAWNED",
+      "agent_id": "chamonix-5d63c187/claude/6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "session_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "correlation_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "parent_event_ids": [
+        "49a49131f0d0c273cf3882d76f6519ff"
+      ],
+      "attributes": {
+        "client_version": "2.1.232",
+        "description": "sweep",
+        "raw_payload_bytes": "109",
+        "source_offset": "0",
+        "subagent_name": "sweep-store",
+        "subagent_prompt": "REDACTED TASK BRIEF",
+        "subagent_type": "general-purpose",
+        "tool_name": "Agent",
+        "tool_use_id": "toolu_e2e_00"
+      },
+      "raw_format": "application/x-claude-tool-input",
+      "collector": "claude"
+    },
+    {
+      "event_id": "1e99e8e808c4a525d37d14254ad3c949",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:21:18.812Z",
+      "sequence": "7",
+      "event_type": "EVENT_TYPE_SUB_AGENT_COMPLETED",
+      "agent_id": "chamonix-5d63c187/claude/6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "session_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "correlation_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "parent_event_ids": [
+        "6e299dc63719e1a0f96a22b3c33ede3d"
+      ],
+      "attributes": {
+        "client_version": "2.1.232",
+        "is_error": "false",
+        "raw_payload_bytes": "788",
+        "result_chars": "21",
+        "result_preview": "Spawned successfully.",
+        "source_offset": "620",
+        "tool_name": "Agent",
+        "tool_use_id": "toolu_e2e_00"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    },
+    {
+      "event_id": "899469b671de6ffdd702462519fd0e06",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:21:18.812Z",
+      "sequence": "8",
+      "event_type": "EVENT_TYPE_MODEL_RESPONSE",
+      "agent_id": "chamonix-5d63c187/claude/6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "session_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "correlation_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "attributes": {
+        "cache_creation_tokens": "0",
+        "cache_read_tokens": "0",
+        "client_version": "2.1.232",
+        "context_tokens": "2",
+        "context_used_percent": "0.0",
+        "input_tokens": "2",
+        "is_sidechain": "false",
+        "model": "claude-opus-5",
+        "output_tokens": "10",
+        "raw_payload_bytes": "616",
+        "role": "assistant",
+        "source_offset": "1409",
+        "stop_reason": "tool_use"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    },
+    {
+      "event_id": "82c375cbbb49b31469dd8db785b393ae",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:21:18.812Z",
+      "sequence": "9",
+      "event_type": "EVENT_TYPE_SUB_AGENT_SPAWNED",
+      "agent_id": "chamonix-5d63c187/claude/6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "session_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "correlation_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "parent_event_ids": [
+        "899469b671de6ffdd702462519fd0e06"
+      ],
+      "attributes": {
+        "client_version": "2.1.232",
+        "description": "sweep",
+        "raw_payload_bytes": "106",
+        "source_offset": "1409",
+        "subagent_name": "sweep-ui",
+        "subagent_prompt": "REDACTED TASK BRIEF",
+        "subagent_type": "general-purpose",
+        "tool_name": "Agent",
+        "tool_use_id": "toolu_e2e_01"
+      },
+      "raw_format": "application/x-claude-tool-input",
+      "collector": "claude"
+    },
+    {
+      "event_id": "1c95314da733256513a0feb7484c25b7",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:21:18.812Z",
+      "sequence": "10",
+      "event_type": "EVENT_TYPE_SUB_AGENT_COMPLETED",
+      "agent_id": "chamonix-5d63c187/claude/6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "session_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "correlation_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "parent_event_ids": [
+        "82c375cbbb49b31469dd8db785b393ae"
+      ],
+      "attributes": {
+        "client_version": "2.1.232",
+        "is_error": "false",
+        "raw_payload_bytes": "779",
+        "result_chars": "21",
+        "result_preview": "Spawned successfully.",
+        "source_offset": "2026",
+        "tool_name": "Agent",
+        "tool_use_id": "toolu_e2e_01"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    },
+    {
+      "event_id": "639cc2d46b6359ecd780a283cc0aaea3",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:21:18.812Z",
+      "sequence": "11",
+      "event_type": "EVENT_TYPE_MODEL_RESPONSE",
+      "agent_id": "chamonix-5d63c187/claude/6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "session_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "correlation_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "attributes": {
+        "cache_creation_tokens": "0",
+        "cache_read_tokens": "0",
+        "client_version": "2.1.232",
+        "context_tokens": "2",
+        "context_used_percent": "0.0",
+        "input_tokens": "2",
+        "is_sidechain": "false",
+        "model": "claude-opus-5",
+        "output_tokens": "10",
+        "raw_payload_bytes": "618",
+        "role": "assistant",
+        "source_offset": "2806",
+        "stop_reason": "tool_use"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    },
+    {
+      "event_id": "1a2d34b126d5787bd28eff2f62639d41",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:21:18.812Z",
+      "sequence": "12",
+      "event_type": "EVENT_TYPE_SUB_AGENT_SPAWNED",
+      "agent_id": "chamonix-5d63c187/claude/6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "session_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "correlation_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "parent_event_ids": [
+        "639cc2d46b6359ecd780a283cc0aaea3"
+      ],
+      "attributes": {
+        "client_version": "2.1.232",
+        "description": "sweep",
+        "raw_payload_bytes": "108",
+        "source_offset": "2806",
+        "subagent_name": "sweep-docs",
+        "subagent_prompt": "REDACTED TASK BRIEF",
+        "subagent_type": "general-purpose",
+        "tool_name": "Agent",
+        "tool_use_id": "toolu_e2e_02"
+      },
+      "raw_format": "application/x-claude-tool-input",
+      "collector": "claude"
+    },
+    {
+      "event_id": "55dbebab3e761484dc3520a304d3daa9",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:21:18.812Z",
+      "sequence": "13",
+      "event_type": "EVENT_TYPE_SUB_AGENT_COMPLETED",
+      "agent_id": "chamonix-5d63c187/claude/6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "session_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "correlation_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+      "parent_event_ids": [
+        "1a2d34b126d5787bd28eff2f62639d41"
+      ],
+      "attributes": {
+        "client_version": "2.1.232",
+        "is_error": "false",
+        "raw_payload_bytes": "785",
+        "result_chars": "21",
+        "result_preview": "Spawned successfully.",
+        "source_offset": "3425",
+        "tool_name": "Agent",
+        "tool_use_id": "toolu_e2e_02"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    },
+    {
+      "event_id": "816d7a37880c72bddd9cd9e18abc775b",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:21:17.812Z",
+      "sequence": "14",
+      "event_type": "EVENT_TYPE_SUB_AGENT_SPAWNED",
+      "agent_id": "chamonix-5d63c187/claude/9a37d5e8-6c14-4f92-8b70-3d18ae52c6b5",
+      "session_id": "9a37d5e8-6c14-4f92-8b70-3d18ae52c6b5",
+      "correlation_id": "9a37d5e8-6c14-4f92-8b70-3d18ae52c6b5",
+      "parent_event_ids": [
+        "82c375cbbb49b31469dd8db785b393ae"
+      ],
+      "attributes": {
+        "agent_name": "sweep-ui",
+        "agent_type": "claude",
+        "claude_version": "2.1.232",
+        "cwd": "/repo/observatory",
+        "git_branch": "e2e-playwright",
+        "is_sidechain": "false",
+        "parent_session_id": "6b1d2f74-3a55-4d0e-9e21-77c0a1b4e8d3",
+        "parent_tool_use_id": "toolu_e2e_01",
+        "spawn_depth": "1",
+        "subagent_type": "sweep-ui",
+        "team_name": "session-9c1f2a44"
+      },
+      "collector": "claude"
+    },
+    {
+      "event_id": "397c814f5f6cc5c6d0cc41a728f82c10",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:21:18.812Z",
+      "sequence": "15",
+      "event_type": "EVENT_TYPE_MODEL_RESPONSE",
+      "agent_id": "chamonix-5d63c187/claude/9a37d5e8-6c14-4f92-8b70-3d18ae52c6b5",
+      "session_id": "9a37d5e8-6c14-4f92-8b70-3d18ae52c6b5",
+      "correlation_id": "9a37d5e8-6c14-4f92-8b70-3d18ae52c6b5",
+      "parent_event_ids": [
+        "c872af2080d69ef5ebe1c513be20094c"
+      ],
+      "attributes": {
+        "cache_creation_tokens": "0",
+        "cache_read_tokens": "0",
+        "client_version": "2.1.232",
+        "context_tokens": "10",
+        "context_used_percent": "0.0",
+        "input_tokens": "10",
+        "is_sidechain": "false",
+        "model": "claude-opus-5",
+        "output_tokens": "5",
+        "raw_payload_bytes": "529",
+        "role": "assistant",
+        "source_offset": "348",
+        "text_preview": "working"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    },
+    {
+      "event_id": "cd1aa5e985b3264cf4c703fdcbbd528e",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:31:41.121Z",
+      "sequence": "87",
+      "event_type": "EVENT_TYPE_MODEL_RESPONSE",
+      "agent_id": "chamonix-5d63c187/claude/1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "session_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "correlation_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "parent_event_ids": [
+        "48420f53a765568ec2fd90cb94035602"
+      ],
+      "attributes": {
+        "cache_creation_tokens": "0",
+        "cache_read_tokens": "0",
+        "client_version": "2.1.232",
+        "context_tokens": "10",
+        "context_used_percent": "0.0",
+        "input_tokens": "10",
+        "is_sidechain": "false",
+        "model": "claude-opus-5",
+        "output_tokens": "5",
+        "raw_payload_bytes": "532",
+        "role": "assistant",
+        "source_offset": "884",
+        "text_preview": "working"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    },
+    {
+      "event_id": "cc0a9bd8154fa96aea2f62caa7ac48f8",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:31:56.122Z",
+      "sequence": "90",
+      "event_type": "EVENT_TYPE_MODEL_RESPONSE",
+      "agent_id": "chamonix-5d63c187/claude/1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "session_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "correlation_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "parent_event_ids": [
+        "48420f53a765568ec2fd90cb94035602"
+      ],
+      "attributes": {
+        "cache_creation_tokens": "0",
+        "cache_read_tokens": "0",
+        "client_version": "2.1.232",
+        "context_tokens": "10",
+        "context_used_percent": "0.0",
+        "input_tokens": "10",
+        "is_sidechain": "false",
+        "model": "claude-opus-5",
+        "output_tokens": "5",
+        "raw_payload_bytes": "532",
+        "role": "assistant",
+        "source_offset": "1417",
+        "text_preview": "working"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    },
+    {
+      "event_id": "d3d04a39205a8cccd58c972a6fe85713",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:32:11.123Z",
+      "sequence": "91",
+      "event_type": "EVENT_TYPE_MODEL_RESPONSE",
+      "agent_id": "chamonix-5d63c187/claude/1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "session_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "correlation_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "parent_event_ids": [
+        "48420f53a765568ec2fd90cb94035602"
+      ],
+      "attributes": {
+        "cache_creation_tokens": "0",
+        "cache_read_tokens": "0",
+        "client_version": "2.1.232",
+        "context_tokens": "10",
+        "context_used_percent": "0.0",
+        "input_tokens": "10",
+        "is_sidechain": "false",
+        "model": "claude-opus-5",
+        "output_tokens": "5",
+        "raw_payload_bytes": "532",
+        "role": "assistant",
+        "source_offset": "1950",
+        "text_preview": "working"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    },
+    {
+      "event_id": "33dc32021cc06ec7804d95fc698c893b",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:32:26.123Z",
+      "sequence": "98",
+      "event_type": "EVENT_TYPE_MODEL_RESPONSE",
+      "agent_id": "chamonix-5d63c187/claude/1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "session_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "correlation_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "parent_event_ids": [
+        "48420f53a765568ec2fd90cb94035602"
+      ],
+      "attributes": {
+        "cache_creation_tokens": "0",
+        "cache_read_tokens": "0",
+        "client_version": "2.1.232",
+        "context_tokens": "10",
+        "context_used_percent": "0.0",
+        "input_tokens": "10",
+        "is_sidechain": "false",
+        "model": "claude-opus-5",
+        "output_tokens": "5",
+        "raw_payload_bytes": "532",
+        "role": "assistant",
+        "source_offset": "2483",
+        "text_preview": "working"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    },
+    {
+      "event_id": "0261c5eb7642951d18d840281a30375f",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:32:41.125Z",
+      "sequence": "150",
+      "event_type": "EVENT_TYPE_MODEL_RESPONSE",
+      "agent_id": "chamonix-5d63c187/claude/1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "session_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "correlation_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "parent_event_ids": [
+        "48420f53a765568ec2fd90cb94035602"
+      ],
+      "attributes": {
+        "cache_creation_tokens": "0",
+        "cache_read_tokens": "0",
+        "client_version": "2.1.232",
+        "context_tokens": "10",
+        "context_used_percent": "0.0",
+        "input_tokens": "10",
+        "is_sidechain": "false",
+        "model": "claude-opus-5",
+        "output_tokens": "5",
+        "raw_payload_bytes": "532",
+        "role": "assistant",
+        "source_offset": "3016",
+        "text_preview": "working"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    },
+    {
+      "event_id": "cfa8f8c4e00f7b75cf1cebae21cbb443",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:32:56.126Z",
+      "sequence": "170",
+      "event_type": "EVENT_TYPE_MODEL_RESPONSE",
+      "agent_id": "chamonix-5d63c187/claude/1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "session_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "correlation_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "parent_event_ids": [
+        "48420f53a765568ec2fd90cb94035602"
+      ],
+      "attributes": {
+        "cache_creation_tokens": "0",
+        "cache_read_tokens": "0",
+        "client_version": "2.1.232",
+        "context_tokens": "10",
+        "context_used_percent": "0.0",
+        "input_tokens": "10",
+        "is_sidechain": "false",
+        "model": "claude-opus-5",
+        "output_tokens": "5",
+        "raw_payload_bytes": "532",
+        "role": "assistant",
+        "source_offset": "3549",
+        "text_preview": "working"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    },
+    {
+      "event_id": "7143389baf2a144428a9d6680759588c",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:33:11.126Z",
+      "sequence": "230",
+      "event_type": "EVENT_TYPE_MODEL_RESPONSE",
+      "agent_id": "chamonix-5d63c187/claude/1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "session_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "correlation_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "parent_event_ids": [
+        "48420f53a765568ec2fd90cb94035602"
+      ],
+      "attributes": {
+        "cache_creation_tokens": "0",
+        "cache_read_tokens": "0",
+        "client_version": "2.1.232",
+        "context_tokens": "10",
+        "context_used_percent": "0.0",
+        "input_tokens": "10",
+        "is_sidechain": "false",
+        "model": "claude-opus-5",
+        "output_tokens": "5",
+        "raw_payload_bytes": "532",
+        "role": "assistant",
+        "source_offset": "4082",
+        "text_preview": "working"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    },
+    {
+      "event_id": "e7b81d344705b2ad8933074a74ff0dc7",
+      "node_id": "chamonix-5d63c187",
+      "timestamp": "2026-09-07T22:33:26.128Z",
+      "sequence": "291",
+      "event_type": "EVENT_TYPE_MODEL_RESPONSE",
+      "agent_id": "chamonix-5d63c187/claude/1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "session_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "correlation_id": "1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+      "parent_event_ids": [
+        "48420f53a765568ec2fd90cb94035602"
+      ],
+      "attributes": {
+        "cache_creation_tokens": "0",
+        "cache_read_tokens": "0",
+        "client_version": "2.1.232",
+        "context_tokens": "10",
+        "context_used_percent": "0.0",
+        "input_tokens": "10",
+        "is_sidechain": "false",
+        "model": "claude-opus-5",
+        "output_tokens": "5",
+        "raw_payload_bytes": "532",
+        "role": "assistant",
+        "source_offset": "4615",
+        "text_preview": "working"
+      },
+      "raw_format": "application/x-claude-session-jsonl",
+      "collector": "claude"
+    }
+  ],
+  "last_sequence": "307"
+}

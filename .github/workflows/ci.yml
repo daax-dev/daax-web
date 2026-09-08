@@ -142,6 +142,17 @@ jobs:
       # Playwright's config disables its built-in webServer under CI, so this job
       # starts the app itself (below) and points the tests at it.
       DAAX_BASE_URL: http://localhost:4200
+      # The Agent View tab's proxy reads this at request time. tests/e2e/agentview.spec.ts
+      # starts a fixture daemon on 7793 (tests/e2e/fixtures/agentview-daemon.mjs) and
+      # skips with a sentence if this is aimed anywhere else, so the value here and the
+      # port there must agree.
+      AGENTVIEW_DAEMON_URL: http://127.0.0.1:7793
+      # The app below runs `next start`, so NODE_ENV is production and
+      # lib/auth-trust denies every /api/* request that carries no forwarded
+      # identity — the tests then see 401 everywhere and grade nothing. This is
+      # the explicit switch that module names for a test posture: the instance
+      # is a throwaway on a runner nothing else can reach.
+      DAAX_TRUST_LOCAL_OPERATOR: "1"
     steps:
       - uses: actions/checkout@v5
 

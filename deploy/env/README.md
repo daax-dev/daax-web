@@ -36,6 +36,7 @@ Because env files carry no secrets, they are safe to commit.
 | `DAAX_DEPLOY_VIA` / `DAAX_DEPLOY_HOST` | provenance stamped onto the F8 Build page                                                                                                                            |
 | `DAAX_REQUIRE_AUTH`                    | `1` enforces Pocket ID forward-auth (Traefik)                                                                                                                        |
 | `DAAX_REQUIRED_SECRETS`                | space-separated NAMES of env vars that must be present (fail-closed)                                                                                                 |
+| `AGENTVIEW_DAEMON_URL`                 | optional; where the Agent View proxy reaches the dist-agent daemon (default `http://host.docker.internal:7717` in containers, `http://127.0.0.1:7717` on a host)     |
 
 ## Postgres: local (default) vs managed
 

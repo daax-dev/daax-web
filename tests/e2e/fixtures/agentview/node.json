@@ -1,0 +1,94 @@
+{
+  "identity_provider": {
+    "detail": "no --auth was given, so this daemon authenticates nobody",
+    "state": "UNAVAILABLE"
+  },
+  "node": {
+    "node_id": "chamonix-5d63c187",
+    "hostname": "chamonix.local",
+    "node_class": "NODE_CLASS_FULL_HOST",
+    "os": "darwin",
+    "arch": "arm64",
+    "agent_version": "dev",
+    "capabilities": {
+      "signals": {
+        "agent_events": {
+          "level": "CAPABILITY_LEVEL_AVAILABLE",
+          "detail": "[gemini reports LIMITED: the session document is rewritten whole on every message and mutated in place afterwards, so this is a sample of state rather than an append-only record read with a durable offset: a session removed by gemini's retention sweep between two polls is never observed]"
+        },
+        "agent_lineage_observed": {
+          "level": "CAPABILITY_LEVEL_LIMITED",
+          "detail": "joined from the open rollout descriptor while the process is alive, sampled via lsof; a session that ended before it was sampled is never recoverable, because codex writes no pid into a rollout [codex reports UNAVAILABLE: codex writes no pid into a rollout, and its only parent pointers (parent_thread_id, forked_from_id) are codex thread ids, so a codex session started by another vendor's agent cannot be joined to it]"
+        },
+        "agent_prompts": {
+          "level": "CAPABILITY_LEVEL_AVAILABLE",
+          "detail": "[gemini reports LIMITED: prompts are read by re-reading a rewritten document, so a session removed between two polls is never observed; a prompt this adapter does see is complete and carries its source record]"
+        },
+        "filesystem_observed": {
+          "level": "CAPABILITY_LEVEL_LIMITED",
+          "detail": "polled from git status, so it observes net effect rather than every intermediate write; gitignored files and paths outside a repository are not seen"
+        },
+        "filesystem_reported": {
+          "level": "CAPABILITY_LEVEL_LIMITED",
+          "detail": "derived from agent-reported tool calls, not observed on disk [codex reports LIMITED: derived from applied patches, not observed on disk] [gemini reports LIMITED: file reads the agent reports; no write_file or replace call appears in any observed session, so writes are not observable and none is emitted]"
+        },
+        "git": {
+          "level": "CAPABILITY_LEVEL_AVAILABLE"
+        },
+        "model_calls": {
+          "level": "CAPABILITY_LEVEL_AVAILABLE",
+          "detail": "[gemini reports LIMITED: a response is withheld until it stops changing, because gemini attaches token usage to a message after writing it, so intermediate states of a turn are never reported]"
+        },
+        "network_l4": {
+          "level": "CAPABILITY_LEVEL_LIMITED",
+          "detail": "sampled via lsof per agent process subtree; a connection opening and closing between polls is not seen, and no byte counts or durations are measured"
+        },
+        "network_l7": {
+          "level": "CAPABILITY_LEVEL_LIMITED",
+          "detail": "web search calls the agent volunteers; payload inspection would require terminating TLS and installing a CA in the operator's trust store, which this project will not do [gemini reports UNAVAILABLE: gemini session documents record no network activity; the activity log that would carry it is written only when the cli runs interactively with --debug]"
+        },
+        "open_files": {
+          "level": "CAPABILITY_LEVEL_UNAVAILABLE",
+          "detail": "permanently unavailable: agents open and close files within milliseconds, so sampling cannot observe the descriptor; which files changed is answered by filesystem_observed"
+        },
+        "process_cwd": {
+          "level": "CAPABILITY_LEVEL_LIMITED",
+          "detail": "agent root processes only, sampled at first sighting and not refreshed"
+        },
+        "process_liveness_reported": {
+          "level": "CAPABILITY_LEVEL_UNAVAILABLE",
+          "detail": "gemini session files record no pid for the agent process; liveness is observable only by the host process collector"
+        },
+        "process_tree": {
+          "level": "CAPABILITY_LEVEL_AVAILABLE",
+          "detail": "inline environment assignment values are removed from the recorded command line at capture, and the number removed is reported in command_redactions"
+        },
+        "sent_dropped": {
+          "level": "CAPABILITY_LEVEL_LIMITED",
+          "detail": "every compaction boundary this adapter reads is recorded exactly, from the vendor's own record and never inferred from an occupancy drop; but a session file untouched for longer than the max-age window is never followed, only the last 4 MiB of a file seen for the first time is read, and eviction inside a context window is not observed at all [codex reports LIMITED: every compaction record this adapter reads is exact and carries the post-compaction input array, and it carries no token count, so none is reported; but a rollout untouched for longer than the max-age window is never followed and only the last 4 MiB of a rollout seen for the first time is read, the summary the conversation was replaced with is stored encrypted and cannot be read, and a bare context_compacted marker with no compacted record beside it is not reported at all] [gemini reports UNAVAILABLE: gemini session documents record no compaction, truncation or eviction boundary of any kind, so context that stopped being sent leaves no trace to read]"
+        },
+        "subagents": {
+          "level": "CAPABILITY_LEVEL_AVAILABLE",
+          "detail": "[codex reports LIMITED: spawn and attribution observable; codex reports no subagent completion] [gemini reports UNAVAILABLE: gemini-cli-core records subagent work nowhere: its chat recorder is called only from the main conversation loop, never from the subagent runner]"
+        },
+        "tailnet_serving": {
+          "level": "CAPABILITY_LEVEL_UNAVAILABLE",
+          "detail": "agentd was not started with --tailscale, so it is reachable on loopback only"
+        },
+        "terminal": {
+          "level": "CAPABILITY_LEVEL_UNAVAILABLE",
+          "detail": "terminal attach not implemented before phase 3"
+        },
+        "tool_calls": {
+          "level": "CAPABILITY_LEVEL_AVAILABLE",
+          "detail": "[gemini reports LIMITED: read_file and run_shell_command observed; gemini records a tool call only on completion, so an invocation is never seen separately from its result]"
+        },
+        "worktree": {
+          "level": "CAPABILITY_LEVEL_AVAILABLE"
+        }
+      }
+    },
+    "started_at": "2026-09-07T22:31:26.791952Z",
+    "last_heartbeat": "2026-09-07T22:33:30.941550Z"
+  }
+}
