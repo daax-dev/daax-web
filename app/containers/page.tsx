@@ -202,9 +202,11 @@ const SORT_ACCESSORS: Record<
   state: (c) => c.state.toLowerCase(),
   memory: (c) => c.memoryUsageBytes,
   imageSize: (c) => c.imageSizeBytes,
-  uptime: (c) =>
-    c.startedAt ? Date.now() - new Date(c.startedAt).getTime() : null,
-};
+  uptime: (c) => {
+    if (!c.startedAt) return null;
+    const t = Date.parse(c.startedAt);
+    return Number.isFinite(t) ? Date.now() - t : null;
+  },
 
 function sortContainers(
   containers: HostContainer[],
