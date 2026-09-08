@@ -95,7 +95,15 @@ export const eventSummary = (event: AgentEvent): string => {
   const key = DETAIL_ARGUMENT_KEYS.find((k) => a[k]);
   const argument = key ? truncate(collapse(a[key]!), DETAIL_VALUE_MAX) : "";
   if (subject && argument) return `${subject} · ${argument}`;
-  return subject || argument;
+  if (subject || argument) return subject || argument;
+  // Nothing canonical matched. A few raw attributes beat an empty cell — the
+  // daemon's page does the same — bounded in count and length, and without
+  // the payload marker, which says a payload exists rather than what happened.
+  return Object.entries(a)
+    .filter(([k]) => k !== "raw_payload_bytes")
+    .slice(0, 3)
+    .map(([k, v]) => `${k}=${truncate(collapse(v), 40)}`)
+    .join("  ");
 };
 
 /** Sort newest first by numeric sequence. */

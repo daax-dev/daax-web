@@ -99,9 +99,25 @@ describe("eventSummary", () => {
     expect(out.endsWith("…")).toBe(true);
   });
 
-  it("is empty for an event with no telling attribute", () => {
+  it("falls back to a few raw attributes rather than an empty cell", () => {
     expect(
-      eventSummary(ev("EVENT_TYPE_PROCESS_EXITED", { client_version: "2.1" })),
+      eventSummary(
+        ev("EVENT_TYPE_MODEL_RESPONSE", {
+          cache_creation_tokens: "276",
+          cache_read_tokens: "386566",
+          client_version: "2.1.263",
+          raw_payload_bytes: "3224",
+          stop_reason: "tool_use",
+        }),
+      ),
+    ).toBe(
+      "cache_creation_tokens=276  cache_read_tokens=386566  client_version=2.1.263",
+    );
+  });
+
+  it("is empty only when there is nothing at all to say", () => {
+    expect(
+      eventSummary(ev("EVENT_TYPE_PROCESS_EXITED", { raw_payload_bytes: "0" })),
     ).toBe("");
   });
 });
