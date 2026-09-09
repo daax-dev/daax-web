@@ -43,7 +43,7 @@
 # change the base. The digest is the multi-arch index digest (works on amd64 +
 # arm64). Bump via Renovate/Dependabot to keep getting security patches; the tag
 # is retained in the reference for readability.
-FROM node:22-bookworm-slim@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4 AS base
+FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS base
 
 # Install dependencies and build tools for node-pty native compilation
 RUN apt-get update && \
@@ -111,6 +111,24 @@ ENV PNPM_HOME=/usr/local/pnpm
 # pnpm's global bin dir is $PNPM_HOME/bin; it must be on PATH or recent pnpm
 # hard-errors ("global bin directory ... is not in PATH") instead of warning.
 ENV PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"
+# npm is upgraded here, not just used: the npm bundled with node:22-bookworm-slim
+# (10.9.8 as of the pinned digest) vendors tar@7.5.11 at
+# /usr/local/lib/node_modules/npm/node_modules/tar, which grype reports as a
+# fixable CRITICAL (fixed in tar 7.5.19). Bumping the base digest does NOT clear
+# it — the current node:22-bookworm-slim still ships the same npm — so the fix
+# has to happen in our own layer. Installing npm globally replaces the vulnerable
+# vendored copy.
+#
+# 10.9.9 (not the 12.x "latest"): it is the last release of the same 10.x line
+# the base ships, it vendors tar 7.5.22, and it keeps the CLI surface this
+# Dockerfile depends on. npm 12 removed `--build-from-source`, which the deps
+# stage passes to compile node-pty — under npm 12 the build dies with
+# `EUNKNOWNCONFIG: Unknown cli flag: --build-from-source`. Bumping past 10.x
+# means porting that flag first. Pinned exactly so the build is reproducible.
+ARG NPM_VERSION=10.9.9
+RUN npm install -g "npm@${NPM_VERSION}"
+# Fail the build if the installed npm is not the pinned version.
+RUN npm --version | grep -qx "${NPM_VERSION}" || { echo "npm version mismatch: expected ${NPM_VERSION}, got $(npm --version)" >&2; exit 1; }
 RUN npm install -g pnpm && mkdir -p "$PNPM_HOME/bin" && pnpm add -g backlog.md
 
 WORKDIR /app
