@@ -103,19 +103,37 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Filesystem scan of dependencies/lockfile. Image scanning runs in
-      # publish-images.yml where the image is already built. Report-mode
-      # (exit-code 0) so unavoidable upstream CVEs don't wedge every PR; tighten
-      # to a blocking threshold once the baseline is triaged.
-      - name: Trivy filesystem scan
+      # Filesystem scan of dependencies/lockfile, in two passes. Image
+      # scanning runs in publish-images.yml where the image is built.
+      #
+      # CRITICAL is a GATE (exit-code 1) but only for findings with a fix
+      # available (ignore-unfixed): a fixable critical is a bump we can make
+      # today, so a PR must not merge with it; an unfixable one has no action
+      # for the PR author and would only wedge every PR until upstream ships.
+      # HIGH stays report-only: the untriaged baseline is too large to block
+      # on without turning the gate into a habit of ignoring it. Tighten HIGH
+      # to exit-code 1 once the baseline is triaged.
+      - name: Trivy filesystem scan — CRITICAL gate (fixable only)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
-          severity: CRITICAL,HIGH
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Trivy filesystem scan — HIGH (report only)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH
           ignore-unfixed: true
           exit-code: "0"
           format: table
+          # The DB was just downloaded by the gate step; don't fetch it twice.
+          skip-setup-trivy: true
 
   e2e:
     name: E2E (Playwright)

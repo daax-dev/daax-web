@@ -46,6 +46,7 @@ interface DaaxDeployment {
 }
 interface BuildInfo {
   version: string;
+  packageVersion: string;
   gitSha: string;
   buildTime: string;
   nodeVersion: string;
@@ -57,13 +58,47 @@ interface BuildInfo {
   deployment?: DaaxDeployment;
 }
 
-function InfoTile({ label, value }: { label: string; value: string }) {
+function InfoTile({
+  label,
+  value,
+  title,
+  prominent = false,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+  prominent?: boolean;
+}) {
   return (
-    <div className="flex flex-col rounded-md border p-3">
+    <div
+      className={cn(
+        "flex flex-col rounded-md border p-3",
+        prominent && "border-primary/40 bg-primary/5",
+      )}
+    >
       <span className="text-xs uppercase text-muted-foreground">{label}</span>
-      <span className="break-all font-mono text-sm">{value}</span>
+      <span
+        className={cn(
+          "break-all font-mono",
+          prominent ? "text-base font-semibold" : "text-sm",
+        )}
+        title={title}
+      >
+        {value}
+      </span>
     </div>
   );
+}
+
+const UNKNOWN_SENTINELS = new Set(["unknown", "dev", ""]);
+
+/** Format an RFC3339 build time for display, leaving sentinels untouched. */
+function formatBuildTime(iso: string): string {
+  if (UNKNOWN_SENTINELS.has(iso)) return iso || "unknown";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? iso
+    : d.toISOString().replace(".000Z", "Z");
 }
 
 export function BuildPanel() {
@@ -105,10 +140,15 @@ export function BuildPanel() {
     );
   }
 
+  // The three stamped build inputs (VERSION / GIT_SHA / BUILD_TIME) lead; the
+  // rest of the grid is runtime context. Sentinels ("unknown", "dev") are shown
+  // as-is — an unstamped build must look unstamped, not plausible.
+  const stampRows: [string, string, string | undefined][] = [
+    ["Version", info.version, `package.json ${info.packageVersion}`],
+    ["Git SHA", info.gitSha, undefined],
+    ["Build time", formatBuildTime(info.buildTime), info.buildTime],
+  ];
   const versionRows: [string, string][] = [
-    ["Version", info.version],
-    ["Git SHA", info.gitSha],
-    ["Build time", info.buildTime],
     ["Node runtime", info.nodeVersion],
     ["Next.js", info.nextVersion],
     ["Branch", info.branch],
@@ -142,10 +182,15 @@ export function BuildPanel() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
+        {/* One flat grid of tiles (tests/e2e/build.spec.ts locates a tile's
+            value as the last <span> of the <div> carrying its label). */}
         <div
-          className="grid grid-cols-1 gap-2 sm:grid-cols-2"
+          className="grid grid-cols-1 gap-2 sm:grid-cols-3"
           data-testid="build-version"
         >
+          {stampRows.map(([k, v, title]) => (
+            <InfoTile key={k} label={k} value={v} title={title} prominent />
+          ))}
           {versionRows.map(([k, v]) => (
             <InfoTile key={k} label={k} value={v} />
           ))}

@@ -135,6 +135,14 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      # Build stamp (lib/build/build-env.ts). Compose cannot run git, so these
+      # come from the environment: deploy.sh / deploy-local.sh export them from
+      # the checkout before `compose build`; a bare `docker compose build`
+      # leaves the honest "dev"/"unknown" sentinels rather than a guess.
+      args:
+        VERSION: ${VERSION:-dev}
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
       # Explicit target (F3 #100): the Dockerfile's last stage is `terminal`, so
       # the web plane must pin `runner` or it would build the terminal image.
       target: runner
@@ -410,6 +418,11 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      # Same build stamp as the daax (web) service above.
+      args:
+        VERSION: ${VERSION:-dev}
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_TIME: ${BUILD_TIME:-unknown}
       target: terminal
     # GHCR-published terminal image (#100): deploy:kinsale/muckross `docker
     # compose pull daax terminal` fetches this published ref. A local

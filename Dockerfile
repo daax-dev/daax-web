@@ -137,13 +137,28 @@ RUN node -e "try { require('node-pty'); console.log('node-pty: OK'); } catch(e) 
 # Build stage
 FROM base AS builder
 
-# Build-time arguments for versioning
-ARG BUILD_DATE
-ARG BUILD_HOST
-ARG BUILD_BRANCH
-ENV NEXT_PUBLIC_BUILD_DATE=${BUILD_DATE:-unknown}
-ENV NEXT_PUBLIC_BUILD_HOST=${BUILD_HOST:-unknown}
-ENV NEXT_PUBLIC_BUILD_BRANCH=${BUILD_BRANCH:-unknown}
+# Build stamp — three explicit inputs (see lib/build/build-env.ts):
+#   VERSION    a release tag (v1.2.3) or git describe --tags --match 'v*' [--dirty]
+#   GIT_SHA    full commit SHA
+#   BUILD_TIME UTC RFC3339
+# Every producer passes them (publish-images.yml, `bun run docker:build`, the
+# compose build blocks, deploy.sh). Left unset they stay the "dev"/"unknown"
+# sentinels: next.config.ts prefers these over its git fallback, so an image is
+# stamped from what the builder was told, not from whatever `.git` is in the
+# build context. BUILD_BRANCH / BUILD_HOST are informational (a tag build has
+# no branch; a CI image has no meaningful build host) and default to unknown —
+# without the explicit hostname the sandbox's "buildkitsandbox" would be baked
+# in as if it were a real host.
+ARG VERSION=dev
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+ARG BUILD_BRANCH=
+ARG BUILD_HOST=
+ENV NEXT_PUBLIC_BUILD_VERSION=${VERSION}
+ENV NEXT_PUBLIC_BUILD_COMMIT=${GIT_SHA}
+ENV NEXT_PUBLIC_BUILD_TIME=${BUILD_TIME}
+ENV NEXT_PUBLIC_BUILD_BRANCH=${BUILD_BRANCH}
+ENV NEXT_PUBLIC_BUILD_HOSTNAME=${BUILD_HOST:-unknown}
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -185,13 +200,23 @@ RUN if [ -n "$DAAX_SKIP_SBOM" ]; then \
 # Production stage
 FROM base AS runner
 
-# Build info (needed for dev mode which rebuilds at runtime)
-ARG BUILD_DATE
-ARG BUILD_HOST
-ARG BUILD_BRANCH
-ENV NEXT_PUBLIC_BUILD_DATE=${BUILD_DATE:-unknown}
-ENV NEXT_PUBLIC_BUILD_HOST=${BUILD_HOST:-unknown}
-ENV NEXT_PUBLIC_BUILD_BRANCH=${BUILD_BRANCH:-unknown}
+# Build stamp, re-declared per stage (ARGs do not cross FROM). The runtime ENV
+# is what /api/build reads (lib/build/build-env.ts) and what lets `next start`
+# load next.config.ts without shelling out to git; the OCI labels are what
+# `docker image inspect` / the registry show, so the two can be cross-checked.
+ARG VERSION=dev
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+ARG BUILD_BRANCH=
+ENV NEXT_PUBLIC_BUILD_VERSION=${VERSION}
+ENV NEXT_PUBLIC_BUILD_COMMIT=${GIT_SHA}
+ENV NEXT_PUBLIC_BUILD_TIME=${BUILD_TIME}
+ENV NEXT_PUBLIC_BUILD_BRANCH=${BUILD_BRANCH}
+LABEL org.opencontainers.image.title="daax-web" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.created="${BUILD_TIME}" \
+      org.opencontainers.image.source="https://github.com/daax-dev/daax-web"
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Docker-socket access is group-based, NOT uid-0-based (#185): the final stage
@@ -298,6 +323,17 @@ CMD ["bun", "run", "start:prod"]
 # non-root `node` user + pre-created node-owned write dirs from #185 — with no
 # risk of a missed transitive file. Only the CMD and healthcheck differ.
 FROM runner AS terminal
+
+# Same stamp as runner (ENV is inherited; ARG and the title label are not), so
+# the terminal image carries its own version/revision/created labels.
+ARG VERSION=dev
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+LABEL org.opencontainers.image.title="daax-terminal" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.created="${BUILD_TIME}" \
+      org.opencontainers.image.source="https://github.com/daax-dev/daax-web"
 
 # Re-declare USER so the non-root guard (tests/deploy/nonroot-hardening) and any
 # reader see this stage runs unprivileged, matching runner. Docker-socket access

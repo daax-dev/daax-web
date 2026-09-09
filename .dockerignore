@@ -12,6 +12,10 @@ dist
 # Testing
 coverage
 
+# Tool caches (e.g. trivy's default <workspace>/.cache/trivy) must never
+# change the build context between a scan and the build it gates.
+.cache/
+
 # IDE/Editor
 .idea
 .vscode

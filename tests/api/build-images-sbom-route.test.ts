@@ -4,18 +4,31 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 
-const { mockRequireAuth, mockIsKnownImageRef, mockGenerateRealSbom } =
-  vi.hoisted(() => ({
-    mockRequireAuth: vi.fn(),
-    mockIsKnownImageRef: vi.fn(),
-    mockGenerateRealSbom: vi.fn(),
-  }));
+const {
+  mockRequireAuth,
+  mockFindKnownImageRef,
+  mockResolveImageId,
+  mockGenerateRealSbom,
+} = vi.hoisted(() => ({
+  mockRequireAuth: vi.fn(),
+  mockFindKnownImageRef: vi.fn(),
+  mockResolveImageId: vi.fn(),
+  mockGenerateRealSbom: vi.fn(),
+}));
 
 vi.mock("@/lib/auth", () => ({ requireAuth: mockRequireAuth }));
-vi.mock("@/lib/build/images", () => ({ isKnownImageRef: mockIsKnownImageRef }));
+vi.mock("@/lib/build/images", () => ({
+  findKnownImageRef: mockFindKnownImageRef,
+  resolveImageId: mockResolveImageId,
+}));
+vi.mock("@/lib/host-docker", () => ({ getDocker: vi.fn(() => ({})) }));
 vi.mock("@/lib/sbom-syft", () => ({ generateRealSbom: mockGenerateRealSbom }));
 
-import { GET, __resetImageSbomState } from "@/app/api/build/images/sbom/route";
+import {
+  GET,
+  MAX_CACHED_SBOMS,
+  __resetImageSbomState,
+} from "@/app/api/build/images/sbom/route";
 
 function req(query: string): NextRequest {
   return new NextRequest(`http://localhost/api/build/images/sbom${query}`);
@@ -37,7 +50,14 @@ describe("GET /api/build/images/sbom", () => {
     vi.clearAllMocks();
     __resetImageSbomState();
     mockRequireAuth.mockResolvedValue({ authenticated: true, user: {} });
-    mockIsKnownImageRef.mockReturnValue(true);
+    // Default: a static (non-stack) known ref that is not pulled locally, so
+    // the scan/cache identity falls back to the ref itself.
+    mockFindKnownImageRef.mockImplementation(async (ref: string) => ({
+      category: "platform",
+      name: ref,
+      ref,
+    }));
+    mockResolveImageId.mockResolvedValue(null);
     mockGenerateRealSbom.mockResolvedValue(REAL_SBOM);
   });
   afterEach(() => vi.restoreAllMocks());
@@ -70,6 +90,31 @@ describe("GET /api/build/images/sbom", () => {
     expect(mockGenerateRealSbom).toHaveBeenCalledTimes(1);
   });
 
+  it("serves a repeat request from the cache without rescanning", async () => {
+    await GET(req("?ref=img-cached:1"));
+    await GET(req("?ref=img-cached:1"));
+    expect(mockGenerateRealSbom).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds the result cache (LRU): the oldest ref is evicted and rescanned", async () => {
+    // Fill the cache to its bound, then one more distinct ref evicts the first.
+    for (let i = 0; i < MAX_CACHED_SBOMS; i++) {
+      await GET(req(`?ref=img-lru-${i}:1`));
+    }
+    expect(mockGenerateRealSbom).toHaveBeenCalledTimes(MAX_CACHED_SBOMS);
+    // Touch the oldest so it becomes most-recent (a hit must not rescan)...
+    await GET(req("?ref=img-lru-0:1"));
+    expect(mockGenerateRealSbom).toHaveBeenCalledTimes(MAX_CACHED_SBOMS);
+    // ...so the eviction victim is img-lru-1, not img-lru-0.
+    await GET(req("?ref=img-lru-extra:1"));
+    expect(mockGenerateRealSbom).toHaveBeenCalledTimes(MAX_CACHED_SBOMS + 1);
+    await GET(req("?ref=img-lru-0:1"));
+    expect(mockGenerateRealSbom).toHaveBeenCalledTimes(MAX_CACHED_SBOMS + 1);
+    await GET(req("?ref=img-lru-1:1"));
+    expect(mockGenerateRealSbom).toHaveBeenCalledTimes(MAX_CACHED_SBOMS + 2);
+    expect(mockGenerateRealSbom).toHaveBeenLastCalledWith("img-lru-1:1");
+  });
+
   it("returns 401 when unauthenticated", async () => {
     mockRequireAuth.mockResolvedValue({
       authenticated: false,
@@ -83,10 +128,44 @@ describe("GET /api/build/images/sbom", () => {
   it("returns 400 for a missing or non-whitelisted ref", async () => {
     let res = await GET(req(""));
     expect(res.status).toBe(400);
-    mockIsKnownImageRef.mockReturnValue(false);
+    mockFindKnownImageRef.mockResolvedValue(null);
     res = await GET(req("?ref=evil/image:latest"));
     expect(res.status).toBe(400);
     expect(mockGenerateRealSbom).not.toHaveBeenCalled();
+  });
+
+  it("scans and caches a stack ref by its immutable image ID, not its tag", async () => {
+    mockFindKnownImageRef.mockResolvedValue({
+      category: "stack",
+      name: "daax-postgres",
+      ref: "postgres:18-alpine",
+      imageId: "sha256:pg-old",
+    });
+    await GET(req("?ref=postgres:18-alpine"));
+    expect(mockGenerateRealSbom).toHaveBeenLastCalledWith("sha256:pg-old");
+    // Same tag, same image → cache hit.
+    await GET(req("?ref=postgres:18-alpine"));
+    expect(mockGenerateRealSbom).toHaveBeenCalledTimes(1);
+    // The tag now runs a replaced image → a fresh scan, not the old SBOM.
+    mockFindKnownImageRef.mockResolvedValue({
+      category: "stack",
+      name: "daax-postgres",
+      ref: "postgres:18-alpine",
+      imageId: "sha256:pg-new",
+    });
+    await GET(req("?ref=postgres:18-alpine"));
+    expect(mockGenerateRealSbom).toHaveBeenCalledTimes(2);
+    expect(mockGenerateRealSbom).toHaveBeenLastCalledWith("sha256:pg-new");
+  });
+
+  it("resolves a static ref to the image ID it currently points at", async () => {
+    mockResolveImageId.mockResolvedValue("sha256:node-id");
+    await GET(req("?ref=node:22-bookworm-slim"));
+    expect(mockResolveImageId).toHaveBeenCalledWith(
+      "node:22-bookworm-slim",
+      expect.anything(),
+    );
+    expect(mockGenerateRealSbom).toHaveBeenLastCalledWith("sha256:node-id");
   });
 
   it("returns 404 when syft yields nothing (image absent)", async () => {

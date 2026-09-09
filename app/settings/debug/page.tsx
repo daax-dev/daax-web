@@ -10,7 +10,7 @@ import {
   debugSettings,
   DEFAULT_SETTINGS,
 } from "@/lib/settings";
-import { RefreshCw, Trash2, Save, AlertCircle } from "lucide-react";
+import { RefreshCw, Trash2, Save } from "lucide-react";
 
 export default function SettingsDebugPage() {
   const [settings, setSettings] = useState<any>(null);
@@ -50,17 +50,6 @@ export default function SettingsDebugPage() {
     }
   };
 
-  const handleFixBasePath = () => {
-    const fixed = { ...settings };
-    // Fix any ~/ps references
-    if (fixed.basePath?.includes("/ps")) {
-      fixed.basePath = fixed.basePath.replace("~/ps", "~/prj");
-      saveSettings(fixed);
-      alert(`Fixed basePath: ${settings.basePath} -> ${fixed.basePath}`);
-      loadDebugInfo();
-    }
-  };
-
   const handleSetPath = (path: string) => {
     saveSettings({ basePath: path });
     alert(`Set basePath to: ${path}`);
@@ -87,17 +76,6 @@ export default function SettingsDebugPage() {
             <pre className="text-xs bg-muted p-4 rounded overflow-auto max-h-96">
               {JSON.stringify(settings, null, 2)}
             </pre>
-            {settings?.basePath?.includes("/ps") && (
-              <div className="mt-4 p-3 bg-orange-500/10 border border-orange-500/20 rounded flex items-center justify-between">
-                <div className="flex items-center gap-2 text-orange-600">
-                  <AlertCircle className="h-5 w-5" />
-                  <span>Found old ~/ps path!</span>
-                </div>
-                <Button size="sm" onClick={handleFixBasePath}>
-                  Fix Now
-                </Button>
-              </div>
-            )}
           </CardContent>
         </Card>
 

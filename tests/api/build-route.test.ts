@@ -21,6 +21,7 @@ import { GET } from "@/app/api/build/route";
 
 const FIXTURE = {
   version: "v0.1.0+abcdef1",
+  packageVersion: "0.1.0",
   gitSha: "abcdef1234567890",
   buildTime: "2026-07-01T00:00:00Z",
   nodeVersion: "v22.0.0",

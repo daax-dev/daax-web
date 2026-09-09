@@ -8,9 +8,13 @@ on:
       - "v*"
   workflow_dispatch:
 
+# id-token: write is for keyless cosign (the `sign` job) — the OIDC token proves
+# to Sigstore that THIS workflow in THIS repo produced the signature, which is
+# what a consumer then verifies with --certificate-identity-regexp.
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 jobs:
   # daax-web and daax-terminal are built PER-PLATFORM ON NATIVE RUNNERS, then
@@ -49,6 +53,33 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          # Full history + tags so `git describe` can name a main-branch build
+          # relative to the last release tag (a shallow clone has no tags).
+          fetch-depth: 0
+
+      # The build stamp: the three explicit inputs the Dockerfile takes
+      # (lib/build/build-env.ts). A tag push IS the version; a branch push is
+      # described relative to the last v* tag, or "dev" when none exists —
+      # never a bare SHA dressed up as a version (the SHA is stamped on its
+      # own). No --dirty in CI: the checkout is by definition clean.
+      - name: Build stamp
+        id: stamp
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = "tag" ]; then
+            version="$REF_NAME"
+          else
+            version="$(git describe --tags --match 'v*' 2>/dev/null || echo dev)"
+          fi
+          {
+            echo "version=$version"
+            echo "git_sha=$GITHUB_SHA"
+            echo "build_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } >> "$GITHUB_OUTPUT"
+          echo "VERSION=$version GIT_SHA=$GITHUB_SHA"
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
@@ -64,13 +95,59 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       # Labels only — this job pushes no tags. The tags are applied by the
-      # merge job, to the manifest list.
+      # merge job, to the manifest list. version/created are overridden so the
+      # registry labels equal the Dockerfile's OCI labels and the /api/build
+      # stamp (metadata-action would otherwise label a main push "main").
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ghcr.io/daax-dev/${{ matrix.image.name }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.stamp.outputs.version }}
+            org.opencontainers.image.created=${{ steps.stamp.outputs.build_time }}
 
+      # Scan BEFORE anything is pushed: build the same image into the local
+      # daemon first (single-platform, so `load` works; no attestations — the
+      # docker exporter cannot carry them), gate it, and only then run the
+      # push-by-digest build below, which is a full cache hit. A CRITICAL,
+      # fixable finding fails this leg, so no unscanned digest ever reaches
+      # the registry — and therefore no unscanned `:latest`.
+      - name: Build for scan (local, not pushed)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: ${{ matrix.image.target }}
+          platforms: ${{ matrix.platform.id }}
+          load: true
+          tags: scan-target/${{ matrix.image.name }}:${{ matrix.platform.arch }}
+          build-args: |
+            VERSION=${{ steps.stamp.outputs.version }}
+            GIT_SHA=${{ steps.stamp.outputs.git_sha }}
+            BUILD_TIME=${{ steps.stamp.outputs.build_time }}
+            BUILD_BRANCH=${{ github.ref_type == 'branch' && github.ref_name || '' }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
+
+      # cache-dir is OUTSIDE the workspace: the action's default is
+      # <workspace>/.cache/trivy, which is inside the Docker build context, so
+      # the scan would change the context (`COPY . .`) and the push build below
+      # would recompile instead of reusing the scanned layers.
+      - name: Trivy image scan gate (CRITICAL, fixable)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: scan-target/${{ matrix.image.name }}:${{ matrix.platform.arch }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+          cache-dir: ${{ runner.temp }}/trivy-cache
+
+      # sbom + provenance (mode=max) attach BuildKit attestations to the pushed
+      # digest as OCI manifests; `imagetools create` carries them into the
+      # manifest list. cosign's SBOM attestation (sign job) is the one a
+      # consumer verifies by identity; this one documents the build itself.
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@v7
@@ -79,14 +156,17 @@ jobs:
           target: ${{ matrix.image.target }}
           platforms: ${{ matrix.platform.id }}
           labels: ${{ steps.meta.outputs.labels }}
+          sbom: true
+          provenance: mode=max
           # `push=true` belongs INSIDE outputs here, not as the separate `push:`
           # key — push-by-digest is an output modifier, and the top-level key
           # would push a tag, which is exactly what this job must not do.
           outputs: type=image,name=ghcr.io/daax-dev/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
-            BUILD_DATE=${{ github.event.head_commit.timestamp || github.event.repository.updated_at }}
-            BUILD_HOST=github-actions
-            BUILD_BRANCH=${{ github.ref_name }}
+            VERSION=${{ steps.stamp.outputs.version }}
+            GIT_SHA=${{ steps.stamp.outputs.git_sha }}
+            BUILD_TIME=${{ steps.stamp.outputs.build_time }}
+            BUILD_BRANCH=${{ github.ref_type == 'branch' && github.ref_name || '' }}
           # Cache is scoped per image AND per arch. One shared scope would have
           # the two architectures evicting each other on every run.
           cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
@@ -252,6 +332,150 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Keyless cosign for every published digest (daax-web, daax-terminal,
+  # code-server): sign the index digest and each platform child, attest a
+  # per-platform CycloneDX SBOM to its child digest, then VERIFY all of it
+  # against this repo's workflow identity — a failed verify fails the job, so a
+  # digest can never be published as "signed" when it isn't. Signing by digest
+  # (never by tag) means the signature follows the bits, not a movable name.
+  # Consumers verify the same way (the index for the signature; their own
+  # platform's child digest for the SBOM attestation):
+  #   cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  #     --certificate-identity-regexp '^https://github.com/daax-dev/daax-web/\.github/workflows/publish-images\.yml@' \
+  #     ghcr.io/daax-dev/daax-web@sha256:…
+  sign:
+    name: Sign + attest (${{ matrix.name }})
+    needs: [daax-web, daax-terminal, code-server]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [daax-web, daax-terminal, code-server]
+    env:
+      COSIGN_YES: "true"
+      OIDC_ISSUER: https://token.actions.githubusercontent.com
+      # Anchored to this repo + this workflow file; any ref (main, v* tags).
+      IDENTITY_REGEXP: ^https://github\.com/daax-dev/daax-web/\.github/workflows/publish-images\.yml@
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pinned by commit SHA (release v4.1.2), not a floating tag: the tool that
+      # produces the signature must itself be an exact, reviewable artifact.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+
+      # Matrix can't reference `needs`, so map name → digest-pinned ref here.
+      - name: Resolve image ref
+        id: img
+        env:
+          WEB: ${{ needs.daax-web.outputs.image }}
+          TERMINAL: ${{ needs.daax-terminal.outputs.image }}
+          CODE_SERVER: ${{ needs.code-server.outputs.image }}
+        run: |
+          case "${{ matrix.name }}" in
+            daax-web) ref="$WEB" ;;
+            daax-terminal) ref="$TERMINAL" ;;
+            code-server) ref="$CODE_SERVER" ;;
+          esac
+          case "$ref" in
+            *@sha256:*) ;;
+            *) echo "::error::not a digest ref: $ref"; exit 1 ;;
+          esac
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "signing $ref"
+
+      # The published ref is a multi-platform INDEX. A signature on the index
+      # covers the whole thing, but an SBOM is per platform: syft on the index
+      # would silently describe only the runner's own arch (amd64), and an
+      # arm64 consumer would then "verify" an inventory of x86 packages. So the
+      # index is signed, and EACH platform child digest is signed and gets its
+      # own CycloneDX attestation. Attestation manifests (platform unknown/
+      # unknown, from BuildKit's provenance/sbom) are not platforms and are
+      # skipped.
+      - name: Resolve platform child digests
+        id: platforms
+        env:
+          REF: ${{ steps.img.outputs.ref }}
+        run: |
+          docker buildx imagetools inspect "$REF" --raw > index.json
+          jq -r '.manifests[]
+                 | select(.platform != null and .platform.os != "unknown")
+                 | "\(.platform.os)/\(.platform.architecture) \(.digest)"' index.json > platforms.txt
+          [ -s platforms.txt ] || { echo "::error::no platform manifests in $REF"; exit 1; }
+          echo "platforms:"; cat platforms.txt
+
+      - name: Sign index and platform children (keyless)
+        env:
+          REF: ${{ steps.img.outputs.ref }}
+        run: |
+          repo="${REF%@*}"
+          cosign sign --yes "$REF"
+          while read -r platform digest; do
+            cosign sign --yes "${repo}@${digest}"
+            echo "signed ${platform} ${digest}"
+          done < platforms.txt
+
+      # CycloneDX SBOM of exactly each platform child digest, attested in-toto
+      # style to THAT digest so the SBOM is bound to the image it describes.
+      # The same placeholder-vs-real floor as lib/sbom-guard.ts applies: an
+      # empty SBOM is not attested — and a missing one fails the job.
+      - name: Attest a per-platform SBOM (CycloneDX, keyless)
+        env:
+          REF: ${{ steps.img.outputs.ref }}
+        run: |
+          repo="${REF%@*}"
+          while read -r platform digest; do
+            out="sbom-$(echo "$platform" | tr '/' '-').cdx.json"
+            syft --platform "$platform" "registry:${repo}@${digest}" -o cyclonedx-json > "$out"
+            node -e '
+              const [f, platform] = process.argv.slice(1);
+              const o = JSON.parse(require("fs").readFileSync(f, "utf8"));
+              if (o.bomFormat !== "CycloneDX" || !Array.isArray(o.components) || o.components.length === 0) {
+                console.error(`SBOM for ${platform} is not a real CycloneDX document — refusing to attest`); process.exit(1);
+              }
+              console.log(`SBOM ${platform} OK: ${o.components.length} components`);
+            ' "$out" "$platform"
+            cosign attest --yes --type cyclonedx --predicate "$out" "${repo}@${digest}"
+            echo "attested ${platform} ${digest}"
+          done < platforms.txt
+
+      # The gate: verify what was just produced, as a consumer would — the
+      # index signature, and each child's signature + SBOM attestation. Any
+      # failure fails the job (set -e is the default for `run`).
+      - name: Verify signatures and attestations
+        env:
+          REF: ${{ steps.img.outputs.ref }}
+        run: |
+          repo="${REF%@*}"
+          cosign verify \
+            --certificate-oidc-issuer "$OIDC_ISSUER" \
+            --certificate-identity-regexp "$IDENTITY_REGEXP" \
+            "$REF" > /dev/null
+          echo "verified index signature $REF"
+          while read -r platform digest; do
+            cosign verify \
+              --certificate-oidc-issuer "$OIDC_ISSUER" \
+              --certificate-identity-regexp "$IDENTITY_REGEXP" \
+              "${repo}@${digest}" > /dev/null
+            cosign verify-attestation --type cyclonedx \
+              --certificate-oidc-issuer "$OIDC_ISSUER" \
+              --certificate-identity-regexp "$IDENTITY_REGEXP" \
+              "${repo}@${digest}" > /dev/null
+            echo "verified ${platform} signature + cyclonedx attestation ${digest}"
+          done < platforms.txt
 
   # F2 (#97): generate a real SBOM (CycloneDX + SPDX) for each published image,
   # keyed by the pushed digest, and upload as workflow artifacts (4 total:
