@@ -297,13 +297,16 @@ export interface AuthContext {
   user: AuthUser;
   /**
    * The TRUSTED, stable Pocket ID subject (X-Forwarded-User) — non-null ONLY
-   * when the forwarded identity was present AND passed the proxy-secret trust
-   * boundary. This is the RBAC identity key (docs §3 F5); it is deliberately
+   * when the forwarded identity was admitted by the current auth posture.
+   * Legacy loopback admission need not carry proof; consult subjectProven before
+   * vouching for this subject to another service. This is the RBAC identity key (docs §3 F5); it is deliberately
    * separate from `user.username` (a display fallback) so authorization never
    * keys on a mutable attribute. Null for the local-operator bypass and for any
    * rejected/absent identity.
    */
   subject: string | null;
+  /** True only for a present identity whose configured proxy secret matched. */
+  subjectProven: boolean;
   /** Raw forwarded username (mutable display attr), pre display-fallback. */
   rawUsername: string | null;
   /** Raw forwarded display name (X-Forwarded-Name). */
@@ -338,10 +341,12 @@ export function deriveAuthContext(h: HeaderReader): AuthContext {
   // solely when an identity is present; an absent header (userId === null) is
   // left to the guards' LOCAL_OPERATOR bypass and is unaffected here.
   let identityTrusted = userId !== null;
+  let subjectProven = false;
   if (userId !== null) {
     if (proxySecretConfigured()) {
       // Secret configured → enforce in every mode.
       identityTrusted = proxySecretMatches(h.get(PROXY_SECRET_HEADER));
+      subjectProven = identityTrusted;
     } else if (authRequired()) {
       // Strict mode + secret unset → fail closed (refuse forwarded identity).
       warnProxySecretMissingOnce();
@@ -373,6 +378,7 @@ export function deriveAuthContext(h: HeaderReader): AuthContext {
       rawUserHeader,
       user: { ...UNAUTHENTICATED_USER },
       subject: null,
+      subjectProven: false,
       rawUsername: null,
       displayName: null,
     };
@@ -391,6 +397,7 @@ export function deriveAuthContext(h: HeaderReader): AuthContext {
     // key and matches lowercased subject allow-list entries. Non-UUID subjects
     // are left untouched (mirrors allowlist.ts canonicalization).
     subject: authenticated ? canonicalizeSubject(userId!) : null,
+    subjectProven,
     rawUsername: username,
     displayName,
     user: {

@@ -111,3 +111,26 @@ describe("agentviewDaemonUrl", () => {
     expect(agentviewDaemonUrl()).toBe("http://127.0.0.1:7717");
   });
 });
+
+describe("the one declared POST", () => {
+  it("admits POST agents/{id}/signal", () => {
+    expect(
+      resolveDaemonPath(
+        ["agents", "node%2Fclaude%2Fsession", "signal"],
+        "POST",
+      ),
+    ).toBe("agents/node%2Fclaude%2Fsession/signal");
+  });
+  it.each([
+    ["POST", ["settings"]],
+    ["POST", ["auth", "session"]],
+    ["POST", ["agents", "node%2Fclaude%2Fsession", "prompt"]],
+    ["POST", ["worktrees", "wt-1", "reconcile"]],
+    ["GET", ["agents", "node%2Fclaude%2Fsession", "signal"]],
+    ["DELETE", ["agents", "node%2Fclaude%2Fsession", "signal"]],
+  ])("refuses %s %j", (method, segments) => {
+    expect(
+      resolveDaemonPath(segments as string[], method as string),
+    ).toBeNull();
+  });
+});

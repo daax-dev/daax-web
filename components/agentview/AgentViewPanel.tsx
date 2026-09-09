@@ -14,6 +14,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  type AgentViewNode,
   fetchAgents,
   fetchEvents,
   fetchNode,
@@ -24,8 +25,9 @@ import type {
   AgentEvent,
   AgentInstance,
   DaemonResult,
-  NodeResponse,
 } from "@/lib/agentview/types";
+// @ts-expect-error TS5097: explicit .tsx disambiguates BreakIn.tsx from breakin.ts on case-insensitive filesystems; both bundlers accept it.
+import { BreakIn } from "./BreakIn.tsx";
 import { AgentsList } from "./AgentsList";
 import { DaemonNotice } from "./DaemonNotice";
 import { EventTimeline, type StreamState } from "./EventTimeline";
@@ -54,7 +56,7 @@ const mergeEvents = (
 };
 
 export function AgentViewPanel() {
-  const [node, setNode] = useState<DaemonResult<NodeResponse> | null>(null);
+  const [node, setNode] = useState<DaemonResult<AgentViewNode> | null>(null);
   const [agents, setAgents] = useState<AgentInstance[]>([]);
   const [agentsFailure, setAgentsFailure] = useState<Failure | null>(null);
   const [events, setEvents] = useState<AgentEvent[]>([]);
@@ -197,7 +199,22 @@ export function AgentViewPanel() {
         )}
         <NodeCard node={node.data} now={now} />
       </aside>
-      <main className="min-w-0">
+      <main className="min-w-0 space-y-4">
+        {agents
+          .filter((agent) => agent.agent_id === selectedAgentId)
+          .map((agent) => (
+            <BreakIn
+              key={agent.agent_id}
+              agent={agent}
+              events={visibleEvents}
+              localNodeId={node.data.node.node_id}
+              terminalLocal={node.data.terminalLocal === true}
+              now={now}
+              observationFailure={
+                agentsFailure?.message || eventsFailure?.message
+              }
+            />
+          ))}
         {eventsFailure ? (
           <DaemonNotice
             kind={eventsFailure.kind}

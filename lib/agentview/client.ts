@@ -19,7 +19,6 @@
 
 import type {
   AgentEvent,
-  AgentInstance,
   AgentsResponse,
   DaemonResult,
   EventsResponse,
@@ -34,8 +33,58 @@ export const PROXY_BASE = "/api/agentview";
 
 // ─── Readers ─────────────────────────────────────────────────────────────────
 
-export function fetchNode(): Promise<DaemonResult<NodeResponse>> {
-  return readJson<NodeResponse>("node");
+export type AgentViewNode = NodeResponse & { terminalLocal?: boolean };
+
+export function fetchNode(): Promise<DaemonResult<AgentViewNode>> {
+  return readJson<AgentViewNode>("node", undefined, (body, response) => ({
+    ...body,
+    terminalLocal: response.headers.get("X-Agentview-Terminal-Local") === "1",
+  }));
+}
+
+/** The daemon's account, preserved separately from observed session state. */
+export interface SignalReply {
+  agent_id: string;
+  signal: string;
+  outcome: "sent" | "refused" | "failed";
+  recorded: boolean;
+  note: string;
+  event_id?: string;
+  error?: string;
+}
+
+export async function signalAgent(
+  agentId: string,
+): Promise<{ reply?: SignalReply; reason?: string; status?: number }> {
+  try {
+    const res = await fetch(
+      `${PROXY_BASE}/agents/${encodeURIComponent(agentId)}/signal`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ signal: "interrupt" }),
+        cache: "no-store",
+      },
+    );
+    const body = await res.json();
+    if (["sent", "refused", "failed"].includes(body.outcome))
+      return { reply: body as SignalReply, status: res.status };
+    return {
+      reason:
+        body.reason ||
+        body.error ||
+        `HTTP ${res.status} without a signal outcome`,
+      status: res.status,
+    };
+  } catch {
+    return {
+      reason:
+        "the signal request did not receive an answer; its outcome is unknown",
+    };
+  }
 }
 
 export function fetchHealth(): Promise<DaemonResult<HealthResponse>> {
@@ -54,13 +103,6 @@ export function fetchAgents(
   if (opts.includeFinished) q.set("include_finished", "true");
   if (opts.includeAllHosts) q.set("include_all_hosts", "true");
   return readJson<AgentsResponse>("agents", q);
-}
-
-/** `agentId` is `node/type/session`; it is sent as one encoded segment. */
-export function fetchAgent(
-  agentId: string,
-): Promise<DaemonResult<AgentInstance>> {
-  return readJson<AgentInstance>(`agents/${encodeURIComponent(agentId)}`);
 }
 
 export interface FetchEventsOptions {
@@ -100,6 +142,7 @@ const UNREACHABLE_ERROR = "agentview daemon unreachable";
 async function readJson<T>(
   path: string,
   query?: URLSearchParams,
+  transform?: (body: T, response: Response) => T,
 ): Promise<DaemonResult<T>> {
   const qs = query?.toString();
   const url = `${PROXY_BASE}/${path}${qs ? `?${qs}` : ""}`;
@@ -181,7 +224,10 @@ async function readJson<T>(
     };
   }
 
-  return { ok: true, data: body as T };
+  return {
+    ok: true,
+    data: transform ? transform(body as T, res) : (body as T),
+  };
 }
 
 function describe(err: unknown): string {

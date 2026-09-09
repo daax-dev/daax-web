@@ -21,7 +21,6 @@ vi.mock("next/server", () => ({
 // Import after mocks are set up
 import { getAuthUser, requireAuth, requireAuthOrThrow } from "@/lib/auth";
 import { localOperatorBypassAllowed } from "@/lib/auth-trust";
-import type { AuthUser } from "@/lib/auth-types";
 
 /**
  * Helper to create a mock Headers object
@@ -69,6 +68,33 @@ describe("auth module", () => {
     // Restore posture env to the runner's originals (Copilot #184).
     vi.unstubAllEnvs();
   });
+
+  it.each([
+    [undefined, undefined, "subject-id", undefined, true, false],
+    ["current", undefined, "subject-id", "current", true, true],
+    ["current", "previous", "subject-id", "previous", true, true],
+    ["current", undefined, "subject-id", "wrong", false, false],
+    ["current", undefined, "subject-id", undefined, false, false],
+    ["current", undefined, undefined, "current", false, false],
+  ] as const)(
+    "exposes proof provenance without changing admission (%j)",
+    async (secret, previous, subject, proof, admitted, proven) => {
+      vi.stubEnv("DAAX_PROXY_SECRET", secret);
+      vi.stubEnv("DAAX_PROXY_SECRET_PREVIOUS", previous);
+      const { deriveAuthContext, evaluateAuthDecisionFromContext } =
+        await import("@/lib/auth-trust");
+      const headers = new Headers();
+      if (subject) headers.set("X-Forwarded-User", subject);
+      if (proof) headers.set("X-Daax-Proxy-Secret", proof);
+      const context = deriveAuthContext(headers);
+      expect(context.user.authenticated).toBe(admitted);
+      expect(context.subject).toBe(admitted ? "subject-id" : null);
+      expect(context.subjectProven).toBe(proven);
+      expect(
+        evaluateAuthDecisionFromContext(context).decision === "allow-user",
+      ).toBe(admitted);
+    },
+  );
 
   describe("getAuthUser", () => {
     it("should return authenticated user with all headers present", async () => {

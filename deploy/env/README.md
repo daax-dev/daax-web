@@ -61,3 +61,42 @@ Ingress is controlled at the network layer, not by these files:
 - **Traefik IP allow-list (optional):** add an `ipAllowList` middleware to the
   router chain in `deploy/traefik-daax.yml.tpl` to further restrict source IPs on
   top of Pocket ID forward-auth. See the daax deployment section of `CLAUDE.md`.
+
+## Agent View break-in (ADR 0026)
+
+The server reads these at request time (no `NEXT_PUBLIC_` equivalents):
+
+| Variable                              | Value                                                                                                                                                                                                                                        |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AGENTVIEW_DAEMON_PROXY_SECRET_FILE`  | Path to the daemon proxy proof secret, a readable regular file with no group/other permissions (`0600` or `0400`). Read anew for each signal, so replacement rotates without restart. Never put the secret value in an environment variable. |
+| `AGENTVIEW_DAEMON_PROXY_PROOF_HEADER` | Proof header name; default `X-Dist-Agent-Proxy`. Match the daemon's `--trusted-proxy-proof-header`.                                                                                                                                          |
+| `AGENTVIEW_DAEMON_IDENTITY_HEADER`    | Subject header name; default `X-Auth-Request-User`. Match the daemon's `--trusted-identity-header`.                                                                                                                                          |
+
+A signal requires a verified Pocket ID subject through daax's existing forward-auth
+configuration. The local-operator bypass has no subject and receives 403. Only the
+signal POST asserts identity; all GETs remain Accept-only and raw payloads remain
+excluded. The daemon must admit that subject and the proof secret. The incoming
+forwarded subject must carry a matching `X-Daax-Proxy-Secret` proof against
+`DAAX_PROXY_SECRET` (or its configured rotation value); legacy host-dev identity
+admission alone is insufficient for daax to vouch for a name. The signal handler
+requires JSON and rejects cross-site fetch metadata even when `DAAX_API_GUARD`
+is disabled.
+
+In host mode set the file path in the app's environment. In Docker, mount the file
+read-only into the **web** service and set the path there; its owner/permissions
+must allow the image's `node` user to read it. Do not COPY the secret into the image.
+Header names and file paths are runtime settings, so no Dockerfile ARG is needed.
+Resume is unavailable whenever `HOST_WORKSPACE_PATH` is set; a container shell
+cannot resume an observed host session at its host cwd. Host resume uses the existing
+terminal's workspace confinement and shows any policy refusal from that server.
+
+Break-in states are observations. After a signal, the baseline pid disappearing
+from the row or a later `PROCESS_EXITED` event for that agent yields
+`interrupted (observed)` and names the pid. An exit event supplies the exit's age;
+a row without an exit timestamp labels the signal's age separately, without
+inventing the time of the process exit.
+This applies to Claude, Codex and Gemini. The Claude transcript interrupt marker
+is an additional reading for keyboard interrupts. A new live pid for the same
+session, started after the action, takes precedence as `resumed here (observed)`.
+A still-live Codex or Gemini process retains the vendor's no-interrupt-record
+explanation. `sent` remains a separate acknowledgment beside the event id.
