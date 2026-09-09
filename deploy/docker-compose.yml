@@ -90,12 +90,14 @@ services:
     command:
       - |
         set -eu
+        umask 077
         stamp=$$(date -u +%Y%m%dT%H%M%SZ)
         out="/backups/daax-$${stamp}.dump"
         trap 'rm -f "$${out}.partial"' EXIT
         echo "[pg-backup] dumping -> $$out"
         pg_dump -Fc --no-owner --no-privileges -f "$${out}.partial"
         mv "$${out}.partial" "$$out"
+        chmod 600 "$$out"
         echo "[pg-backup] wrote $$out"
         if [ "$${DAAX_BACKUP_RETENTION_DAYS}" -gt 0 ] 2>/dev/null; then
           find /backups -maxdepth 1 -type f \( -name 'daax-*.dump' -o -name 'daax-*.dump.partial' \) -mtime "+$${DAAX_BACKUP_RETENTION_DAYS}" -delete || true
@@ -247,7 +249,11 @@ services:
       # the app (mint) and terminal server (verify), same container = one value.
       # Generate: `openssl rand -hex 32`. Never commit it. Set DAAX_REQUIRE_AUTH=1
       # to enforce identity (with Traefik/Pocket ID) on any untrusted exposure.
-      - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
+      # A8: the PRODUCTION deploy must make the auth posture a DELIBERATE choice,
+      # not a silent non-strict default. `:?` fails a bare `docker compose up`
+      # that never sourced an env file (scripts/deploy.sh + every deploy/env/*.env
+      # set this to 1); set to 0 only for a consciously trusted-network deploy.
+      - "DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:?set 1 to enforce Pocket ID forward-auth (recommended) or 0 for a deliberately trusted network; see deploy/env/README.md}"
       - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
       # _PREVIOUS is accepted too (#103): a ticket already minted under the old
       # secret still verifies during rotation, so DAAX_WS_TOKEN_SECRET can rotate
@@ -417,7 +423,9 @@ services:
       - TERMINAL_HOST=0.0.0.0
 
       # WS ticket verification — MUST match the web plane's value (see daax above).
-      - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
+      # A8: same deliberate-posture requirement as the web plane; `:?` fails a
+      # bare `docker compose up` (deploy/env/*.env + scripts/deploy.sh set it).
+      - "DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:?set 1 to enforce Pocket ID forward-auth (recommended) or 0 for a deliberately trusted network; see deploy/env/README.md}"
       - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
 
       # Spawn machinery (terminal-only).

@@ -31,15 +31,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { spawn, ChildProcess } from "child_process";
 import { requireAuth } from "@/lib/auth";
 import { discoverAllMcps } from "@/lib/mcp-config";
-import {
-  getDefaultProjectPath,
-  isAllowedRemoteUrl,
-  buildChildEnv,
-} from "@/lib/mcp-route-helpers";
+import { getDefaultProjectPath, buildChildEnv } from "@/lib/mcp-route-helpers";
+import { assertPublicHttpUrl } from "@/lib/ssrf-guard";
 
 // Allowlist of executables permitted for an ad-hoc (unregistered) inspector
 // launch. These are the standard MCP launchers; a bare basename resolved via
 // PATH is required (no path separators), which blocks /bin/sh, ./evil, etc.
+//
+// `docker`/`docker-compose` are intentionally NOT allowlisted (A7): with
+// client-supplied args, `docker` would let an authenticated user run e.g.
+// `docker run -v /var/run/docker.sock:/var/run/docker.sock ...` and reach the
+// host daemon. Register a stdio MCP that itself launches a container if that is
+// genuinely required, rather than exposing the docker CLI as an ad-hoc launcher.
 const ALLOWED_LAUNCHERS = new Set([
   "npx",
   "node",
@@ -50,7 +53,6 @@ const ALLOWED_LAUNCHERS = new Set([
   "python",
   "python3",
   "deno",
-  "docker",
 ]);
 
 function isAllowedAdHocCommand(command: string): boolean {
@@ -221,9 +223,25 @@ export async function POST(request: NextRequest) {
         // Copilot): a non-http(s) scheme (file:/data:/…) is rejected with a
         // controlled 400 rather than being handed to the inspector UI — this
         // makes the code match this route's "http/https only" claim.
-        if (!isAllowedRemoteUrl(cfg.url)) {
+        // SSRF guard (A2): resolve the host and reject private / link-local /
+        // metadata / RFC1918 targets before the inspector connects to it
+        // (subsumes the http/https scheme check).
+        //
+        // RESIDUAL (accepted): the target URL is handed to a spawned
+        // `@modelcontextprotocol/inspector` child that makes its OWN connection,
+        // so daax cannot force `redirect: "error"` there — a public host that
+        // 3xx-redirects to a private/metadata target could still be chased by the
+        // child. Only the initial host is validated here. This is accepted, not a
+        // gap: under the documented single-operator posture (premortem A1) an
+        // authenticated caller already has terminal `/shell` + `docker exec`, so
+        // the inspector grants no reach they don't already have. Closing it fully
+        // would need daax to proxy the connection itself (tracked follow-up).
+        const ssrf = await assertPublicHttpUrl(cfg.url);
+        if (!ssrf.ok) {
           return NextResponse.json(
-            { error: `Registered MCP ${mcpId} has an invalid remote URL` },
+            {
+              error: `Registered MCP ${mcpId} has an unreachable remote URL: ${ssrf.error}`,
+            },
             { status: 400 },
           );
         }
@@ -257,16 +275,16 @@ export async function POST(request: NextRequest) {
       // Ad-hoc REMOTE launch (unregistered, SSE/HTTP): no command is ever
       // spawned from the URL. Validate the client-supplied serverUrl scheme
       // (http/https) and hand it to the inspector UI. Do not spread client env.
-      if (!isAllowedRemoteUrl(body.serverUrl)) {
+      const ssrf = await assertPublicHttpUrl(body.serverUrl);
+      if (!ssrf.ok) {
         return NextResponse.json(
           {
-            error:
-              "serverUrl must be a valid http(s) URL for an SSE/HTTP inspector launch.",
+            error: `serverUrl must be a public http(s) URL for an SSE/HTTP inspector launch: ${ssrf.error}`,
           },
           { status: 400 },
         );
       }
-      targetUrl = body.serverUrl;
+      targetUrl = ssrf.url; // validated (narrowed to string) by assertPublicHttpUrl
       resolvedEnv = undefined;
     } else {
       // Ad-hoc stdio launch (no registered id): only permit an allowlisted

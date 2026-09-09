@@ -97,6 +97,26 @@ describe.skipIf(!configured)("DB console on Postgres (F6 #102)", () => {
     );
   });
 
+  it("R2: auth_audit is append-only — INSERT allowed, UPDATE and DELETE rejected (42501)", async () => {
+    // Locks the append-only guarantee (migration 1785632484332) so a future
+    // migration that drops the trigger fails loudly here rather than silently
+    // re-opening audit-log tampering via the super-admin DB console.
+    await query("INSERT INTO auth_audit (event, outcome) VALUES ($1,$2)", [
+      "authz",
+      "allow",
+    ]);
+    await expect(
+      query("UPDATE auth_audit SET outcome = 'deny'"),
+    ).rejects.toMatchObject({ code: "42501" });
+    await expect(query("DELETE FROM auth_audit")).rejects.toMatchObject({
+      code: "42501",
+    });
+    const res = await query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM auth_audit",
+    );
+    expect(res.rows[0].n).toBe(1);
+  });
+
   it("inspectTable paginates real rows and reports a bounded total", async () => {
     await query(
       "INSERT INTO users (subject, username, email) VALUES ($1,$2,$3),($4,$5,$6)",

@@ -13,11 +13,8 @@ import { NextResponse } from "next/server";
 import { spawn } from "child_process";
 import { requireAuth } from "@/lib/auth";
 import { discoverAllMcps } from "@/lib/mcp-config";
-import {
-  getDefaultProjectPath,
-  isAllowedRemoteUrl,
-  buildChildEnv,
-} from "@/lib/mcp-route-helpers";
+import { getDefaultProjectPath, buildChildEnv } from "@/lib/mcp-route-helpers";
+import { assertPublicHttpUrl } from "@/lib/ssrf-guard";
 
 interface McpTool {
   name: string;
@@ -175,6 +172,13 @@ async function fetchToolsViaStdio(
 // Fetch tools via HTTP. `url` is resolved SERVER-SIDE from the registered MCP
 // config (never from the client body), and additionally constrained to
 // http(s) here as belt-and-suspenders against file:/// and other schemes.
+//
+// SSRF (A2): the caller already ran assertPublicHttpUrl on this URL, but that
+// only vets the INITIAL host. A public host that 3xx-redirects to a private/
+// metadata target would re-open the SSRF via the redirect if fetch followed it,
+// so `redirect: "error"` forbids server-side redirect-following entirely (a
+// redirect throws instead of chasing the Location). JSON-RPC tools/list POSTs do
+// not legitimately need redirects.
 async function fetchToolsViaHttp(url: string): Promise<McpToolsResponse> {
   let parsed: URL;
   try {
@@ -194,6 +198,7 @@ async function fetchToolsViaHttp(url: string): Promise<McpToolsResponse> {
     await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      redirect: "error",
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 1,
@@ -211,6 +216,7 @@ async function fetchToolsViaHttp(url: string): Promise<McpToolsResponse> {
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      redirect: "error",
       body: JSON.stringify({
         jsonrpc: "2.0",
         id: 2,
@@ -300,11 +306,15 @@ export async function POST(request: Request) {
       // up-front (#182 Copilot): a present-but-invalid remote URL (non-http(s)
       // scheme like file:/data:, unparseable) is a deterministic misconfig →
       // controlled 400, NOT a 500 bubbled up from fetchToolsViaHttp's throw.
-      if (!isAllowedRemoteUrl(config.url)) {
+      // SSRF guard (A2): the URL is user-registered and fetched server-side, so
+      // resolve the host and reject private / link-local / metadata / RFC1918
+      // targets before the fetch (assertPublicHttpUrl subsumes the scheme check).
+      const ssrf = await assertPublicHttpUrl(config.url);
+      if (!ssrf.ok) {
         return NextResponse.json(
           {
             success: false,
-            error: `Registered MCP ${mcpId} has an invalid remote URL`,
+            error: `Registered MCP ${mcpId} has an unreachable remote URL: ${ssrf.error}`,
           },
           { status: 400 },
         );

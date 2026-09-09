@@ -3,7 +3,7 @@
  * Stores sensitive credentials in a local JSON file (gitignored + dockerignored)
  */
 
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, chmodSync, existsSync } from "fs";
 import { join } from "path";
 
 // Secrets file location - in the process working directory (project root),
@@ -49,7 +49,15 @@ export function saveSecrets(secrets: Partial<DaaxSecrets>): DaaxSecrets {
   const updated = { ...current, ...secrets };
 
   try {
-    writeFileSync(SECRETS_FILE, JSON.stringify(updated, null, 2), "utf-8");
+    // Write owner-only (0600) so the plaintext token file is never left
+    // umask-dependent world/group-readable (R3). The `mode` option only applies
+    // when the file is CREATED, so chmod unconditionally afterwards to also fix
+    // an already-existing file written before this hardening.
+    writeFileSync(SECRETS_FILE, JSON.stringify(updated, null, 2), {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+    chmodSync(SECRETS_FILE, 0o600);
   } catch (error) {
     console.error("Failed to save secrets:", error);
     throw error;

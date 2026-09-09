@@ -1,9 +1,26 @@
 import { NextResponse } from "next/server";
 import { readdirSync, existsSync, type Dirent } from "fs";
 import { join } from "path";
+import { homedir } from "os";
 import { getSettings } from "@/lib/settings";
 import { expandPath } from "@/lib/path-utils";
 import { requireAuth } from "@/lib/auth";
+import { confineToRealRoot, PathConfinementError } from "@/lib/path-confine";
+
+/**
+ * The outermost directory a client-supplied `?basePath=` override may resolve
+ * into (A10). Without this, `?basePath=/etc` (or `/`) drives a recursive readdir
+ * of arbitrary directories — a reconnaissance aid. Container mode is already
+ * clamped to /workspace by getWorkspacePath; host mode's outer boundary is the
+ * server's home directory (basePath defaults to ~/prj and legit overrides are
+ * project roots under $HOME).
+ */
+function workspaceConfinementRoot(): string {
+  if (existsSync("/workspace") && process.env.HOST_WORKSPACE_PATH) {
+    return "/workspace";
+  }
+  return homedir();
+}
 
 interface GitProject {
   name: string;
@@ -148,7 +165,33 @@ export async function GET(request: Request) {
     const settings = queryBasePath
       ? { basePath: queryBasePath }
       : getSettings();
-    const workspacePath = getWorkspacePath(settings);
+    let workspacePath = getWorkspacePath(settings);
+
+    // Confine a CLIENT-supplied basePath override to the allowed root (A10). The
+    // operator-configured settings basePath is trusted and left unconfined; only
+    // the query override is untrusted input.
+    if (queryBasePath) {
+      try {
+        // confineToRealRoot dereferences symlinks too, so `~/prj/escape -> /etc`
+        // cannot be used to recursively list an out-of-root directory.
+        workspacePath = confineToRealRoot(
+          workspaceConfinementRoot(),
+          workspacePath,
+        );
+      } catch (err) {
+        if (err instanceof PathConfinementError) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: "basePath escapes the allowed workspace root",
+              directories: [],
+            },
+            { status: 403 },
+          );
+        }
+        throw err;
+      }
+    }
 
     console.log(
       `[Workspace API] Using basePath: ${settings.basePath}, resolved to: ${workspacePath}`,

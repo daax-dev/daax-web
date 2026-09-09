@@ -3,7 +3,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import yaml from "js-yaml";
 import { expandPath, getSettings } from "@/lib/settings";
-import { confineToRoot, PathConfinementError } from "@/lib/path-confine";
+import { confineToRealRoot, PathConfinementError } from "@/lib/path-confine";
 import { requireAuth } from "@/lib/auth";
 import type { FlowspecWorkflowConfig } from "@/types/flowspec-workflow";
 
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
     const workspaceRoot = expandPath(getSettings().basePath);
     let expandedPath: string;
     try {
-      expandedPath = confineToRoot(workspaceRoot, expandPath(projectPath));
+      expandedPath = confineToRealRoot(workspaceRoot, expandPath(projectPath));
     } catch (err) {
       if (err instanceof PathConfinementError) {
         return NextResponse.json(

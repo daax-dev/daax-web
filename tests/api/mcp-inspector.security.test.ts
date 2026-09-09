@@ -97,6 +97,9 @@ describe("POST /api/plugins/mcp-inspector — security (#182)", () => {
 
   beforeEach(() => {
     envSnapshot = { ...process.env };
+    // A2: the SSRF guard blocks loopback/private targets by default; the legit
+    // launch tests below use localhost URLs, so opt localhost into the allow-list.
+    process.env.DAAX_MCP_ALLOWED_HOSTS = "localhost";
     mockSpawn.mockReturnValue(makeFakeProc() as never);
     mockRequireAuth.mockResolvedValue({
       authenticated: true,
