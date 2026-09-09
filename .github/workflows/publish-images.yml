@@ -8,13 +8,15 @@ on:
       - "v*"
   workflow_dispatch:
 
-# id-token: write is for keyless cosign (the `sign` job) — the OIDC token proves
-# to Sigstore that THIS workflow in THIS repo produced the signature, which is
-# what a consumer then verifies with --certificate-identity-regexp.
+# No id-token here, deliberately. Keyless cosign needs `id-token: write`, but
+# granted at this level EVERY job could mint the OIDC token — including the
+# build jobs that run third-party actions on floating major tags — and any of
+# them could then obtain a Sigstore certificate for this workflow's identity
+# and produce a signature `cosign verify` would accept. Only the `sign` job
+# declares it, in its own permissions block.
 permissions:
   contents: read
   packages: write
-  id-token: write
 
 jobs:
   # daax-web and daax-terminal are built PER-PLATFORM ON NATIVE RUNNERS, then
@@ -121,6 +123,9 @@ jobs:
           platforms: ${{ matrix.platform.id }}
           load: true
           tags: scan-target/${{ matrix.image.name }}:${{ matrix.platform.arch }}
+          # Same labels as the push build below, so the scanned image config
+          # is byte-identical to the pushed one, not merely layer-identical.
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ steps.stamp.outputs.version }}
             GIT_SHA=${{ steps.stamp.outputs.git_sha }}

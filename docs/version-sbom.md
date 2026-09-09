@@ -141,7 +141,11 @@ in four groups:
   the digest of the image the container actually runs (resolved by image ID, so
   a re-pointed tag can't mislead); "this container" marks daax-web itself. Two
   containers on one image (web + migrate) share a row. Bounded by
-  `DAAX_BUILD_STACK_MAX` (default 64).
+  `DAAX_BUILD_STACK_MAX` (default 64). Needs the Docker socket: in the split
+  fleet/cloud deployment (`deploy/docker-compose.yml`) only `daax-terminal`
+  mounts it, so there the web plane answers 503 for this card and the per-image
+  SBOM — the section is for the single-container and from-source modes until
+  the terminal plane serves it.
 - **App runtime base** — the image the daax container is built `FROM`
   (`node:22-bookworm-slim`).
 - **Platform & tooling** — images daax runs (code-server, the syft scanner).
@@ -203,8 +207,9 @@ existing tag (locally, and on `origin` when pushing) and creates an
 **annotated** tag. Strict semver only (`vX.Y.Z`, no leading zeros, no suffix).
 Bash 3.2 (macOS) compatible.
 
-`--push` fires `.github/workflows/publish-images.yml` (`v*` trigger), which per
-image (`daax-web`, `daax-terminal`; `code-server` alongside):
+`--push` fires `.github/workflows/publish-images.yml` (`v*` trigger), which for
+`daax-web` and `daax-terminal` (`code-server` is built multi-arch, signed and
+attested in the same run, but is not stamped and not trivy-gated yet):
 
 1. **Stamps** `VERSION=vX.Y.Z GIT_SHA=<sha> BUILD_TIME=<now>` into both arch
    builds (native amd64 + arm64 runners, no QEMU).
