@@ -1,44 +1,15 @@
-/**
- * Proxy route: GET /api/agentview/[...path]
- *
- * The Agent View tab's only way to the dist-agent daemon (`agentd`). The daemon
- * pins its `Host` header to loopback and sends no CORS headers, so a browser at
- * :4200 cannot read it; this route reads it from the daax server instead and
- * hands the JSON back untouched. It is a *reader*: GET only, no body, no
- * headers of the caller's forwarded — the daemon sees `Accept` and nothing
- * else, never the daax session cookie.
- *
- * Auth: requireAuth() is called first; unauthenticated requests receive a 401
- * from the auth layer before the daemon is contacted, with `no-store` set so a
- * cached 401 cannot outlive a sign-in.
- *
- * The allow-list (lib/agentview/server.ts `resolveDaemonPath`) is narrow on
- * purpose. The daemon serves raw prompts, conversations and file diffs
- * (dist-agent ADR 0001/0014) and accepts writes on four routes (settings,
- * session minting, logout, signals). None of those has any business behind a
- * daax proxy in the tab's first cut, and a proxy that forwarded whatever it was
- * asked for would turn a daax session into a daemon session — a confused
- * deputy with the operator's privileges. A route is added by an argument here,
- * never by a wildcard. One narrowing on top of the list: `events/{id}` returns
- * the raw payload unless told not to, so `raw=false` is pinned on it.
- *
- * Failure semantics, each distinguishable by the client (lib/agentview/client.ts):
- *   - unknown route      → 404 { error: "no such agentview route", path }
- *   - daemon 401/403     → same status, { error: "the daemon refused this request",
- *                           upstream_status, detail }
- *   - daemon unreachable → 502 { error: "agentview daemon unreachable", daemon, reason }
- *   - anything else      → the daemon's status and body, passed through.
- *
- * `stream` is forwarded as a live `text/event-stream`: the 5 s timeout bounds
- * the daemon's *answer*, not the body, and the upstream fetch is aborted when
- * the browser goes away.
+/** Agent View: payload-free GETs and one declared POST signal (ADR 0026).
+ * Identity assertions are sent on the POST only; GETs remain Accept-only.
  */
 
 import { NextResponse } from "next/server";
+import { deriveAuthContext } from "@/lib/auth-trust";
 import { requireAuth } from "@/lib/auth";
 import {
   agentviewDaemonUrl,
   fetchDaemon,
+  postDaemonSignal,
+  SignalConfigurationError,
   resolveDaemonPath,
 } from "@/lib/agentview/server";
 
@@ -143,6 +114,13 @@ export async function GET(
     headers: {
       "Content-Type": res.headers.get("content-type") ?? "application/json",
       ...NO_STORE_HEADERS,
+      ...(path === "node"
+        ? {
+            "X-Agentview-Terminal-Local": process.env.HOST_WORKSPACE_PATH
+              ? "0"
+              : "1",
+          }
+        : {}),
     },
   });
 }
@@ -169,5 +147,65 @@ async function safeText(res: Response): Promise<string> {
     return await res.text();
   } catch {
     return "";
+  }
+}
+
+export async function POST(
+  req: Request,
+  context: { params: Promise<{ path: string[] }> },
+) {
+  const auth = await requireAuth();
+  if (!auth.authenticated) {
+    const res = auth.response.clone();
+    res.headers.set("Cache-Control", "no-store");
+    return res;
+  }
+  // Next decodes catch-all parameters, including slashes within an encoded ID.
+  // Encode the parameter slot again before applying the same path validator.
+  const { path: segments } = await context.params;
+  const encoded =
+    segments?.map((part, i) => (i === 1 ? encodeURIComponent(part) : part)) ??
+    [];
+  if (!resolveDaemonPath(encoded, "POST"))
+    return NextResponse.json(
+      { error: "method not allowed" },
+      { status: 405, headers: NO_STORE_HEADERS },
+    );
+  const { subject } = deriveAuthContext(req.headers);
+  if (!subject)
+    return NextResponse.json(
+      {
+        error: "cannot break in",
+        reason:
+          "daax trusted the local operator without a name, and the daemon records a signal against a person",
+      },
+      { status: 403, headers: NO_STORE_HEADERS },
+    );
+  try {
+    const upstream = await postDaemonSignal(segments[1], await req.text(), {
+      subject,
+      // Request has no socket peer in Next. Never trust a caller's forwarding
+      // header as a socket address; use the ADR's explicit loopback fallback.
+      peerAddress: "127.0.0.1",
+    });
+    if (!upstream.ok)
+      return NextResponse.json(
+        { error: "agentview daemon unreachable", reason: upstream.message },
+        { status: 502, headers: NO_STORE_HEADERS },
+      );
+    return new Response(upstream.res.body, {
+      status: upstream.res.status,
+      headers: {
+        ...NO_STORE_HEADERS,
+        "Content-Type":
+          upstream.res.headers.get("content-type") ?? "application/json",
+      },
+    });
+  } catch (err) {
+    if (!(err instanceof SignalConfigurationError)) throw err;
+    return NextResponse.json(
+      { error: "cannot break in", reason: err.message },
+      { status: 503, headers: NO_STORE_HEADERS },
+    );
   }
 }

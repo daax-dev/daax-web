@@ -61,3 +61,26 @@ Ingress is controlled at the network layer, not by these files:
 - **Traefik IP allow-list (optional):** add an `ipAllowList` middleware to the
   router chain in `deploy/traefik-daax.yml.tpl` to further restrict source IPs on
   top of Pocket ID forward-auth. See the daax deployment section of `CLAUDE.md`.
+
+## Agent View break-in (ADR 0026)
+
+The server reads these at request time (no `NEXT_PUBLIC_` equivalents):
+
+| Variable | Value |
+| --- | --- |
+| `AGENTVIEW_DAEMON_PROXY_SECRET_FILE` | Path to the daemon proxy proof secret, a readable regular file with no group/other permissions (`0600` or `0400`). Read anew for each signal, so replacement rotates without restart. Never put the secret value in an environment variable. |
+| `AGENTVIEW_DAEMON_PROXY_PROOF_HEADER` | Proof header name; default `X-Dist-Agent-Proxy`. Match the daemon's `--trusted-proxy-proof-header`. |
+| `AGENTVIEW_DAEMON_IDENTITY_HEADER` | Subject header name; default `X-Auth-Request-User`. Match the daemon's `--trusted-identity-header`. |
+
+A signal requires a verified Pocket ID subject through daax's existing forward-auth
+configuration. The local-operator bypass has no subject and receives 403. Only the
+signal POST asserts identity; all GETs remain Accept-only and raw payloads remain
+excluded. The daemon must admit that subject and the proof secret.
+
+In host mode set the file path in the app's environment. In Docker, mount the file
+read-only into the **web** service and set the path there; its owner/permissions
+must allow the image's `node` user to read it. Do not COPY the secret into the image.
+Header names and file paths are runtime settings, so no Dockerfile ARG is needed.
+Resume is unavailable whenever `HOST_WORKSPACE_PATH` is set; a container shell
+cannot resume an observed host session at its host cwd. Host resume uses the existing
+terminal's workspace confinement and shows any policy refusal from that server.

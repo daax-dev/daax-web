@@ -17,6 +17,7 @@
  */
 
 import "server-only";
+import { open } from "node:fs/promises";
 
 /** The daemon's default listen address (dist-agent `agentd --listen`). */
 const DEFAULT_PORT = 7717;
@@ -68,24 +69,28 @@ function isTraversal(segment: string): boolean {
  * What is deliberately absent, and why: `prompts`, `agents/{id}/prompt`,
  * `agents/{id}/conversation`, `agents/{id}/sent` and `worktrees/{id}/diff[/file]`
  * carry raw prompts or file contents (dist-agent ADR 0001/0014); `settings`,
- * `auth/*` and `agents/{id}/signal` are writes or credentials; `build/sbom`,
+ * `auth/*` are writes or credentials; the one declared POST is signal; `build/sbom`,
  * `repositories` and `worktrees/{id}/reconcile` are simply not needed by the
  * tab's first cut. A route is added here by an argument, not by a fallthrough.
  */
-export const ALLOWED_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
-  ["healthz"],
-  ["node"],
-  ["nodes"],
-  ["build"],
-  ["agents"],
-  ["agents", "{id}"],
-  ["agents", "{id}", "inventory"],
-  ["events"],
-  ["events", "{id}"],
-  ["events", "{id}", "causal"],
-  ["projects"],
-  ["worktrees"],
-  ["stream"],
+export const ALLOWED_PATHS: ReadonlyArray<{
+  method: string;
+  shape: readonly string[];
+}> = [
+  { method: "GET", shape: ["healthz"] },
+  { method: "GET", shape: ["node"] },
+  { method: "GET", shape: ["nodes"] },
+  { method: "GET", shape: ["build"] },
+  { method: "GET", shape: ["agents"] },
+  { method: "GET", shape: ["agents", "{id}"] },
+  { method: "GET", shape: ["agents", "{id}", "inventory"] },
+  { method: "GET", shape: ["events"] },
+  { method: "GET", shape: ["events", "{id}"] },
+  { method: "GET", shape: ["events", "{id}", "causal"] },
+  { method: "GET", shape: ["projects"] },
+  { method: "GET", shape: ["worktrees"] },
+  { method: "GET", shape: ["stream"] },
+  { method: "POST", shape: ["agents", "{id}", "signal"] },
 ];
 
 /**
@@ -93,9 +98,14 @@ export const ALLOWED_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
  * `null` when the route is not admitted. The returned path is relative to the
  * daemon's `/api/v1/` prefix and keeps every parameter exactly as encoded.
  */
-export function resolveDaemonPath(segments: string[]): string | null {
+export function resolveDaemonPath(
+  segments: string[],
+  method = "GET",
+): string | null {
   if (segments.length === 0) return null;
-  for (const shape of ALLOWED_PATHS) {
+  for (const entry of ALLOWED_PATHS) {
+    if (entry.method !== method) continue;
+    const shape = entry.shape;
     if (shape.length !== segments.length) continue;
     let matched = true;
     for (let i = 0; i < shape.length; i++) {
@@ -198,6 +208,103 @@ export async function fetchDaemon(
           ? err.message
           : String(err);
     return { ok: false, kind: "unreachable", message };
+  } finally {
+    cleanup();
+  }
+}
+
+/** A configuration failure must never leak the proof value into a response. */
+export class SignalConfigurationError extends Error {}
+
+/** One read per signal, from the same opened file whose permissions are checked. */
+async function readProxySecret(): Promise<string> {
+  const name = "AGENTVIEW_DAEMON_PROXY_SECRET_FILE";
+  const path = process.env[name];
+  if (!path) throw new SignalConfigurationError(`${name} is unset`);
+  try {
+    const file = await open(path, "r");
+    try {
+      const stat = await file.stat();
+      if (!stat.isFile() || (stat.mode & 0o077) !== 0)
+        throw new Error(
+          "must be a regular file private to its owner (mode 0600 or 0400)",
+        );
+      const secret = (await file.readFile("utf8")).trim();
+      if (!secret || /[\r\n]/.test(secret))
+        throw new Error("must contain one non-empty secret");
+      return secret;
+    } finally {
+      await file.close();
+    }
+  } catch {
+    throw new SignalConfigurationError(
+      `${name} must name a readable regular file private to its owner, containing one non-empty secret`,
+    );
+  }
+}
+
+/** No caller headers are copied. Reads deliberately do not use this function. */
+export async function postDaemonSignal(
+  agentId: string,
+  body: string,
+  identity: { subject: string; peerAddress?: string },
+): Promise<DaemonFetchResult> {
+  if (!identity.subject.trim())
+    throw new SignalConfigurationError("a verified subject is required");
+  const secret = await readProxySecret();
+  const proof =
+    process.env.AGENTVIEW_DAEMON_PROXY_PROOF_HEADER || "X-Dist-Agent-Proxy";
+  const subject =
+    process.env.AGENTVIEW_DAEMON_IDENTITY_HEADER || "X-Auth-Request-User";
+  // Configuration cannot turn these dedicated assertions into cookies or replace
+  // the forwarding tripwire/content negotiation headers.
+  const reserved = [
+    "cookie",
+    "authorization",
+    "origin",
+    "accept",
+    "content-type",
+    "x-forwarded-for",
+    "host",
+  ];
+  if (
+    proof.toLowerCase() === subject.toLowerCase() ||
+    [proof, subject].some(
+      (h) =>
+        !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(h) ||
+        reserved.includes(h.toLowerCase()),
+    )
+  )
+    throw new SignalConfigurationError(
+      "AGENTVIEW_DAEMON_PROXY_PROOF_HEADER and AGENTVIEW_DAEMON_IDENTITY_HEADER must name distinct assertion headers",
+    );
+  const { signal, cleanup } = withTimeout(undefined, DAEMON_CONNECT_TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      `${agentviewDaemonUrl()}/api/v1/agents/${encodeURIComponent(agentId)}/signal`,
+      {
+        method: "POST",
+        cache: "no-store",
+        redirect: "manual",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          [proof]: secret,
+          [subject]: identity.subject,
+          "X-Forwarded-For": identity.peerAddress || "127.0.0.1",
+        },
+        body,
+        signal,
+      },
+    );
+    return { ok: true, res };
+  } catch {
+    return {
+      ok: false,
+      kind: "unreachable",
+      message:
+        "signal request did not receive an answer; its outcome is unknown",
+    };
   } finally {
     cleanup();
   }
