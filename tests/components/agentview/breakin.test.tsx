@@ -152,10 +152,13 @@ describe("BreakIn", () => {
       const interrupt = screen.getByRole("button", {
         name: /^Interrupt/,
       });
-      expect(interrupt).toBeDisabled();
       fireEvent.click(interrupt);
       await Promise.resolve();
       expect(fetchMock).not.toHaveBeenCalled();
+      expect(interrupt).toBeDisabled();
+      expect(interrupt).toHaveTextContent(
+        "nothing to interrupt: this session is",
+      );
       expect(screen.getByRole("button", { name: "Resume here" })).toBeEnabled();
     },
   );
