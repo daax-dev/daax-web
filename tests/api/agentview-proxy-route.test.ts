@@ -7,6 +7,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { mkdtemp, writeFile, chmod, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { NextResponse } from "next/server";
 
 // ─── hoist mock factories before any imports ────────────────────────────────
@@ -42,7 +45,7 @@ afterEach(() => {
 });
 
 // Import after mock is registered
-import { GET } from "@/app/api/agentview/[...path]/route";
+import { GET, POST } from "@/app/api/agentview/[...path]/route";
 
 function ctx(...path: string[]) {
   return { params: Promise.resolve({ path }) };
@@ -375,5 +378,215 @@ describe("GET /api/agentview/[...path]", () => {
     expect(upstreamSignal?.aborted).toBe(false);
     incoming.abort();
     expect(upstreamSignal?.aborted).toBe(true);
+  });
+});
+
+const SUBJECT = "a8e78e55-bcde-4789-9210-981476abc123";
+const SIGNAL_BODY = {
+  agent_id: "node/claude/session",
+  signal: "interrupt",
+  outcome: "sent",
+  recorded: true,
+  note: "the effect is learned on the next process poll",
+  event_id: "agent-signal-123",
+};
+const REMOTE_BODY = {
+  agent_id: "galway/claude/session",
+  signal: "interrupt",
+  outcome: "refused",
+  recorded: true,
+  note: "refusal recorded",
+  event_id: "agent-signal-refused-456",
+  error:
+    "this agent runs on node galway, reachable at https://agent.galway.example; control is not federated, so use the control surface there (ADR 0026 §3)",
+};
+
+function signalRequest(
+  id = "node/claude/session",
+  body = '{ "signal": "interrupt" }',
+) {
+  return new Request(
+    `http://localhost/api/agentview/agents/${encodeURIComponent(id)}/signal`,
+    {
+      method: "POST",
+      body,
+      headers: {
+        "X-Forwarded-User": SUBJECT,
+        "X-Forwarded-Username": "display-name",
+        "X-Forwarded-Email": "display@example.test",
+        "X-Daax-Proxy-Secret": "test-daax-proof",
+        "X-Forwarded-For": "198.51.100.7",
+        Cookie: "daax_session=must-not-forward",
+        Authorization: "Bearer must-not-forward",
+        Origin: "http://localhost",
+        "Content-Type": "application/json",
+      },
+    },
+  );
+}
+
+describe("POST /api/agentview/[...path]", () => {
+  let dir: string;
+  let secretPath: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "agentview-proof-"));
+    secretPath = join(dir, "proxy.secret");
+    await writeFile(secretPath, "test-daemon-proof\n", { mode: 0o600 });
+    vi.stubEnv("AGENTVIEW_DAEMON_PROXY_SECRET_FILE", secretPath);
+    vi.stubEnv("AGENTVIEW_DAEMON_PROXY_PROOF_HEADER", "");
+    vi.stubEnv("AGENTVIEW_DAEMON_IDENTITY_HEADER", "");
+    vi.stubEnv("DAAX_PROXY_SECRET", "test-daax-proof");
+    vi.stubEnv("DAAX_TRUST_LOCAL_OPERATOR", "1");
+    vi.stubEnv("DAAX_REQUIRE_AUTH", "");
+    mockFetch.mockImplementation(() =>
+      Promise.resolve(upstreamJson(SIGNAL_BODY)),
+    );
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("requires authentication before examining the path or contacting the daemon", async () => {
+    mockRequireAuth.mockResolvedValueOnce({
+      authenticated: false,
+      response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    });
+    const res = await POST(signalRequest(), ctx("settings"));
+    expect(res.status).toBe(401);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("forwards the operator's subject and the proof secret on a signal, and nothing else", async () => {
+    const res = await POST(
+      signalRequest(),
+      ctx("agents", "node/claude/session", "signal"),
+    );
+    expect(res.status).toBe(200);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe(
+      "http://daemon.test:7717/api/v1/agents/node%2Fclaude%2Fsession/signal",
+    );
+    expect(Object.fromEntries(new Headers(init.headers))).toEqual({
+      accept: "application/json",
+      "content-type": "application/json",
+      "x-dist-agent-proxy": "test-daemon-proof",
+      "x-auth-request-user": "a8e78e55-bcde-4789-9210-981476abc123",
+      "x-forwarded-for": "127.0.0.1",
+    });
+    expect(init.body).toBe('{ "signal": "interrupt" }');
+    expect(init.method).toBe("POST");
+    expect(init.redirect).toBe("manual");
+  });
+
+  it("refuses to break in for a local operator with no subject, without contacting the daemon", async () => {
+    const res = await POST(
+      new Request("http://localhost/api/agentview/agents/a/signal", {
+        method: "POST",
+        body: '{"signal":"interrupt"}',
+      }),
+      ctx("agents", "a", "signal"),
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({
+      error: "cannot break in",
+      reason:
+        "daax trusted the local operator without a name, and the daemon records a signal against a person",
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("answers 503 naming AGENTVIEW_DAEMON_PROXY_SECRET_FILE when it is unset", async () => {
+    vi.stubEnv("AGENTVIEW_DAEMON_PROXY_SECRET_FILE", "");
+    const res = await POST(
+      signalRequest(),
+      ctx("agents", "node/claude/session", "signal"),
+    );
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain("AGENTVIEW_DAEMON_PROXY_SECRET_FILE");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses a secret file readable by others", async () => {
+    await chmod(secretPath, 0o644);
+    const res = await POST(
+      signalRequest(),
+      ctx("agents", "node/claude/session", "signal"),
+    );
+    expect(res.status).toBe(503);
+    expect(await res.text()).toContain("AGENTVIEW_DAEMON_PROXY_SECRET_FILE");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("uses configured header names and reads a rotated secret on the next request", async () => {
+    vi.stubEnv("AGENTVIEW_DAEMON_PROXY_PROOF_HEADER", "X-Test-Proof");
+    vi.stubEnv("AGENTVIEW_DAEMON_IDENTITY_HEADER", "X-Test-Subject");
+    await POST(signalRequest(), ctx("agents", "node/claude/session", "signal"));
+    await writeFile(secretPath, "rotated-test-proof\n");
+    await POST(signalRequest(), ctx("agents", "node/claude/session", "signal"));
+    expect(
+      new Headers(mockFetch.mock.calls[0][1].headers).get("X-Test-Proof"),
+    ).toBe("test-daemon-proof");
+    expect(
+      new Headers(mockFetch.mock.calls[1][1].headers).get("X-Test-Proof"),
+    ).toBe("rotated-test-proof");
+    expect(
+      new Headers(mockFetch.mock.calls[1][1].headers).get("X-Test-Subject"),
+    ).toBe("a8e78e55-bcde-4789-9210-981476abc123");
+  });
+
+  it.each([
+    [200, SIGNAL_BODY],
+    [409, REMOTE_BODY],
+  ])(
+    "passes the daemon's outcome, recorded and event_id through unchanged (%s)",
+    async (status, body) => {
+      const wire = JSON.stringify(body, null, 2);
+      mockFetch.mockResolvedValueOnce(
+        new Response(wire, {
+          status: status as number,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+      const res = await POST(
+        signalRequest(),
+        ctx("agents", "node/claude/session", "signal"),
+      );
+      expect(res.status).toBe(status);
+      expect(await res.text()).toBe(wire);
+      expect(res.headers.get("cache-control")).toBe("no-store");
+    },
+  );
+
+  it.each([
+    ["settings"],
+    ["auth", "session"],
+    ["agents", "a", "prompt"],
+    ["worktrees", "a", "reconcile"],
+  ])("refuses undeclared POST %j", async (...parts) => {
+    const res = await POST(signalRequest(), ctx(...parts));
+    expect(res.status).toBe(405);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("reports terminal locality from runtime HOST_WORKSPACE_PATH without changing the node body", async () => {
+    for (const [workspace, expected] of [
+      ["", "1"],
+      ["/host/prj", "0"],
+    ]) {
+      vi.stubEnv("HOST_WORKSPACE_PATH", workspace);
+      mockFetch.mockResolvedValueOnce(
+        upstreamJson({ node: { node_id: "node" } }),
+      );
+      const res = await GET(
+        browserRequest("http://localhost/api/agentview/node"),
+        ctx("node"),
+      );
+      expect(res.headers.get("X-Agentview-Terminal-Local")).toBe(expected);
+      expect(await res.json()).toEqual({ node: { node_id: "node" } });
+      expect([
+        ...new Headers(mockFetch.mock.calls.at(-1)![1].headers).keys(),
+      ]).toEqual(["accept"]);
+    }
   });
 });

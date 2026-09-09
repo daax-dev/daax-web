@@ -3,7 +3,7 @@
 import { useState } from "react";
 import dynamic from "next/dynamic";
 import type { AgentEvent, AgentInstance } from "@/lib/agentview/types";
-import { signalAgent, stripEnum } from "@/lib/agentview/client";
+import { formatAge, signalAgent, stripEnum } from "@/lib/agentview/client";
 import {
   resumeCommand,
   resumeParams,
@@ -121,14 +121,9 @@ export function BreakIn({
     >
       <p className="break-all text-muted-foreground">{agent.agent_id}</p>
       <p role="status" data-testid="agentview-breakin-state">
-        {breakinState(
-          agent,
-          events,
-          observationFailure
-            ? { ...(lastSignal ?? snapshot()), reason: observationFailure }
-            : lastSignal,
-          now,
-        )}
+        {observationFailure
+          ? `unknown, because ${observationFailure} · ${formatAge(agent.last_activity, now)}`
+          : breakinState(agent, events, lastSignal, now)}
       </p>
       {lastSignal?.reply && (
         <p data-testid="agentview-signal-reply">

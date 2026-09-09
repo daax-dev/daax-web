@@ -26,7 +26,8 @@ import type {
   AgentInstance,
   DaemonResult,
 } from "@/lib/agentview/types";
-import { BreakIn } from "./BreakIn";
+// @ts-expect-error TS5097: explicit .tsx disambiguates BreakIn.tsx from breakin.ts on case-insensitive filesystems; both bundlers accept it.
+import { BreakIn } from "./BreakIn.tsx";
 import { AgentsList } from "./AgentsList";
 import { DaemonNotice } from "./DaemonNotice";
 import { EventTimeline, type StreamState } from "./EventTimeline";
