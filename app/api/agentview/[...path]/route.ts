@@ -35,7 +35,11 @@ export async function GET(
   }
 
   const { path: segments } = await context.params;
-  const path = resolveDaemonPath(segments ?? []);
+  const path = resolveDaemonPath(
+    segments?.map((part, i) =>
+      segments[0] === "agents" && i === 1 ? encodeURIComponent(part) : part,
+    ) ?? [],
+  );
   if (path === null) {
     return NextResponse.json(
       { error: "no such agentview route", path: (segments ?? []).join("/") },
@@ -150,10 +154,31 @@ async function safeText(res: Response): Promise<string> {
   }
 }
 
+/** This hop sees the browser; middleware settings cannot disable this guard. */
+function guardSignalWrite(req: Request): Response | null {
+  if (
+    req.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !==
+    "application/json"
+  )
+    return NextResponse.json(
+      { error: "signal requests require Content-Type application/json" },
+      { status: 415, headers: NO_STORE_HEADERS },
+    );
+  const site = req.headers.get("sec-fetch-site");
+  if (site !== null && site !== "same-origin" && site !== "none")
+    return NextResponse.json(
+      { error: "cross-site signal requests are forbidden" },
+      { status: 403, headers: NO_STORE_HEADERS },
+    );
+  return null;
+}
+
 export async function POST(
   req: Request,
   context: { params: Promise<{ path: string[] }> },
 ) {
+  const refusal = guardSignalWrite(req);
+  if (refusal) return refusal;
   const auth = await requireAuth();
   if (!auth.authenticated) {
     const res = auth.response.clone();
@@ -171,7 +196,7 @@ export async function POST(
       { error: "method not allowed" },
       { status: 405, headers: NO_STORE_HEADERS },
     );
-  const { subject } = deriveAuthContext(req.headers);
+  const { subject, subjectProven } = deriveAuthContext(req.headers);
   if (!subject)
     return NextResponse.json(
       {
@@ -181,12 +206,18 @@ export async function POST(
       },
       { status: 403, headers: NO_STORE_HEADERS },
     );
+  if (!subjectProven)
+    return NextResponse.json(
+      {
+        error: "cannot break in",
+        reason:
+          "DAAX_PROXY_SECRET proof is required; daax will not vouch for a name it did not verify",
+      },
+      { status: 403, headers: NO_STORE_HEADERS },
+    );
   try {
     const upstream = await postDaemonSignal(segments[1], await req.text(), {
       subject,
-      // Request has no socket peer in Next. Never trust a caller's forwarding
-      // header as a socket address; use the ADR's explicit loopback fallback.
-      peerAddress: "127.0.0.1",
     });
     if (!upstream.ok)
       return NextResponse.json(

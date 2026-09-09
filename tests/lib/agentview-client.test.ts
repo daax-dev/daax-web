@@ -6,7 +6,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  fetchAgent,
   fetchAgents,
   fetchEvents,
   fetchHealth,
@@ -156,13 +155,6 @@ describe("readers map the proxy's answers to DaemonResult", () => {
 
 describe("readers shape their requests", () => {
   beforeEach(() => mockFetch.mockResolvedValue(reply(200, {})));
-
-  it("fetchAgent encodes the slashes in an agent id", async () => {
-    await fetchAgent("chamonix-d5d8554e/claude/abc");
-    expect(calledUrl()).toBe(
-      "/api/agentview/agents/chamonix-d5d8554e%2Fclaude%2Fabc",
-    );
-  });
 
   it("fetchAgents sends no query by default and the two flags when asked", async () => {
     await fetchAgents();

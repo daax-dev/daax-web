@@ -187,19 +187,19 @@ describe("GET /api/agentview/[...path]", () => {
     expect(url).toBe(`http://daemon.test:7717/api/v1/events?${qs}`);
   });
 
-  it("forwards an encoded agent id as one encoded segment", async () => {
+  it("resolves an agent id the way Next delivers it", async () => {
     mockFetch.mockResolvedValueOnce(upstreamJson(AGENTS_BODY.agents[0]));
 
     await GET(
       browserRequest(
-        "http://localhost/api/agentview/agents/chamonix-d5d8554e%2Fclaude%2Fabc",
+        "http://localhost/api/agentview/agents/node%2Fclaude%2Fsession",
       ),
-      ctx("agents", "chamonix-d5d8554e%2Fclaude%2Fabc"),
+      ctx("agents", "node/claude/session"),
     );
 
     const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(
-      "http://daemon.test:7717/api/v1/agents/chamonix-d5d8554e%2Fclaude%2Fabc",
+      "http://daemon.test:7717/api/v1/agents/node%2Fclaude%2Fsession",
     );
   });
 
@@ -398,7 +398,7 @@ const REMOTE_BODY = {
   note: "refusal recorded",
   event_id: "agent-signal-refused-456",
   error:
-    "this agent runs on node galway, reachable at https://agent.galway.example; control is not federated, so use the control surface there (ADR 0026 §3)",
+    'no agent "galway/claude/session" is in this node\'s registry; its prefix names node galway, and control is not federated: node galway has its own control surface at https://agent.galway.example (ADR 0026 §3); this daemon can only signal processes it can see',
 };
 
 function signalRequest(
@@ -446,6 +446,90 @@ describe("POST /api/agentview/[...path]", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
+  it("refuses to sign for a forwarded subject that carried no proxy proof", async () => {
+    vi.stubEnv("DAAX_PROXY_SECRET", undefined);
+    vi.stubEnv("DAAX_PROXY_SECRET_PREVIOUS", undefined);
+    vi.stubEnv("DAAX_REQUIRE_AUTH", undefined);
+    vi.stubEnv("HOST", undefined);
+    const req = signalRequest();
+    req.headers.delete("X-Daax-Proxy-Secret");
+    const res = await POST(req, ctx("agents", "node/claude/session", "signal"));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({
+      error: "cannot break in",
+      reason:
+        "DAAX_PROXY_SECRET proof is required; daax will not vouch for a name it did not verify",
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "off"])(
+    "refuses a cross-site signal from its own handler, not only from the middleware (%s)",
+    async (guard) => {
+      vi.stubEnv("DAAX_API_GUARD", guard);
+      for (const [header, value, status] of [
+        ["Sec-Fetch-Site", "cross-site", 403],
+        ["Sec-Fetch-Site", "same-site", 403],
+        ["Content-Type", "text/plain", 415],
+        ["Content-Type", "application/jsonp", 415],
+        ["Content-Type", "", 415],
+      ] as const) {
+        const req = signalRequest();
+        req.headers.set(header, value);
+        const res = await POST(
+          req,
+          ctx("agents", "node/claude/session", "signal"),
+        );
+        expect(res.status, `${header}: ${value}`).toBe(status);
+      }
+      expect(mockRequireAuth).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["same-origin", "none", undefined])(
+    "accepts a JSON signal with charset and permitted fetch metadata (%s)",
+    async (site) => {
+      const req = signalRequest();
+      req.headers.set("Content-Type", "Application/JSON; charset=utf-8");
+      if (site) req.headers.set("Sec-Fetch-Site", site);
+      const res = await POST(
+        req,
+        ctx("agents", "node/claude/session", "signal"),
+      );
+      expect(res.status).toBe(200);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    ["Cookie", "X-Subject"],
+    ["X-Proof", "Cookie"],
+    ["Authorization", "X-Subject"],
+    ["Origin", "X-Subject"],
+    ["Host", "X-Subject"],
+    ["Accept", "X-Subject"],
+    ["Content-Type", "X-Subject"],
+    ["X-Forwarded-For", "X-Subject"],
+    ["X-Same", "x-same"],
+    ["Invalid Header", "X-Subject"],
+  ])(
+    "refuses header names that would become a cookie or collide (%s, %s)",
+    async (proof, subject) => {
+      vi.stubEnv("AGENTVIEW_DAEMON_PROXY_PROOF_HEADER", proof);
+      vi.stubEnv("AGENTVIEW_DAEMON_IDENTITY_HEADER", subject);
+      const res = await POST(
+        signalRequest(),
+        ctx("agents", "node/claude/session", "signal"),
+      );
+      expect(res.status).toBe(503);
+      expect(await res.text()).toContain(
+        "must name distinct assertion headers",
+      );
+      expect(mockFetch).not.toHaveBeenCalled();
+    },
+  );
+
   it("requires authentication before examining the path or contacting the daemon", async () => {
     mockRequireAuth.mockResolvedValueOnce({
       authenticated: false,
@@ -484,6 +568,7 @@ describe("POST /api/agentview/[...path]", () => {
       new Request("http://localhost/api/agentview/agents/a/signal", {
         method: "POST",
         body: '{"signal":"interrupt"}',
+        headers: { "Content-Type": "application/json" },
       }),
       ctx("agents", "a", "signal"),
     );
@@ -537,7 +622,7 @@ describe("POST /api/agentview/[...path]", () => {
 
   it.each([
     [200, SIGNAL_BODY],
-    [409, REMOTE_BODY],
+    [421, REMOTE_BODY],
   ])(
     "passes the daemon's outcome, recorded and event_id through unchanged (%s)",
     async (status, body) => {

@@ -19,7 +19,6 @@
 
 import type {
   AgentEvent,
-  AgentInstance,
   AgentsResponse,
   DaemonResult,
   EventsResponse,
@@ -104,13 +103,6 @@ export function fetchAgents(
   if (opts.includeFinished) q.set("include_finished", "true");
   if (opts.includeAllHosts) q.set("include_all_hosts", "true");
   return readJson<AgentsResponse>("agents", q);
-}
-
-/** `agentId` is `node/type/session`; it is sent as one encoded segment. */
-export function fetchAgent(
-  agentId: string,
-): Promise<DaemonResult<AgentInstance>> {
-  return readJson<AgentInstance>(`agents/${encodeURIComponent(agentId)}`);
 }
 
 export interface FetchEventsOptions {

@@ -247,7 +247,7 @@ async function readProxySecret(): Promise<string> {
 export async function postDaemonSignal(
   agentId: string,
   body: string,
-  identity: { subject: string; peerAddress?: string },
+  identity: { subject: string },
 ): Promise<DaemonFetchResult> {
   if (!identity.subject.trim())
     throw new SignalConfigurationError("a verified subject is required");
@@ -291,7 +291,9 @@ export async function postDaemonSignal(
           "Content-Type": "application/json",
           [proof]: secret,
           [subject]: identity.subject,
-          "X-Forwarded-For": identity.peerAddress || "127.0.0.1",
+          // Next exposes no socket peer. Never use a request header as that
+          // address; this literal is ADR 0026's explicit loopback fallback.
+          "X-Forwarded-For": "127.0.0.1",
         },
         body,
         signal,
