@@ -13,15 +13,119 @@ permissions:
   packages: write
 
 jobs:
-  daax-web:
-    name: Publish daax-web
-    runs-on: ubuntu-latest
-    outputs:
-      # Digest-pinned ref for the SBOM job (F2, #97) — never a mutable tag.
-      image: ghcr.io/daax-dev/daax-web@${{ steps.build.outputs.digest }}
+  # daax-web and daax-terminal are built PER-PLATFORM ON NATIVE RUNNERS, then
+  # joined into one manifest list. They used to be `platforms: linux/amd64` with
+  # this note:
+  #
+  #   amd64 only: cloud VMs (Azure x86_64) are amd64, and the arm64 build
+  #   compiles node-pty from source under QEMU emulation — minutes -> ~30m+
+  #   and fragile.
+  #
+  # That was true of QEMU and is the right call for QEMU. The cost it describes
+  # is emulation, not arm64 — so this builds arm64 on `ubuntu-24.04-arm`, where
+  # node-pty compiles natively at amd64 speed. GitHub-hosted arm64 runners are
+  # free for public repositories, and this repository is public.
+  #
+  # The reason to care is fleet parity: chamonix is an arm64 workstation, and an
+  # amd64-only image is why it is the one host that cannot pull what the fleet
+  # runs. It hand-builds instead, so "the same daax everywhere" was unachievable
+  # by construction rather than by neglect.
+  #
+  # push-by-digest + `imagetools create` is the documented multi-runner pattern:
+  # neither build tags anything, the merge job creates the tag pointing at a
+  # manifest list. A host then pulls ONE digest and gets its own architecture.
+  build:
+    name: Build ${{ matrix.image.name }} (${{ matrix.platform.arch }})
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - { name: daax-web, target: runner }
+          - { name: daax-terminal, target: terminal }
+        platform:
+          - { arch: amd64, id: linux/amd64, runner: ubuntu-latest }
+          - { arch: arm64, id: linux/arm64, runner: ubuntu-24.04-arm }
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # No QEMU step, deliberately: each runner is already the architecture it
+      # builds. Adding it back would silently re-enable emulated builds if a
+      # native runner label ever stopped resolving.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # Labels only — this job pushes no tags. The tags are applied by the
+      # merge job, to the manifest list.
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/daax-dev/${{ matrix.image.name }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: ${{ matrix.image.target }}
+          platforms: ${{ matrix.platform.id }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # `push=true` belongs INSIDE outputs here, not as the separate `push:`
+          # key — push-by-digest is an output modifier, and the top-level key
+          # would push a tag, which is exactly what this job must not do.
+          outputs: type=image,name=ghcr.io/daax-dev/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp || github.event.repository.updated_at }}
+            BUILD_HOST=github-actions
+            BUILD_BRANCH=${{ github.ref_name }}
+          # Cache is scoped per image AND per arch. One shared scope would have
+          # the two architectures evicting each other on every run.
+          cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
+
+      # The digest is the FILENAME and the file is empty: the merge job only
+      # needs the set of digests, and a content-addressed name cannot collide
+      # between the two architectures.
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Named `daax-web` so the sbom job's `needs:` and
+  # `needs.daax-web.outputs.image` keep working unchanged. It now resolves to
+  # the MANIFEST LIST digest, which is what a host should pin.
+  daax-web:
+    name: Publish daax-web
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      image: ghcr.io/daax-dev/daax-web@${{ steps.merge.outputs.digest }}
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digests-daax-web-*
+          merge-multiple: true
+          path: /tmp/digests
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
@@ -41,43 +145,35 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+      - name: Create manifest list and push
+        id: merge
+        working-directory: /tmp/digests
+        run: |
+          # shellcheck disable=SC2046
+          # Word splitting is the mechanism, not an accident: both expansions
+          # produce ARGUMENT LISTS — a `-t` per tag, and one ref per
+          # per-architecture digest. Quoting either would pass a single
+          # argument and `imagetools create` would reject it.
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/daax-dev/daax-web@sha256:%s ' *)
+          digest="$(docker buildx imagetools inspect ghcr.io/daax-dev/daax-web:${{ steps.meta.outputs.version }} --format '{{json .Manifest.Digest}}' | tr -d '\"')"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Published ghcr.io/daax-dev/daax-web@$digest"
+          docker buildx imagetools inspect "ghcr.io/daax-dev/daax-web@$digest"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build and push
-        id: build
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          target: runner
-          # amd64 only: cloud VMs (Azure x86_64) are amd64, and the arm64 build
-          # compiles node-pty from source under QEMU emulation — minutes → ~30m+
-          # and fragile. code-server below stays multi-arch (no native compile).
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            BUILD_DATE=${{ github.event.head_commit.timestamp || github.event.repository.updated_at }}
-            BUILD_HOST=github-actions
-            BUILD_BRANCH=${{ github.ref_name }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # F3 split (#100): the terminal plane ships as its own image so registry-pull
-  # deploys (e.g. deploy:kinsale/muckross, which `docker compose pull`) can fetch
-  # it. It is the same Dockerfile context/base as daax-web (the `terminal` target
-  # is FROM `runner`), differing only in its CMD (start:terminal) — so its
-  # dependency SBOM equals daax-web's and is not regenerated separately below.
   daax-terminal:
     name: Publish daax-terminal
+    needs: build
     runs-on: ubuntu-latest
+    outputs:
+      image: ghcr.io/daax-dev/daax-terminal@${{ steps.merge.outputs.digest }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digests-daax-terminal-*
+          merge-multiple: true
+          path: /tmp/digests
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
@@ -97,29 +193,20 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build and push
-        id: build
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          target: terminal
-          # amd64 only, same rationale as daax-web (node-pty native compile).
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            BUILD_DATE=${{ github.event.head_commit.timestamp || github.event.repository.updated_at }}
-            BUILD_HOST=github-actions
-            BUILD_BRANCH=${{ github.ref_name }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Create manifest list and push
+        id: merge
+        working-directory: /tmp/digests
+        run: |
+          # shellcheck disable=SC2046
+          # Word splitting is the mechanism, not an accident: both expansions
+          # produce ARGUMENT LISTS — a `-t` per tag, and one ref per
+          # per-architecture digest. Quoting either would pass a single
+          # argument and `imagetools create` would reject it.
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/daax-dev/daax-terminal@sha256:%s ' *)
+          digest="$(docker buildx imagetools inspect ghcr.io/daax-dev/daax-terminal:${{ steps.meta.outputs.version }} --format '{{json .Manifest.Digest}}' | tr -d '\"')"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Published ghcr.io/daax-dev/daax-terminal@$digest"
 
   code-server:
     name: Publish code-server
