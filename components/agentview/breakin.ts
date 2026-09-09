@@ -4,6 +4,7 @@ import { formatAge, stripEnum } from "@/lib/agentview/client";
 
 /** The pre-action row is the baseline; an acknowledgment is never an observation. */
 export interface LastSignal {
+  kind: "signal" | "resume";
   at: string;
   agentId: string;
   sessionId: string;
@@ -11,6 +12,11 @@ export interface LastSignal {
   pid?: number;
   reply?: SignalReply;
   reason?: string;
+}
+
+/** Protojson omits false: only an explicit true is an observed live process. */
+export function hasLiveProcess(agent: AgentInstance): boolean {
+  return agent.process_alive === true;
 }
 
 export function breakinState(
@@ -29,7 +35,7 @@ export function breakinState(
   if (action) {
     const after = Date.parse(action.at);
     if (
-      agent.process_alive === true &&
+      hasLiveProcess(agent) &&
       agent.agent_pid !== undefined &&
       (agent.agent_pid !== action.pid || agent.agent_id !== action.agentId) &&
       Date.parse(agent.agent_process_started_at ?? "") > after
@@ -56,9 +62,10 @@ export function breakinState(
       );
     if (action.reply && agent.agent_type !== "claude")
       return unknown("the vendor records no interrupt");
-    return unknown("nothing has been observed yet");
+    if (action.kind === "signal")
+      return unknown("nothing has been observed yet");
   }
-  if (agent.process_alive === true && agent.state === "AGENT_STATE_ACTIVE")
+  if (hasLiveProcess(agent) && agent.state === "AGENT_STATE_ACTIVE")
     return "running";
   return unknown(
     `this session is ${stripEnum(agent.state)}; no live active process observed`,

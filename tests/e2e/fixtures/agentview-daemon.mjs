@@ -73,8 +73,15 @@ function controlAgents(name, control, refuseControl) {
     agent.agent_pid = 424242;
     agent.agent_process_started_at = "2026-09-07T22:00:00Z";
     agent.capabilities.signals.control = refuseControl
-      ? { level: "CAPABILITY_LEVEL_UNAVAILABLE", detail: "fixture control is unavailable: no authenticated signal target" }
-      : { level: "CAPABILITY_LEVEL_LIMITED", detail: "process signal; effect learned on the next poll" };
+      ? {
+          level: "CAPABILITY_LEVEL_UNAVAILABLE",
+          detail:
+            "fixture control is unavailable: no authenticated signal target",
+        }
+      : {
+          level: "CAPABILITY_LEVEL_LIMITED",
+          detail: "process signal; effect learned on the next poll",
+        };
   }
   return doc;
 }
@@ -87,27 +94,67 @@ function handle(req, res, { refuse, control, refuseControl, signals }) {
     return json(res, 200, { signals });
   const signal = /^\/api\/v1\/agents\/([^/]+)\/signal$/.exec(p);
   if (control && signal && req.method === "POST") {
-    if (req.headers["x-dist-agent-proxy"] !== "fixture-daemon-proof" ||
-        req.headers["x-auth-request-user"] !== "a8e78e55-bcde-4789-9210-981476abc123" ||
-        !req.headers["x-forwarded-for"]) return refused(res);
-    if (req.headers["content-type"] !== "application/json" || req.headers.origin)
-      return json(res, 403, {error: "invalid browser write"});
+    if (
+      req.headers["x-dist-agent-proxy"] !== "fixture-daemon-proof" ||
+      req.headers["x-auth-request-user"] !==
+        "a8e78e55-bcde-4789-9210-981476abc123" ||
+      !req.headers["x-forwarded-for"]
+    )
+      return refused(res);
+    if (
+      req.headers["content-type"] !== "application/json" ||
+      req.headers.origin
+    )
+      return json(res, 403, { error: "invalid browser write" });
     let body = "";
     req.setEncoding("utf8");
-    req.on("data", (chunk) => { body += chunk; });
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
     req.on("end", () => {
       let parsed;
-      try { parsed = JSON.parse(body); } catch { return json(res, 400, {error: "invalid JSON"}); }
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        return json(res, 400, { error: "invalid JSON" });
+      }
       const id = decodeURIComponent(signal[1]);
-      const target = controlAgents("agents", control, refuseControl).agents.find((agent) => agent.agent_id === id);
-      if (!target || parsed.signal !== "interrupt") return json(res, 400, {error: "invalid fixture signal target or verb"});
+      if (id === "galway/claude/session" && parsed.signal === "interrupt") {
+        signals.push({ agent_id: id, body: parsed, headers: req.headers });
+        return json(res, 421, {
+          agent_id: id,
+          signal: parsed.signal,
+          outcome: "refused",
+          recorded: true,
+          note: "refusal recorded",
+          event_id: `fixture-signal-${signals.length}`,
+          error:
+            'no agent "galway/claude/session" is in this node\'s registry; its prefix names node galway, and control is not federated: node galway has its own control surface at https://agent.galway.example (ADR 0026 §3); this daemon can only signal processes it can see',
+        });
+      }
+      const target = controlAgents(
+        "agents",
+        control,
+        refuseControl,
+      ).agents.find((agent) => agent.agent_id === id);
+      if (!target || parsed.signal !== "interrupt")
+        return json(res, 400, {
+          error: "invalid fixture signal target or verb",
+        });
       signals.push({ agent_id: id, body: parsed, headers: req.headers });
       return json(res, refuseControl ? 409 : 200, {
-        agent_id: id, signal: parsed.signal,
-        outcome: refuseControl ? "refused" : "sent", recorded: true,
+        agent_id: id,
+        signal: parsed.signal,
+        outcome: refuseControl ? "refused" : "sent",
+        recorded: true,
         note: "the effect is learned on the next process poll",
         event_id: `fixture-signal-${signals.length}`,
-        ...(refuseControl ? {error: "fixture control is unavailable: no authenticated signal target"} : {}),
+        ...(refuseControl
+          ? {
+              error:
+                "fixture control is unavailable: no authenticated signal target",
+            }
+          : {}),
       });
     });
     return;
@@ -141,7 +188,11 @@ function handle(req, res, { refuse, control, refuseControl, signals }) {
     const all =
       url.searchParams.get("include_finished") === "true" &&
       hasFixture("agents-all");
-    return json(res, 200, controlAgents(all ? "agents-all" : "agents", control, refuseControl));
+    return json(
+      res,
+      200,
+      controlAgents(all ? "agents-all" : "agents", control, refuseControl),
+    );
   }
 
   const agent = AGENT_ROUTE.exec(p);
@@ -150,7 +201,9 @@ function handle(req, res, { refuse, control, refuseControl, signals }) {
     // requires; an unencoded `node/type/session` never matches this pattern
     // and falls to the 404 below, as it does on the daemon.
     const id = decodeURIComponent(agent[1]);
-    const found = controlAgents("agents", control, refuseControl).agents.find((a) => a.agent_id === id);
+    const found = controlAgents("agents", control, refuseControl).agents.find(
+      (a) => a.agent_id === id,
+    );
     if (!found) return json(res, 404, { error: `no such agent: ${id}` });
     return json(res, 200, found);
   }
@@ -229,7 +282,12 @@ function stream(req, res, params) {
  * Starts the fixture daemon. `port: 0` picks an ephemeral port, which is what
  * the in-process test uses; the resolved `port` is reported back.
  */
-export function start({ port = DEFAULT_PORT, refuse = false, control = false, refuseControl = false } = {}) {
+export function start({
+  port = DEFAULT_PORT,
+  refuse = false,
+  control = false,
+  refuseControl = false,
+} = {}) {
   if (port === OPERATOR_PORT) {
     return Promise.reject(
       new Error(
@@ -239,7 +297,14 @@ export function start({ port = DEFAULT_PORT, refuse = false, control = false, re
     );
   }
   const signals = [];
-  const server = http.createServer((req, res) => handle(req, res, { refuse, control: control || refuseControl, refuseControl, signals }));
+  const server = http.createServer((req, res) =>
+    handle(req, res, {
+      refuse,
+      control: control || refuseControl,
+      refuseControl,
+      signals,
+    }),
+  );
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", () => {
@@ -263,7 +328,12 @@ const isMain =
 if (isMain) {
   const port = Number(process.env.AGENTVIEW_E2E_DAEMON_PORT || DEFAULT_PORT);
   const refuse = process.argv.includes("--refuse");
-  start({ port, refuse, control: process.argv.includes("--control"), refuseControl: process.argv.includes("--refuse-control") })
+  start({
+    port,
+    refuse,
+    control: process.argv.includes("--control"),
+    refuseControl: process.argv.includes("--refuse-control"),
+  })
     .then(({ port: bound }) => {
       console.log(
         `agentview fixture daemon listening on http://127.0.0.1:${bound}` +

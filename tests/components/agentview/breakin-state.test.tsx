@@ -6,6 +6,7 @@ import type { AgentEvent } from "@/lib/agentview/types";
 import { ACTIVE_AGENT } from "./fixtures";
 
 const signal: LastSignal = {
+  kind: "signal",
   at: "2026-09-08T14:00:00Z",
   agentId: "chamonix-d5d8554e/claude/4db77e81-4da9-4567-a755-ad316e8df7ba",
   sessionId: "4db77e81-4da9-4567-a755-ad316e8df7ba",
@@ -33,6 +34,22 @@ const interrupted: AgentEvent = {
 };
 afterEach(cleanup);
 describe("observed break-in state", () => {
+  it("resuming a running session keeps reporting running until a new pid is observed", () => {
+    const resume: LastSignal = { ...signal, kind: "resume", reply: undefined };
+    expect(breakinState(ACTIVE_AGENT, [], resume, now)).toBe("running");
+    expect(
+      breakinState(
+        {
+          ...ACTIVE_AGENT,
+          agent_pid: 50000,
+          agent_process_started_at: "2026-09-08T14:00:20Z",
+        },
+        [],
+        resume,
+        now,
+      ),
+    ).toBe("resumed here (observed)");
+  });
   it("running comes from the live ACTIVE agent row", () => {
     render(<p>{breakinState(ACTIVE_AGENT, [], null, now)}</p>);
     expect(screen.getByText("running", { exact: true })).toBeVisible();

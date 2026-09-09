@@ -10,7 +10,7 @@ import {
   resumeUnavailableReason,
 } from "@/lib/agentview/resume";
 import { buildTerminalWsUrl } from "@/lib/websocket-utils";
-import { breakinState, type LastSignal } from "./breakin";
+import { breakinState, hasLiveProcess, type LastSignal } from "./breakin";
 
 // This existing terminal owns the ticketed WebSocket, xterm, input and cleanup.
 const Terminal = dynamic(
@@ -48,15 +48,16 @@ export function BreakIn({
       : !control || control.level === "CAPABILITY_LEVEL_UNSPECIFIED"
         ? "the daemon has not reported whether control is available"
         : undefined;
-  const passive =
-    agent.state !== "AGENT_STATE_ACTIVE" || agent.process_alive === false;
+  const live = hasLiveProcess(agent);
+  const passive = agent.state !== "AGENT_STATE_ACTIVE" || !live;
   const interruptReason =
     observationFailure ||
-    controlReason ||
-    signalRefusal ||
     (passive
-      ? `nothing to interrupt: this session is ${stripEnum(agent.state)}`
-      : undefined);
+      ? agent.state !== "AGENT_STATE_ACTIVE"
+        ? `nothing to interrupt: this session is ${stripEnum(agent.state)}`
+        : "nothing to interrupt: no process has been observed for this session"
+      : undefined) ||
+    controlReason;
   const command = resumeCommand(agent.agent_type, agent.session_id);
   const remoteReason =
     agent.node_id !== localNodeId
@@ -74,7 +75,8 @@ export function BreakIn({
       ? "the daemon has not reported this session's cwd"
       : undefined) ||
     terminalRefusal;
-  const snapshot = (): LastSignal => ({
+  const snapshot = (kind: LastSignal["kind"]): LastSignal => ({
+    kind,
     at: new Date().toISOString(),
     agentId: agent.agent_id,
     sessionId: agent.session_id,
@@ -83,9 +85,10 @@ export function BreakIn({
   });
 
   const interrupt = async () => {
+    setSignalRefusal(undefined);
     if (interruptReason || pending) return;
     setPending(true);
-    const before = snapshot();
+    const before = snapshot("signal");
     setLastSignal(before);
     const result = await signalAgent(agent.agent_id);
     setLastSignal({ ...before, ...result });
@@ -97,21 +100,23 @@ export function BreakIn({
   };
   const resume = () => {
     if (resumeReason || !command || !agent.cwd || terminalUrl) return;
-    setLastSignal(snapshot());
+    setLastSignal(snapshot("resume"));
     setTerminalUrl(buildTerminalWsUrl(resumeParams(agent.cwd, command)));
   };
   const terminalError = (reason: string) => {
     setTerminalRefusal(reason);
     setLastSignal((previous) => ({
-      ...(previous ?? snapshot()),
+      ...(previous ?? snapshot("resume")),
       reason: `the terminal server refused: ${reason}`,
     }));
     setTerminalUrl(undefined);
   };
-  // The daemon's 409 puts the peer's control URL in its reason. Permit web links
+  // A relayed row or a 421 refusal names the peer control URL. Permit web links
   // only; never treat arbitrary reason text as an executable URL.
   const reason = lastSignal?.reply?.error || controlReason || "";
-  const peerUrl = reason.match(/reachable at (https?:\/\/[^\s;]+)/)?.[1];
+  const peerUrl = reason
+    .match(/(?:reachable at|control surface at) (https?:\/\/[^\s,;)]+)/)?.[1]
+    ?.replace(/[.!?:]+$/, "");
 
   return (
     <section
@@ -125,6 +130,9 @@ export function BreakIn({
           ? `unknown, because ${observationFailure} · ${formatAge(agent.last_activity, now)}`
           : breakinState(agent, events, lastSignal, now)}
       </p>
+      {signalRefusal && (
+        <p data-testid="agentview-signal-refusal">{signalRefusal}</p>
+      )}
       {lastSignal?.reply && (
         <p data-testid="agentview-signal-reply">
           {lastSignal.reply.outcome} ·{" "}

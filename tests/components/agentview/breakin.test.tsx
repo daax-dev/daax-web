@@ -8,6 +8,8 @@ import {
 } from "@testing-library/react";
 // @ts-expect-error TS5097: explicit .tsx disambiguates BreakIn.tsx from breakin.ts on case-insensitive filesystems; both bundlers accept it.
 import { BreakIn, type BreakInProps } from "@/components/agentview/BreakIn.tsx";
+import recordedAgents from "../../e2e/fixtures/agentview/agents.json";
+import type { AgentInstance } from "@/lib/agentview/types";
 import { ACTIVE_AGENT } from "./fixtures";
 
 // The existing Terminal owns xterm and ticketing. Its public onError contract is
@@ -114,19 +116,28 @@ describe("BreakIn", () => {
       }),
     ).toBeDisabled();
   });
-  it("a remote node renders the link from the 409", async () => {
+  it("a remote node renders the link from the 421", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
           ...reply,
           outcome: "refused",
           error:
-            "this agent runs on node galway, reachable at https://agent.galway.example; control is not federated, so use the control surface there (ADR 0026 §3)",
+            'no agent "galway/claude/session" is in this node\'s registry; its prefix names node galway, and control is not federated: node galway has its own control surface at https://agent.galway.example (ADR 0026 §3); this daemon can only signal processes it can see',
         }),
-        { status: 409 },
+        { status: 421 },
       ),
     );
-    render(<BreakIn {...props} agent={{ ...active, node_id: "galway" }} />);
+    render(
+      <BreakIn
+        {...props}
+        agent={{
+          ...active,
+          agent_id: "galway/claude/session",
+          node_id: "galway",
+        }}
+      />,
+    );
     expect(
       screen.getByRole("button", {
         name: /Resume here — this session runs on galway/,
@@ -157,7 +168,9 @@ describe("BreakIn", () => {
       expect(fetchMock).not.toHaveBeenCalled();
       expect(interrupt).toBeDisabled();
       expect(interrupt).toHaveTextContent(
-        "nothing to interrupt: this session is",
+        patch.state === "AGENT_STATE_IDLE"
+          ? "nothing to interrupt: this session is IDLE"
+          : "nothing to interrupt: no process has been observed for this session",
       );
       expect(screen.getByRole("button", { name: "Resume here" })).toBeEnabled();
     },
@@ -176,11 +189,122 @@ describe("BreakIn", () => {
     render(<BreakIn {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "Interrupt" }));
     expect(
-      await screen.findByRole("button", {
-        name: "Interrupt — daax trusted the local operator without a name, and the daemon records a signal against a person",
-      }),
-    ).toBeDisabled();
+      await screen.findByTestId("agentview-signal-refusal"),
+    ).toHaveTextContent(
+      "daax trusted the local operator without a name, and the daemon records a signal against a person",
+    );
+    expect(screen.getByRole("button", { name: "Interrupt" })).toBeEnabled();
   });
+  it.each([
+    "this agent runs on node galway, and control is not federated: node galway has its own control surface at http://100.112.65.66:7717 (ADR 0026 §3); this daemon can only signal processes it can see",
+    "this agent runs on node galway, reachable at http://100.112.65.66:7717, and control is not federated, so use the control surface there (ADR 0026 §3)",
+    "this agent runs on node galway, reachable at http://100.112.65.66:7717.",
+  ])(
+    "renders the owning node's URL from the control capability detail, not only from the refusal (%s)",
+    (detail) => {
+      render(
+        <BreakIn
+          {...props}
+          agent={{
+            ...active,
+            node_id: "galway",
+            agent_id: "galway/claude/session",
+            capabilities: {
+              signals: {
+                control: { level: "CAPABILITY_LEVEL_UNAVAILABLE", detail },
+              },
+            },
+          }}
+        />,
+      );
+      expect(
+        screen.getByRole("link", {
+          name: "Open control surface on the owning node",
+        }),
+      ).toHaveAttribute("href", "http://100.112.65.66:7717");
+      expect(screen.getByRole("button", { name: /^Interrupt/ })).toBeDisabled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("an ACTIVE row with no process_alive key disables Interrupt and says why", () => {
+    // Byte-faithful recorded row: no --control synthesis and no added fields.
+    const agent = recordedAgents.agents.find(
+      (row) => row.state === "AGENT_STATE_ACTIVE",
+    ) as AgentInstance;
+    expect(Object.hasOwn(agent, "process_alive")).toBe(false);
+    render(<BreakIn {...props} agent={agent} />);
+    const interrupt = screen.getByRole("button", { name: /^Interrupt/ });
+    fireEvent.click(interrupt);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(interrupt).toBeDisabled();
+    expect(interrupt).toHaveTextContent(
+      "nothing to interrupt: no process has been observed for this session",
+    );
+    expect(screen.getByTestId("agentview-breakin-state")).toHaveTextContent(
+      "unknown",
+    );
+  });
+
+  it.each([true, false, undefined])(
+    "the state line and the Interrupt button agree about whether a process was observed (%s)",
+    (processAlive) => {
+      render(
+        <BreakIn
+          {...props}
+          agent={{ ...active, process_alive: processAlive }}
+        />,
+      );
+      const interrupt = screen.getByRole("button", { name: /^Interrupt/ });
+      if (processAlive === true) {
+        expect(interrupt).toBeEnabled();
+        expect(screen.getByTestId("agentview-breakin-state")).toHaveTextContent(
+          /^running$/,
+        );
+      } else {
+        fireEvent.click(interrupt);
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(interrupt).toBeDisabled();
+        expect(interrupt).toHaveTextContent(
+          "no process has been observed for this session",
+        );
+        expect(screen.getByTestId("agentview-breakin-state")).toHaveTextContent(
+          "unknown",
+        );
+      }
+    },
+  );
+
+  it("a transient refusal does not permanently disable Interrupt", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          error: "agentview daemon unreachable",
+          reason: "daemon restarting",
+        }),
+        { status: 502 },
+      ),
+    );
+    render(<BreakIn {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Interrupt" }));
+    expect(
+      await screen.findByTestId("agentview-signal-refusal"),
+    ).toHaveTextContent("daemon restarting");
+    const retry = screen.getByRole("button", {
+      name: "Interrupt",
+    });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    await waitFor(() =>
+      expect(screen.getByTestId("agentview-signal-reply")).toHaveTextContent(
+        "sent · event signal-1",
+      ),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(screen.queryByTestId("agentview-signal-refusal")).toBeNull();
+    expect(screen.queryByText("daemon restarting")).toBeNull();
+  });
+
   it("opens resume with the observed cwd and relays a terminal path refusal", async () => {
     render(<BreakIn {...props} />);
     fireEvent.click(screen.getByRole("button", { name: "Resume here" }));
@@ -192,8 +316,8 @@ describe("BreakIn", () => {
       command: "claude --resume 4db77e81-4da9-4567-a755-ad316e8df7ba",
       sessionType: "resume",
     });
-    expect(screen.getByTestId("agentview-breakin-state")).not.toHaveTextContent(
-      "resumed here",
+    expect(screen.getByTestId("agentview-breakin-state")).toHaveTextContent(
+      /^running$/,
     );
     fireEvent.click(screen.getByRole("button", { name: "Refuse path" }));
     expect(
