@@ -89,3 +89,14 @@ Header names and file paths are runtime settings, so no Dockerfile ARG is needed
 Resume is unavailable whenever `HOST_WORKSPACE_PATH` is set; a container shell
 cannot resume an observed host session at its host cwd. Host resume uses the existing
 terminal's workspace confinement and shows any policy refusal from that server.
+
+Break-in states are observations. After a signal, the baseline pid disappearing
+from the row or a later `PROCESS_EXITED` event for that agent yields
+`interrupted (observed)` and names the pid. An exit event supplies the exit's age;
+a row without an exit timestamp labels the signal's age separately, without
+inventing the time of the process exit.
+This applies to Claude, Codex and Gemini. The Claude transcript interrupt marker
+is an additional reading for keyboard interrupts. A new live pid for the same
+session, started after the action, takes precedence as `resumed here (observed)`.
+A still-live Codex or Gemini process retains the vendor's no-interrupt-record
+explanation. `sent` remains a separate acknowledgment beside the event id.

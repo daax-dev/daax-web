@@ -63,8 +63,8 @@ const AGENT_ROUTE = /^\/api\/v1\/agents\/([^/]+)$/;
 
 // Control mode supplies the process/control fields absent from the recorded
 // transcript-only daemon. It models a live Claude process; it never signals an
-// operating-system process or fabricates an interrupt observation.
-function controlAgents(name, control, refuseControl) {
+// operating-system process. --ends-on-signal explicitly models process exit.
+function controlAgents(name, control, refuseControl, exits) {
   const doc = readFixture(name);
   if (!control) return doc;
   for (const agent of doc.agents) {
@@ -72,6 +72,10 @@ function controlAgents(name, control, refuseControl) {
     agent.process_alive = true;
     agent.agent_pid = 424242;
     agent.agent_process_started_at = "2026-09-07T22:00:00Z";
+    if (exits.has(agent.agent_id)) {
+      delete agent.process_alive;
+      delete agent.agent_pid;
+    }
     agent.capabilities.signals.control = refuseControl
       ? {
           level: "CAPABILITY_LEVEL_UNAVAILABLE",
@@ -86,7 +90,11 @@ function controlAgents(name, control, refuseControl) {
   return doc;
 }
 
-function handle(req, res, { refuse, control, refuseControl, signals }) {
+function handle(
+  req,
+  res,
+  { refuse, control, refuseControl, endsOnSignal, signals, exits },
+) {
   const url = new URL(req.url, "http://127.0.0.1");
   const p = url.pathname;
 
@@ -136,12 +144,26 @@ function handle(req, res, { refuse, control, refuseControl, signals }) {
         "agents",
         control,
         refuseControl,
+        exits,
       ).agents.find((agent) => agent.agent_id === id);
       if (!target || parsed.signal !== "interrupt")
         return json(res, 400, {
           error: "invalid fixture signal target or verb",
         });
       signals.push({ agent_id: id, body: parsed, headers: req.headers });
+      if (endsOnSignal && !refuseControl) {
+        exits.set(id, {
+          event_id: `fixture-exit-${signals.length}`,
+          sequence: String(
+            Number(readFixture("events").last_sequence) + signals.length,
+          ),
+          event_type: "EVENT_TYPE_PROCESS_EXITED",
+          agent_id: id,
+          node_id: target.node_id,
+          session_id: target.session_id,
+          timestamp: new Date().toISOString(),
+        });
+      }
       return json(res, refuseControl ? 409 : 200, {
         agent_id: id,
         signal: parsed.signal,
@@ -191,7 +213,12 @@ function handle(req, res, { refuse, control, refuseControl, signals }) {
     return json(
       res,
       200,
-      controlAgents(all ? "agents-all" : "agents", control, refuseControl),
+      controlAgents(
+        all ? "agents-all" : "agents",
+        control,
+        refuseControl,
+        exits,
+      ),
     );
   }
 
@@ -201,14 +228,18 @@ function handle(req, res, { refuse, control, refuseControl, signals }) {
     // requires; an unencoded `node/type/session` never matches this pattern
     // and falls to the 404 below, as it does on the daemon.
     const id = decodeURIComponent(agent[1]);
-    const found = controlAgents("agents", control, refuseControl).agents.find(
-      (a) => a.agent_id === id,
-    );
+    const found = controlAgents(
+      "agents",
+      control,
+      refuseControl,
+      exits,
+    ).agents.find((a) => a.agent_id === id);
     if (!found) return json(res, 404, { error: `no such agent: ${id}` });
     return json(res, 200, found);
   }
 
-  if (p === "/api/v1/events") return json(res, 200, events(url.searchParams));
+  if (p === "/api/v1/events")
+    return json(res, 200, events(url.searchParams, exits));
 
   if (p === "/api/v1/stream") return stream(req, res, url.searchParams);
 
@@ -216,9 +247,15 @@ function handle(req, res, { refuse, control, refuseControl, signals }) {
 }
 
 /** Filters the recorded list the way the daemon's query parameters would. */
-function events(params) {
+function events(params, exits) {
   const doc = readFixture("events");
-  let rows = doc.events.slice();
+  let rows = [...doc.events, ...exits.values()];
+  const lastSequence = String(
+    Math.max(
+      Number(doc.last_sequence),
+      ...Array.from(exits.values(), (event) => Number(event.sequence)),
+    ),
+  );
 
   const agentId = params.get("agent_id");
   if (agentId) rows = rows.filter((e) => e.agent_id === agentId);
@@ -234,7 +271,7 @@ function events(params) {
   const limit = Number(params.get("limit") ?? 0);
   if (limit > 0) rows = rows.slice(0, limit);
 
-  return { events: rows, last_sequence: doc.last_sequence };
+  return { events: rows, last_sequence: lastSequence };
 }
 
 /**
@@ -287,6 +324,7 @@ export function start({
   refuse = false,
   control = false,
   refuseControl = false,
+  endsOnSignal = false,
 } = {}) {
   if (port === OPERATOR_PORT) {
     return Promise.reject(
@@ -297,12 +335,15 @@ export function start({
     );
   }
   const signals = [];
+  const exits = new Map();
   const server = http.createServer((req, res) =>
     handle(req, res, {
       refuse,
-      control: control || refuseControl,
+      control: control || refuseControl || endsOnSignal,
       refuseControl,
+      endsOnSignal,
       signals,
+      exits,
     }),
   );
   return new Promise((resolve, reject) => {
@@ -333,6 +374,7 @@ if (isMain) {
     refuse,
     control: process.argv.includes("--control"),
     refuseControl: process.argv.includes("--refuse-control"),
+    endsOnSignal: process.argv.includes("--ends-on-signal"),
   })
     .then(({ port: bound }) => {
       console.log(

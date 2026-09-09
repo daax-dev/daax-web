@@ -41,6 +41,26 @@ export function breakinState(
       Date.parse(agent.agent_process_started_at ?? "") > after
     )
       return "resumed here (observed)";
+    if (action.kind === "signal" && action.pid !== undefined) {
+      const exit = events.find(
+        (event) =>
+          event.event_type === "EVENT_TYPE_PROCESS_EXITED" &&
+          event.node_id === action.nodeId &&
+          event.agent_id === action.agentId &&
+          Date.parse(event.timestamp) > after,
+      );
+      if (exit)
+        return `interrupted (observed): process ${action.pid} ended ${formatAge(exit.timestamp, now)} after the signal`;
+      if (
+        agent.agent_id === action.agentId &&
+        !hasLiveProcess(agent) &&
+        (agent.agent_pid === action.pid || agent.agent_pid === undefined)
+      ) {
+        // The row proves an end, but has no exit timestamp: label the signal's
+        // age rather than assigning that timestamp to the process exit.
+        return `interrupted (observed): process ${action.pid} ended after the signal · signal ${formatAge(action.at, now)}`;
+      }
+    }
     if (
       events.some(
         (event) =>
@@ -60,7 +80,11 @@ export function breakinState(
       return unknown(
         `the daemon ${action.reply.outcome}: ${action.reply.error || action.reply.note}`,
       );
-    if (action.reply && agent.agent_type !== "claude")
+    if (
+      action.kind === "signal" &&
+      hasLiveProcess(agent) &&
+      agent.agent_type !== "claude"
+    )
       return unknown("the vendor records no interrupt");
     if (action.kind === "signal")
       return unknown("nothing has been observed yet");

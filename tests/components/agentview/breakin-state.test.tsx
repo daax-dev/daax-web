@@ -32,6 +32,14 @@ const interrupted: AgentEvent = {
   timestamp: "2026-09-08T14:00:10Z",
   attributes: { turn_interrupted: "true" },
 };
+const exited: AgentEvent = {
+  event_id: "process-exit-1",
+  sequence: "43",
+  event_type: "EVENT_TYPE_PROCESS_EXITED",
+  agent_id: "chamonix-d5d8554e/claude/4db77e81-4da9-4567-a755-ad316e8df7ba",
+  node_id: "chamonix-d5d8554e",
+  timestamp: "2026-09-08T14:00:10Z",
+};
 afterEach(cleanup);
 describe("observed break-in state", () => {
   it("resuming a running session keeps reporting running until a new pid is observed", () => {
@@ -49,6 +57,132 @@ describe("observed break-in state", () => {
         now,
       ),
     ).toBe("resumed here (observed)");
+  });
+  it.each([40327, undefined])(
+    "interrupted (observed) comes from the process ending after the signal (%s)",
+    (pid) => {
+      const { process_alive: _alive, ...ended } = ACTIVE_AGENT;
+      const { rerender } = render(
+        <p>{breakinState({ ...ended, agent_pid: pid }, [], signal, now)}</p>,
+      );
+      expect(
+        screen.getByText(
+          "interrupted (observed): process 40327 ended after the signal · signal 30s ago",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      rerender(
+        <p>
+          {breakinState({ ...ended, agent_pid: pid }, [], signal, now + 30000)}
+        </p>,
+      );
+      expect(
+        screen.getByText(
+          "interrupted (observed): process 40327 ended after the signal · signal 1m ago",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      expect(screen.queryByText(/signal 30s ago/)).toBeNull();
+    },
+  );
+  it("interrupted (observed) comes from a PROCESS_EXITED after the signal", () => {
+    const { rerender } = render(
+      <p>{breakinState(ACTIVE_AGENT, [exited], signal, now)}</p>,
+    );
+    expect(
+      screen.getByText(
+        "interrupted (observed): process 40327 ended 20s ago after the signal",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    rerender(
+      <p>{breakinState(ACTIVE_AGENT, [exited], signal, now + 60000)}</p>,
+    );
+    expect(
+      screen.getByText(
+        "interrupted (observed): process 40327 ended 1m ago after the signal",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(/20s ago/)).toBeNull();
+  });
+  it.each(["2026-09-08T13:59:59Z", "2026-09-08T14:00:00Z"])(
+    "a PROCESS_EXITED before or at T does not count (%s)",
+    (timestamp) => {
+      expect(
+        breakinState(ACTIVE_AGENT, [{ ...exited, timestamp }], signal, now),
+      ).toBe("unknown, because nothing has been observed yet · 30s ago");
+    },
+  );
+  it.each(["codex", "gemini"])(
+    "a %s agent whose process ended is observed, not unknown",
+    (agentType) => {
+      expect(
+        breakinState(
+          { ...ACTIVE_AGENT, agent_type: agentType, process_alive: undefined },
+          [],
+          signal,
+          now,
+        ),
+      ).toBe(
+        "interrupted (observed): process 40327 ended after the signal · signal 30s ago",
+      );
+      expect(
+        breakinState(
+          { ...ACTIVE_AGENT, agent_type: agentType },
+          [],
+          signal,
+          now,
+        ),
+      ).toBe("unknown, because the vendor records no interrupt · 30s ago");
+    },
+  );
+  it("resumed wins over interrupted when a new pid appears", () => {
+    expect(
+      breakinState(
+        {
+          ...ACTIVE_AGENT,
+          agent_pid: 50000,
+          agent_process_started_at: "2026-09-08T14:00:20Z",
+        },
+        [exited, interrupted],
+        signal,
+        now,
+      ),
+    ).toBe("resumed here (observed)");
+  });
+  it("ignores exits for another agent or node and does not read a resume baseline as a signal", () => {
+    for (const event of [
+      { ...exited, agent_id: "different" },
+      { ...exited, node_id: "different" },
+    ])
+      expect(breakinState(ACTIVE_AGENT, [event], signal, now)).toBe(
+        "unknown, because nothing has been observed yet · 30s ago",
+      );
+    expect(
+      breakinState(
+        ACTIVE_AGENT,
+        [exited],
+        { ...signal, kind: "resume", reply: undefined },
+        now,
+      ),
+    ).toBe("running");
+    expect(
+      breakinState(
+        { ...ACTIVE_AGENT, process_alive: false, agent_pid: 50000 },
+        [],
+        signal,
+        now,
+      ),
+    ).toBe("unknown, because nothing has been observed yet · 30s ago");
+    expect(
+      breakinState(
+        { ...ACTIVE_AGENT, process_alive: false },
+        [exited],
+        { ...signal, pid: undefined },
+        now,
+      ),
+    ).toBe("unknown, because nothing has been observed yet · 30s ago");
   });
   it("running comes from the live ACTIVE agent row", () => {
     render(<p>{breakinState(ACTIVE_AGENT, [], null, now)}</p>);

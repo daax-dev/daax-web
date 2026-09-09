@@ -223,3 +223,37 @@ test("wrong-node fixture refusal uses 404 and the daemon's exact sentence", asyn
       'no agent "galway/claude/session" is in this node\'s registry; its prefix names node galway, and control is not federated: node galway has its own control surface at https://agent.galway.example (ADR 0026 §3); this daemon can only signal processes it can see',
   });
 });
+
+test("Interrupt observes the baseline process ending and names its pid", async ({
+  page,
+}) => {
+  await startDaemon("--ends-on-signal");
+  await page.goto("/agentview");
+  await page
+    .locator(`[data-testid="agentview-agent"][data-agent-id="${agentId}"]`)
+    .click();
+  await page.getByRole("button", { name: "Interrupt", exact: true }).click();
+  await expect(page.getByTestId("agentview-breakin-state")).toContainText(
+    "interrupted (observed): process 424242 ended",
+    { timeout: 15000 },
+  );
+  const { signals } = await (await fetch(`${DAEMON}/__signals`)).json();
+  expect(signals).toHaveLength(1);
+  const { agents } = await (await fetch(`${DAEMON}/api/v1/agents`)).json();
+  const row = agents.find(
+    (agent: { agent_id: string }) => agent.agent_id === agentId,
+  );
+  expect(row).not.toHaveProperty("process_alive");
+  expect(row).not.toHaveProperty("agent_pid");
+  const { events } = await (
+    await fetch(
+      `${DAEMON}/api/v1/events?agent_id=${encodeURIComponent(agentId)}`,
+    )
+  ).json();
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      event_type: "EVENT_TYPE_PROCESS_EXITED",
+      agent_id: "chamonix-5d63c187/claude/1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411",
+    }),
+  );
+});
