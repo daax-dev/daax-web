@@ -189,6 +189,23 @@ services:
     cap_drop:
       - ALL
 
+    # host.docker.internal must be DECLARED on Linux. Docker Desktop provides
+    # the name for free, which is why this was never missed on the macOS
+    # workstation and why Agent View was dead on every Linux host in the fleet:
+    # lib/agentview/server.ts dials http://host.docker.internal:7717 in
+    # container mode, the name did not resolve, and the UI reported the daemon
+    # unreachable — correctly, from where it was standing.
+    #
+    # This maps it to the host gateway. Harmless where the name already exists.
+    #
+    # NOTE this is necessary and not yet sufficient on Linux: agentd listens on
+    # 127.0.0.1 by default, so the gateway address still refuses the connection.
+    # A Linux host also needs the daemon reachable from the bridge and, because
+    # such a caller is not loopback, `--auth=oidc` will then want a session that
+    # Agent View reads do not carry. Tracked separately.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
     ports:
       # Bind to localhost only - Traefik proxies external access.
       # 4201 (Terminal WebSocket) is now published by the `terminal` service.
@@ -324,6 +341,28 @@ services:
       # Clawdbot gateway (optional - required for /bot page)
       - CLAWD_GATEWAY_URL=${CLAWD_GATEWAY_URL:-}
       - CLAWD_GATEWAY_TOKEN=${CLAWD_GATEWAY_TOKEN:-}
+
+      # RBAC admin allow-list (lib/rbac/allowlist.ts, F5 #101). Without it NOBODY
+      # is an admin on a host that forwards a real identity, and the settings
+      # page's "Plugins & Features" card — the per-menu maturity and on/off
+      # controls — is gated on isAdminMode, so it silently disappears.
+      #
+      # Measured on /api/auth/access with and without a forwarded subject:
+      #   no identity       -> isAdmin true,  admin:* permissions (local operator)
+      #   forwarded subject -> isAdmin false, user permissions only
+      #
+      # Every host here runs DAAX_REQUIRE_AUTH=1, so all of them are the second
+      # case and none of them had an admin.
+      #
+      # SUBJECT form, not email/username: the subject is the immutable OIDC
+      # `sub`, matched exactly, and it is what Pocket ID's forward-auth actually
+      # sends (`c.Header("X-Forwarded-User", user.ID)`). An attribute entry is
+      # matched against mutable values the proxy forwards and is only as
+      # trustworthy as the IdP's email verification.
+      #
+      # Per-host: each host runs its own Pocket ID, so the same person has a
+      # different subject on each. Set it in deploy/env/<host>.env.
+      - DAAX_ADMIN_USERS=${DAAX_ADMIN_USERS:-}
 
       # Agent View (dist-agent daemon). Optional: the proxy at /api/agentview
       # defaults to http://host.docker.internal:7717 in container mode; set this
