@@ -114,7 +114,7 @@ jobs:
       # on without turning the gate into a habit of ignoring it. Tighten HIGH
       # to exit-code 1 once the baseline is triaged.
       - name: Trivy filesystem scan — CRITICAL gate (fixable only)
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -124,7 +124,7 @@ jobs:
           format: table
 
       - name: Trivy filesystem scan — HIGH (report only)
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -196,6 +196,7 @@ jobs:
         run: |
           bun run start:prod &
           echo "APP_PID=$!" >> "$GITHUB_ENV"
+          # shellcheck disable=SC2034 # loop counter intentionally unused
           for i in $(seq 1 60); do
             if curl -sf http://localhost:4200/ >/dev/null; then
               echo "app is up"; exit 0

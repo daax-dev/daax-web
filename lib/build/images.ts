@@ -13,8 +13,9 @@
  * Digests are resolved from the local Docker daemon. Images that aren't present
  * are reported present:false with a null digest rather than guessed, and when
  * the daemon is unreachable the stack category is simply absent. The set of
- * refs is closed per request: the per-image SBOM route whitelists against the
- * freshly computed set, so a client can only ever name an image that is in it.
+ * refs and running image IDs is closed per request: the per-image SBOM route
+ * whitelists against the freshly computed set, so a client can only ever name
+ * an image that is in it.
  */
 import os from "node:os";
 
@@ -77,8 +78,11 @@ export const COMPOSE_SERVICE_LABEL = "com.docker.compose.service";
 export const STACK_MAX_DEFAULT = 64;
 
 /** The app's runtime base image (Dockerfile FROM); override via env. */
+export const DEFAULT_RUNTIME_BASE_IMAGE =
+  "node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5";
+
 function runtimeBaseImage(): string {
-  return process.env.DAAX_RUNTIME_BASE_IMAGE || "node:22-bookworm-slim";
+  return process.env.DAAX_RUNTIME_BASE_IMAGE || DEFAULT_RUNTIME_BASE_IMAGE;
 }
 
 /** The code-server image daax proxies (/code-server); override via env. */
@@ -142,10 +146,11 @@ export interface StackOptions {
  * The images of the running stack: every running container in the same compose
  * project as this one (label com.docker.compose.project), or — when this
  * process is not a compose-managed container — every running container. Rows
- * are keyed by image ref, so two containers on one image (e.g. web + migrate)
- * share a row listing both names. Bounded by `max`; sorted by container name
- * with this container first. Any daemon failure yields [] (absence, not a
- * guess), never throws.
+ * are keyed by image ref AND immutable image ID, so two containers on the same
+ * image (e.g. web + migrate) share a row, while containers left on different
+ * generations of a mutable tag remain distinct. Bounded by `max`; sorted by
+ * container name with this container first. Any daemon failure yields []
+ * (absence, not a guess), never throws.
  */
 export async function stackImageRefs(
   docker: ImagesDockerClient,
@@ -178,9 +183,10 @@ export async function stackImageRefs(
   for (const c of scoped) {
     const ref = (c.Image || "").trim();
     if (!ref) continue;
+    const rowKey = `${ref}\0${c.ImageID || ""}`;
     const name = containerName(c);
     const isSelf = self !== undefined && c.Id === self.Id;
-    const existing = rows.get(ref);
+    const existing = rows.get(rowKey);
     if (existing) {
       existing.containers = [...(existing.containers ?? []), name].sort();
       existing.name = existing.containers.join(", ");
@@ -190,7 +196,7 @@ export async function stackImageRefs(
       }
       continue;
     }
-    rows.set(ref, {
+    rows.set(rowKey, {
       category: "stack",
       name,
       ref,
@@ -214,33 +220,42 @@ export async function stackImageRefs(
 
 /**
  * The closed set of image references for THIS request: the running stack
- * (when the daemon is reachable) followed by the static refs, deduplicated by
- * ref with the stack row winning (it carries the container context and the
- * digest of the image actually running).
+ * (when the daemon is reachable) followed by static refs not already represented
+ * in the stack. Distinct running image IDs are never deduplicated merely because
+ * their mutable display refs match.
  */
 export async function knownImageRefs(
   docker: ImagesDockerClient = getDocker(),
   opts: StackOptions = {},
 ): Promise<KnownImageRef[]> {
   const stack = await stackImageRefs(docker, opts);
-  return dedupeByRef([...stack, ...staticImageRefs()]);
+  const stackRefs = new Set(stack.map((row) => row.ref));
+  return [
+    ...stack,
+    ...staticImageRefs().filter((row) => !stackRefs.has(row.ref)),
+  ];
 }
 
 /**
- * The known-set entry for `ref`, or null when it is not in the freshly computed
- * set (whitelist for the SBOM route). Computed once per call; a caller must not
- * cache a hit across requests, since the stack can change. Stack rows carry the
- * immutable `imageId` of the image the container runs.
+ * The known-set entry for a display ref or running immutable image ID, or null
+ * when it is not in the freshly computed set (whitelist for the SBOM route).
+ * A display ref shared by multiple running image IDs is ambiguous and rejected;
+ * callers must use the image ID. Computed once per call; a caller must not cache
+ * a hit across requests, since the stack can change.
  */
 export async function findKnownImageRef(
   ref: string,
   docker: ImagesDockerClient = getDocker(),
 ): Promise<KnownImageRef | null> {
   if (!ref) return null;
-  return (await knownImageRefs(docker)).find((r) => r.ref === ref) ?? null;
+  const refs = await knownImageRefs(docker);
+  const byId = refs.find((row) => row.imageId === ref);
+  if (byId) return byId;
+  const byRef = refs.filter((row) => row.ref === ref);
+  return byRef.length === 1 ? byRef[0] : null;
 }
 
-/** True when `ref` is in the freshly computed known set. */
+/** True when a ref or running image ID is unambiguously in the known set. */
 export async function isKnownImageRef(
   ref: string,
   docker: ImagesDockerClient = getDocker(),

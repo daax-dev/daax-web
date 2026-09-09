@@ -10,8 +10,9 @@
  *      blocks, deploy.sh) or the same names in the shell for `bun run build`.
  *   2. Git fallback for a from-source `bun dev` / `bun run build`.
  *
- * Sentinels: a missing value is the literal "dev" (version) / "unknown"
- * (commit, time) — never a guessed-at, plausible-looking stamp.
+ * Docker builds pass sentinels when inputs are missing: "dev" (version) and
+ * "unknown" (commit/time). A from-source build derives version/commit from git
+ * and records its actual build time in next.config.ts.
  */
 
 export const BUILD_VERSION_UNKNOWN = "dev";
@@ -21,6 +22,8 @@ export const BUILD_TIME_UNKNOWN = "unknown";
 export interface BuildStamp {
   /** Explicit VERSION or `git describe --tags --match 'v*' [--dirty]`, else "dev". */
   version: string;
+  /** package.json version embedded by next.config.ts. */
+  packageVersion: string;
   /** Full git commit SHA, else "unknown". */
   commit: string;
   /** UTC RFC3339 build time, else "unknown". */
@@ -33,6 +36,7 @@ export interface BuildStamp {
 export function buildStamp(): BuildStamp {
   return {
     version: process.env.NEXT_PUBLIC_BUILD_VERSION || BUILD_VERSION_UNKNOWN,
+    packageVersion: process.env.NEXT_PUBLIC_BUILD_PACKAGE_VERSION || "0.0.0",
     commit: process.env.NEXT_PUBLIC_BUILD_COMMIT || BUILD_COMMIT_UNKNOWN,
     time: process.env.NEXT_PUBLIC_BUILD_TIME || BUILD_TIME_UNKNOWN,
     branch: process.env.NEXT_PUBLIC_BUILD_BRANCH || "unknown",
@@ -44,9 +48,26 @@ export function shortCommit(commit: string): string {
   return commit === BUILD_COMMIT_UNKNOWN ? commit : commit.slice(0, 7);
 }
 
+/** Stamped VERSION, or the package version (+short commit) when unstamped. */
+export function displayVersion(
+  stamped: string,
+  packageVersion: string | undefined,
+  gitSha: string,
+): string {
+  if (stamped && stamped !== BUILD_VERSION_UNKNOWN) return stamped;
+  const base = packageVersion ? `v${packageVersion}` : "v0.0.0";
+  return gitSha !== BUILD_COMMIT_UNKNOWN
+    ? `${base}+${shortCommit(gitSha)}`
+    : base;
+}
+
 /** One-line summary for tooltips: `v1.2.3 · abc1234 · 2026-09-09T10:00:00Z · main`. */
 export function buildSummary(stamp: BuildStamp = buildStamp()): string {
-  const parts = [stamp.version, shortCommit(stamp.commit), stamp.time];
+  const parts = [
+    displayVersion(stamp.version, stamp.packageVersion, stamp.commit),
+    shortCommit(stamp.commit),
+    stamp.time,
+  ];
   if (stamp.branch !== "unknown") parts.push(stamp.branch);
   return parts.join(" · ");
 }

@@ -4,10 +4,9 @@
  *
  * Mirrors the reference platform's admin Build endpoint, adapted to daax-web:
  *   - "Go runtime" → Node runtime (process.version) + Next.js version.
- *   - Azure Container Apps fields → daax's real deployment surface. Mode/host/
- *     deployer are always populated (knowable locally); GHCR registry/image/tag
- *     and workspace stay env-driven and are omitted when unset (a from-source
- *     dev run has no image) rather than inventing container-registry values.
+ *   - Azure Container Apps fields → daax's real deployment surface. Mode is
+ *     always derivable; host/deployer and GHCR registry/image/tag/workspace are
+ *     omitted when unavailable rather than invented.
  *
  * SBOM files are served from a whitelisted directory (no path traversal) and
  * validated with the shared placeholder-vs-real guard, so the panel degrades to
@@ -18,12 +17,8 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { checkSbom } from "@/lib/sbom-guard";
-import {
-  BUILD_COMMIT_UNKNOWN,
-  BUILD_VERSION_UNKNOWN,
-  buildStamp,
-  shortCommit,
-} from "./build-env";
+import { buildStamp, displayVersion } from "./build-env";
+export { displayVersion } from "./build-env";
 import type { SbomFormatId, SbomComponentId, SbomRef } from "./sbom-format";
 
 /** Default upper bound (bytes) on an SBOM file the route will read into memory. */
@@ -98,7 +93,7 @@ export interface BuildInfo {
   sbomAvailable: boolean;
   /** Which (component, format) SBOMs are available. */
   sboms: SbomRef[];
-  /** Deployment metadata (mode/host/deployer always set; image fields when known). */
+  /** Deployment metadata (mode always set; other fields when known). */
   deployment?: DaaxDeployment;
 }
 
@@ -239,11 +234,9 @@ function readPackageJson(): { version?: string; nextVersion?: string } {
 }
 
 /**
- * Read deployment metadata. Always populates the fields that are genuinely
- * knowable locally — mode (host vs container), host, and the deploying user —
- * so the Deployment card is never an empty "not deployed" line. Registry/image/
- * tag/workspace/via stay env-driven and are omitted when unset (a from-source
- * dev run has no image), rather than inventing container-registry values.
+ * Read deployment metadata. Mode (host vs container) is always derivable.
+ * Host, deployer, registry/image/tag/workspace/via are best-effort and omitted
+ * when unavailable rather than invented.
  */
 export function getDeployment(): DaaxDeployment {
   const env = process.env;
@@ -265,22 +258,6 @@ export function getDeployment(): DaaxDeployment {
       (mode === "host" ? env.NEXT_PUBLIC_BUILD_HOSTNAME : undefined) ||
       undefined,
   };
-}
-
-/**
- * Display version from the stamp + package.json. Exported for tests: the
- * stamped VERSION wins verbatim; otherwise "v<pkg>" (+"<sha7>" when known).
- */
-export function displayVersion(
-  stamped: string,
-  packageVersion: string | undefined,
-  gitSha: string,
-): string {
-  if (stamped && stamped !== BUILD_VERSION_UNKNOWN) return stamped;
-  const base = packageVersion ? `v${packageVersion}` : "v0.0.0";
-  return gitSha !== BUILD_COMMIT_UNKNOWN
-    ? `${base}+${shortCommit(gitSha)}`
-    : base;
 }
 
 /** Assemble the full BuildInfo payload. */

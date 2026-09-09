@@ -141,8 +141,8 @@ export function BuildPanel() {
   }
 
   // The three stamped build inputs (VERSION / GIT_SHA / BUILD_TIME) lead; the
-  // rest of the grid is runtime context. Sentinels ("unknown", "dev") are shown
-  // as-is — an unstamped build must look unstamped, not plausible.
+  // rest of the grid is runtime context. Unknown commit/time sentinels are shown
+  // as-is; an unstamped version is visibly derived from package.json + commit.
   const stampRows: [string, string, string | undefined][] = [
     ["Version", info.version, `package.json ${info.packageVersion}`],
     ["Git SHA", info.gitSha, undefined],

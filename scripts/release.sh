@@ -20,8 +20,9 @@
 #
 # The version: an explicit vX.Y.Z, or --bump from the latest vX.Y.Z tag
 # (seeding v0.1.0 when no tag exists). Refuses to clobber an existing tag
-# (locally, and on origin with --push). --allow-dirty skips only the
-# clean-tree check.
+# (locally, and on origin with --push). --allow-dirty skips only the general
+# clean-tree check; --prepare still refuses a modified package.json so unrelated
+# package edits cannot be swept into the release commit.
 #
 # Strict semver: v(0|[1-9][0-9]*).(0|[1-9][0-9]*).(0|[1-9][0-9]*) — no leading
 # zeros, no pre-release/build suffix (those are `git describe` territory).
@@ -170,10 +171,21 @@ main() {
   root="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git repository"
   cd "$root"
 
+  branch="$(git rev-parse --abbrev-ref HEAD)"
+  # A bump must be based on the remote tag set, not whatever tags happen to
+  # exist in a stale local clone. This applies to --prepare too: otherwise the
+  # documented PR phase can prepare an already-used version and only discover
+  # the collision after merge. A pushed explicit version also fetches so the
+  # main/ref and remote-tag checks below use current state.
+  if [ "$push" -eq 1 ]; then
+    [ "$branch" = "main" ] || die "must be on main to tag (on '$branch'); use --prepare on a feature branch for the version bump"
+    git fetch -q --tags origin main || die "could not fetch origin/main and tags"
+  elif [ -n "$bump" ] && git remote get-url origin >/dev/null 2>&1; then
+    git fetch -q --tags origin || die "could not fetch origin tags for --bump"
+  fi
   tags="$(git tag -l 'v*')"
   version="$(resolve_version "$explicit" "$bump" "$tags")" \
     || die "invalid version '${explicit}' (want vX.Y.Z, no leading zeros, no suffix)"
-  branch="$(git rev-parse --abbrev-ref HEAD)"
 
   if git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
     die "tag $version already exists locally — refusing to clobber"
@@ -185,6 +197,9 @@ main() {
   # ---- Phase 1: --prepare — the version bump, as a commit for a PR ----------
   if [ "$prepare" -eq 1 ]; then
     [ "$branch" != "main" ] || die "--prepare must run on a feature branch, not main (all work lands via PR)"
+    if ! git diff --quiet -- package.json || ! git diff --cached --quiet -- package.json; then
+      die "--prepare refuses a modified package.json; commit or stash those edits first"
+    fi
     current="$(package_version working-tree)"
     [ -n "$current" ] || die 'could not read "version" from package.json'
     if [ "$current" = "${version#v}" ]; then
@@ -212,7 +227,6 @@ main() {
     die "committed package.json (HEAD) is at $current, not ${version#v}: land the bump via PR first (scripts/release.sh --prepare $version on a feature branch)"
   fi
   if [ "$push" -eq 1 ]; then
-    git fetch -q origin main
     [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] \
       || die "main is not at origin/main — pull (or push via PR) so the tag lands on the reviewed commit"
     if git ls-remote --exit-code --tags origin "refs/tags/$version" >/dev/null 2>&1; then

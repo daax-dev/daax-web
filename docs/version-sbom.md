@@ -65,19 +65,22 @@ Every producer passes them, so the same stamp shows up everywhere:
 - **`docker compose build`** (root and `deploy/docker-compose.yml`) — the build
   blocks pass `${VERSION:-dev}` etc.; `scripts/deploy.sh` and `deploy-local.sh`
   export them from the checkout before building.
-- **`bun dev` / `bun run build`** — git fallback in `next.config.ts`; or set
+- **`bun dev` / `bun run build`** — git fallback for version/commit/branch and
+  the current UTC time; or set
   `VERSION=… GIT_SHA=… BUILD_TIME=… bun run build`.
 
-Unset inputs stay the honest sentinels (`dev` / `unknown`): the panel then shows
-`v<package.json version>+<sha7>` (or plain `v<version>` when the commit is
-unknown too) and "unknown" for the time — never a plausible-looking guess. A bare
-short SHA is deliberately **not** a version (the commit is stamped on its own),
-which is why the fallback uses `--match 'v*'` without `--always`.
+Docker builds with unset inputs keep the honest sentinels (`dev` / `unknown`):
+the panel then shows `v<package.json version>+<sha7>` (or plain `v<version>`
+when the commit is unknown too) and "unknown" for the time. A from-source build
+can read its checkout and records its actual build time. A bare short SHA is
+deliberately **not** a version (the commit is stamped on its own), which is why
+the fallback uses `--match 'v*'` without `--always`.
 
 The titlebar logo tooltip and the Build page read the same names through
 `lib/build/build-env.ts` (`buildStamp()` / `buildSummary()`), so they cannot
-disagree. `/api/health` stays public and version-free; `/api/build` (auth) is
-where the stamp is exposed.
+disagree; `next.config.ts` also embeds the package version used for the shared
+unstamped fallback. `/api/health` stays public and version-free; `/api/build`
+(auth) is where the stamp is exposed.
 
 Cross-check a running image against its labels:
 
@@ -108,10 +111,11 @@ The reference shows Azure Container Apps assets (subscription, resource group,
 region, image). daax does not run on Azure, so faking those would be dishonest.
 Instead the panel shows daax's real deployment surface:
 
-- **Always populated (knowable locally):** mode (`host` vs `container`, inferred
-  from `HOST_WORKSPACE_PATH`), deployed-via, deployed-by (`$USER`). Host is
-  `DAAX_DEPLOY_HOST`, or the build host for a from-source (host-mode) run only —
-  a container was built elsewhere, so its build host is not its deploy host.
+- **Always populated:** mode (`host` vs `container`, inferred from
+  `HOST_WORKSPACE_PATH`). Deployed-via and deployed-by use explicit env values,
+  with host-mode / `$USER` fallbacks when available. Host is `DAAX_DEPLOY_HOST`,
+  or the build host for a from-source (host-mode) run only — a container was
+  built elsewhere, so its build host is not its deploy host.
 - **Env-driven, shown only when set:** registry, image, image tag, workspace
   mount — a from-source `bun dev` has no container image, so those rows are
   simply absent rather than invented.
@@ -140,14 +144,16 @@ in four groups:
   row shows the container name(s), the compose service, the image reference and
   the digest of the image the container actually runs (resolved by image ID, so
   a re-pointed tag can't mislead); "this container" marks daax-web itself. Two
-  containers on one image (web + migrate) share a row. Bounded by
+  containers on the same immutable image (web + migrate) share a row; containers
+  on different generations of the same mutable tag remain separate. Bounded by
   `DAAX_BUILD_STACK_MAX` (default 64). Needs the Docker socket: in the split
   fleet/cloud deployment (`deploy/docker-compose.yml`) only `daax-terminal`
   mounts it, so there the web plane answers 503 for this card and the per-image
   SBOM — the section is for the single-container and from-source modes until
   the terminal plane serves it.
 - **App runtime base** — the image the daax container is built `FROM`
-  (`node:22-bookworm-slim`).
+  (`node:22-bookworm-slim` at the same immutable index digest pinned in the
+  Dockerfile, so a later tag update cannot change what this row describes).
 - **Platform & tooling** — images daax runs (code-server, the syft scanner).
 - **Devcontainer base catalog** — the base images users pick when spawning
   devcontainers.
@@ -156,14 +162,18 @@ Digests come from the local Docker daemon (`docker inspect` → `RepoDigests`).
 Images not present locally show "not pulled". Each present image has a **View**
 action that generates its SBOM on demand with syft
 (`GET /api/build/images/sbom?ref=…`) and renders the same component table.
+The default syft container is pinned to a multi-architecture digest because it
+receives the Docker socket while scanning; `DAAX_SYFT_IMAGE` can override that
+operator-controlled trust choice.
 
-**The whitelist.** The SBOM route only ever scans a ref that is in the set
-computed fresh for that request (running stack + static refs, `isKnownImageRef`),
-so a caller cannot name an arbitrary image; scan _results_ are cached per ref,
-the set never is. When the daemon is unreachable the stack group is simply
-absent and the static set alone is the whitelist — absence, never a pass. In
-the F3 split deploy the web plane deliberately has no Docker socket, so there
-`/api/build/images` answers 503 and the card reports Docker as unavailable.
+**The whitelist.** The SBOM route only scans an unambiguous ref or immutable
+running image ID in the set computed fresh for that request (running stack +
+static refs, `findKnownImageRef`), so a caller cannot name an arbitrary image.
+Scan results are cached by immutable image ID; the set never is. When the daemon
+is unreachable the stack group is simply absent and the static set alone is the
+whitelist — absence, never a pass. In the F3 split deploy the web plane
+deliberately has no Docker socket, so there `/api/build/images` answers 503 and
+the card reports Docker as unavailable.
 
 ### Generating the SBOM
 
@@ -178,13 +188,15 @@ reads nested lockfiles that carry no license data), so the script scans
 git-ignored (generated).
 
 **Container mode.** The Dockerfile installs syft in the builder stage from a
-pinned release artifact whose sha256 is verified against the published checksums
-(no piping a remote script into a shell), runs `bun run sbom:generate` after the
-app build, then copies `sbom/` into the runtime image — so container deployments
-ship the same dependency SBOM, not just local dev. This step is **required**: a
-failed download, checksum mismatch, or scan fails the image build so a release
-can't silently ship without an SBOM. Set `DAAX_SKIP_SBOM=1` to opt out (e.g. an
-air-gapped build) and accept the panel's graceful empty state.
+pinned release artifact whose per-architecture sha256 is fixed in the Dockerfile
+and checked before extraction (no checksum downloaded from the same release at
+build time, and no remote script piped into a shell). It runs
+`bun run sbom:generate` after the app build, then copies `sbom/` into the runtime
+image — so container deployments ship the same dependency SBOM, not just local
+dev. This step is **required**: a failed download, checksum mismatch, or scan
+fails the image build so a release can't silently ship without an SBOM. Set
+`DAAX_SKIP_SBOM=1` to opt out (e.g. an air-gapped build) and accept the panel's
+graceful empty state.
 
 ### Release flow
 
@@ -200,38 +212,43 @@ scripts/release.sh --prepare v1.2.0
 scripts/release.sh v1.2.0 --push
 ```
 
-`--prepare` refuses to run on `main`; the tag phase requires `main`, a clean
-tree (`--allow-dirty` relaxes only that), `package.json` already at `X.Y.Z`,
-and — with `--push` — `main` equal to `origin/main`. It refuses to clobber an
-existing tag (locally, and on `origin` when pushing) and creates an
-**annotated** tag. Strict semver only (`vX.Y.Z`, no leading zeros, no suffix).
-Bash 3.2 (macOS) compatible.
+`--prepare` refuses to run on `main` or with a modified/staged `package.json`;
+the tag phase requires `main`, a clean tree (`--allow-dirty` relaxes only that),
+`package.json` already at `X.Y.Z`, and — with `--push` — `main` equal to
+`origin/main`. It refuses to clobber an existing tag (locally, and on `origin`
+when pushing) and creates an **annotated** tag. Strict semver only (`vX.Y.Z`, no
+leading zeros, no suffix). Bash 3.2 (macOS) compatible.
 
-`--push` fires `.github/workflows/publish-images.yml` (`v*` trigger), which for
-`daax-web` and `daax-terminal` (`code-server` is built multi-arch, signed and
-attested in the same run, but is not stamped and not trivy-gated yet):
+`--push` fires `.github/workflows/publish-images.yml` (`v*` trigger). The
+workflow first proves the tag is strict semver, matches the committed
+`package.json` version, and points to a commit contained in `origin/main`;
+manual runs are subject to the same reviewed-commit check. Then:
 
 1. **Stamps** `VERSION=vX.Y.Z GIT_SHA=<sha> BUILD_TIME=<now>` into both arch
-   builds (native amd64 + arm64 runners, no QEMU).
-2. **Gates** each arch image with trivy (`CRITICAL`, fixable only, exit 1)
-   _before_ it is pushed — so an unscanned digest, and therefore an unscanned
-   `:latest`, never reaches the registry.
-3. **Pushes by digest** with BuildKit `sbom: true` and `provenance: mode=max`
-   attestations, then merges the arches into one manifest list carrying the
-   `latest` / `X.Y.Z` / `X.Y` / `sha-…` tags.
+   daax-web/terminal builds (native amd64 + arm64 runners, no QEMU).
+2. **Pushes candidates by digest** with BuildKit `sbom: true` and
+   `provenance: mode=max`, without moving any public release tag.
+3. **Gates the exact pushed content** for every image and architecture with
+   trivy (`CRITICAL`, fixable only, exit 1). Scanning the registry digest avoids
+   treating a separate local build as proof about different pushed bytes.
 4. **Signs and attests** with keyless cosign: `cosign sign` on the merged
    index digest _and_ on each platform child digest, then
    `cosign attest --type cyclonedx` with a syft SBOM of each platform child
    (an SBOM is per platform — one taken from the index would only describe the
    runner's own arch), and **verifies** all of it against this repo's workflow
    identity — a failed verify fails the job.
+5. **Promotes public tags** (`latest` / `X.Y.Z` / `X.Y` / `sha-…`) only after
+   all three images pass scanning and cosign verification. A failed gate leaves
+   the previous public tags untouched. `sha-…` is emitted only for branch runs;
+   a release-tag run at the same commit carries different stamped metadata and
+   therefore must not race the branch run for one content tag.
 
 Consumers verify the same way before trusting a digest — the index for the
 signature, their own platform's child digest for the SBOM attestation:
 
 ```bash
 ISSUER=https://token.actions.githubusercontent.com
-IDENTITY='^https://github.com/daax-dev/daax-web/\.github/workflows/publish-images\.yml@'
+IDENTITY='^https://github\.com/daax-dev/daax-web/\.github/workflows/publish-images\.yml@(refs/heads/main|refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$'
 cosign verify --certificate-oidc-issuer "$ISSUER" --certificate-identity-regexp "$IDENTITY" \
   ghcr.io/daax-dev/daax-web@sha256:<index>
 # platform child digest for this host:
@@ -285,7 +302,7 @@ probes use the public `/api/health`, not this route. `runtime = "nodejs"`,
   "gitSha": "df79cec45e282792de262cde7167ab69b4225951",
   "buildTime": "2026-07-01T10:48:00Z",
   "nodeVersion": "v23.9.0",
-  "nextVersion": "16.1.6",
+  "nextVersion": "16.3.4",
   "branch": "sbom",
   "hostname": "chamonix",
   "sbomAvailable": true,
@@ -303,9 +320,10 @@ probes use the public `/api/health`, not this route. `runtime = "nodejs"`,
 ```
 
 `version` is the stamped `VERSION` verbatim; an unstamped build shows
-`v<packageVersion>+<sha7>` instead. `gitSha`/`buildTime` are `unknown` when not
-stamped. `sboms` lists only documents that pass the real-SBOM guard.
-`deployment` always carries mode/deployer; host and image fields appear only
+`v<packageVersion>+<sha7>` instead. Docker builds use `unknown` for an omitted
+commit/time; from-source builds derive the commit and current build time.
+`sboms` lists only documents that pass the real-SBOM guard.
+`deployment` always carries mode; deployer, host, and image fields appear only
 when known.
 
 ### `GET /api/build/sbom`

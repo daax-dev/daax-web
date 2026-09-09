@@ -8,7 +8,7 @@ import { generateRealSbom } from "@/lib/sbom-syft";
 import { checkSbom } from "@/lib/sbom-guard";
 
 /**
- * GET /api/build/images/sbom?ref=<image>&inline=1
+ * GET /api/build/images/sbom?ref=<image-ref-or-id>&inline=1
  *
  * Generates (via syft) and returns the CycloneDX SBOM for one of the known
  * container images (settings > Build panel per-image SBOM).
@@ -18,11 +18,11 @@ import { checkSbom } from "@/lib/sbom-guard";
  *   - syft execution threw → 500.
  *   - Otherwise → 200 application/json.
  *
- * `ref` MUST be one of the closed known-image set (findKnownImageRef, computed
- * fresh for this request: the running stack + the static refs): syft runs as
- * `docker run … docker:<image>` (arg array, no shell), so the whitelist keeps a
- * caller from scanning an arbitrary image. The set is never cached across
- * requests — only scan RESULTS are.
+ * `ref` MUST be an unambiguous reference or immutable ID from the closed known
+ * image set (findKnownImageRef, computed fresh for this request: the running
+ * stack + the static refs): syft runs as `docker run … docker:<image>` (arg
+ * array, no shell), so the whitelist keeps a caller from scanning an arbitrary
+ * image. The set is never cached across requests — only scan RESULTS are.
  *
  * Identity: a tag is mutable (postgres:18-alpine can be re-pulled under daax),
  * so the scan target, the in-flight coalescing and the cache are all keyed by
@@ -37,6 +37,8 @@ import { checkSbom } from "@/lib/sbom-guard";
  *    same image share ONE syft run instead of spawning N.
  *  - A small global semaphore bounds how many distinct scans run at once, so a
  *    caller can't fan out one scan per whitelisted image simultaneously.
+ *  - The shared syft runner kills scans that exceed its output or time limit,
+ *    so a corrupt image cannot hold a semaphore slot forever.
  *  - Results are cached per ref in a small LRU (DAAX_IMAGE_SBOM_CACHE_MAX
  *    entries, default 32): the whitelist follows the running stack, so refs
  *    churn over a server's lifetime and a cache keyed only by "was whitelisted

@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { execSync } from "child_process";
+import packageJson from "./package.json";
 
 // Build stamp, resolved once at config load and inlined as NEXT_PUBLIC_BUILD_*
 // (see lib/build/build-env.ts for the reader side). Three explicit inputs —
@@ -7,8 +8,9 @@ import { execSync } from "child_process";
 // container build is stamped from what the builder was TOLD (Dockerfile ARGs,
 // set by publish-images.yml / docker:build / compose / deploy.sh) rather than
 // from whatever `.git` happens to be in the build context. The git fallback
-// stays for a from-source `bun dev` / `bun run build`; when git is unavailable
-// the value degrades to the "dev"/"unknown" sentinel, never to a guess.
+// stays for a from-source `bun dev` / `bun run build`; when git is unavailable,
+// version/commit degrade to sentinels while time records the actual config-load
+// time.
 //
 // Precedence per value: NEXT_PUBLIC_BUILD_* already in the environment (the
 // runner image sets these, so `next start` never shells out) → the explicit
@@ -119,6 +121,7 @@ const nextConfig: NextConfig = {
   },
   env: {
     NEXT_PUBLIC_BUILD_VERSION: buildEnv.version,
+    NEXT_PUBLIC_BUILD_PACKAGE_VERSION: packageJson.version,
     NEXT_PUBLIC_BUILD_COMMIT: buildEnv.commit,
     NEXT_PUBLIC_BUILD_TIME: buildEnv.time,
     NEXT_PUBLIC_BUILD_BRANCH: buildEnv.branch,

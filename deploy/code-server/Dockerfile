@@ -19,11 +19,10 @@
 
 # Digest-pinned base (matches the top-level Dockerfile's policy) so a registry-side
 # tag update cannot silently change the base; the digest is the multi-arch index
-# digest, valid on amd64 + arm64. Bumped 4.108.2 -> 4.136.2 for CRITICAL CVEs:
-# 4.108.2 carried 17 fixable criticals of its own (handlebars in the bundled
-# vscode extensions, an old git-lfs, basic-ftp, libgnutls30/libssl3/openssl/
-# libssh2-1), and 4.136.2 carries 1 (a go1.24.4 stdlib inside upstream's own
-# /usr/bin/git-lfs, which we do not build and cannot patch from here).
+# digest, valid on amd64 + arm64. Bumped 4.108.2 -> 4.136.2 for CRITICAL CVEs.
+# Two inherited Go binaries still need replacement below: git-lfs is upgraded
+# from the base image's 3.6.1, and fixuid is rebuilt with the patched Go
+# toolchain installed by this file.
 # Note: 4.136.2 moved upstream from Debian 12 (bookworm) to Debian 13 (trixie),
 # so the apt-installed toolchains move with it — python3 3.11 -> 3.13, rustc
 # 1.63 -> 1.85. Verified in the built image (go/python3/uv/rustc/git/jq all
@@ -82,6 +81,34 @@ RUN if [ -z "${TARGETARCH}" ]; then echo "ERROR: TARGETARCH is not set. Provide 
 
 ENV PATH="/usr/local/go/bin:${PATH}"
 
+# The base image's fixuid was built with Go 1.20.7, which makes Trivy report
+# fixable CRITICAL stdlib findings even though the surrounding OS is current.
+# Rebuild the same fixuid release from its pinned module tag with the patched,
+# checksum-verified Go toolchain above; fixuid remains the base entrypoint.
+ARG FIXUID_VERSION=0.6.0
+RUN GOBIN=/usr/local/bin go install "github.com/boxboat/fixuid@v${FIXUID_VERSION}" \
+    && go version -m /usr/local/bin/fixuid | grep -Eq "mod[[:space:]]+github.com/boxboat/fixuid[[:space:]]+v${FIXUID_VERSION}"
+
+# The base image also ships git-lfs 3.6.1 built with Go 1.24.4. Build the
+# current 3.8.0 source through Go's checksum-verified module proxy, overriding
+# its vulnerable x/crypto version, so Git LFS functionality remains without
+# inheriting either fixable CRITICAL finding.
+ARG GIT_LFS_VERSION=3.8.0
+ARG GIT_LFS_COMMIT=aece9221
+ARG GIT_LFS_X_CRYPTO_VERSION=0.55.0
+RUN set -eu; \
+    module="github.com/git-lfs/git-lfs/v3"; \
+    go mod download "${module}@v${GIT_LFS_VERSION}"; \
+    module_zip="$(go env GOPATH)/pkg/mod/cache/download/github.com/git-lfs/git-lfs/v3/@v/v${GIT_LFS_VERSION}.zip"; \
+    mkdir -p /tmp/git-lfs-src; \
+    unzip -q "$module_zip" -d /tmp/git-lfs-src; \
+    cd "/tmp/git-lfs-src/${module}@v${GIT_LFS_VERSION}"; \
+    go mod edit -require="golang.org/x/crypto@v${GIT_LFS_X_CRYPTO_VERSION}"; \
+    go mod tidy; \
+    go build -trimpath -ldflags "-s -w -X ${module}/config.GitCommit=${GIT_LFS_COMMIT}" -o /usr/bin/git-lfs .; \
+    rm -rf /tmp/git-lfs-src; \
+    git-lfs version | grep -q "git-lfs/${GIT_LFS_VERSION}"
+
 # ── uv (Python package manager, installed via pip, version-pinned) ───────────
 ARG UV_VERSION=0.12.12
 RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}" \
@@ -98,6 +125,8 @@ RUN printf '\nexport GOPATH="$HOME/go"\nexport GOBIN="$HOME/go/bin"\nexport PATH
 # ── Verify ─────────────────────────────────────────────────────────────────────
 USER root
 RUN /usr/local/go/bin/go version \
+    && git-lfs version \
+    && go version -m /usr/local/bin/fixuid | grep -E "mod[[:space:]]+github.com/boxboat/fixuid[[:space:]]+v${FIXUID_VERSION}" \
     && python3 --version \
     && uv --version \
     && rustc --version

@@ -9,16 +9,56 @@ on:
   workflow_dispatch:
 
 # No id-token here, deliberately. Keyless cosign needs `id-token: write`, but
-# granted at this level EVERY job could mint the OIDC token — including the
-# build jobs that run third-party actions on floating major tags — and any of
-# them could then obtain a Sigstore certificate for this workflow's identity
-# and produce a signature `cosign verify` would accept. Only the `sign` job
-# declares it, in its own permissions block.
+# granted at this level EVERY job could mint the OIDC token and obtain a
+# Sigstore certificate for this workflow's identity. Only the `sign` job
+# declares it, in its own permissions block. Package write is likewise scoped
+# to the jobs that actually push content; all external actions in those jobs
+# are pinned by commit SHA.
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: publish-images-${{ github.ref }}
+  # A newer main build supersedes an older one before it can move `latest`.
+  cancel-in-progress: true
 
 jobs:
+  # A valid signature proves which workflow ran, not that the signed commit was
+  # reviewed. Refuse feature-branch dispatches and tags pointing outside main;
+  # otherwise either can mint a signature matching the consumer policy below.
+  validate-ref:
+    name: Validate publish source
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+
+      - name: Require a reviewed main commit
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = "tag" ] && ! [[ "$REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::release tag is not strict vX.Y.Z: $REF_NAME"
+            exit 1
+          fi
+          if [ "$REF_TYPE" = "tag" ]; then
+            package_version="$(node -p "require('./package.json').version")"
+            if [ "$REF_NAME" != "v$package_version" ]; then
+              echo "::error::release tag $REF_NAME does not match package.json v$package_version"
+              exit 1
+            fi
+          fi
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "::error::$GITHUB_REF does not point to a reviewed main commit"
+            exit 1
+          fi
+
   # daax-web and daax-terminal are built PER-PLATFORM ON NATIVE RUNNERS, then
   # joined into one manifest list. They used to be `platforms: linux/amd64` with
   # this note:
@@ -42,7 +82,11 @@ jobs:
   # manifest list. A host then pulls ONE digest and gets its own architecture.
   build:
     name: Build ${{ matrix.image.name }} (${{ matrix.platform.arch }})
+    needs: validate-ref
     runs-on: ${{ matrix.platform.runner }}
+    permissions:
+      contents: read
+      packages: write
     strategy:
       fail-fast: false
       matrix:
@@ -54,7 +98,7 @@ jobs:
           - { arch: arm64, id: linux/arm64, runner: ubuntu-24.04-arm }
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           # Full history + tags so `git describe` can name a main-branch build
           # relative to the last release tag (a shallow clone has no tags).
@@ -84,7 +128,7 @@ jobs:
           echo "VERSION=$version GIT_SHA=$GITHUB_SHA"
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -94,7 +138,7 @@ jobs:
       # builds. Adding it back would silently re-enable emulated builds if a
       # native runner label ever stopped resolving.
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       # Labels only — this job pushes no tags. The tags are applied by the
       # merge job, to the manifest list. version/created are overridden so the
@@ -102,60 +146,20 @@ jobs:
       # stamp (metadata-action would otherwise label a main push "main").
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/daax-dev/${{ matrix.image.name }}
           labels: |
             org.opencontainers.image.version=${{ steps.stamp.outputs.version }}
             org.opencontainers.image.created=${{ steps.stamp.outputs.build_time }}
 
-      # Scan BEFORE anything is pushed: build the same image into the local
-      # daemon first (single-platform, so `load` works; no attestations — the
-      # docker exporter cannot carry them), gate it, and only then run the
-      # push-by-digest build below, which is a full cache hit. A CRITICAL,
-      # fixable finding fails this leg, so no unscanned digest ever reaches
-      # the registry — and therefore no unscanned `:latest`.
-      - name: Build for scan (local, not pushed)
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          target: ${{ matrix.image.target }}
-          platforms: ${{ matrix.platform.id }}
-          load: true
-          tags: scan-target/${{ matrix.image.name }}:${{ matrix.platform.arch }}
-          # Same labels as the push build below, so the scanned image config
-          # is byte-identical to the pushed one, not merely layer-identical.
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=${{ steps.stamp.outputs.version }}
-            GIT_SHA=${{ steps.stamp.outputs.git_sha }}
-            BUILD_TIME=${{ steps.stamp.outputs.build_time }}
-            BUILD_BRANCH=${{ github.ref_type == 'branch' && github.ref_name || '' }}
-          cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
-
-      # cache-dir is OUTSIDE the workspace: the action's default is
-      # <workspace>/.cache/trivy, which is inside the Docker build context, so
-      # the scan would change the context (`COPY . .`) and the push build below
-      # would recompile instead of reusing the scanned layers.
-      - name: Trivy image scan gate (CRITICAL, fixable)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          scan-type: image
-          image-ref: scan-target/${{ matrix.image.name }}:${{ matrix.platform.arch }}
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
-          format: table
-          cache-dir: ${{ runner.temp }}/trivy-cache
-
       # sbom + provenance (mode=max) attach BuildKit attestations to the pushed
-      # digest as OCI manifests; `imagetools create` carries them into the
-      # manifest list. cosign's SBOM attestation (sign job) is the one a
-      # consumer verifies by identity; this one documents the build itself.
+      # digest as OCI manifests. This pushes only a content-addressed digest,
+      # never a release tag; the exact registry object is scanned below before
+      # its digest artifact is made available to the merge job.
       - name: Build and push by digest
         id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           target: ${{ matrix.image.target }}
@@ -177,6 +181,23 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
 
+      # Scan the exact digest produced above. A separate local build is not a
+      # security boundary: mutable package repositories or a cache miss can
+      # make a later push differ from what was scanned. No release tag is
+      # created until this gate and the signature verification both pass.
+      - name: Trivy pushed-digest gate (CRITICAL, fixable)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        env:
+          TRIVY_PLATFORM: ${{ matrix.platform.id }}
+        with:
+          scan-type: image
+          image-ref: ghcr.io/daax-dev/${{ matrix.image.name }}@${{ steps.build.outputs.digest }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+          cache-dir: ${{ runner.temp }}/trivy-cache
+
       # The digest is the FILENAME and the file is empty: the merge job only
       # needs the set of digests, and a content-addressed name cannot collide
       # between the two architectures.
@@ -188,7 +209,7 @@ jobs:
           touch "/tmp/digests/${DIGEST#sha256:}"
 
       - name: Upload digest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: digests-${{ matrix.image.name }}-${{ matrix.platform.arch }}
           path: /tmp/digests/*
@@ -199,111 +220,100 @@ jobs:
   # `needs.daax-web.outputs.image` keep working unchanged. It now resolves to
   # the MANIFEST LIST digest, which is what a host should pin.
   daax-web:
-    name: Publish daax-web
+    name: Assemble daax-web candidate
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     outputs:
       image: ghcr.io/daax-dev/daax-web@${{ steps.merge.outputs.digest }}
     steps:
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: digests-daax-web-*
           merge-multiple: true
           path: /tmp/digests
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ghcr.io/daax-dev/daax-web
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
-
-      - name: Create manifest list and push
+      # The temporary candidate tag makes the assembled index addressable for
+      # signing. It is not a release tag; public tags are promoted only after
+      # every image's cosign verification succeeds.
+      - name: Create candidate manifest list
         id: merge
         working-directory: /tmp/digests
+        env:
+          CANDIDATE: ghcr.io/daax-dev/daax-web:candidate-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           # shellcheck disable=SC2046
-          # Word splitting is the mechanism, not an accident: both expansions
-          # produce ARGUMENT LISTS — a `-t` per tag, and one ref per
-          # per-architecture digest. Quoting either would pass a single
-          # argument and `imagetools create` would reject it.
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+          # Word splitting produces one source argument per digest file.
+          docker buildx imagetools create --tag "$CANDIDATE" \
             $(printf 'ghcr.io/daax-dev/daax-web@sha256:%s ' *)
-          digest="$(docker buildx imagetools inspect ghcr.io/daax-dev/daax-web:${{ steps.meta.outputs.version }} --format '{{json .Manifest.Digest}}' | tr -d '\"')"
+          digest="$(docker buildx imagetools inspect "$CANDIDATE" --format '{{json .Manifest.Digest}}' | tr -d '\"')"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "Published ghcr.io/daax-dev/daax-web@$digest"
+          echo "Candidate ghcr.io/daax-dev/daax-web@$digest"
           docker buildx imagetools inspect "ghcr.io/daax-dev/daax-web@$digest"
 
   daax-terminal:
-    name: Publish daax-terminal
+    name: Assemble daax-terminal candidate
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     outputs:
       image: ghcr.io/daax-dev/daax-terminal@${{ steps.merge.outputs.digest }}
     steps:
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: digests-daax-terminal-*
           merge-multiple: true
           path: /tmp/digests
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ghcr.io/daax-dev/daax-terminal
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
-
-      - name: Create manifest list and push
+      - name: Create candidate manifest list
         id: merge
         working-directory: /tmp/digests
+        env:
+          CANDIDATE: ghcr.io/daax-dev/daax-terminal:candidate-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           # shellcheck disable=SC2046
-          # Word splitting is the mechanism, not an accident: both expansions
-          # produce ARGUMENT LISTS — a `-t` per tag, and one ref per
-          # per-architecture digest. Quoting either would pass a single
-          # argument and `imagetools create` would reject it.
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+          # Word splitting produces one source argument per digest file.
+          docker buildx imagetools create --tag "$CANDIDATE" \
             $(printf 'ghcr.io/daax-dev/daax-terminal@sha256:%s ' *)
-          digest="$(docker buildx imagetools inspect ghcr.io/daax-dev/daax-terminal:${{ steps.meta.outputs.version }} --format '{{json .Manifest.Digest}}' | tr -d '\"')"
+          digest="$(docker buildx imagetools inspect "$CANDIDATE" --format '{{json .Manifest.Digest}}' | tr -d '\"')"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "Published ghcr.io/daax-dev/daax-terminal@$digest"
+          echo "Candidate ghcr.io/daax-dev/daax-terminal@$digest"
 
   code-server:
-    name: Publish code-server
+    name: Build + scan code-server candidate
+    needs: validate-ref
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     outputs:
       image: ghcr.io/daax-dev/code-server@${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -311,43 +321,69 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ghcr.io/daax-dev/code-server
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
-      - name: Build and push
+      # Push by digest only. Release tags are promoted after both architecture
+      # scans and the shared signature/attestation verification succeed.
+      - name: Build and push candidate by digest
         id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: deploy/code-server
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          outputs: type=image,name=ghcr.io/daax-dev/code-server,push-by-digest=true,name-canonical=true,push=true
           labels: ${{ steps.meta.outputs.labels }}
+          sbom: true
+          provenance: mode=max
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # Keyless cosign for every published digest (daax-web, daax-terminal,
+      - name: Trivy code-server amd64 gate (CRITICAL, fixable)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          scan-type: image
+          image-ref: ghcr.io/daax-dev/code-server@${{ steps.build.outputs.digest }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+          cache-dir: ${{ runner.temp }}/trivy-cache
+
+      - name: Trivy code-server arm64 gate (CRITICAL, fixable)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
+        with:
+          scan-type: image
+          image-ref: ghcr.io/daax-dev/code-server@${{ steps.build.outputs.digest }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+          cache-dir: ${{ runner.temp }}/trivy-cache
+          skip-setup-trivy: true
+
+  # Keyless cosign for every candidate digest (daax-web, daax-terminal,
   # code-server): sign the index digest and each platform child, attest a
   # per-platform CycloneDX SBOM to its child digest, then VERIFY all of it
-  # against this repo's workflow identity — a failed verify fails the job, so a
-  # digest can never be published as "signed" when it isn't. Signing by digest
-  # (never by tag) means the signature follows the bits, not a movable name.
+  # against this repo's workflow identity. Public release tags are created by
+  # the publish job only after every matrix leg passes, so a signing failure
+  # leaves the previous release tags untouched. Signing by digest means the
+  # signature follows the bits, not a movable name.
   # Consumers verify the same way (the index for the signature; their own
   # platform's child digest for the SBOM attestation):
   #   cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  #     --certificate-identity-regexp '^https://github.com/daax-dev/daax-web/\.github/workflows/publish-images\.yml@' \
+  #     --certificate-identity-regexp '^https://github\.com/daax-dev/daax-web/\.github/workflows/publish-images\.yml@(refs/heads/main|refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$' \
   #     ghcr.io/daax-dev/daax-web@sha256:…
   sign:
     name: Sign + attest (${{ matrix.name }})
@@ -364,11 +400,11 @@ jobs:
     env:
       COSIGN_YES: "true"
       OIDC_ISSUER: https://token.actions.githubusercontent.com
-      # Anchored to this repo + this workflow file; any ref (main, v* tags).
-      IDENTITY_REGEXP: ^https://github\.com/daax-dev/daax-web/\.github/workflows/publish-images\.yml@
+      # Accept only reviewed main builds and strict release-tag builds.
+      IDENTITY_REGEXP: ^https://github\.com/daax-dev/daax-web/\.github/workflows/publish-images\.yml@(refs/heads/main|refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$
     steps:
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -402,7 +438,7 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "signing $ref"
 
-      # The published ref is a multi-platform INDEX. A signature on the index
+      # The candidate ref is a multi-platform INDEX. A signature on the index
       # covers the whole thing, but an SBOM is per platform: syft on the index
       # would silently describe only the runner's own arch (amd64), and an
       # arm64 consumer would then "verify" an inventory of x86 packages. So the
@@ -445,6 +481,8 @@ jobs:
           while read -r platform digest; do
             out="sbom-$(echo "$platform" | tr '/' '-').cdx.json"
             syft --platform "$platform" "registry:${repo}@${digest}" -o cyclonedx-json > "$out"
+            # shellcheck disable=SC2016
+            # JavaScript template literals must remain literal to this shell.
             node -e '
               const [f, platform] = process.argv.slice(1);
               const o = JSON.parse(require("fs").readFileSync(f, "utf8"));
@@ -482,6 +520,78 @@ jobs:
             echo "verified ${platform} signature + cyclonedx attestation ${digest}"
           done < platforms.txt
 
+  # Promotion is the release boundary. Candidate content is already in GHCR so
+  # it can be scanned and signed by digest, but no public tag moves until every
+  # image has passed both its vulnerability gate and cosign verification.
+  publish:
+    name: Publish verified ${{ matrix.name }}
+    needs: [daax-web, daax-terminal, code-server, sign]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [daax-web, daax-terminal, code-server]
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract release tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        with:
+          images: ghcr.io/daax-dev/${{ matrix.name }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            # A tag run stamps different metadata from the preceding main run
+            # at the same commit. Publish sha-* only for branch runs so those
+            # two valid builds cannot race to assign one tag to different bits.
+            type=sha,format=short,enable=${{ github.ref_type == 'branch' }}
+
+      - name: Resolve verified image ref
+        id: img
+        env:
+          WEB: ${{ needs.daax-web.outputs.image }}
+          TERMINAL: ${{ needs.daax-terminal.outputs.image }}
+          CODE_SERVER: ${{ needs.code-server.outputs.image }}
+        run: |
+          case "${{ matrix.name }}" in
+            daax-web) ref="$WEB" ;;
+            daax-terminal) ref="$TERMINAL" ;;
+            code-server) ref="$CODE_SERVER" ;;
+          esac
+          case "$ref" in
+            *@sha256:*) ;;
+            *) echo "::error::not a digest ref: $ref"; exit 1 ;;
+          esac
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Promote verified digest to release tags
+        env:
+          REF: ${{ steps.img.outputs.ref }}
+        run: |
+          # shellcheck disable=SC2046
+          # metadata-action emits controlled registry refs; word splitting
+          # produces one `-t <tag>` pair for imagetools.
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            "$REF"
+          first_tag="$(jq -r '.tags[0]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
+          promoted="$(docker buildx imagetools inspect "$first_tag" --format '{{json .Manifest.Digest}}' | tr -d '\"')"
+          [ "${REF##*@}" = "$promoted" ] || {
+            echo "::error::promoted digest $promoted does not match $REF"
+            exit 1
+          }
+          echo "Published verified $REF as $DOCKER_METADATA_OUTPUT_TAGS"
+
   # F2 (#97): generate a real SBOM (CycloneDX + SPDX) for each published image,
   # keyed by the pushed digest, and upload as workflow artifacts (4 total:
   # {daax-web, code-server} × {cyclonedx-json, spdx-json}). A placeholder-vs-real
@@ -490,7 +600,7 @@ jobs:
   # not reachable from CI); these artifacts feed the F8 build-provenance page (#99).
   sbom:
     name: SBOM (${{ matrix.name }}, ${{ matrix.format }})
-    needs: [daax-web, code-server]
+    needs: [publish, daax-web, code-server]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -505,7 +615,7 @@ jobs:
           - { name: code-server, format: spdx-json }
     steps:
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -523,7 +633,7 @@ jobs:
           fi
 
       - name: Generate SBOM with syft
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           image: ${{ steps.img.outputs.ref }}
           format: ${{ matrix.format }}
@@ -538,6 +648,8 @@ jobs:
         id: guard
         run: |
           file="sbom-${{ matrix.name }}-${{ matrix.format }}.json"
+          # shellcheck disable=SC2016
+          # JavaScript template literals must remain literal to this shell.
           node -e '
             const fs = require("fs");
             const f = process.argv[1];
@@ -560,7 +672,7 @@ jobs:
 
       - name: Upload SBOM artifact
         if: steps.guard.outputs.real == 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: sbom-${{ matrix.name }}-${{ matrix.format }}
           path: sbom-${{ matrix.name }}-${{ matrix.format }}.json

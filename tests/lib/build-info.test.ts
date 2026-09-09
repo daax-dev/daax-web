@@ -25,6 +25,7 @@ import {
   availableSboms,
   positiveIntEnv,
 } from "@/lib/build/build-info";
+import { buildSummary } from "@/lib/build/build-env";
 
 // A real CycloneDX SBOM: correct marker, non-empty components, > 512 bytes.
 function realCycloneDx(): string {
@@ -284,5 +285,17 @@ describe("collectBuildInfo", () => {
       "v0.1.0+0123456",
     );
     expect(displayVersion("dev", undefined, "unknown")).toBe("v0.0.0");
+  });
+
+  it("uses the same derived version in the titlebar summary", () => {
+    expect(
+      buildSummary({
+        version: "dev",
+        packageVersion: "0.1.0",
+        commit: "abcdef1234567890",
+        time: "2026-09-09T10:00:00Z",
+        branch: "feature/build",
+      }),
+    ).toBe("v0.1.0+abcdef1 · abcdef1 · 2026-09-09T10:00:00Z · feature/build");
   });
 });

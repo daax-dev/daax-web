@@ -138,8 +138,10 @@ WORKDIR /app
 FROM base AS deps
 
 COPY package.json bun.lock* ./
-# Install dependencies - bun may skip optional deps that fail native compilation
-RUN bun install --frozen-lockfile || bun install
+# Install exactly the dependency graph reviewed and scanned in bun.lock. Optional
+# native-package failures are handled by Bun; a lockfile mismatch must fail the
+# image build rather than silently resolving an unreviewed graph.
+RUN bun install --frozen-lockfile
 
 # node-pty is optional in package.json (for host flexibility) but REQUIRED for Docker
 # Explicitly install and build it for Linux since bun may have skipped it.
@@ -193,22 +195,26 @@ RUN bun run build
 # air-gapped build) and accept the panel's graceful "no SBOM in this build".
 ARG DAAX_SKIP_SBOM=
 ARG SYFT_VERSION=1.45.1
+ARG SYFT_SHA256_amd64=20c84195e24927f50a3b2269946be51f4c4abc9d2f145fee7388b4199149f716
+ARG SYFT_SHA256_arm64=7df9f45cba1f6358ecfc7fac349d43b4605137001f9646b41267abe15a7c6cd7
 RUN if [ -n "$DAAX_SKIP_SBOM" ]; then \
       echo "DAAX_SKIP_SBOM set — skipping SBOM generation"; mkdir -p /app/sbom; \
     else \
       set -eu; \
       arch="$(dpkg --print-architecture)"; \
+      case "$arch" in \
+        amd64) syft_sha="${SYFT_SHA256_amd64}" ;; \
+        arm64) syft_sha="${SYFT_SHA256_arm64}" ;; \
+        *) echo "unsupported arch for syft: ${arch}" >&2; exit 1 ;; \
+      esac; \
       base="https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}"; \
       tarball="syft_${SYFT_VERSION}_linux_${arch}.tar.gz"; \
       cd /tmp; \
       curl -fsSL -o "$tarball" "${base}/${tarball}"; \
-      curl -fsSL -o syft_checksums.txt "${base}/syft_${SYFT_VERSION}_checksums.txt"; \
-      line="$(awk -v f="$tarball" '$2 == f {print}' syft_checksums.txt)"; \
-      [ -n "$line" ] || { echo "no checksum entry for ${tarball}" >&2; exit 1; }; \
-      printf '%s\n' "$line" | sha256sum -c -; \
+      echo "${syft_sha}  ${tarball}" | sha256sum -c -; \
       tar -xzf "$tarball" syft; \
       install -m 0755 syft /usr/local/bin/syft; \
-      rm -f "$tarball" syft_checksums.txt syft; \
+      rm -f "$tarball" syft; \
       cd /app; \
       syft version; \
       bun run sbom:generate; \

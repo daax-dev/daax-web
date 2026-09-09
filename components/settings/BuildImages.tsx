@@ -35,6 +35,7 @@ interface KnownImage {
   containers?: string[];
   service?: string;
   self?: boolean;
+  imageId?: string;
 }
 
 const CATEGORY_LABELS: Record<ImageCategory, string> = {
@@ -134,7 +135,10 @@ export function BuildImages() {
                   </TableHeader>
                   <TableBody>
                     {(grouped.get(category) ?? []).map((img) => (
-                      <ImageRow key={img.ref} img={img} />
+                      <ImageRow
+                        key={`${img.ref}:${img.imageId ?? ""}`}
+                        img={img}
+                      />
                     ))}
                   </TableBody>
                 </Table>
@@ -154,13 +158,14 @@ function ImageRow({ img }: { img: KnownImage }) {
   const [sbom, setSbom] = useState<SbomDocument | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const scanRef = img.imageId ?? img.ref;
 
   useEffect(() => {
     if (!open || sbom) return;
     let cancelled = false;
     setLoading(true);
     setErr("");
-    fetch(imageSbomUrl(img.ref, true), { cache: "no-store" })
+    fetch(imageSbomUrl(scanRef, true), { cache: "no-store" })
       .then(async (res) => {
         if (res.status === 404)
           throw new Error("not available (image not pulled)");
@@ -179,7 +184,7 @@ function ImageRow({ img }: { img: KnownImage }) {
     return () => {
       cancelled = true;
     };
-  }, [open, sbom, img.ref]);
+  }, [open, sbom, scanRef]);
 
   const rows = useMemo(() => (sbom ? rowsFromSbom(sbom) : []), [sbom]);
 
@@ -242,7 +247,7 @@ function ImageRow({ img }: { img: KnownImage }) {
                   </span>
                   <span>· {rows.length} components</span>
                   <a
-                    href={imageSbomUrl(img.ref)}
+                    href={imageSbomUrl(scanRef)}
                     className="inline-flex items-center gap-1 text-primary hover:underline"
                   >
                     <Download className="h-3.5 w-3.5" /> Download

@@ -5,17 +5,21 @@
  * whitelist. A fake Docker client is injected — no daemon, no dockerode mock.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 import {
   staticImageRefs,
   stackImageRefs,
   knownImageRefs,
+  findKnownImageRef,
   isKnownImageRef,
   collectImages,
   selfContainerId,
   digestFromInspect,
   COMPOSE_PROJECT_LABEL,
   COMPOSE_SERVICE_LABEL,
+  DEFAULT_RUNTIME_BASE_IMAGE,
   type ImagesDockerClient,
   type StackContainerInfo,
 } from "@/lib/build/images";
@@ -106,8 +110,16 @@ describe("staticImageRefs", () => {
     expect(cats).toContain("platform");
     expect(cats).toContain("devcontainer");
     expect(cats).not.toContain("stack");
-    expect(refs.some((r) => r.ref === "node:22-bookworm-slim")).toBe(true);
+    expect(refs.some((r) => r.ref === DEFAULT_RUNTIME_BASE_IMAGE)).toBe(true);
     expect(refs.some((r) => r.ref.includes("anchore/syft"))).toBe(true);
+  });
+
+  it("keeps the displayed runtime base pinned to the Dockerfile FROM", () => {
+    const dockerfile = readFileSync(
+      path.join(process.cwd(), "Dockerfile"),
+      "utf-8",
+    );
+    expect(dockerfile).toContain(`FROM ${DEFAULT_RUNTIME_BASE_IMAGE} AS base`);
   });
 
   it("honors env overrides for the runtime base and code-server", () => {
@@ -171,6 +183,23 @@ describe("stackImageRefs", () => {
     expect(web.imageId).toBe("sha256:web-id");
   });
 
+  it("keeps different image IDs under the same mutable tag in separate rows", async () => {
+    const containers = [
+      container("1111111111111111", "old", "example/app:latest", {
+        imageId: "sha256:old-id",
+      }),
+      container("2222222222222222", "new", "example/app:latest", {
+        imageId: "sha256:new-id",
+      }),
+    ];
+    const rows = await stackImageRefs(fakeDocker(containers), { selfId: null });
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.imageId).sort()).toEqual([
+      "sha256:new-id",
+      "sha256:old-id",
+    ]);
+  });
+
   it("lists every running container when not under compose", async () => {
     // Not in a container at all (workstation): selfId null.
     const rows = await stackImageRefs(fakeDocker(), { selfId: null });
@@ -231,7 +260,7 @@ describe("knownImageRefs / isKnownImageRef", () => {
       const pg = refs.filter((r) => r.ref === "postgres:18-alpine");
       expect(pg).toHaveLength(1);
       expect(pg[0].category).toBe("stack");
-      expect(refs.some((r) => r.ref === "node:22-bookworm-slim")).toBe(true);
+      expect(refs.some((r) => r.ref === DEFAULT_RUNTIME_BASE_IMAGE)).toBe(true);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -240,7 +269,9 @@ describe("knownImageRefs / isKnownImageRef", () => {
   it("accepts exactly the refs of the freshly computed set", async () => {
     const docker = fakeDocker();
     expect(await isKnownImageRef("postgres:18-alpine", docker)).toBe(true);
-    expect(await isKnownImageRef("node:22-bookworm-slim", docker)).toBe(true);
+    expect(await isKnownImageRef(DEFAULT_RUNTIME_BASE_IMAGE, docker)).toBe(
+      true,
+    );
     // Running on the host but in another compose project → not in this
     // stack's set (self identified via DAAX_CONTAINER_ID).
     vi.stubEnv("DAAX_CONTAINER_ID", SELF_ID);
@@ -255,10 +286,31 @@ describe("knownImageRefs / isKnownImageRef", () => {
     expect(await isKnownImageRef("", docker)).toBe(false);
   });
 
+  it("accepts exact running IDs and rejects an ambiguous mutable tag", async () => {
+    const containers = [
+      container("1111111111111111", "old", "example/app:latest", {
+        imageId: "sha256:old-id",
+      }),
+      container("2222222222222222", "new", "example/app:latest", {
+        imageId: "sha256:new-id",
+      }),
+    ];
+    const docker = fakeDocker(containers);
+    expect(await findKnownImageRef("example/app:latest", docker)).toBeNull();
+    expect((await findKnownImageRef("sha256:old-id", docker))?.name).toBe(
+      "old",
+    );
+    expect((await findKnownImageRef("sha256:new-id", docker))?.name).toBe(
+      "new",
+    );
+  });
+
   it("falls back to the static set alone when the daemon is down", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const docker = fakeDocker(new Error("down"));
-    expect(await isKnownImageRef("node:22-bookworm-slim", docker)).toBe(true);
+    expect(await isKnownImageRef(DEFAULT_RUNTIME_BASE_IMAGE, docker)).toBe(
+      true,
+    );
     expect(await isKnownImageRef("postgres:18-alpine", docker)).toBe(false);
     vi.restoreAllMocks();
   });
@@ -291,7 +343,7 @@ describe("collectImages", () => {
     expect(web?.present).toBe(true);
     expect(web?.digest).toBe("sha256:sha256:web-id");
     expect(docker.inspected).toContain("sha256:web-id");
-    expect(docker.inspected).toContain("node:22-bookworm-slim");
+    expect(docker.inspected).toContain(DEFAULT_RUNTIME_BASE_IMAGE);
   });
 
   it("marks images not present when inspect fails", async () => {
