@@ -32,6 +32,118 @@ export function agentviewDaemonUrl(): string {
 }
 
 /**
+ * The `Host` to present to the daemon, which is NOT always the host we dial.
+ *
+ * agentd refuses a request whose Host it does not recognise — a DNS-rebinding
+ * guard, and a correct one: a name that resolves to the daemon can be pointed
+ * there by whoever controls the name, so the daemon answers only to a loopback
+ * Host, the address it was told to listen on, or its --public-origin.
+ *
+ * `host.docker.internal` is none of those, so the container-mode default above
+ * dialled the right socket and was refused by name:
+ *
+ *   403 refused: Host "host.docker.internal:7717" is not this daemon. It
+ *   answers only to a loopback Host or the address it was told to listen on
+ *   (127.0.0.1:7717) or the origin it was told it is reached at (…)
+ *
+ * That is the whole reason Agent View showed a dead daemon on every host. The
+ * socket was reachable; the name was wrong.
+ *
+ * So when we are using the container-mode default, send the loopback Host the
+ * daemon does accept. We are not guessing: host.docker.internal is by
+ * definition the host, and agentd's default listen address is that host's
+ * loopback, which is exactly what the guard admits.
+ *
+ * Returns undefined when AGENTVIEW_DAEMON_URL is set — an operator who named a
+ * daemon has also named the Host it should answer to, and silently rewriting it
+ * would defeat the guard rather than satisfy it.
+ */
+export function agentviewDaemonHostHeader(): string | undefined {
+  if (process.env.AGENTVIEW_DAEMON_URL?.trim()) return undefined;
+  if (!process.env.HOST_WORKSPACE_PATH) return undefined;
+  return `127.0.0.1:${DEFAULT_PORT}`;
+}
+
+/**
+ * One daemon request, sent so the Host above actually survives.
+ *
+ * `fetch` CANNOT do this. Host is a forbidden header name in the fetch spec, so
+ * undici silently drops it and derives Host from the URL — the override looks
+ * applied and changes nothing. Measured against the real daemon from inside the
+ * container:
+ *
+ *   fetch + Host header    -> 403   (header dropped, Host is host.docker.internal)
+ *   node:http + Host       -> 200
+ *
+ * So the container-mode path uses node:http, which lets a caller set Host, and
+ * everything else keeps using fetch. This is deliberately NOT a wholesale
+ * transport swap: when an operator sets AGENTVIEW_DAEMON_URL there is no
+ * override to apply, `hostHeader` is undefined, and the original fetch path
+ * runs untouched — including TLS, which node:http could not serve anyway.
+ *
+ * The Response is constructed rather than proxied so callers keep the shape
+ * they already use: `.status`, `.ok`, `.text()`, and a real streaming `.body`
+ * for the SSE route.
+ */
+async function daemonRequest(
+  url: string,
+  init: {
+    method?: string;
+    headers: Record<string, string>;
+    body?: string;
+    signal?: AbortSignal;
+  },
+): Promise<Response> {
+  const hostHeader = agentviewDaemonHostHeader();
+  if (!hostHeader) {
+    return fetch(url, {
+      method: init.method ?? "GET",
+      cache: "no-store",
+      redirect: "manual",
+      headers: init.headers,
+      body: init.body,
+      signal: init.signal,
+    });
+  }
+
+  const { request } = await import("node:http");
+  const { Readable } = await import("node:stream");
+  const target = new URL(url);
+
+  return new Promise<Response>((resolve, reject) => {
+    const req = request(
+      {
+        hostname: target.hostname,
+        port: target.port,
+        path: `${target.pathname}${target.search}`,
+        method: init.method ?? "GET",
+        // Host LAST so it cannot be shadowed by a caller-supplied entry.
+        headers: { ...init.headers, Host: hostHeader },
+        signal: init.signal,
+      },
+      (res) => {
+        const headers = new Headers();
+        for (const [k, v] of Object.entries(res.headers)) {
+          if (Array.isArray(v)) for (const one of v) headers.append(k, one);
+          else if (v !== undefined) headers.set(k, v);
+        }
+        // Through `unknown` on purpose. Readable.toWeb returns node:stream/web's
+        // ReadableStream, whose getReader overloads do not structurally match
+        // the DOM lib's — the two are the same object at runtime and TypeScript
+        // will not accept a direct cast between them.
+        const body = Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>;
+        resolve(
+          new Response(body, { status: res.statusCode ?? 502, headers }),
+        );
+      },
+    );
+    req.on("error", reject);
+    if (init.body) req.write(init.body);
+    req.end();
+  });
+}
+
+/**
  * One path segment that is *not* a path parameter: a fixed route word. The
  * daemon's route table uses lowercase ASCII words only.
  */
@@ -190,12 +302,10 @@ export async function fetchDaemon(
     DAEMON_CONNECT_TIMEOUT_MS,
   );
   try {
-    const res = await fetch(url, {
+    const res = await daemonRequest(url, {
       method: "GET",
-      cache: "no-store",
       headers: { Accept: accept },
       signal: combined,
-      redirect: "manual",
     });
     return { ok: true, res };
   } catch (err) {
@@ -280,12 +390,15 @@ export async function postDaemonSignal(
     );
   const { signal, cleanup } = withTimeout(undefined, DAEMON_CONNECT_TIMEOUT_MS);
   try {
-    const res = await fetch(
+    // Same transport as reads: the rebinding guard runs before any of the
+    // assertions below are looked at, so a signal is refused by Host for the
+    // same reason a read was. `reserved` above deliberately keeps "host" out of
+    // the CONFIGURABLE assertion headers; the Host here is the transport's own,
+    // set by daemonRequest and never taken from a caller.
+    const res = await daemonRequest(
       `${agentviewDaemonUrl()}/api/v1/agents/${encodeURIComponent(agentId)}/signal`,
       {
         method: "POST",
-        cache: "no-store",
-        redirect: "manual",
         headers: {
           Accept: "application/json",
           "Content-Type": "application/json",
