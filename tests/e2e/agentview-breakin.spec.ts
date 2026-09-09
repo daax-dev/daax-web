@@ -14,10 +14,14 @@ const APP = "http://127.0.0.1:4218";
 const DAEMON = "http://127.0.0.1:7794";
 const agentId = "chamonix-5d63c187/claude/1c9e4b02-8f7a-4b16-9d33-2ea5c60f7411";
 test.describe.configure({ mode: "serial" });
-test.skip(
-  !existsSync(path.resolve(".next/BUILD_ID")),
-  "Agent View break-in needs a production build; run bun run build before this spec",
-);
+const buildMissing = !existsSync(path.resolve(".next/BUILD_ID"));
+const buildRequired = process.env.DAAX_REQUIRE_E2E_BUILD === "1";
+const buildReason =
+  "Agent View break-in needs a production build; run bun run build before this spec";
+test.skip(buildMissing && !buildRequired, buildReason);
+test.beforeAll(() => {
+  if (buildMissing && buildRequired) throw new Error(buildReason);
+});
 test.use({
   baseURL: APP,
   extraHTTPHeaders: {
@@ -182,7 +186,7 @@ test("the unmodified recorded ACTIVE row has no observed process and cannot be i
     .click();
   await expect(
     page.getByRole("button", {
-      name: "Interrupt — nothing to interrupt: no process has been observed for this session",
+      name: "Interrupt — this daemon's authenticator admits everybody: no --auth was given, so this daemon authenticates nobody. Every control action is recorded with the principal that asked for it, and the honest value of that here is nobody, so control is unavailable for every agent on this daemon (ADR 0017 §2)",
       exact: true,
     }),
   ).toBeDisabled();
@@ -192,7 +196,7 @@ test("the unmodified recorded ACTIVE row has no observed process and cannot be i
   expect(posts).toEqual([]);
 });
 
-test("wrong-node fixture refusal uses 421 and the daemon's exact sentence", async ({
+test("wrong-node fixture refusal uses 404 and the daemon's exact sentence", async ({
   request,
 }) => {
   await startDaemon("--control");
@@ -202,12 +206,14 @@ test("wrong-node fixture refusal uses 421 and the daemon's exact sentence", asyn
       data: { signal: "interrupt" },
     },
   );
-  expect(response.status()).toBe(421);
+  const { signals } = await (await fetch(`${DAEMON}/__signals`)).json();
+  expect(signals).toHaveLength(1);
+  expect(signals[0].agent_id).toBe("galway/claude/session");
+  expect(signals[0].body).toEqual({ signal: "interrupt" });
+  expect(response.status()).toBe(404);
   const body = await response.json();
-  // Node fetch retries 421 once; the audit sequence is transport-dependent.
-  // The route unit test separately pins byte-for-byte event_id pass-through.
-  expect(body.event_id).toMatch(/^fixture-signal-[1-9][0-9]*$/);
-  expect(body).toMatchObject({
+  expect(body).toEqual({
+    event_id: "fixture-signal-1",
     agent_id: "galway/claude/session",
     signal: "interrupt",
     outcome: "refused",

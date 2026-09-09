@@ -147,6 +147,7 @@ jobs:
       # skips with a sentence if this is aimed anywhere else, so the value here and the
       # port there must agree.
       AGENTVIEW_DAEMON_URL: http://127.0.0.1:7793
+      DAAX_REQUIRE_E2E_BUILD: "1"
       # The app below runs `next start`, so NODE_ENV is production and
       # lib/auth-trust denies every /api/* request that carries no forwarded
       # identity — the tests then see 401 everywhere and grade nothing. This is

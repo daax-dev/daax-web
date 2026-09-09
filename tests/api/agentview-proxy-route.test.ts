@@ -622,7 +622,7 @@ describe("POST /api/agentview/[...path]", () => {
 
   it.each([
     [200, SIGNAL_BODY],
-    [421, REMOTE_BODY],
+    [404, REMOTE_BODY],
   ])(
     "passes the daemon's outcome, recorded and event_id through unchanged (%s)",
     async (status, body) => {

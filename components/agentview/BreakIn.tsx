@@ -52,12 +52,12 @@ export function BreakIn({
   const passive = agent.state !== "AGENT_STATE_ACTIVE" || !live;
   const interruptReason =
     observationFailure ||
+    controlReason ||
     (passive
       ? agent.state !== "AGENT_STATE_ACTIVE"
         ? `nothing to interrupt: this session is ${stripEnum(agent.state)}`
         : "nothing to interrupt: no process has been observed for this session"
-      : undefined) ||
-    controlReason;
+      : undefined);
   const command = resumeCommand(agent.agent_type, agent.session_id);
   const remoteReason =
     agent.node_id !== localNodeId
@@ -111,7 +111,7 @@ export function BreakIn({
     }));
     setTerminalUrl(undefined);
   };
-  // A relayed row or a 421 refusal names the peer control URL. Permit web links
+  // A relayed row or a 404 refusal names the peer control URL. Permit web links
   // only; never treat arbitrary reason text as an executable URL.
   const reason = lastSignal?.reply?.error || controlReason || "";
   const peerUrl = reason

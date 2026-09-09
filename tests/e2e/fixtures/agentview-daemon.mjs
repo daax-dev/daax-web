@@ -121,7 +121,7 @@ function handle(req, res, { refuse, control, refuseControl, signals }) {
       const id = decodeURIComponent(signal[1]);
       if (id === "galway/claude/session" && parsed.signal === "interrupt") {
         signals.push({ agent_id: id, body: parsed, headers: req.headers });
-        return json(res, 421, {
+        return json(res, 404, {
           agent_id: id,
           signal: parsed.signal,
           outcome: "refused",

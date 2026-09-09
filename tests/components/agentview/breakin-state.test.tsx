@@ -55,7 +55,17 @@ describe("observed break-in state", () => {
     expect(screen.getByText("running", { exact: true })).toBeVisible();
   });
   it("interrupted (observed) comes from a later MODEL_REQUEST marker", () => {
-    render(<p>{breakinState(ACTIVE_AGENT, [interrupted], signal, now)}</p>);
+    const observedSignal: LastSignal = {
+      kind: "signal",
+      at: "2026-09-08T14:00:00Z",
+      agentId: "chamonix-d5d8554e/claude/4db77e81-4da9-4567-a755-ad316e8df7ba",
+      sessionId: "4db77e81-4da9-4567-a755-ad316e8df7ba",
+      nodeId: "chamonix-d5d8554e",
+      pid: 40327,
+    };
+    render(
+      <p>{breakinState(ACTIVE_AGENT, [interrupted], observedSignal, now)}</p>,
+    );
     expect(
       screen.getByText("interrupted (observed)", { exact: true }),
     ).toBeVisible();

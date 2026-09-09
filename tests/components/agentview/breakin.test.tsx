@@ -116,7 +116,7 @@ describe("BreakIn", () => {
       }),
     ).toBeDisabled();
   });
-  it("a remote node renders the link from the 421", async () => {
+  it("a remote node renders the link from the 404", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(
         JSON.stringify({
@@ -125,7 +125,7 @@ describe("BreakIn", () => {
           error:
             'no agent "galway/claude/session" is in this node\'s registry; its prefix names node galway, and control is not federated: node galway has its own control surface at https://agent.galway.example (ADR 0026 §3); this daemon can only signal processes it can see',
         }),
-        { status: 421 },
+        { status: 404 },
       ),
     );
     render(
@@ -227,6 +227,40 @@ describe("BreakIn", () => {
     },
   );
 
+  it("a relayed row with no process_alive shows the federation reason before passive state", () => {
+    const { process_alive: _processAlive, ...withoutProcess } = active;
+    render(
+      <BreakIn
+        {...props}
+        agent={{
+          ...withoutProcess,
+          agent_id: "galway/claude/session",
+          node_id: "galway",
+          capabilities: {
+            signals: {
+              control: {
+                level: "CAPABILITY_LEVEL_UNAVAILABLE",
+                detail:
+                  "this agent runs on node galway, and control is not federated: node galway has its own control surface at http://100.112.65.66:7717 (ADR 0026 §3); this daemon can only signal processes it can see",
+              },
+            },
+          },
+        }}
+      />,
+    );
+    const interrupt = screen.getByRole("button", {
+      name: "Interrupt — this agent runs on node galway, and control is not federated: node galway has its own control surface at http://100.112.65.66:7717 (ADR 0026 §3); this daemon can only signal processes it can see",
+    });
+    expect(interrupt).toBeDisabled();
+    fireEvent.click(interrupt);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("link", {
+        name: "Open control surface on the owning node",
+      }),
+    ).toHaveAttribute("href", "http://100.112.65.66:7717");
+  });
+
   it("an ACTIVE row with no process_alive key disables Interrupt and says why", () => {
     // Byte-faithful recorded row: no --control synthesis and no added fields.
     const agent = recordedAgents.agents.find(
@@ -239,7 +273,7 @@ describe("BreakIn", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(interrupt).toBeDisabled();
     expect(interrupt).toHaveTextContent(
-      "nothing to interrupt: no process has been observed for this session",
+      "this daemon's authenticator admits everybody: no --auth was given, so this daemon authenticates nobody. Every control action is recorded with the principal that asked for it, and the honest value of that here is nobody, so control is unavailable for every agent on this daemon (ADR 0017 §2)",
     );
     expect(screen.getByTestId("agentview-breakin-state")).toHaveTextContent(
       "unknown",
