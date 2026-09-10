@@ -211,6 +211,25 @@ services:
       # 4201 (Terminal WebSocket) is now published by the `terminal` service.
       - "127.0.0.1:4200:4200" # Web UI
 
+    # Agent View's proxy (app/api/agentview) reaches dist-agent's `agentd` at
+    # http://host.docker.internal:7717 whenever HOST_WORKSPACE_PATH is set —
+    # i.e. in every container deployment. That name resolves for free only on
+    # Docker Desktop, so without this the tab renders "Daemon unreachable:
+    # getaddrinfo ENOTFOUND host.docker.internal" and no other symptom.
+    #
+    # `host-gateway` is the portable default. On a Linux host it resolves to the
+    # docker0 bridge (172.17.0.1), which reaches the host but is shared with
+    # every container on the machine; DAAX_HOST_GATEWAY overrides it with this
+    # deployment's own bridge gateway so that only containers on DAAX_NETWORK
+    # can reach whatever answers there.
+    #
+    # Resolving the name is half of it: agentd binds 127.0.0.1:7717 and must
+    # keep doing so (its loopback listener is what exempts daax's uncredentialed
+    # reads from needing a session), so the host also needs something listening
+    # on that gateway address that forwards to 127.0.0.1:7717.
+    extra_hosts:
+      - "host.docker.internal:${DAAX_HOST_GATEWAY:-host-gateway}"
+
     volumes:
       # No Docker socket here (F3 #100): the web plane does not spawn containers.
       # The socket is mounted only on the `terminal` service.
