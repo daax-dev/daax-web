@@ -13,8 +13,19 @@ services:
   # The password MUST be provided via env/secret — fail-closed, never committed.
   postgres:
     # Digest-pinned (#203): multi-arch index digest so a registry-side tag update
-    # cannot silently swap the image. Bump via Renovate/Dependabot for patches.
-    image: postgres:18-alpine@sha256:1b1689b20d16a014a3d195653381cf2caa75a41a92d93b255a9d6ea29fd353aa
+    # cannot silently swap the image. Bump via Dependabot for patches.
+    #
+    # Moved 2026-09-10 from sha256:1b1689b2 to match what chamonix runs in
+    # dx/docker-compose.yml. Two reasons, both measured with grype 0.118.0
+    # through an SBOM rather than a direct image scan: the fleet and the
+    # workstation were running DIFFERENT postgres images, which is exactly the
+    # drift a digest pin exists to prevent; and the old digest carried 15
+    # fixable CRITICALs against this one's 6 — ten of them libcurl 8.20.0-r1,
+    # where this image has 8.21.0-r0. The 6 that remain are the openssl/curl
+    # advisories every distro base carries right now, which no pin can clear:
+    # alpine:latest and postgres:18-trixie report the same ones. Re-measure
+    # with dx's `make sbom`.
+    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
     container_name: daax-postgres
     restart: unless-stopped
     environment:
@@ -52,7 +63,7 @@ services:
   # so pg_dump matches the server version. See docs/postgres-backup-restore.md.
   #   docker compose --profile backup run --rm pg-backup
   pg-backup:
-    image: postgres:18-alpine@sha256:1b1689b20d16a014a3d195653381cf2caa75a41a92d93b255a9d6ea29fd353aa
+    image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
     container_name: daax-pg-backup
     restart: "no"
     profiles:
