@@ -47,8 +47,7 @@ jobs:
       # Integration tests gate the DB invariants (F5, #101): revoked-no-regrant,
       # JIT xmax insert-vs-update, first-admin bootstrap, prune-only-reconcile,
       # group-sync. `test:integration` spins a throwaway Postgres via Docker
-      # (scripts/with-test-postgres.sh) and self-skips only if Docker is absent —
-      # the ubuntu-latest runner HAS Docker, so these actually run at the gate.
+      # (scripts/with-test-postgres.sh) and fails closed if Docker is absent.
       - name: Integration tests (Postgres via Docker)
         run: bun run test:integration
 
@@ -125,7 +124,9 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:18-alpine
+        # Match the deployed digest so a mutable tag cannot silently change what
+        # the release gate tests against.
+        image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
         env:
           POSTGRES_USER: daax
           POSTGRES_PASSWORD: daax

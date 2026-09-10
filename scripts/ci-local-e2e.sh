@@ -15,10 +15,11 @@
 #
 # Where this deviates from the job, and why:
 #
-#   - Postgres. The job gets a fresh `postgres:18-alpine` service container per
-#     run. Here, when DATABASE_URL is unset, a throwaway container of the same
-#     image is started on an ephemeral loopback port with a generated password
-#     and removed on exit — the same shape scripts/with-test-postgres.sh uses.
+#   - Postgres. The job gets a fresh digest-pinned `postgres:18-alpine` service
+#     container per run. Here, when DATABASE_URL is unset, a throwaway container
+#     of the same image is started on an ephemeral loopback port with a generated
+#     password and removed on exit — the same shape
+#     scripts/with-test-postgres.sh uses.
 #     The compose `postgres` service is NOT used: it is the operator's persistent
 #     development database (fixed container name, fixed port 5432, named volume),
 #     so bringing it up with a generated password would either recreate the
@@ -52,7 +53,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 APP_PORT=4210
 APP_URL="http://127.0.0.1:${APP_PORT}"
-PG_IMAGE="${DAAX_TEST_PG_IMAGE:-postgres:18-alpine}"
+# Match the CI service exactly; the override is for deliberate compatibility
+# runs.
+PG_IMAGE="${DAAX_TEST_PG_IMAGE:-postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2}"
 PG_CONTAINER=""
 APP_PID=""
 APP_LOG="$(mktemp -t daax-ci-local-e2e-app.XXXXXX)"

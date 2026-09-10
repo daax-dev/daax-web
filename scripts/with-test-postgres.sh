@@ -7,18 +7,21 @@
 # dependency tree (and out of the production image) — the throwaway DB is a
 # plain `docker run` torn down on exit.
 #
-# If Docker is unavailable this exits 0 with a skip message so the command is a
-# no-op rather than a failure (the integration test also self-skips).
+# Docker is required. An explicit integration run that grades nothing is a
+# false green, especially in CI where this suite gates database authorization.
 #
 # Usage: scripts/with-test-postgres.sh <command> [args...]
 set -euo pipefail
 
 if ! docker info >/dev/null 2>&1; then
-  echo "[with-test-postgres] Docker not available — skipping integration run." >&2
-  exit 0
+  echo "[with-test-postgres] Docker not available — refusing to skip integration run." >&2
+  exit 1
 fi
 
-IMAGE="${DAAX_TEST_PG_IMAGE:-postgres:18-alpine}"
+# Match the deployed digest so local and CI integration runs exercise the image
+# that ships. DAAX_TEST_PG_IMAGE remains available for explicit compatibility
+# tests.
+IMAGE="${DAAX_TEST_PG_IMAGE:-postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2}"
 NAME="daax-test-pg-$$"
 PASSWORD="daax_test_pw"
 
