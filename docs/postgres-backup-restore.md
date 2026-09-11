@@ -127,8 +127,9 @@ export DATABASE_URL="postgres://daax:pw@127.0.0.1:5432/daax"
 DUMP=$(DAAX_BACKUP_DIR=/tmp/drill scripts/pg-backup.sh)
 
 # 2. Spin a throwaway target and restore into it.
+PG_IMAGE="postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2"
 docker run -d --name daax-drill -e POSTGRES_USER=daax -e POSTGRES_PASSWORD=pw \
-  -e POSTGRES_DB=daax -p 127.0.0.1:55432:5432 postgres:18-alpine
+  -e POSTGRES_DB=daax -p 127.0.0.1:55432:5432 "$PG_IMAGE"
 sleep 5
 DATABASE_URL="postgres://daax:pw@127.0.0.1:55432/daax" DAAX_RESTORE_YES=1 \
   scripts/pg-restore.sh "$DUMP"
