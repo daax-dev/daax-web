@@ -18,12 +18,14 @@ import path from "node:path";
 
 import {
   collectBuildInfo,
+  displayVersion,
   getDeployment,
   sbomFilePath,
   readSbom,
   availableSboms,
   positiveIntEnv,
 } from "@/lib/build/build-info";
+import { buildSummary } from "@/lib/build/build-env";
 
 // A real CycloneDX SBOM: correct marker, non-empty components, > 512 bytes.
 function realCycloneDx(): string {
@@ -106,6 +108,20 @@ describe("getDeployment", () => {
     expect(dep.image).toBeUndefined();
     expect(dep.registry).toBeUndefined();
     expect(dep.workspace).toBeUndefined();
+  });
+
+  it("names the build host as the deploy host only in host mode", () => {
+    vi.stubEnv("DAAX_DEPLOY_HOST", "");
+    vi.stubEnv("NEXT_PUBLIC_BUILD_HOSTNAME", "chamonix");
+    vi.stubEnv("HOST_WORKSPACE_PATH", "");
+    vi.stubEnv("DAAX_DEPLOY_MODE", "");
+    expect(getDeployment().host).toBe("chamonix");
+    // Container mode: the image was built elsewhere (buildkit sandbox / CI),
+    // so only an explicit DAAX_DEPLOY_HOST is trusted.
+    vi.stubEnv("HOST_WORKSPACE_PATH", "/workspace");
+    expect(getDeployment().host).toBeUndefined();
+    vi.stubEnv("DAAX_DEPLOY_HOST", "kinsale");
+    expect(getDeployment().host).toBe("kinsale");
   });
 
   it("infers container mode from HOST_WORKSPACE_PATH", () => {
@@ -227,12 +243,16 @@ describe("collectBuildInfo", () => {
   });
 
   it("assembles version, runtime, deployment, and empty SBOM set", () => {
+    vi.stubEnv("NEXT_PUBLIC_BUILD_VERSION", "");
     vi.stubEnv("NEXT_PUBLIC_BUILD_COMMIT", "abcdef1234567890");
+    vi.stubEnv("NEXT_PUBLIC_BUILD_TIME", "2026-09-09T10:00:00Z");
     vi.stubEnv("NEXT_PUBLIC_BUILD_BRANCH", "sbom");
     const info = collectBuildInfo();
-    // Version is derived from the real package.json ("vX.Y.Z+<sha7>").
+    // No stamped VERSION → derived from the real package.json ("vX.Y.Z+<sha7>").
     expect(info.version).toMatch(/^v\d+\.\d+\.\d+\+abcdef1$/);
+    expect(info.packageVersion).toMatch(/^\d+\.\d+\.\d+$/);
     expect(info.gitSha).toBe("abcdef1234567890");
+    expect(info.buildTime).toBe("2026-09-09T10:00:00Z");
     expect(info.nextVersion).toBeTruthy();
     expect(info.branch).toBe("sbom");
     expect(info.nodeVersion).toBe(process.version);
@@ -241,10 +261,41 @@ describe("collectBuildInfo", () => {
     expect(info.deployment?.mode).toBe("host");
   });
 
-  it("omits the +sha suffix for a bare dev build", () => {
+  it("uses a stamped VERSION verbatim (release tag / git describe)", () => {
+    vi.stubEnv("NEXT_PUBLIC_BUILD_VERSION", "v1.4.0-3-gabc1234-dirty");
+    vi.stubEnv("NEXT_PUBLIC_BUILD_COMMIT", "abc1234abc1234");
+    expect(collectBuildInfo().version).toBe("v1.4.0-3-gabc1234-dirty");
+  });
+
+  it("reports the sentinels, not a guess, for an unstamped build", () => {
+    vi.stubEnv("NEXT_PUBLIC_BUILD_VERSION", "");
     vi.stubEnv("NEXT_PUBLIC_BUILD_COMMIT", "");
+    vi.stubEnv("NEXT_PUBLIC_BUILD_TIME", "");
     const info = collectBuildInfo();
-    expect(info.gitSha).toBe("000000");
+    expect(info.gitSha).toBe("unknown");
+    expect(info.buildTime).toBe("unknown");
+    // No +sha suffix when the commit is unknown; "dev" never dresses up.
     expect(info.version).toMatch(/^v\d+\.\d+\.\d+$/);
+  });
+
+  it("displayVersion: stamped wins, else package version (+sha7 when known)", () => {
+    expect(displayVersion("v2.0.0", "0.1.0", "unknown")).toBe("v2.0.0");
+    expect(displayVersion("dev", "0.1.0", "unknown")).toBe("v0.1.0");
+    expect(displayVersion("", "0.1.0", "0123456789abcdef")).toBe(
+      "v0.1.0+0123456",
+    );
+    expect(displayVersion("dev", undefined, "unknown")).toBe("v0.0.0");
+  });
+
+  it("uses the same derived version in the titlebar summary", () => {
+    expect(
+      buildSummary({
+        version: "dev",
+        packageVersion: "0.1.0",
+        commit: "abcdef1234567890",
+        time: "2026-09-09T10:00:00Z",
+        branch: "feature/build",
+      }),
+    ).toBe("v0.1.0+abcdef1 · abcdef1 · 2026-09-09T10:00:00Z · feature/build");
   });
 });

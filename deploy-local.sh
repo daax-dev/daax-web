@@ -79,6 +79,24 @@ else
 fi
 
 log()  { printf '%s[info]%s %s\n' "$BLU" "$RST" "$*"; }
+
+# Build stamp for the compose build args (deploy/docker-compose.yml → Dockerfile
+# ARG VERSION/GIT_SHA/BUILD_TIME → /api/build + OCI labels). Read from this
+# checkout unless already exported; outside git the "dev"/"unknown" sentinels
+# stay — never a guess.
+export_build_stamp() {
+  if [[ -z "${VERSION:-}" ]]; then
+    VERSION="$(git -C "$SCRIPT_DIR" describe --tags --match 'v*' --dirty 2>/dev/null || echo dev)"
+  fi
+  if [[ -z "${GIT_SHA:-}" ]]; then
+    GIT_SHA="$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+  fi
+  if [[ -z "${BUILD_TIME:-}" ]]; then
+    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  fi
+  export VERSION GIT_SHA BUILD_TIME
+  log "build stamp: VERSION=$VERSION GIT_SHA=${GIT_SHA:0:7} BUILD_TIME=$BUILD_TIME"
+}
 ok()   { printf '%s[ ok ]%s %s\n' "$GRN" "$RST" "$*"; }
 warn() { printf '%s[warn]%s %s\n' "$YEL" "$RST" "$*" >&2; }
 err()  { printf '%s[err ]%s %s\n' "$RED" "$RST" "$*" >&2; }
@@ -399,6 +417,7 @@ cmd_deploy() {
   ensure_network
 
   log "building daax web + terminal images..."
+  export_build_stamp
   compose build --pull daax terminal
   ensure_daax_data_owner
   log "starting daax web + terminal (force-recreate)..."
@@ -556,6 +575,7 @@ cmd_migrate_daax() {
 
   # Bring up daax on native (web + terminal planes, F3 #100)
   log "building daax on native daemon..."
+  export_build_stamp
   compose build --pull daax terminal
   ensure_daax_data_owner
   log "starting daax on native daemon..."

@@ -1782,23 +1782,13 @@ function SettingsInner() {
 
             <Card>
               <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-lg flex items-center gap-2">
-                      <Mic className="h-5 w-5" />
-                      Voice Input
-                    </CardTitle>
-                    <CardDescription>
-                      Configure voice-to-text settings for AI agents
-                    </CardDescription>
-                  </div>
-                  <Button variant="outline" size="sm" asChild>
-                    <Link href="/settings/voice">
-                      <Mic className="h-4 w-4 mr-2" />
-                      Test Voice
-                    </Link>
-                  </Button>
-                </div>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Mic className="h-5 w-5" />
+                  Voice Input
+                </CardTitle>
+                <CardDescription>
+                  Configure voice-to-text settings for AI agents
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">

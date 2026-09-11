@@ -4,10 +4,9 @@
  *
  * Mirrors the reference platform's admin Build endpoint, adapted to daax-web:
  *   - "Go runtime" → Node runtime (process.version) + Next.js version.
- *   - Azure Container Apps fields → daax's real deployment surface. Mode/host/
- *     deployer are always populated (knowable locally); GHCR registry/image/tag
- *     and workspace stay env-driven and are omitted when unset (a from-source
- *     dev run has no image) rather than inventing container-registry values.
+ *   - Azure Container Apps fields → daax's real deployment surface. Mode is
+ *     always derivable; host/deployer and GHCR registry/image/tag/workspace are
+ *     omitted when unavailable rather than invented.
  *
  * SBOM files are served from a whitelisted directory (no path traversal) and
  * validated with the shared placeholder-vs-real guard, so the panel degrades to
@@ -18,6 +17,8 @@ import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 
 import { checkSbom } from "@/lib/sbom-guard";
+import { buildStamp, displayVersion } from "./build-env";
+export { displayVersion } from "./build-env";
 import type { SbomFormatId, SbomComponentId, SbomRef } from "./sbom-format";
 
 /** Default upper bound (bytes) on an SBOM file the route will read into memory. */
@@ -66,11 +67,19 @@ export interface DaaxDeployment {
 }
 
 export interface BuildInfo {
-  /** Display version, e.g. "v0.1.0" (package.json) or "v0.1.0+<sha7>". */
+  /**
+   * Stamped version: the explicit VERSION build input (a release tag such as
+   * "v1.2.3", or `git describe` output like "v1.2.3-4-gabc1234[-dirty]"). When
+   * no version was stamped this falls back to package.json's "v<version>"
+   * suffixed with "+<sha7>" when the commit is known — and "dev" is never
+   * dressed up as a release.
+   */
   version: string;
-  /** Full git commit SHA (or "000000" in a bare dev build). */
+  /** package.json `version` (what scripts/release.sh bumps), e.g. "0.1.0". */
+  packageVersion: string;
+  /** Full git commit SHA, or "unknown" when not stamped. */
   gitSha: string;
-  /** Build timestamp (NEXT_PUBLIC_BUILD_TIMESTAMP, or now for dev). */
+  /** UTC RFC3339 build time (NEXT_PUBLIC_BUILD_TIME), or "unknown". */
   buildTime: string;
   /** Node.js runtime version, e.g. "v22.x". */
   nodeVersion: string;
@@ -84,7 +93,7 @@ export interface BuildInfo {
   sbomAvailable: boolean;
   /** Which (component, format) SBOMs are available. */
   sboms: SbomRef[];
-  /** Deployment metadata (mode/host/deployer always set; image fields when known). */
+  /** Deployment metadata (mode always set; other fields when known). */
   deployment?: DaaxDeployment;
 }
 
@@ -225,11 +234,9 @@ function readPackageJson(): { version?: string; nextVersion?: string } {
 }
 
 /**
- * Read deployment metadata. Always populates the fields that are genuinely
- * knowable locally — mode (host vs container), host, and the deploying user —
- * so the Deployment card is never an empty "not deployed" line. Registry/image/
- * tag/workspace/via stay env-driven and are omitted when unset (a from-source
- * dev run has no image), rather than inventing container-registry values.
+ * Read deployment metadata. Mode (host vs container) is always derivable.
+ * Host, deployer, registry/image/tag/workspace/via are best-effort and omitted
+ * when unavailable rather than invented.
  */
 export function getDeployment(): DaaxDeployment {
   const env = process.env;
@@ -243,30 +250,31 @@ export function getDeployment(): DaaxDeployment {
     image: env.DAAX_IMAGE || undefined,
     imageTag: env.DAAX_IMAGE_TAG || undefined,
     workspace: env.HOST_WORKSPACE_PATH || undefined,
-    host: env.DAAX_DEPLOY_HOST || env.NEXT_PUBLIC_BUILD_HOSTNAME || undefined,
+    // The build host only names the deploy host for a from-source (host mode)
+    // run. A container was built elsewhere (buildkit sandbox, CI runner), so
+    // in container mode only an explicit DAAX_DEPLOY_HOST is trusted.
+    host:
+      env.DAAX_DEPLOY_HOST ||
+      (mode === "host" ? env.NEXT_PUBLIC_BUILD_HOSTNAME : undefined) ||
+      undefined,
   };
 }
 
 /** Assemble the full BuildInfo payload. */
 export function collectBuildInfo(): BuildInfo {
   const { version, nextVersion } = readPackageJson();
-  const env = process.env;
-  const gitSha = env.NEXT_PUBLIC_BUILD_COMMIT || "000000";
-  const shortSha = gitSha.slice(0, 7);
-  const baseVersion = version ? `v${version}` : "v0.0.0";
-  const displayVersion =
-    gitSha !== "000000" ? `${baseVersion}+${shortSha}` : baseVersion;
-
+  const stamp = buildStamp();
   const sboms = availableSboms();
 
   return {
-    version: displayVersion,
-    gitSha,
-    buildTime: env.NEXT_PUBLIC_BUILD_TIMESTAMP || new Date().toISOString(),
+    version: displayVersion(stamp.version, version, stamp.commit),
+    packageVersion: version || "0.0.0",
+    gitSha: stamp.commit,
+    buildTime: stamp.time,
     nodeVersion: process.version,
     nextVersion: nextVersion || "unknown",
-    branch: env.NEXT_PUBLIC_BUILD_BRANCH || "local",
-    hostname: env.NEXT_PUBLIC_BUILD_HOSTNAME || "dev",
+    branch: stamp.branch,
+    hostname: process.env.NEXT_PUBLIC_BUILD_HOSTNAME || "unknown",
     sbomAvailable: sboms.length > 0,
     sboms,
     deployment: getDeployment(),

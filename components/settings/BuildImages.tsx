@@ -22,23 +22,35 @@ import { Badge } from "@/components/ui/badge";
 import { rowsFromSbom } from "@/lib/build/sbom-format";
 import type { SbomDocument } from "@/lib/build/sbom-format";
 
-type ImageCategory = "runtime" | "platform" | "devcontainer";
+type ImageCategory = "stack" | "runtime" | "platform" | "devcontainer";
 
+// Mirrors lib/build/images.ts KnownImage (kept local so the client bundle
+// doesn't pull the server module's dockerode/node imports).
 interface KnownImage {
   category: ImageCategory;
   name: string;
   ref: string;
   digest: string | null;
   present: boolean;
+  containers?: string[];
+  service?: string;
+  self?: boolean;
+  imageId?: string;
 }
 
 const CATEGORY_LABELS: Record<ImageCategory, string> = {
+  stack: "Running stack",
   runtime: "App runtime base",
   platform: "Platform & tooling",
   devcontainer: "Devcontainer base catalog",
 };
 
-const CATEGORY_ORDER: ImageCategory[] = ["runtime", "platform", "devcontainer"];
+const CATEGORY_ORDER: ImageCategory[] = [
+  "stack",
+  "runtime",
+  "platform",
+  "devcontainer",
+];
 
 function imageSbomUrl(ref: string, inline = false): string {
   return `/api/build/images/sbom?ref=${encodeURIComponent(ref)}${inline ? "&inline=1" : ""}`;
@@ -83,8 +95,9 @@ export function BuildImages() {
           <Layers className="h-5 w-5" /> Base &amp; dependency images
         </CardTitle>
         <CardDescription>
-          The container images daax is built on and uses, with the exact digest
-          resolved from the local Docker daemon and a per-image SBOM.
+          What the stack is running right now, plus the images daax is built on
+          and uses — each with the exact digest resolved from the local Docker
+          daemon and a per-image SBOM.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -100,7 +113,11 @@ export function BuildImages() {
         )}
         {images &&
           CATEGORY_ORDER.filter((c) => grouped.has(c)).map((category) => (
-            <div key={category} className="space-y-2">
+            <div
+              key={category}
+              className="space-y-2"
+              data-testid={`build-images-${category}`}
+            >
               <h3 className="text-sm font-semibold">
                 {CATEGORY_LABELS[category]}
               </h3>
@@ -108,7 +125,9 @@ export function BuildImages() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Image</TableHead>
+                      <TableHead>
+                        {category === "stack" ? "Container" : "Image"}
+                      </TableHead>
                       <TableHead>Reference</TableHead>
                       <TableHead>Digest</TableHead>
                       <TableHead className="text-right">SBOM</TableHead>
@@ -116,7 +135,10 @@ export function BuildImages() {
                   </TableHeader>
                   <TableBody>
                     {(grouped.get(category) ?? []).map((img) => (
-                      <ImageRow key={img.ref} img={img} />
+                      <ImageRow
+                        key={`${img.ref}:${img.imageId ?? ""}`}
+                        img={img}
+                      />
                     ))}
                   </TableBody>
                 </Table>
@@ -136,13 +158,14 @@ function ImageRow({ img }: { img: KnownImage }) {
   const [sbom, setSbom] = useState<SbomDocument | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const scanRef = img.imageId ?? img.ref;
 
   useEffect(() => {
     if (!open || sbom) return;
     let cancelled = false;
     setLoading(true);
     setErr("");
-    fetch(imageSbomUrl(img.ref, true), { cache: "no-store" })
+    fetch(imageSbomUrl(scanRef, true), { cache: "no-store" })
       .then(async (res) => {
         if (res.status === 404)
           throw new Error("not available (image not pulled)");
@@ -161,14 +184,24 @@ function ImageRow({ img }: { img: KnownImage }) {
     return () => {
       cancelled = true;
     };
-  }, [open, sbom, img.ref]);
+  }, [open, sbom, scanRef]);
 
   const rows = useMemo(() => (sbom ? rowsFromSbom(sbom) : []), [sbom]);
 
   return (
     <>
       <TableRow>
-        <TableCell className="font-medium">{img.name}</TableCell>
+        <TableCell className="font-medium">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span>{img.name}</span>
+            {img.self && <Badge variant="secondary">this container</Badge>}
+          </div>
+          {img.service && (
+            <div className="text-xs text-muted-foreground">
+              service: {img.service}
+            </div>
+          )}
+        </TableCell>
         <TableCell className="break-all font-mono text-xs">{img.ref}</TableCell>
         <TableCell className="break-all font-mono text-xs text-muted-foreground">
           {img.digest ?? <Badge variant="outline">not pulled</Badge>}
@@ -214,7 +247,7 @@ function ImageRow({ img }: { img: KnownImage }) {
                   </span>
                   <span>· {rows.length} components</span>
                   <a
-                    href={imageSbomUrl(img.ref)}
+                    href={imageSbomUrl(scanRef)}
                     className="inline-flex items-center gap-1 text-primary hover:underline"
                   >
                     <Download className="h-3.5 w-3.5" /> Download

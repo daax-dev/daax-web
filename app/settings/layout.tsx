@@ -9,7 +9,6 @@ import {
   Shield,
   Package,
   Rocket,
-  Mic,
   Bug,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -55,7 +54,6 @@ const SETTINGS_TABS: SettingsTab[] = [
   },
   { href: "/settings/build", label: "Build", icon: Package },
   { href: "/settings/releases", label: "Releases", icon: Rocket },
-  { href: "/settings/voice", label: "Voice", icon: Mic },
   { href: "/settings/debug", label: "Debug", icon: Bug },
 ];
 

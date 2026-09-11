@@ -1,61 +1,66 @@
 import type { NextConfig } from "next";
 import { execSync } from "child_process";
+import packageJson from "./package.json";
 
-// Get build info at config load time
+// Build stamp, resolved once at config load and inlined as NEXT_PUBLIC_BUILD_*
+// (see lib/build/build-env.ts for the reader side). Three explicit inputs —
+// VERSION, GIT_SHA, BUILD_TIME — are preferred over anything derived here, so a
+// container build is stamped from what the builder was TOLD (Dockerfile ARGs,
+// set by publish-images.yml / docker:build / compose / deploy.sh) rather than
+// from whatever `.git` happens to be in the build context. The git fallback
+// stays for a from-source `bun dev` / `bun run build`; when git is unavailable,
+// version/commit degrade to sentinels while time records the actual config-load
+// time.
+//
+// Precedence per value: NEXT_PUBLIC_BUILD_* already in the environment (the
+// runner image sets these, so `next start` never shells out) → the explicit
+// input → git → sentinel.
+function sh(cmd: string): string | null {
+  try {
+    const out = execSync(cmd, {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
+function pick(...candidates: Array<string | undefined | null>): string | null {
+  for (const c of candidates) if (c && c.trim()) return c.trim();
+  return null;
+}
+
 function getBuildEnv() {
-  const now = new Date();
-  const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}.${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
-
-  // Get hostname from env var (Dockerfile) or shell command
-  const hostname = process.env.BUILD_HOST || getHostname();
-
-  // Get git branch from command or env var fallback
-  const branch = getBranch();
-
-  // Get git commit from command or env var fallback
-  const commit = getCommit();
-
-  return { hostname, branch, commit, timestamp };
-}
-
-function getHostname(): string {
-  // Note: BUILD_HOST is already checked by caller getBuildEnv() at line 10
-  // This function handles HOSTNAME env var and shell command fallback
-  if (process.env.HOSTNAME) return process.env.HOSTNAME;
-  try {
-    return execSync("hostname -s", {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-  } catch {
-    return "unknown";
-  }
-}
-
-function getBranch(): string {
-  // Prefer env var (set during docker build)
-  if (process.env.BUILD_BRANCH) return process.env.BUILD_BRANCH;
-  try {
-    return execSync("git rev-parse --abbrev-ref HEAD", {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-  } catch {
-    return "unknown";
-  }
-}
-
-function getCommit(): string {
-  // Prefer env var (set during docker build)
-  if (process.env.BUILD_COMMIT) return process.env.BUILD_COMMIT;
-  try {
-    return execSync("git rev-parse HEAD", {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-  } catch {
-    return "000000";
-  }
+  const env = process.env;
+  // Only a reachable `v*` tag makes a version (no `--always`: a bare short SHA
+  // is not a version, and the commit is stamped separately). Absent → "dev",
+  // which the Build page renders as package.json "v<version>+<sha7>".
+  const version =
+    pick(env.NEXT_PUBLIC_BUILD_VERSION, env.VERSION) ??
+    sh("git describe --tags --match 'v*' --dirty") ??
+    "dev";
+  const commit =
+    pick(env.NEXT_PUBLIC_BUILD_COMMIT, env.GIT_SHA) ??
+    sh("git rev-parse HEAD") ??
+    "unknown";
+  const time =
+    pick(env.NEXT_PUBLIC_BUILD_TIME, env.BUILD_TIME) ??
+    new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  // Branch is informational (a tag build has none); BUILD_BRANCH is the
+  // optional Dockerfile ARG, else the checkout's branch.
+  const branch =
+    pick(env.NEXT_PUBLIC_BUILD_BRANCH, env.BUILD_BRANCH) ??
+    sh("git rev-parse --abbrev-ref HEAD") ??
+    "unknown";
+  // Build host is only meaningful for a from-source build (see getDeployment);
+  // BUILD_HOST/HOSTNAME are honored so a CI/host build can name itself.
+  const hostname =
+    pick(env.NEXT_PUBLIC_BUILD_HOSTNAME, env.BUILD_HOST, env.HOSTNAME) ??
+    sh("hostname -s") ??
+    "unknown";
+  return { version, commit, time, branch, hostname };
 }
 
 const buildEnv = getBuildEnv();
@@ -115,10 +120,12 @@ const nextConfig: NextConfig = {
     root: process.cwd(),
   },
   env: {
-    NEXT_PUBLIC_BUILD_HOSTNAME: buildEnv.hostname,
-    NEXT_PUBLIC_BUILD_BRANCH: buildEnv.branch,
+    NEXT_PUBLIC_BUILD_VERSION: buildEnv.version,
+    NEXT_PUBLIC_BUILD_PACKAGE_VERSION: packageJson.version,
     NEXT_PUBLIC_BUILD_COMMIT: buildEnv.commit,
-    NEXT_PUBLIC_BUILD_TIMESTAMP: buildEnv.timestamp,
+    NEXT_PUBLIC_BUILD_TIME: buildEnv.time,
+    NEXT_PUBLIC_BUILD_BRANCH: buildEnv.branch,
+    NEXT_PUBLIC_BUILD_HOSTNAME: buildEnv.hostname,
   },
   // Security headers on every route (#192). Note: Next.js `headers()` applies to
   // page/route responses; API routes under app/ are also covered by the `/:path*`

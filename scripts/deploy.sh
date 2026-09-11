@@ -278,12 +278,31 @@ phase_capture() {
   deploy_log "$LOGFILE" "$ENV_NAME" "capture" "ok" "captured rollback baseline ($prior, stack_existed=$STACK_EXISTED_AT_CAPTURE)"
 }
 
+# Build stamp for the compose build args (deploy/docker-compose.yml → Dockerfile
+# ARG VERSION/GIT_SHA/BUILD_TIME → /api/build + OCI labels). Read from this
+# checkout unless the caller already exported them; a non-git directory leaves
+# the "dev"/"unknown" sentinels, never a guess.
+export_build_stamp() {
+  if [[ -z "${VERSION:-}" ]]; then
+    VERSION="$(git -C "$REPO_ROOT" describe --tags --match 'v*' --dirty 2>/dev/null || echo dev)"
+  fi
+  if [[ -z "${GIT_SHA:-}" ]]; then
+    GIT_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+  fi
+  if [[ -z "${BUILD_TIME:-}" ]]; then
+    BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  fi
+  export VERSION GIT_SHA BUILD_TIME
+  log "build stamp: VERSION=$VERSION GIT_SHA=${GIT_SHA:0:7} BUILD_TIME=$BUILD_TIME"
+}
+
 phase_build() {
   if [[ "${DAAX_DEPLOY_PULL:-0}" == "1" ]]; then
     log "phase: pull (published images)"
     compose pull daax terminal >&2 || fail build "image pull failed"
   else
     log "phase: build"
+    export_build_stamp
     compose build --pull daax terminal >&2 || fail build "image build failed"
   fi
   deploy_log "$LOGFILE" "$ENV_NAME" "build" "ok" "images ready (pull=${DAAX_DEPLOY_PULL:-0})"

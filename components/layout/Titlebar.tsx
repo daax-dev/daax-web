@@ -63,6 +63,7 @@ import {
   type MaturityLevel,
   type BrandingConfig,
 } from "@/lib/settings";
+import { buildSummary } from "@/lib/build/build-env";
 
 interface NavItem {
   href: string;
@@ -576,7 +577,7 @@ export function Titlebar() {
       <div className="container flex h-14 max-w-screen-2xl items-center">
         <div
           className="mr-4 flex items-center space-x-2"
-          title={`${process.env.NEXT_PUBLIC_BUILD_BRANCH || "dev"} | ${process.env.NEXT_PUBLIC_BUILD_DATE || "unknown"} | ${process.env.NEXT_PUBLIC_BUILD_HOST || "local"}`}
+          title={buildSummary()}
         >
           {isDaaxLogo ? (
             <>

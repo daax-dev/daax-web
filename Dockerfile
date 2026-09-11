@@ -43,7 +43,7 @@
 # change the base. The digest is the multi-arch index digest (works on amd64 +
 # arm64). Bump via Renovate/Dependabot to keep getting security patches; the tag
 # is retained in the reference for readability.
-FROM node:22-bookworm-slim@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4 AS base
+FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 AS base
 
 # Install dependencies and build tools for node-pty native compilation
 RUN apt-get update && \
@@ -111,6 +111,24 @@ ENV PNPM_HOME=/usr/local/pnpm
 # pnpm's global bin dir is $PNPM_HOME/bin; it must be on PATH or recent pnpm
 # hard-errors ("global bin directory ... is not in PATH") instead of warning.
 ENV PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"
+# npm is upgraded here, not just used: the npm bundled with node:22-bookworm-slim
+# (10.9.8 as of the pinned digest) vendors tar@7.5.11 at
+# /usr/local/lib/node_modules/npm/node_modules/tar, which grype reports as a
+# fixable CRITICAL (fixed in tar 7.5.19). Bumping the base digest does NOT clear
+# it — the current node:22-bookworm-slim still ships the same npm — so the fix
+# has to happen in our own layer. Installing npm globally replaces the vulnerable
+# vendored copy.
+#
+# 10.9.9 (not the 12.x "latest"): it is the last release of the same 10.x line
+# the base ships, it vendors tar 7.5.22, and it keeps the CLI surface this
+# Dockerfile depends on. npm 12 removed `--build-from-source`, which the deps
+# stage passes to compile node-pty — under npm 12 the build dies with
+# `EUNKNOWNCONFIG: Unknown cli flag: --build-from-source`. Bumping past 10.x
+# means porting that flag first. Pinned exactly so the build is reproducible.
+ARG NPM_VERSION=10.9.9
+RUN npm install -g "npm@${NPM_VERSION}"
+# Fail the build if the installed npm is not the pinned version.
+RUN npm --version | grep -qx "${NPM_VERSION}" || { echo "npm version mismatch: expected ${NPM_VERSION}, got $(npm --version)" >&2; exit 1; }
 RUN npm install -g pnpm && mkdir -p "$PNPM_HOME/bin" && pnpm add -g backlog.md
 
 WORKDIR /app
@@ -120,8 +138,10 @@ WORKDIR /app
 FROM base AS deps
 
 COPY package.json bun.lock* ./
-# Install dependencies - bun may skip optional deps that fail native compilation
-RUN bun install --frozen-lockfile || bun install
+# Install exactly the dependency graph reviewed and scanned in bun.lock. Optional
+# native-package failures are handled by Bun; a lockfile mismatch must fail the
+# image build rather than silently resolving an unreviewed graph.
+RUN bun install --frozen-lockfile
 
 # node-pty is optional in package.json (for host flexibility) but REQUIRED for Docker
 # Explicitly install and build it for Linux since bun may have skipped it.
@@ -137,13 +157,28 @@ RUN node -e "try { require('node-pty'); console.log('node-pty: OK'); } catch(e) 
 # Build stage
 FROM base AS builder
 
-# Build-time arguments for versioning
-ARG BUILD_DATE
-ARG BUILD_HOST
-ARG BUILD_BRANCH
-ENV NEXT_PUBLIC_BUILD_DATE=${BUILD_DATE:-unknown}
-ENV NEXT_PUBLIC_BUILD_HOST=${BUILD_HOST:-unknown}
-ENV NEXT_PUBLIC_BUILD_BRANCH=${BUILD_BRANCH:-unknown}
+# Build stamp — three explicit inputs (see lib/build/build-env.ts):
+#   VERSION    a release tag (v1.2.3) or git describe --tags --match 'v*' [--dirty]
+#   GIT_SHA    full commit SHA
+#   BUILD_TIME UTC RFC3339
+# Every producer passes them (publish-images.yml, `bun run docker:build`, the
+# compose build blocks, deploy.sh). Left unset they stay the "dev"/"unknown"
+# sentinels: next.config.ts prefers these over its git fallback, so an image is
+# stamped from what the builder was told, not from whatever `.git` is in the
+# build context. BUILD_BRANCH / BUILD_HOST are informational (a tag build has
+# no branch; a CI image has no meaningful build host) and default to unknown —
+# without the explicit hostname the sandbox's "buildkitsandbox" would be baked
+# in as if it were a real host.
+ARG VERSION=dev
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+ARG BUILD_BRANCH=
+ARG BUILD_HOST=
+ENV NEXT_PUBLIC_BUILD_VERSION=${VERSION}
+ENV NEXT_PUBLIC_BUILD_COMMIT=${GIT_SHA}
+ENV NEXT_PUBLIC_BUILD_TIME=${BUILD_TIME}
+ENV NEXT_PUBLIC_BUILD_BRANCH=${BUILD_BRANCH}
+ENV NEXT_PUBLIC_BUILD_HOSTNAME=${BUILD_HOST:-unknown}
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -160,22 +195,26 @@ RUN bun run build
 # air-gapped build) and accept the panel's graceful "no SBOM in this build".
 ARG DAAX_SKIP_SBOM=
 ARG SYFT_VERSION=1.45.1
+ARG SYFT_SHA256_amd64=20c84195e24927f50a3b2269946be51f4c4abc9d2f145fee7388b4199149f716
+ARG SYFT_SHA256_arm64=7df9f45cba1f6358ecfc7fac349d43b4605137001f9646b41267abe15a7c6cd7
 RUN if [ -n "$DAAX_SKIP_SBOM" ]; then \
       echo "DAAX_SKIP_SBOM set — skipping SBOM generation"; mkdir -p /app/sbom; \
     else \
       set -eu; \
       arch="$(dpkg --print-architecture)"; \
+      case "$arch" in \
+        amd64) syft_sha="${SYFT_SHA256_amd64}" ;; \
+        arm64) syft_sha="${SYFT_SHA256_arm64}" ;; \
+        *) echo "unsupported arch for syft: ${arch}" >&2; exit 1 ;; \
+      esac; \
       base="https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}"; \
       tarball="syft_${SYFT_VERSION}_linux_${arch}.tar.gz"; \
       cd /tmp; \
       curl -fsSL -o "$tarball" "${base}/${tarball}"; \
-      curl -fsSL -o syft_checksums.txt "${base}/syft_${SYFT_VERSION}_checksums.txt"; \
-      line="$(awk -v f="$tarball" '$2 == f {print}' syft_checksums.txt)"; \
-      [ -n "$line" ] || { echo "no checksum entry for ${tarball}" >&2; exit 1; }; \
-      printf '%s\n' "$line" | sha256sum -c -; \
+      echo "${syft_sha}  ${tarball}" | sha256sum -c -; \
       tar -xzf "$tarball" syft; \
       install -m 0755 syft /usr/local/bin/syft; \
-      rm -f "$tarball" syft_checksums.txt syft; \
+      rm -f "$tarball" syft; \
       cd /app; \
       syft version; \
       bun run sbom:generate; \
@@ -185,13 +224,23 @@ RUN if [ -n "$DAAX_SKIP_SBOM" ]; then \
 # Production stage
 FROM base AS runner
 
-# Build info (needed for dev mode which rebuilds at runtime)
-ARG BUILD_DATE
-ARG BUILD_HOST
-ARG BUILD_BRANCH
-ENV NEXT_PUBLIC_BUILD_DATE=${BUILD_DATE:-unknown}
-ENV NEXT_PUBLIC_BUILD_HOST=${BUILD_HOST:-unknown}
-ENV NEXT_PUBLIC_BUILD_BRANCH=${BUILD_BRANCH:-unknown}
+# Build stamp, re-declared per stage (ARGs do not cross FROM). The runtime ENV
+# is what /api/build reads (lib/build/build-env.ts) and what lets `next start`
+# load next.config.ts without shelling out to git; the OCI labels are what
+# `docker image inspect` / the registry show, so the two can be cross-checked.
+ARG VERSION=dev
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+ARG BUILD_BRANCH=
+ENV NEXT_PUBLIC_BUILD_VERSION=${VERSION}
+ENV NEXT_PUBLIC_BUILD_COMMIT=${GIT_SHA}
+ENV NEXT_PUBLIC_BUILD_TIME=${BUILD_TIME}
+ENV NEXT_PUBLIC_BUILD_BRANCH=${BUILD_BRANCH}
+LABEL org.opencontainers.image.title="daax-web" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.created="${BUILD_TIME}" \
+      org.opencontainers.image.source="https://github.com/daax-dev/daax-web"
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Docker-socket access is group-based, NOT uid-0-based (#185): the final stage
@@ -298,6 +347,17 @@ CMD ["bun", "run", "start:prod"]
 # non-root `node` user + pre-created node-owned write dirs from #185 — with no
 # risk of a missed transitive file. Only the CMD and healthcheck differ.
 FROM runner AS terminal
+
+# Same stamp as runner (ENV is inherited; ARG and the title label are not), so
+# the terminal image carries its own version/revision/created labels.
+ARG VERSION=dev
+ARG GIT_SHA=unknown
+ARG BUILD_TIME=unknown
+LABEL org.opencontainers.image.title="daax-terminal" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.created="${BUILD_TIME}" \
+      org.opencontainers.image.source="https://github.com/daax-dev/daax-web"
 
 # Re-declare USER so the non-root guard (tests/deploy/nonroot-hardening) and any
 # reader see this stage runs unprivileged, matching runner. Docker-socket access

@@ -49,7 +49,17 @@ echo "🔨 Building image..."
 # untargeted build would produce the terminal-only image. rebuild.sh runs a
 # single combined container (default CMD start:prod = web + terminal), so it
 # needs the `runner` image explicitly.
-docker build --target runner -t "$IMAGE_NAME" .
+# Build stamp (lib/build/build-env.ts): the Dockerfile no longer derives
+# version/commit/time from the .git in its context, so pass them explicitly or
+# the image reports "dev"/"unknown". Same rule as docker:build / deploy.sh.
+VERSION="${VERSION:-$(git describe --tags --match 'v*' --dirty 2>/dev/null || echo dev)}"
+GIT_SHA="${GIT_SHA:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
+BUILD_TIME="${BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+docker build --target runner \
+  --build-arg "VERSION=$VERSION" \
+  --build-arg "GIT_SHA=$GIT_SHA" \
+  --build-arg "BUILD_TIME=$BUILD_TIME" \
+  -t "$IMAGE_NAME" .
 
 # Force-refresh ALL AI agent images (every variant, every run) so a stale local
 # :latest never wins over a newer registry image. Non-fatal: a pull failure only
