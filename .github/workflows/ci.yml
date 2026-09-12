@@ -82,7 +82,7 @@ jobs:
           build-args: |
             DAAX_SKIP_SBOM=1
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Build terminal image (terminal target)
         uses: docker/build-push-action@v7

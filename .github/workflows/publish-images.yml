@@ -179,7 +179,7 @@ jobs:
           # Cache is scoped per image AND per arch. One shared scope would have
           # the two architectures evicting each other on every run.
           cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }},ignore-error=true
 
       # Scan the exact digest produced above. A separate local build is not a
       # security boundary: mutable package repositories or a cache miss can
@@ -344,7 +344,7 @@ jobs:
           sbom: true
           provenance: mode=max
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-to: type=gha,mode=max,ignore-error=true
 
       - name: Trivy code-server amd64 gate (CRITICAL, fixable)
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
