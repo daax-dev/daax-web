@@ -206,9 +206,20 @@ do_rollback() {
       deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "prior image restore failed; stack left as-is, not recreated"
       return 0
     fi
-    if compose up -d --force-recreate --wait --wait-timeout 120 daax terminal >&2; then
+    # Recreate every service that ran at capture on its prior image, and remove
+    # the ones this deploy introduced — a service that did not exist before is
+    # not part of the state being restored.
+    local present absent
+    present="$(rollback_services "$STATEFILE" present)"
+    absent="$(rollback_services "$STATEFILE" absent)"
+    if [[ -n "$absent" ]]; then
+      # shellcheck disable=SC2086 # word-split on purpose: service names
+      compose rm -sf $absent >&2 || err "could not remove services absent at capture: $absent"
+    fi
+    # shellcheck disable=SC2086
+    if compose up -d --force-recreate --wait --wait-timeout 120 $present >&2; then
       ok "rolled back to prior running images"
-      deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "prior images restored and running"
+      deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "prior images restored and running ($present)"
     else
       err "rollback restore did not converge; manual intervention required"
       deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "prior images restored but stack did not become healthy"
@@ -285,18 +296,23 @@ phase_capture() {
   # be a silent no-op unless DAAX_IMAGE/DAAX_TERMINAL_IMAGE were set per-env.
   # A baseline that cannot be pinned cannot be restored: fail BEFORE any
   # mutation (CAPTURED stays 0, so the failure path touches nothing).
+  # A baseline with ONE of the two app planes (e.g. a legacy single-container
+  # `daax` and no `daax-terminal`) cannot be rolled back to: recreating it
+  # through this compose file would bring up a split web plane with no terminal
+  # and call that the prior state. Checked by inspect alone, BEFORE capture
+  # re-points any :rollback tag; migrating such a host is a manual step. The
+  # four supporting services may legitimately be absent (first convergence).
+  if app_pair_partial; then
+    fail capture "partial baseline: exactly one of daax / daax-terminal is running — not a topology this deploy can roll back to; migrate the host to the split deploy manually first"
+  fi
   if ! capture_rollback_state "$STATEFILE" \
     "daax=${DAAX_IMAGE:-ghcr.io/daax-dev/daax-web:latest}" \
-    "daax-terminal=${DAAX_TERMINAL_IMAGE:-ghcr.io/daax-dev/daax-terminal:latest}"; then
+    "daax-terminal=${DAAX_TERMINAL_IMAGE:-ghcr.io/daax-dev/daax-terminal:latest}" \
+    "daax-code-server=${CODE_SERVER_IMAGE:-daax-code-server:latest}" \
+    "daax-watchtower=${WATCHTOWER_IMAGE:-ghcr.io/daax-dev/watchtower:latest}" \
+    "daax-hawkeye=${HAWKEYE_IMAGE:-ghcr.io/daax-dev/hawkeye:latest}" \
+    "daax-provenance=${PROVENANCE_IMAGE:-ghcr.io/daax-dev/provenance:latest}"; then
     fail capture "could not pin the running images under :rollback — refusing to deploy without a restorable baseline"
-  fi
-  # A baseline with ONE of the two planes (e.g. a legacy single-container `daax`
-  # and no `daax-terminal`) cannot be rolled back to: recreating it through this
-  # compose file would bring up a split web plane with no terminal and call that
-  # the prior state. Refuse before any mutation; migrating such a host is a
-  # deliberate, manual step.
-  if [[ "$(awk -F'\t' '$3 != "-" {n++} END {print n+0}' "$STATEFILE")" == 1 ]]; then
-    fail capture "partial baseline: exactly one of daax / daax-terminal is running — not a topology this deploy can roll back to; migrate the host to the split deploy manually first"
   fi
   CAPTURED=1
   # POSITIVE pre-mutation check (H1): did a stack exist BEFORE we touched
@@ -332,13 +348,16 @@ phase_build() {
   if [[ "${DAAX_DEPLOY_PULL:-0}" == "1" ]]; then
     log "phase: pull (published images)"
     compose pull daax terminal >&2 || fail build "image pull failed"
-    compose pull watchtower hawkeye provenance >&2 \
-      || log "supporting service pull failed (non-fatal; the fleet roller checks their digests)"
   else
     log "phase: build"
     export_build_stamp
     compose build --pull daax terminal >&2 || fail build "image build failed"
   fi
+  # The supporting services are always registry images — built elsewhere,
+  # signed, pinned — so they are pulled in both modes, and a failure is fatal:
+  # a deploy that reports success must be running all of them.
+  compose pull watchtower hawkeye provenance >&2 \
+    || fail build "supporting service image pull failed (watchtower/hawkeye/provenance)"
   deploy_log "$LOGFILE" "$ENV_NAME" "build" "ok" "images ready (pull=${DAAX_DEPLOY_PULL:-0})"
 }
 
@@ -414,14 +433,12 @@ phase_up() {
   SWITCHED=1
   compose up -d --force-recreate --wait --wait-timeout 120 daax terminal >&2 \
     || fail up "web/terminal stack did not become healthy"
-  # code-server is best-effort: its image may be operator-supplied and the
-  # /code-server page degrades gracefully. Do not fail the deploy on it.
-  compose up -d code-server >&2 || log "code-server did not start (non-fatal)"
-  # Same posture for the three supporting services: the fleet roller checks
-  # their running digests, so a failure here is reported there, not hidden.
-  compose up -d watchtower hawkeye provenance >&2 \
-    || log "watchtower/hawkeye/provenance did not all start (non-fatal)"
-  deploy_log "$LOGFILE" "$ENV_NAME" "up" "ok" "web + terminal up (force-recreated)"
+  # code-server and the three supporting services are part of the stack every
+  # host runs (pinned per target), so they gate the deploy like the app planes:
+  # --wait blocks on each healthcheck, and a failure rolls back all six.
+  compose up -d --wait --wait-timeout 120 code-server watchtower hawkeye provenance >&2 \
+    || fail up "code-server/watchtower/hawkeye/provenance did not become healthy"
+  deploy_log "$LOGFILE" "$ENV_NAME" "up" "ok" "web + terminal (force-recreated) and supporting services up"
 }
 
 phase_health() {

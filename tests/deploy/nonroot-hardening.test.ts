@@ -135,6 +135,9 @@ interface ComposeService {
   volumes?: string[];
   environment?: string[] | Record<string, string>;
   command?: string[] | string;
+  image?: string;
+  ports?: string[];
+  healthcheck?: { test?: string[] | string };
 }
 
 /**
@@ -256,5 +259,58 @@ describe("#100 deploy/docker-compose.yml split: terminal plane + web plane, both
     expect(webVar).toBe("DAAX_WS_TOKEN_SECRET");
     expect(termVar).toBe("DAAX_WS_TOKEN_SECRET");
     expect(webVar).toBe(termVar);
+  });
+});
+
+describe("fleet supporting services in deploy/docker-compose.yml", () => {
+  const services = loadServices(resolve(repoRoot, "deploy/docker-compose.yml"));
+  const supporting = ["watchtower", "hawkeye", "provenance"] as const;
+
+  it.each(supporting)(
+    "%s is hardened (no-new-privileges, cap_drop ALL), loopback-only, never mounts the socket, and has a healthcheck",
+    (name) => {
+      const svc = services[name];
+      expect(svc, `${name} must be defined`).toBeDefined();
+      expect(svc.security_opt ?? []).toContain("no-new-privileges:true");
+      expect(svc.cap_drop ?? []).toEqual(["ALL"]);
+      expect(mountsDockerSocket(svc)).toBe(false);
+      for (const p of svc.ports ?? [])
+        expect(p.startsWith("127.0.0.1:")).toBe(true);
+      const test = svc.healthcheck?.test;
+      expect(Array.isArray(test) ? test.join(" ") : (test ?? "")).toMatch(
+        /\/health$/,
+      );
+    },
+  );
+
+  it("each runs the digest-selecting variable for its image", () => {
+    expect(services.watchtower.image).toMatch(/^\$\{WATCHTOWER_IMAGE:-/);
+    expect(services.hawkeye.image).toMatch(/^\$\{HAWKEYE_IMAGE:-/);
+    expect(services.provenance.image).toMatch(/^\$\{PROVENANCE_IMAGE:-/);
+    expect(services["code-server"].image).toMatch(/^\$\{CODE_SERVER_IMAGE:-/);
+  });
+
+  it("provenance persists where its binary actually writes the database", () => {
+    expect(services.provenance.volumes ?? []).toContain(
+      "daax-provenance-data:/root/.local/share/provenance",
+    );
+  });
+
+  it("the web plane checks the SAME code-server image the service runs", () => {
+    expect(envValue(services.daax, "CODE_SERVER_IMAGE")).toBe(
+      "${CODE_SERVER_IMAGE:-daax-code-server:latest}",
+    );
+    expect(services["code-server"].image).toBe(
+      "${CODE_SERVER_IMAGE:-daax-code-server:latest}",
+    );
+  });
+
+  it("the terminal plane (attention bridge) reaches watchtower by service name", () => {
+    expect(envValue(services.terminal, "WATCHTOWER_API_URL")).toBe(
+      "http://watchtower:4220",
+    );
+    expect(envValue(services.daax, "WATCHTOWER_API_URL")).toBe(
+      "http://watchtower:4220",
+    );
   });
 });

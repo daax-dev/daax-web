@@ -373,6 +373,9 @@ services:
 
       # Code-Server URL - set to your domain
       - NEXT_PUBLIC_CODE_SERVER_URL=${CODE_SERVER_URL:-https://daax-code.${HOSTNAME}.poley.dev/?folder=/workspace}
+      # The image /api/code-server checks and starts per project — the SAME
+      # digest-pinned image the code-server service below runs.
+      - CODE_SERVER_IMAGE=${CODE_SERVER_IMAGE:-daax-code-server:latest}
 
       # Docker network name — read by the web tier (lib/settings.ts). The spawn
       # machinery that actually attaches containers to it runs in the `terminal`
@@ -525,6 +528,11 @@ services:
       # Bind to all interfaces so the web container / Traefik reach it over daax-net.
       - TERMINAL_HOST=0.0.0.0
 
+      # The attention WebSocket bridge runs in THIS plane
+      # (server/handlers/attention-bridge.ts); without it, it falls back to
+      # host.docker.internal:4220, which a loopback-bound watchtower refuses.
+      - WATCHTOWER_API_URL=http://watchtower:4220
+
       # WS ticket verification — MUST match the web plane's value (see daax above).
       - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
       - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
@@ -645,6 +653,11 @@ services:
   # pinned per target in deploy/env/<host>.env; the defaults below exist only so
   # a bare `docker compose config` resolves. Loopback ports are for the host's
   # Traefik; daax reaches them by service name on daax-net.
+  #
+  # Hardened like the other planes: no-new-privileges + cap_drop [ALL]. Each was
+  # started that way on its pinned digest and served /health (2026-09-13); none
+  # needs a capability. Healthchecks use the wget each image ships, so
+  # `compose up --wait` (scripts/deploy.sh) blocks on a real answer.
   watchtower:
     image: ${WATCHTOWER_IMAGE:-ghcr.io/daax-dev/watchtower:latest}
     container_name: daax-watchtower
@@ -656,6 +669,14 @@ services:
       - daax-watchtower-data:/data
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4220/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     networks:
       - daax-net
     logging:
@@ -679,6 +700,14 @@ services:
       - daax-hawkeye-data:/var/lib/hawkeye
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4230/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     networks:
       - daax-net
     logging:
@@ -694,9 +723,22 @@ services:
     ports:
       - "127.0.0.1:4250:8080"
     volumes:
-      - daax-provenance-data:/data
+      # Where the binary ACTUALLY writes its database. The image's entrypoint
+      # tests /data/provenance.db, but `provenance init` uses the default config
+      # path under the (root) user's home, so a /data mount persisted nothing —
+      # a recreate wiped the catalog. init is idempotent (pending migrations
+      # only), so the entrypoint re-running it each start is harmless.
+      - daax-provenance-data:/root/.local/share/provenance
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     networks:
       - daax-net
     logging:

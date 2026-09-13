@@ -216,6 +216,66 @@ rollback_tag_for() {
   printf '%s:rollback' "$prefix$last"
 }
 
+# The six services a deploy manages, keyed by CONTAINER name: the compose
+# service that runs it, and the compose variable that selects its image.
+#   daax -> daax / DAAX_IMAGE          daax-terminal -> terminal / DAAX_TERMINAL_IMAGE
+#   daax-code-server -> code-server / CODE_SERVER_IMAGE
+#   daax-watchtower -> watchtower / WATCHTOWER_IMAGE
+#   daax-hawkeye -> hawkeye / HAWKEYE_IMAGE
+#   daax-provenance -> provenance / PROVENANCE_IMAGE
+service_compose_name() {
+  case "$1" in
+    daax) echo daax ;;
+    daax-terminal) echo terminal ;;
+    daax-code-server) echo code-server ;;
+    daax-watchtower) echo watchtower ;;
+    daax-hawkeye) echo hawkeye ;;
+    daax-provenance) echo provenance ;;
+    *) return 1 ;;
+  esac
+}
+service_image_var() {
+  case "$1" in
+    daax) echo DAAX_IMAGE ;;
+    daax-terminal) echo DAAX_TERMINAL_IMAGE ;;
+    daax-code-server) echo CODE_SERVER_IMAGE ;;
+    daax-watchtower) echo WATCHTOWER_IMAGE ;;
+    daax-hawkeye) echo HAWKEYE_IMAGE ;;
+    daax-provenance) echo PROVENANCE_IMAGE ;;
+    *) return 1 ;;
+  esac
+}
+
+# running_image_id <container> — the image id it runs, or empty. Read-only.
+running_image_id() {
+  "$DOCKER_BIN" inspect --format '{{.Image}}' "$1" 2>/dev/null || true
+}
+
+# app_pair_partial — true when exactly ONE of daax / daax-terminal is running.
+# Read-only (inspect only), so the caller can refuse BEFORE capture tags anything.
+app_pair_partial() {
+  local web term
+  web="$(running_image_id daax)"
+  term="$(running_image_id daax-terminal)"
+  { [[ -n "$web" ]] && [[ -z "$term" ]]; } || { [[ -z "$web" ]] && [[ -n "$term" ]]; }
+}
+
+# rollback_services <statefile> present|absent — compose service names whose
+# container DID (present) or did NOT (absent) run an image at capture.
+rollback_services() {
+  local statefile="$1" want="$2" name tag imgid svc out=""
+  [[ -f "$statefile" ]] || return 0
+  while IFS=$'\t' read -r name tag imgid; do
+    svc="$(service_compose_name "$name")" || continue
+    if [[ "$imgid" == "-" || -z "$imgid" ]]; then
+      [[ "$want" == absent ]] && out="$out $svc"
+    else
+      [[ "$want" == present ]] && out="$out $svc"
+    fi
+  done <"$statefile"
+  printf '%s' "${out# }"
+}
+
 # capture_rollback_state <statefile> <service:image-tag>...
 # Each arg is "container_name=image_tag" (e.g. "daax=daax:latest").
 # Returns non-zero if a running image could not be pinned under :rollback — the
@@ -227,7 +287,7 @@ capture_rollback_state() {
   for pair in "$@"; do
     name="${pair%%=*}"
     tag="${pair#*=}"
-    imgid="$("$DOCKER_BIN" inspect --format '{{.Image}}' "$name" 2>/dev/null || true)"
+    imgid="$(running_image_id "$name")"
     if [[ -n "$imgid" ]]; then
       # Pin the running image under a stable rollback tag so a rebuild of `tag`
       # does not garbage away the bytes we may need to restore.
@@ -265,20 +325,20 @@ had_prior_state() {
 restore_rollback_state() {
   local statefile="$1"
   [[ -f "$statefile" ]] || return 0
-  local name tag imgid rb rc=0
+  local name tag imgid rb var rc=0
   while IFS=$'\t' read -r name tag imgid; do
     [[ "$imgid" == "-" || -z "$imgid" ]] && continue
     if [[ "$tag" == *@sha256:* ]]; then
       rb="$(rollback_tag_for "$tag")"
+      if ! var="$(service_image_var "$name")"; then
+        rc=1
+        continue
+      fi
       if ! "$DOCKER_BIN" tag "$imgid" "$rb" >/dev/null 2>&1; then
         rc=1
         continue
       fi
-      case "$name" in
-        daax) export DAAX_IMAGE="$rb" ;;
-        daax-terminal) export DAAX_TERMINAL_IMAGE="$rb" ;;
-        *) rc=1 ;;
-      esac
+      export "$var=$rb"
     else
       "$DOCKER_BIN" tag "$imgid" "$tag" >/dev/null 2>&1 || rc=1
     fi
