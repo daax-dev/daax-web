@@ -386,11 +386,12 @@ services:
       # Every host here runs DAAX_REQUIRE_AUTH=1, so all of them are the second
       # case and none of them had an admin.
       #
-      # SUBJECT form, not email/username: the subject is the immutable OIDC
-      # `sub`, matched exactly, and it is what Pocket ID's forward-auth actually
-      # sends (`c.Header("X-Forwarded-User", user.ID)`). An attribute entry is
-      # matched against mutable values the proxy forwards and is only as
-      # trustworthy as the IdP's email verification.
+      # The subject is the immutable OIDC `sub`, matched exactly, and it is what
+      # Pocket ID's forward-auth actually sends (`c.Header("X-Forwarded-User",
+      # user.ID)`). An attribute entry (email/username) is matched against
+      # mutable values the proxy forwards and is only as trustworthy as the
+      # IdP's email verification. The fleet env files list both, deliberately —
+      # deploy/env/<host>.env says why.
       #
       # Per-host: each host runs its own Pocket ID, so the same person has a
       # different subject on each. Set it in deploy/env/<host>.env.
