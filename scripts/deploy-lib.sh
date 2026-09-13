@@ -238,18 +238,35 @@ had_prior_state() {
   awk -F'\t' '$3 != "-" {found=1} END {exit found?0:1}' "$statefile"
 }
 
-# restore_rollback_state <statefile> — re-tag each captured :latest back to the
-# prior running image id. Returns 0 even if some services had no prior image
+# restore_rollback_state <statefile> — point each captured service back at its
+# prior running image id. Services with no prior image are skipped
 # (fresh-deploy services are simply left for the caller to `compose down`).
+#
+# A TAG ref (repo:latest) is re-tagged back to the prior id. A DIGEST ref
+# (repo@sha256:…, what the fleet pins) cannot be: Docker refuses "to create a
+# tag with a digest reference", so re-tagging silently did nothing and the
+# recreate brought the failed digest straight back. For those, the compose
+# image variable is exported to the repo:rollback tag capture made instead.
+# Returns non-zero if any restore could not be made, so the caller can say so.
 restore_rollback_state() {
   local statefile="$1"
   [[ -f "$statefile" ]] || return 0
-  local name tag imgid
+  local name tag imgid rb rc=0
   while IFS=$'\t' read -r name tag imgid; do
     [[ "$imgid" == "-" || -z "$imgid" ]] && continue
-    "$DOCKER_BIN" tag "$imgid" "$tag" >/dev/null 2>&1 || true
+    if [[ "$tag" == *@sha256:* ]]; then
+      rb="$(rollback_tag_for "$tag")"
+      "$DOCKER_BIN" tag "$imgid" "$rb" >/dev/null 2>&1 || rc=1
+      case "$name" in
+        daax) export DAAX_IMAGE="$rb" ;;
+        daax-terminal) export DAAX_TERMINAL_IMAGE="$rb" ;;
+        *) rc=1 ;;
+      esac
+    else
+      "$DOCKER_BIN" tag "$imgid" "$tag" >/dev/null 2>&1 || rc=1
+    fi
   done <"$statefile"
-  return 0
+  return "$rc"
 }
 
 # --- post-deploy health (F7) ---------------------------------------------------

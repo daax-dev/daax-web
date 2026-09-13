@@ -169,7 +169,7 @@ services:
     # (start:web). The terminal plane (server/terminal-server.ts) runs in the
     # separate `terminal` service below. The image default CMD (start:prod =
     # both planes) is overridden here so this Traefik-facing service never runs
-    # the terminal server and — critically — never mounts the Docker socket.
+    # the terminal server. (It does mount the Docker socket — see #501 above.)
     command: ["bun", "run", "start:web"]
 
     depends_on:
@@ -454,8 +454,9 @@ services:
   # Terminal plane (F3 frontend/backend split, #100).
   #
   # Runs ONLY server/terminal-server.ts (the `terminal` Dockerfile target =
-  # daax-terminal image). This is the sole holder of the Docker socket + the
-  # workspace spawn machinery, isolating it from the Traefik-facing web plane.
+  # daax-terminal image). It holds the Docker socket + the workspace spawn
+  # machinery. The web plane also mounts the socket since #501, so this split
+  # no longer isolates Docker access from the Traefik-facing plane.
   # Traefik's daax-ws router forwards wss://…/ws to 127.0.0.1:4201, now
   # published by THIS service.
   #

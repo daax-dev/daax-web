@@ -1,4 +1,11 @@
-# galway deployment (single-container topology)
+# galway deployment (single-container topology) — ARCHIVED
+
+> **Archived 2026-09-13. Do not apply these files.** galway is deployed like
+> every other fleet host: `scripts/deploy.sh galway` with
+> `deploy/env/galway.env` and the split `deploy/docker-compose.yml`, driven for
+> the whole fleet by dx `scripts/deploy-fleet.sh`. Copying the files below onto
+> galway would put it back on the single-container topology the fleet moved off.
+> They are kept only as the record of what galway ran before convergence.
 
 Version-controlled mirror of the daax deployment running on the **galway** host.
 These are the files that live OUTSIDE this repo on the host; this folder is the
@@ -30,7 +37,7 @@ single-container mode (web + terminal server in one `daax` container) plus:
 
 All app ports bind to 127.0.0.1; Traefik is the only ingress.
 
-## Applying changes
+## Applying changes (historical — superseded by `scripts/deploy.sh galway`)
 
 1. Edit the file HERE first, PR it to main, then copy to the host location.
 2. `/etc/traefik/dynamic/daax.yml`: substitute `DAAX_PROXY_SECRET_PLACEHOLDER`

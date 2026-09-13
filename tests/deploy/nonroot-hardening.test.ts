@@ -177,9 +177,15 @@ function expectSocketHardened(svc: ComposeService | undefined): void {
   expect(svc?.cap_drop ?? []).toContain("ALL");
   const groups = (svc?.group_add ?? []).map(String);
   expect(groups.length).toBeGreaterThan(0);
-  // Must reference the host docker GID env var, not a hardcoded root/0.
-  expect(groups.some((g) => g.includes("DOCKER_GID"))).toBe(true);
-  expect(groups).not.toContain("0");
+  // Exactly the host docker GID variable with a NON-ZERO fallback — never a
+  // hardcoded root group, and never a `${DOCKER_GID:-0}` that falls back to it.
+  expect(groups.length).toBe(1);
+  const m = groups[0].match(/^\$\{DOCKER_GID:-(\d+)\}$/);
+  expect(
+    m,
+    `group_add must be \${DOCKER_GID:-<gid>}, got ${groups[0]}`,
+  ).not.toBeNull();
+  expect(Number(m?.[1])).toBeGreaterThan(0);
 }
 
 describe("#185 root docker-compose.yml (combined container) keeps daax non-root hardening", () => {

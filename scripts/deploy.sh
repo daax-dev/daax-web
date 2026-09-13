@@ -176,7 +176,9 @@ do_rollback() {
   # running stack (if any) is untouched on its prior images. Restore the :latest
   # tags for hygiene, but do NOT force-recreate (no needless downtime).
   if [[ "$SWITCHED" != 1 ]]; then
-    had_prior_state "$STATEFILE" && restore_rollback_state "$STATEFILE"
+    if had_prior_state "$STATEFILE" && ! restore_rollback_state "$STATEFILE"; then
+      err "could not restore every prior image tag — verify the stack's images manually"
+    fi
     log "pre-switch failure — running stack left in place (no recreate)"
     deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "pre-switch failure; running stack untouched, tags restored"
     return 0
@@ -185,7 +187,9 @@ do_rollback() {
   # SWITCHED: the app plane was (partially) recreated onto new images.
   if had_prior_state "$STATEFILE"; then
     # Known baseline → restore prior images and force-recreate.
-    restore_rollback_state "$STATEFILE"
+    if ! restore_rollback_state "$STATEFILE"; then
+      err "could not restore every prior image — the recreate below may bring the failed image back"
+    fi
     if compose up -d --force-recreate --wait --wait-timeout 120 daax terminal >&2; then
       ok "rolled back to prior running images"
       deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "prior images restored and running"

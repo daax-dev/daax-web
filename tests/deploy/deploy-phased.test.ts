@@ -54,7 +54,11 @@ case "$1" in
   image) exit 0 ;;                      # image inspect <img> -> present
   inspect)                             # inspect --format {{.Image}} <name>
     if [[ "\${FAKE_PRIOR:-0}" == "1" ]]; then echo "prior-\${@: -1}"; exit 0; else exit 1; fi ;;
-  tag) exit 0 ;;
+  tag)                                 # real docker refuses a digest destination
+    if [[ "\${@: -1}" == *@sha256:* ]]; then
+      echo "Error: refusing to create a tag with a digest reference" >&2; exit 1
+    fi
+    exit 0 ;;
   compose)
     if grep -q 'ps -aq' <<<"$args"; then
       [[ "\${FAKE_PS_FAIL:-0}" == "1" ]] && exit 1
@@ -435,6 +439,38 @@ describe("deploy.sh image override (fleet roll)", () => {
     expect(readFileSync(dockerLog, "utf8")).toMatch(
       /compose .*pull daax terminal/,
     );
+  });
+
+  it("POST-UP failure with digest refs rolls compose back to repo:rollback, not the failed digest", () => {
+    const envLog = join(work, "env-rollback.log");
+    writeFileSync(envLog, "");
+    resetDockerLog();
+    const res = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        FAKE_ENV_LOG: envLog,
+        FAKE_PRIOR: "1",
+        FAKE_PS_NONEMPTY: "1",
+        FAKE_HTTP_CODE: "503",
+        DAAX_IMAGE_OVERRIDE: TGT_WEB,
+        DAAX_TERMINAL_IMAGE_OVERRIDE: TGT_TERM,
+      },
+      freshLog("override-rollback"),
+    );
+    expect(res.status).not.toBe(0);
+    const dl = readFileSync(dockerLog, "utf8");
+    expect(dl).toMatch(/tag prior-daax ghcr\.io\/daax-dev\/daax-web:rollback/);
+    expect(dl).toMatch(
+      /tag prior-daax-terminal ghcr\.io\/daax-dev\/daax-terminal:rollback/,
+    );
+    // The recreate after rollback is the LAST compose call: it must run the
+    // captured prior images, never the digest that just failed health.
+    const lines = readFileSync(envLog, "utf8").trim().split("\n");
+    expect(lines.at(-1)).toBe(
+      "ghcr.io/daax-dev/daax-web:rollback ghcr.io/daax-dev/daax-terminal:rollback",
+    );
+    expect(res.stderr).not.toMatch(/could not restore/);
   });
 
   it("REJECTS a tag override before touching docker", () => {

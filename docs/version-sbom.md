@@ -146,11 +146,10 @@ in four groups:
   a re-pointed tag can't mislead); "this container" marks daax-web itself. Two
   containers on the same immutable image (web + migrate) share a row; containers
   on different generations of the same mutable tag remain separate. Bounded by
-  `DAAX_BUILD_STACK_MAX` (default 64). Needs the Docker socket: in the split
-  fleet/cloud deployment (`deploy/docker-compose.yml`) only `daax-terminal`
-  mounts it, so there the web plane answers 503 for this card and the per-image
-  SBOM — the section is for the single-container and from-source modes until
-  the terminal plane serves it.
+  `DAAX_BUILD_STACK_MAX` (default 64). Needs the Docker socket: the split
+  fleet/cloud deployment (`deploy/docker-compose.yml`) mounts it on the web
+  plane as well as `daax-terminal` since daax-web#501; a web plane without it
+  answers 503 for this card and the per-image SBOM.
 - **App runtime base** — the image the daax container is built `FROM`
   (`node:22-bookworm-slim` at the same immutable index digest pinned in the
   Dockerfile, so a later tag update cannot change what this row describes).
