@@ -246,18 +246,38 @@ service_image_var() {
   esac
 }
 
-# running_image_id <container> — the image id it runs, or empty. Read-only.
+# running_image_id <container> — prints the image id the container runs and
+# returns 0; prints nothing and returns 0 when the container positively does not
+# exist ("no such object"); returns 2 when docker could not say (daemon down,
+# permission, timeout). Absent and unknown must never be confused: an unknown
+# service recorded as absent is REMOVED by rollback. Read-only.
 running_image_id() {
-  "$DOCKER_BIN" inspect --format '{{.Image}}' "$1" 2>/dev/null || true
+  local out rc=0
+  # stdout and stderr together: on success inspect prints only the id; on
+  # failure the text is what tells absent from unknown.
+  out="$("$DOCKER_BIN" inspect --format '{{.Image}}' "$1" 2>&1)" || rc=$?
+  if ((rc == 0)); then
+    printf '%s' "$out"
+    return 0
+  fi
+  if [[ "${out,,}" == *"no such object"* || "${out,,}" == *"no such container"* ]]; then
+    return 0
+  fi
+  return 2
 }
 
-# app_pair_partial — true when exactly ONE of daax / daax-terminal is running.
-# Read-only (inspect only), so the caller can refuse BEFORE capture tags anything.
-app_pair_partial() {
+# app_pair_state — "partial" when exactly ONE of daax / daax-terminal is
+# running, "unknown" when docker cannot say for either, else "ok". Read-only
+# (inspect only), so the caller can refuse BEFORE capture tags anything.
+app_pair_state() {
   local web term
-  web="$(running_image_id daax)"
-  term="$(running_image_id daax-terminal)"
-  { [[ -n "$web" ]] && [[ -z "$term" ]]; } || { [[ -z "$web" ]] && [[ -n "$term" ]]; }
+  web="$(running_image_id daax)" || { echo unknown; return 0; }
+  term="$(running_image_id daax-terminal)" || { echo unknown; return 0; }
+  if { [[ -n "$web" ]] && [[ -z "$term" ]]; } || { [[ -z "$web" ]] && [[ -n "$term" ]]; }; then
+    echo partial
+  else
+    echo ok
+  fi
 }
 
 # rollback_services <statefile> present|absent — compose service names whose
@@ -278,8 +298,11 @@ rollback_services() {
 
 # capture_rollback_state <statefile> <service:image-tag>...
 # Each arg is "container_name=image_tag" (e.g. "daax=daax:latest").
-# Returns non-zero if a running image could not be pinned under :rollback — the
-# baseline would then not be restorable, so the caller must not deploy.
+# Returns non-zero if a running image could not be pinned under :rollback, or if
+# docker could not say whether a service exists — the baseline would then not
+# be restorable (or would remove a service that was running), so the caller
+# must not deploy. A tag written before such a failure points at an image that
+# is still running, so it changes nothing a later rollback relies on.
 capture_rollback_state() {
   local statefile="$1"; shift
   : >"$statefile"
@@ -287,7 +310,10 @@ capture_rollback_state() {
   for pair in "$@"; do
     name="${pair%%=*}"
     tag="${pair#*=}"
-    imgid="$(running_image_id "$name")"
+    if ! imgid="$(running_image_id "$name")"; then
+      rc=1
+      continue
+    fi
     if [[ -n "$imgid" ]]; then
       # Pin the running image under a stable rollback tag so a rebuild of `tag`
       # does not garbage away the bytes we may need to restore.

@@ -143,7 +143,7 @@ SWITCHED=0
 STACK_EXISTED_AT_CAPTURE=0
 
 # stack_present — POSITIVE check: returns 0 (present-or-UNKNOWN) unless a
-# `compose ps` SUCCEEDS and reports NO containers for the app services. A failed
+# `compose ps` SUCCEEDS and reports NO containers for any of the six services. A failed
 # ps (docker unreachable) returns 0 so uncertainty never authorizes a teardown.
 stack_present() {
   local out rc=0
@@ -152,7 +152,7 @@ stack_present() {
   # `out="$(compose ps …)"` is a simple command whose failure would trip errexit
   # (and the ERR trap → an unwanted rollback) in any non-if/&&/|| call context.
   # Guarding it here keeps the "uncertain -> present" intent regardless of caller.
-  out="$(compose ps -aq daax terminal 2>/dev/null)" || rc=$?
+  out="$(compose ps -aq daax terminal code-server watchtower hawkeye provenance 2>/dev/null)" || rc=$?
   if ((rc != 0)); then
     return 0 # uncertain -> treat as present (never tear down on doubt)
   fi
@@ -182,8 +182,12 @@ do_rollback() {
     # post-switch fresh path does.
     if [[ "$STACK_EXISTED_AT_CAPTURE" != 1 ]] && ! had_prior_state "$STATEFILE"; then
       log "no stack existed at capture — tearing down the partial fresh deploy"
-      compose down --remove-orphans >&2 || true
-      deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "pre-switch failure on a fresh deploy; torn down"
+      if compose down --remove-orphans >&2; then
+        deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "pre-switch failure on a fresh deploy; torn down"
+      else
+        err "teardown of the partial fresh deploy FAILED — manual intervention required"
+        deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "pre-switch failure on a fresh deploy; teardown failed"
+      fi
       return 0
     fi
     if had_prior_state "$STATEFILE" && ! restore_rollback_state "$STATEFILE"; then
@@ -209,17 +213,24 @@ do_rollback() {
     # Recreate every service that ran at capture on its prior image, and remove
     # the ones this deploy introduced — a service that did not exist before is
     # not part of the state being restored.
-    local present absent
+    local present absent cleanup=ok
     present="$(rollback_services "$STATEFILE" present)"
     absent="$(rollback_services "$STATEFILE" absent)"
     if [[ -n "$absent" ]]; then
       # shellcheck disable=SC2086 # word-split on purpose: service names
-      compose rm -sf $absent >&2 || err "could not remove services absent at capture: $absent"
+      if ! compose rm -sf $absent >&2; then
+        err "could not remove services absent at capture: $absent — manual intervention required"
+        cleanup=failed
+      fi
     fi
     # shellcheck disable=SC2086
     if compose up -d --force-recreate --wait --wait-timeout 120 $present >&2; then
-      ok "rolled back to prior running images"
-      deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "prior images restored and running ($present)"
+      if [[ "$cleanup" == ok ]]; then
+        ok "rolled back to prior running images"
+        deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "prior images restored and running ($present)"
+      else
+        deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "prior images restored ($present) but services absent at capture were not removed ($absent)"
+      fi
     else
       err "rollback restore did not converge; manual intervention required"
       deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "prior images restored but stack did not become healthy"
@@ -234,8 +245,12 @@ do_rollback() {
     # Positively fresh at capture (compose ps reported no stack) → tear down the
     # partial deploy so the host is left in a KNOWN state.
     log "no stack existed at capture — tearing down the partial fresh deploy"
-    compose down --remove-orphans >&2 || true
-    deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "fresh deploy torn down (no stack at capture)"
+    if compose down --remove-orphans >&2; then
+      deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "fresh deploy torn down (no stack at capture)"
+    else
+      err "teardown of the partial fresh deploy FAILED — manual intervention required"
+      deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "fresh deploy teardown failed"
+    fi
   fi
 }
 
@@ -302,9 +317,10 @@ phase_capture() {
   # and call that the prior state. Checked by inspect alone, BEFORE capture
   # re-points any :rollback tag; migrating such a host is a manual step. The
   # four supporting services may legitimately be absent (first convergence).
-  if app_pair_partial; then
-    fail capture "partial baseline: exactly one of daax / daax-terminal is running — not a topology this deploy can roll back to; migrate the host to the split deploy manually first"
-  fi
+  case "$(app_pair_state)" in
+    partial) fail capture "partial baseline: exactly one of daax / daax-terminal is running — not a topology this deploy can roll back to; migrate the host to the split deploy manually first" ;;
+    unknown) fail capture "cannot determine whether daax / daax-terminal exist (docker inspect failed) — refusing to deploy on an unknown baseline" ;;
+  esac
   if ! capture_rollback_state "$STATEFILE" \
     "daax=${DAAX_IMAGE:-ghcr.io/daax-dev/daax-web:latest}" \
     "daax-terminal=${DAAX_TERMINAL_IMAGE:-ghcr.io/daax-dev/daax-terminal:latest}" \
@@ -312,7 +328,7 @@ phase_capture() {
     "daax-watchtower=${WATCHTOWER_IMAGE:-ghcr.io/daax-dev/watchtower:latest}" \
     "daax-hawkeye=${HAWKEYE_IMAGE:-ghcr.io/daax-dev/hawkeye:latest}" \
     "daax-provenance=${PROVENANCE_IMAGE:-ghcr.io/daax-dev/provenance:latest}"; then
-    fail capture "could not pin the running images under :rollback — refusing to deploy without a restorable baseline"
+    fail capture "could not pin every running image under :rollback, or could not tell whether a service exists — refusing to deploy without a restorable baseline"
   fi
   CAPTURED=1
   # POSITIVE pre-mutation check (H1): did a stack exist BEFORE we touched

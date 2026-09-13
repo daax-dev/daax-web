@@ -63,9 +63,15 @@ case "$1" in
     [[ -n "\${FAKE_IMAGE_ABSENT:-}" && "\${@: -1}" == "\$FAKE_IMAGE_ABSENT" ]] && exit 1
     exit 0 ;;
   inspect)                             # inspect --format {{.Image}} <name>
-    if [[ -n "\${FAKE_PRIOR_ONLY:-}" && "\${@: -1}" != "\$FAKE_PRIOR_ONLY" ]]; then exit 1; fi
-    if [[ -n "\${FAKE_PRIOR_NAMES:-}" && " \$FAKE_PRIOR_NAMES " != *" \${@: -1} "* ]]; then exit 1; fi
-    if [[ "\${FAKE_PRIOR:-0}" == "1" ]]; then echo "prior-\${@: -1}"; exit 0; else exit 1; fi ;;
+    # Like real docker: an absent container is "no such object" on stderr;
+    # FAKE_INSPECT_UNKNOWN=<name> is an inspect that fails for another reason.
+    if [[ -n "\${FAKE_INSPECT_UNKNOWN:-}" && "\${@: -1}" == "\$FAKE_INSPECT_UNKNOWN" ]]; then
+      echo "Cannot connect to the Docker daemon" >&2; exit 1
+    fi
+    nso() { echo "Error: No such object: $1" >&2; exit 1; }
+    if [[ -n "\${FAKE_PRIOR_ONLY:-}" && "\${@: -1}" != "\$FAKE_PRIOR_ONLY" ]]; then nso "\${@: -1}"; fi
+    if [[ -n "\${FAKE_PRIOR_NAMES:-}" && " \$FAKE_PRIOR_NAMES " != *" \${@: -1} "* ]]; then nso "\${@: -1}"; fi
+    if [[ "\${FAKE_PRIOR:-0}" == "1" ]]; then echo "prior-\${@: -1}"; exit 0; else nso "\${@: -1}"; fi ;;
   tag)                                 # real docker refuses a digest destination
     if [[ "\${@: -1}" == *@sha256:* ]]; then
       echo "Error: refusing to create a tag with a digest reference" >&2; exit 1
@@ -89,6 +95,11 @@ case "$1" in
     if grep -q 'ps -aq' <<<"$args"; then
       [[ "\${FAKE_PS_FAIL:-0}" == "1" ]] && exit 1
       [[ "\${FAKE_PS_NONEMPTY:-0}" == "1" ]] && echo "cid-abcdef"
+      # FAKE_PS_SERVICES="svc …": a container exists only for these services,
+      # reported only when the ps asks about one of them.
+      for svc in \${FAKE_PS_SERVICES:-}; do
+        grep -qw -- "$svc" <<<"$args" && { echo "cid-$svc"; break; }
+      done
       exit 0
     fi
     exit 0 ;;
@@ -831,6 +842,106 @@ describe("deploy.sh image override (fleet roll)", () => {
         "ghcr.io/daax-dev/daax-web:rollback",
         "ghcr.io/daax-dev/daax-terminal:rollback",
       ]);
+    });
+
+    it("an inspect that FAILS (not 'no such object') for a supporting service refuses capture", () => {
+      resetDockerLog();
+      const log = freshLog("inspect-unknown");
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "1",
+          FAKE_PS_NONEMPTY: "1",
+          FAKE_INSPECT_UNKNOWN: "daax-watchtower",
+          ...SIX,
+        },
+        log,
+      );
+      expect(res.status).not.toBe(0);
+      expect(readFileSync(dockerLog, "utf8")).not.toMatch(
+        /compose .*(pull|up -d|rm -sf|down)/,
+      );
+      expect(readFileSync(log, "utf8")).toMatch(
+        /"phase":"capture","status":"fail"/,
+      );
+    });
+
+    it("an inspect that FAILS for an app plane refuses before any tag", () => {
+      resetDockerLog();
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "1",
+          FAKE_INSPECT_UNKNOWN: "daax-terminal",
+          ...SIX,
+        },
+        freshLog("inspect-unknown-app"),
+      );
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toMatch(/cannot determine whether daax/);
+      expect(readFileSync(dockerLog, "utf8")).not.toMatch(/^tag /m);
+    });
+
+    it("a stack where ONLY a supporting service exists counts as PRESENT: never torn down", () => {
+      // No inspect baseline at all (FAKE_PRIOR=0) — only `compose ps` can see
+      // the watchtower container, and only if it asks about all six services.
+      resetDockerLog();
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "0",
+          FAKE_PS_SERVICES: "watchtower",
+          FAKE_FAIL_PATTERN: "run --rm migrate",
+          ...SIX,
+        },
+        freshLog("support-only"),
+      );
+      expect(res.status).not.toBe(0);
+      expect(readFileSync(dockerLog, "utf8")).not.toMatch(/compose .*down/);
+    });
+
+    it("a FAILED removal of absent services makes the rollback DEGRADED, not ok", () => {
+      resetDockerLog();
+      const log = freshLog("rm-fail");
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "1",
+          FAKE_PRIOR_NAMES: "daax daax-terminal",
+          FAKE_PS_NONEMPTY: "1",
+          FAKE_HTTP_CODE: "503",
+          FAKE_FAIL_PATTERN: "rm -sf",
+          ...SIX,
+        },
+        log,
+      );
+      expect(res.status).not.toBe(0);
+      const jl = readFileSync(log, "utf8");
+      expect(jl).toMatch(/"phase":"rollback","status":"degraded"/);
+      expect(jl).not.toMatch(/"phase":"rollback","status":"ok"/);
+    });
+
+    it("a FAILED fresh-deploy teardown is DEGRADED, not ok", () => {
+      resetDockerLog();
+      const log = freshLog("down-fail");
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "0",
+          FAKE_FAIL_PATTERN: "run --rm migrate|down --remove-orphans",
+          ...SIX,
+        },
+        log,
+      );
+      expect(res.status).not.toBe(0);
+      const jl = readFileSync(log, "utf8");
+      expect(jl).toMatch(/"phase":"rollback","status":"degraded"/);
+      expect(jl).not.toMatch(/"phase":"rollback","status":"ok"/);
     });
 
     it("a supporting-service health failure after the switch rolls back", () => {
