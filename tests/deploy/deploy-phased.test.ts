@@ -867,6 +867,28 @@ describe("deploy.sh image override (fleet roll)", () => {
       );
     });
 
+    it("an UNWRITABLE rollback statefile fails capture before any pull or switch", () => {
+      resetDockerLog();
+      const log = freshLog("statefile-unwritable");
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "1",
+          FAKE_PS_NONEMPTY: "1",
+          DAAX_ROLLBACK_STATE: join(work, "no-such-dir", "rollback.state"),
+          ...SIX,
+        },
+        log,
+      );
+      expect(res.status).not.toBe(0);
+      const dl = readFileSync(dockerLog, "utf8");
+      expect(dl).not.toMatch(/compose .*(pull|up -d|run --rm)/);
+      expect(readFileSync(log, "utf8")).toMatch(
+        /"phase":"capture","status":"fail"/,
+      );
+    });
+
     it("an inspect that FAILS for an app plane refuses before any tag", () => {
       resetDockerLog();
       const res = runDeploy(

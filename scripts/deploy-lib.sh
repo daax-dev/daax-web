@@ -305,8 +305,7 @@ rollback_services() {
 # is still running, so it changes nothing a later rollback relies on.
 capture_rollback_state() {
   local statefile="$1"; shift
-  : >"$statefile"
-  local pair name tag imgid rc=0
+  local pair name tag imgid rc=0 lines=""
   for pair in "$@"; do
     name="${pair%%=*}"
     tag="${pair#*=}"
@@ -318,12 +317,17 @@ capture_rollback_state() {
       # Pin the running image under a stable rollback tag so a rebuild of `tag`
       # does not garbage away the bytes we may need to restore.
       "$DOCKER_BIN" tag "$imgid" "$(rollback_tag_for "$tag")" >/dev/null 2>&1 || rc=1
-      printf '%s\t%s\t%s\n' "$name" "$tag" "$imgid" >>"$statefile"
+      lines+="$name"$'\t'"$tag"$'\t'"$imgid"$'\n'
     else
       # No prior container → nothing to restore for this service (fresh deploy).
-      printf '%s\t%s\t%s\n' "$name" "$tag" "-" >>"$statefile"
+      lines+="$name"$'\t'"$tag"$'\t-\n'
     fi
   done
+  # One checked write through a temp file and a rename: callers run this under
+  # `if !`, where errexit is off, so an unwritable statefile would otherwise pass
+  # silently and the deploy would proceed with no baseline to roll back to.
+  printf '%s' "$lines" >"$statefile.tmp" 2>/dev/null || return 1
+  mv -f "$statefile.tmp" "$statefile" 2>/dev/null || { rm -f "$statefile.tmp" 2>/dev/null; return 1; }
   return "$rc"
 }
 
