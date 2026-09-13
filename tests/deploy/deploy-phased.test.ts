@@ -889,6 +889,32 @@ describe("deploy.sh image override (fleet roll)", () => {
       );
     });
 
+    it("a rollback statefile path that is a DIRECTORY fails capture (mv would succeed into it)", () => {
+      const dir = join(work, "statefile-is-a-dir");
+      mkdirSync(dir, { recursive: true });
+      resetDockerLog();
+      const log = freshLog("statefile-dir");
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "1",
+          FAKE_PS_NONEMPTY: "1",
+          DAAX_ROLLBACK_STATE: dir,
+          ...SIX,
+        },
+        log,
+      );
+      expect(res.status).not.toBe(0);
+      expect(readFileSync(dockerLog, "utf8")).not.toMatch(
+        /compose .*(pull|up -d|run --rm)/,
+      );
+      expect(readFileSync(log, "utf8")).toMatch(
+        /"phase":"capture","status":"fail"/,
+      );
+      expect(readdirSync(dir)).toEqual([]);
+    });
+
     it("an inspect that FAILS for an app plane refuses before any tag", () => {
       resetDockerLog();
       const res = runDeploy(

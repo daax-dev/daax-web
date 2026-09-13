@@ -323,11 +323,20 @@ capture_rollback_state() {
       lines+="$name"$'\t'"$tag"$'\t-\n'
     fi
   done
-  # One checked write through a temp file and a rename: callers run this under
-  # `if !`, where errexit is off, so an unwritable statefile would otherwise pass
-  # silently and the deploy would proceed with no baseline to roll back to.
-  printf '%s' "$lines" >"$statefile.tmp" 2>/dev/null || return 1
-  mv -f "$statefile.tmp" "$statefile" 2>/dev/null || { rm -f "$statefile.tmp" 2>/dev/null; return 1; }
+  # One checked write through a unique temp file and a rename: callers run this
+  # under `if !`, where errexit is off, so an unwritable statefile would
+  # otherwise pass silently and the deploy would proceed with no baseline to
+  # roll back to. A directory or symlink at the target is refused — `mv` would
+  # move the temp file INTO a directory and succeed, and a predictable temp name
+  # could be pre-planted as a symlink.
+  local tmp
+  [[ -d "$statefile" || -L "$statefile" ]] && return 1
+  tmp="$(mktemp "$(dirname -- "$statefile")/.daax-rollback.XXXXXX" 2>/dev/null)" || return 1
+  if ! printf '%s' "$lines" >"$tmp" 2>/dev/null || ! mv -f -- "$tmp" "$statefile" 2>/dev/null; then
+    rm -f -- "$tmp" 2>/dev/null
+    return 1
+  fi
+  [[ -f "$statefile" && ! -L "$statefile" ]] || return 1
   return "$rc"
 }
 
