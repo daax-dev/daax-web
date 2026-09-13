@@ -543,13 +543,18 @@ main() {
     # the same deployment. The hash covers interpolated values, secrets included,
     # so it exists only when every required secret is in the environment; the
     # values themselves are never printed. `compose config` reads files only —
-    # no daemon.
+    # no daemon. The hashes describe the PINNED images above: a caller that
+    # deploys *_OVERRIDE digests different from the pins cannot compare them.
     if assert_required_secrets >/dev/null 2>&1; then
       export_compose_env
       local hashes svc hash key
       if hashes="$(compose config --hash '*' 2>/dev/null)" && [[ -n "$hashes" ]]; then
         while read -r svc hash; do
           [[ "$svc" =~ ^[a-z0-9][a-z0-9_-]*$ && "$hash" =~ ^[0-9a-f]{64}$ ]] || continue
+          # Only the six services the fleet roller verifies. postgres, migrate and
+          # pg-backup interpolate DAAX_PG_PASSWORD, so their hash would be an
+          # offline guessing oracle for it, and nothing compares them.
+          case "$svc" in daax|terminal|code-server|watchtower|hawkeye|provenance) ;; *) continue ;; esac
           key="$(printf %s "$svc" | tr "a-z-" "A-Z_")"
           printf 'CONFIG_HASH_%s=%s\n' "$key" "$hash"
         done <<<"$hashes"
