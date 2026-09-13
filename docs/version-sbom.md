@@ -171,8 +171,8 @@ running image ID in the set computed fresh for that request (running stack +
 static refs, `findKnownImageRef`), so a caller cannot name an arbitrary image.
 Scan results are cached by immutable image ID; the set never is. When the daemon
 is unreachable the stack group is simply absent and the static set alone is the
-whitelist — absence, never a pass. In the F3 split deploy the web plane
-deliberately has no Docker socket, so there `/api/build/images` answers 503 and
+whitelist — absence, never a pass. Where the web plane has no Docker socket
+(any split deploy predating daax-web#501), `/api/build/images` answers 503 and
 the card reports Docker as unavailable.
 
 ### Generating the SBOM

@@ -429,9 +429,8 @@ services:
       # to reach a daemon elsewhere. Read by lib/agentview/server.ts.
       - AGENTVIEW_DAEMON_URL=${AGENTVIEW_DAEMON_URL:-}
 
-    # No group_add here (F3 #100): the web plane holds no Docker socket, so it
-    # needs no docker-group membership. Socket access is group-based on the
-    # `terminal` service only.
+    # Socket access for this plane is group-based: see the hardening block and
+    # group_add above (daax-web#501).
     networks:
       - daax-net
 

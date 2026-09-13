@@ -445,6 +445,24 @@ main() {
   source "$env_file"
   set +a
 
+  # Fleet roll (dx scripts/deploy-fleet.sh) hands every host the SAME verified
+  # digest. The env file just sourced pins its own DAAX_IMAGE/DAAX_TERMINAL_IMAGE,
+  # so a caller's plain DAAX_IMAGE is silently overwritten by the file's pin and
+  # the host redeploys what it already runs. The *_OVERRIDE names win over the
+  # file — and only as a digest reference, never a movable tag.
+  local ov src
+  for ov in DAAX_IMAGE DAAX_TERMINAL_IMAGE; do
+    src="${ov}_OVERRIDE"
+    [[ -n "${!src:-}" ]] || continue
+    if [[ ! "${!src}" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]; then
+      err "$src must be an image@sha256:<64 hex> digest reference, got '${!src}'"
+      exit 2
+    fi
+    log "image override: $ov=${!src} (env file had ${!ov:-unset})"
+    printf -v "$ov" '%s' "${!src}"
+    export "${ov?}"
+  done
+
   export_compose_env
 
   # Serialize deploys: concurrent runs would corrupt the shared rollback baseline

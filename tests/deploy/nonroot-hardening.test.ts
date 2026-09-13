@@ -196,7 +196,7 @@ describe("#185 root docker-compose.yml (combined container) keeps daax non-root 
   });
 });
 
-describe("#100 deploy/docker-compose.yml split: socket only on the terminal plane", () => {
+describe("#100 deploy/docker-compose.yml split: terminal plane + web plane, both socket-hardened", () => {
   const services = loadServices(resolve(repoRoot, "deploy/docker-compose.yml"));
   const daax = services.daax;
   const terminal = services.terminal;
@@ -211,15 +211,19 @@ describe("#100 deploy/docker-compose.yml split: socket only on the terminal plan
     expectSocketHardened(terminal);
   });
 
-  it("the Traefik-facing daax (web) service does NOT mount the Docker socket", () => {
-    expect(mountsDockerSocket(daax)).toBe(false);
+  // The web plane holds the socket again (daax-web#501): F3 moved it to the
+  // terminal plane without moving the web routes that call Docker, so
+  // /containers, /testcontainers, /api/build/images and /api/ai/active-sessions
+  // 503'd in the split deploy. That makes this plane root-equivalent on the
+  // host, an operator decision recorded in deploy/docker-compose.yml. What the
+  // tests still hold it to is the same non-root, group-based posture as the
+  // terminal plane — never root, never GID 0.
+  it("the Traefik-facing daax (web) service mounts the Docker socket (daax-web#501)", () => {
+    expect(mountsDockerSocket(daax)).toBe(true);
   });
 
-  it("the daax (web) service keeps defense-in-depth hardening but needs no group_add", () => {
-    expect(daax.security_opt ?? []).toContain("no-new-privileges:true");
-    expect(daax.cap_drop ?? []).toContain("ALL");
-    // No socket → no docker-group membership required.
-    expect(daax.group_add ?? []).toHaveLength(0);
+  it("the socket-bearing daax (web) service is non-root hardened (no-new-privileges, cap_drop ALL, group_add DOCKER_GID)", () => {
+    expectSocketHardened(daax);
   });
 
   it("the daax (web) service runs the web plane only (start:web, never the terminal)", () => {
@@ -228,8 +232,7 @@ describe("#100 deploy/docker-compose.yml split: socket only on the terminal plan
       : (daax.command ?? "");
     expect(cmd).toContain("start:web");
     // Must NOT run the terminal plane (start:terminal) or the combined default
-    // (start:prod) — those would re-couple the socket-free web tier to the
-    // terminal server.
+    // (start:prod) — those would re-couple the web tier to the terminal server.
     expect(cmd).not.toContain("start:terminal");
     expect(cmd).not.toContain("start:prod");
   });

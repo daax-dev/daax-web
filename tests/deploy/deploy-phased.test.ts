@@ -43,6 +43,7 @@ let dockerLog: string;
 //   FAKE_PS_FAIL=1      -> `compose ps -aq` fails (docker unreachable / uncertain)
 const FAKE_DOCKER = `#!/usr/bin/env bash
 echo "$*" >> "$FAKE_DOCKER_LOG"
+[[ -n "\${FAKE_ENV_LOG:-}" ]] && echo "\${DAAX_IMAGE:-} \${DAAX_TERMINAL_IMAGE:-}" >> "$FAKE_ENV_LOG"
 args="$*"
 if [[ -n "\${FAKE_FAIL_PATTERN:-}" ]] && grep -qE "\$FAKE_FAIL_PATTERN" <<<"$args"; then
   echo "fake docker: forced failure on: $args" >&2
@@ -370,6 +371,85 @@ describe("deploy.sh preflight — fail-closed", () => {
     expect(readFileSync(log, "utf8")).toMatch(
       /"phase":"preflight","status":"fail"/,
     );
+  });
+});
+
+describe("deploy.sh image override (fleet roll)", () => {
+  const PIN_WEB = `ghcr.io/daax-dev/daax-web@sha256:${"a".repeat(64)}`;
+  const PIN_TERM = `ghcr.io/daax-dev/daax-terminal@sha256:${"b".repeat(64)}`;
+  const TGT_WEB = `ghcr.io/daax-dev/daax-web@sha256:${"c".repeat(64)}`;
+  const TGT_TERM = `ghcr.io/daax-dev/daax-terminal@sha256:${"d".repeat(64)}`;
+
+  beforeAll(() => {
+    writeFileSync(
+      join(work, "env", "pinned.env"),
+      [
+        "DAAX_HOSTNAME=testhost",
+        `DAAX_WORKSPACE=${join(work, "ws")}`,
+        `CLAUDE_CONFIG_PATH=${join(work, "claude.json")}`,
+        "DAAX_PG_MANAGED=0",
+        "DAAX_DEPLOY_PULL=1",
+        'DAAX_REQUIRED_SECRETS="TEST_SECRET_A"',
+        `DAAX_IMAGE=${PIN_WEB}`,
+        `DAAX_TERMINAL_IMAGE=${PIN_TERM}`,
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("without an override, compose runs the env file's pinned digests", () => {
+    const envLog = join(work, "env-pin.log");
+    writeFileSync(envLog, "");
+    resetDockerLog();
+    const res = runDeploy(
+      "pinned",
+      { TEST_SECRET_A: "x", FAKE_ENV_LOG: envLog },
+      freshLog("override-none"),
+    );
+    expect(res.status).toBe(0);
+    const seen = readFileSync(envLog, "utf8");
+    expect(seen).toContain(`${PIN_WEB} ${PIN_TERM}`);
+    expect(seen).not.toContain(TGT_WEB);
+  });
+
+  it("*_OVERRIDE digests win over the env file's pins for every compose call", () => {
+    const envLog = join(work, "env-override.log");
+    writeFileSync(envLog, "");
+    resetDockerLog();
+    // A plain DAAX_IMAGE from the caller is what the env file overwrites — the
+    // defect this guards against. It must NOT be what compose sees.
+    const res = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        FAKE_ENV_LOG: envLog,
+        DAAX_IMAGE_OVERRIDE: TGT_WEB,
+        DAAX_TERMINAL_IMAGE_OVERRIDE: TGT_TERM,
+      },
+      freshLog("override-digest"),
+    );
+    expect(res.status).toBe(0);
+    const lines = readFileSync(envLog, "utf8").trim().split("\n");
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) expect(l).toBe(`${TGT_WEB} ${TGT_TERM}`);
+    expect(readFileSync(dockerLog, "utf8")).toMatch(
+      /compose .*pull daax terminal/,
+    );
+  });
+
+  it("REJECTS a tag override before touching docker", () => {
+    resetDockerLog();
+    const res = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        DAAX_IMAGE_OVERRIDE: "ghcr.io/daax-dev/daax-web:latest",
+      },
+      freshLog("override-tag"),
+    );
+    expect(res.status).toBe(2);
+    expect(res.stderr).toMatch(/DAAX_IMAGE_OVERRIDE must be an image@sha256/);
+    expect(readFileSync(dockerLog, "utf8")).toBe("");
   });
 });
 
