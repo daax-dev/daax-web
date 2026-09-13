@@ -58,8 +58,22 @@ case "$1" in
     if [[ "\${@: -1}" == *@sha256:* ]]; then
       echo "Error: refusing to create a tag with a digest reference" >&2; exit 1
     fi
+    # FAKE_RETAG_FAIL=1: the SECOND pin of a destination fails (capture works,
+    # the re-pin during rollback does not).
+    if [[ "\${FAKE_RETAG_FAIL:-0}" == "1" ]] && grep -qxF "\${@: -1}" "\${FAKE_TAG_LOG:-/dev/null}" 2>/dev/null; then
+      exit 1
+    fi
+    [[ -n "\${FAKE_TAG_LOG:-}" ]] && echo "\${@: -1}" >> "$FAKE_TAG_LOG"
     exit 0 ;;
   compose)
+    # Like real compose: an image ref with no local tag cannot start.
+    if [[ -n "\${FAKE_TAG_LOG:-}" ]] && grep -q 'up -d' <<<"$args"; then
+      for ref in "\${DAAX_IMAGE:-}" "\${DAAX_TERMINAL_IMAGE:-}"; do
+        if [[ "$ref" == *:rollback ]] && ! grep -qxF "$ref" "$FAKE_TAG_LOG"; then
+          echo "fake compose: no such image $ref" >&2; exit 1
+        fi
+      done
+    fi
     if grep -q 'ps -aq' <<<"$args"; then
       [[ "\${FAKE_PS_FAIL:-0}" == "1" ]] && exit 1
       [[ "\${FAKE_PS_NONEMPTY:-0}" == "1" ]] && echo "cid-abcdef"
@@ -378,7 +392,9 @@ describe("deploy.sh preflight — fail-closed", () => {
   });
 });
 
-describe("deploy.sh image override (fleet roll)", () => {
+// Each case spawns the real deploy.sh; under a full-suite run the default 5s
+// test timeout is not enough headroom.
+describe("deploy.sh image override (fleet roll)", { timeout: 30_000 }, () => {
   const PIN_WEB = `ghcr.io/daax-dev/daax-web@sha256:${"a".repeat(64)}`;
   const PIN_TERM = `ghcr.io/daax-dev/daax-terminal@sha256:${"b".repeat(64)}`;
   const TGT_WEB = `ghcr.io/daax-dev/daax-web@sha256:${"c".repeat(64)}`;
@@ -453,6 +469,7 @@ describe("deploy.sh image override (fleet roll)", () => {
         FAKE_PRIOR: "1",
         FAKE_PS_NONEMPTY: "1",
         FAKE_HTTP_CODE: "503",
+        FAKE_TAG_LOG: join(work, "tags-rollback.log"),
         DAAX_IMAGE_OVERRIDE: TGT_WEB,
         DAAX_TERMINAL_IMAGE_OVERRIDE: TGT_TERM,
       },
@@ -471,6 +488,62 @@ describe("deploy.sh image override (fleet roll)", () => {
       "ghcr.io/daax-dev/daax-web:rollback ghcr.io/daax-dev/daax-terminal:rollback",
     );
     expect(res.stderr).not.toMatch(/could not restore/);
+  });
+
+  it("capture that cannot pin :rollback FAILS before pulling or switching anything", () => {
+    resetDockerLog();
+    const log = freshLog("capture-tag-fail");
+    const res = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        FAKE_PRIOR: "1",
+        FAKE_PS_NONEMPTY: "1",
+        FAKE_FAIL_PATTERN: "^tag prior-daax ",
+        DAAX_IMAGE_OVERRIDE: TGT_WEB,
+        DAAX_TERMINAL_IMAGE_OVERRIDE: TGT_TERM,
+      },
+      log,
+    );
+    expect(res.status).not.toBe(0);
+    const dl = readFileSync(dockerLog, "utf8");
+    expect(dl).not.toMatch(/compose .*pull/);
+    expect(dl).not.toMatch(/compose .*up -d/);
+    expect(dl).not.toMatch(/compose .*down/);
+    expect(readFileSync(log, "utf8")).toMatch(
+      /"phase":"capture","status":"fail"/,
+    );
+  });
+
+  it("a rollback whose re-pin fails does NOT recreate, and logs degraded", () => {
+    const tagLog = join(work, "tags-retag-fail.log");
+    writeFileSync(tagLog, "");
+    resetDockerLog();
+    const log = freshLog("retag-fail");
+    const res = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        FAKE_PRIOR: "1",
+        FAKE_PS_NONEMPTY: "1",
+        FAKE_HTTP_CODE: "503",
+        FAKE_TAG_LOG: tagLog,
+        FAKE_RETAG_FAIL: "1",
+        DAAX_IMAGE_OVERRIDE: TGT_WEB,
+        DAAX_TERMINAL_IMAGE_OVERRIDE: TGT_TERM,
+      },
+      log,
+    );
+    expect(res.status).not.toBe(0);
+    const ups = readFileSync(dockerLog, "utf8").match(
+      /up -d --force-recreate/g,
+    );
+    // Exactly the deploy's own recreate — none for the failed rollback.
+    expect(ups?.length).toBe(1);
+    expect(res.stderr).toMatch(/NOT recreating/);
+    expect(readFileSync(log, "utf8")).toMatch(
+      /"phase":"rollback","status":"degraded"/,
+    );
   });
 
   it("REJECTS a tag override before touching docker", () => {

@@ -1,3 +1,6 @@
+# ARCHIVED 2026-09-13 — record of galway's pre-convergence topology. Do NOT apply.
+# galway deploys with: scripts/deploy.sh galway (see deploy/galway/README.md).
+
 # Daax Production Deployment
 #
 # This compose file is designed for deployment behind Traefik.

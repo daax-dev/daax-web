@@ -210,10 +210,12 @@ rollback_tag_for() {
 
 # capture_rollback_state <statefile> <service:image-tag>...
 # Each arg is "container_name=image_tag" (e.g. "daax=daax:latest").
+# Returns non-zero if a running image could not be pinned under :rollback — the
+# baseline would then not be restorable, so the caller must not deploy.
 capture_rollback_state() {
   local statefile="$1"; shift
   : >"$statefile"
-  local pair name tag imgid
+  local pair name tag imgid rc=0
   for pair in "$@"; do
     name="${pair%%=*}"
     tag="${pair#*=}"
@@ -221,13 +223,14 @@ capture_rollback_state() {
     if [[ -n "$imgid" ]]; then
       # Pin the running image under a stable rollback tag so a rebuild of `tag`
       # does not garbage away the bytes we may need to restore.
-      "$DOCKER_BIN" tag "$imgid" "$(rollback_tag_for "$tag")" >/dev/null 2>&1 || true
+      "$DOCKER_BIN" tag "$imgid" "$(rollback_tag_for "$tag")" >/dev/null 2>&1 || rc=1
       printf '%s\t%s\t%s\n' "$name" "$tag" "$imgid" >>"$statefile"
     else
       # No prior container → nothing to restore for this service (fresh deploy).
       printf '%s\t%s\t%s\n' "$name" "$tag" "-" >>"$statefile"
     fi
   done
+  return "$rc"
 }
 
 # had_prior_state <statefile> — true if ANY captured service had a running image
@@ -247,7 +250,10 @@ had_prior_state() {
 # tag with a digest reference", so re-tagging silently did nothing and the
 # recreate brought the failed digest straight back. For those, the compose
 # image variable is exported to the repo:rollback tag capture made instead.
-# Returns non-zero if any restore could not be made, so the caller can say so.
+# The rollback tag is re-pinned to the captured id before it is exported, so a
+# stale :rollback left by an earlier deploy is never what compose starts; if
+# that re-pin fails the variable is NOT exported. Returns non-zero if any
+# restore could not be made — the caller must then not recreate.
 restore_rollback_state() {
   local statefile="$1"
   [[ -f "$statefile" ]] || return 0
@@ -256,7 +262,10 @@ restore_rollback_state() {
     [[ "$imgid" == "-" || -z "$imgid" ]] && continue
     if [[ "$tag" == *@sha256:* ]]; then
       rb="$(rollback_tag_for "$tag")"
-      "$DOCKER_BIN" tag "$imgid" "$rb" >/dev/null 2>&1 || rc=1
+      if ! "$DOCKER_BIN" tag "$imgid" "$rb" >/dev/null 2>&1; then
+        rc=1
+        continue
+      fi
       case "$name" in
         daax) export DAAX_IMAGE="$rb" ;;
         daax-terminal) export DAAX_TERMINAL_IMAGE="$rb" ;;

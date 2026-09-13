@@ -177,7 +177,9 @@ do_rollback() {
   # tags for hygiene, but do NOT force-recreate (no needless downtime).
   if [[ "$SWITCHED" != 1 ]]; then
     if had_prior_state "$STATEFILE" && ! restore_rollback_state "$STATEFILE"; then
-      err "could not restore every prior image tag — verify the stack's images manually"
+      err "could not restore every prior image tag — the running stack was not switched, but verify its image tags manually"
+      deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "pre-switch failure; running stack untouched, tag restore failed"
+      return 0
     fi
     log "pre-switch failure — running stack left in place (no recreate)"
     deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "pre-switch failure; running stack untouched, tags restored"
@@ -188,7 +190,11 @@ do_rollback() {
   if had_prior_state "$STATEFILE"; then
     # Known baseline → restore prior images and force-recreate.
     if ! restore_rollback_state "$STATEFILE"; then
-      err "could not restore every prior image — the recreate below may bring the failed image back"
+      # Recreating now would start the failed image, or a stale one, and call it
+      # a rollback. Leave the stack as it is and say so.
+      err "could not restore every prior image; NOT recreating — manual intervention required"
+      deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "prior image restore failed; stack left as-is, not recreated"
+      return 0
     fi
     if compose up -d --force-recreate --wait --wait-timeout 120 daax terminal >&2; then
       ok "rolled back to prior running images"
@@ -267,9 +273,13 @@ phase_capture() {
   # a local `daax:latest`/`daax-terminal:latest` would retag/restore the WRONG
   # refs, so `compose up` would keep the new/broken GHCR tags and rollback would
   # be a silent no-op unless DAAX_IMAGE/DAAX_TERMINAL_IMAGE were set per-env.
-  capture_rollback_state "$STATEFILE" \
+  # A baseline that cannot be pinned cannot be restored: fail BEFORE any
+  # mutation (CAPTURED stays 0, so the failure path touches nothing).
+  if ! capture_rollback_state "$STATEFILE" \
     "daax=${DAAX_IMAGE:-ghcr.io/daax-dev/daax-web:latest}" \
-    "daax-terminal=${DAAX_TERMINAL_IMAGE:-ghcr.io/daax-dev/daax-terminal:latest}"
+    "daax-terminal=${DAAX_TERMINAL_IMAGE:-ghcr.io/daax-dev/daax-terminal:latest}"; then
+    fail capture "could not pin the running images under :rollback — refusing to deploy without a restorable baseline"
+  fi
   CAPTURED=1
   # POSITIVE pre-mutation check (H1): did a stack exist BEFORE we touched
   # anything? This — not a per-container image inspect — decides fresh vs upgrade,
