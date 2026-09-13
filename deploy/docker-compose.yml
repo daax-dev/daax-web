@@ -429,6 +429,11 @@ services:
       # to reach a daemon elsewhere. Read by lib/agentview/server.ts.
       - AGENTVIEW_DAEMON_URL=${AGENTVIEW_DAEMON_URL:-}
 
+      # watchtower / hawkeye / provenance on daax-net (services below).
+      - WATCHTOWER_API_URL=http://watchtower:4220
+      - HAWKEYE_API_URL=http://hawkeye:4230
+      - PROVENANCE_API_URL=http://provenance:8080
+
     # Socket access for this plane is group-based: see the hardening block and
     # group_add above (daax-web#501).
     networks:
@@ -568,14 +573,16 @@ services:
 
   # Code-Server (VS Code in browser) with language runtimes (Go, Node, Python, Rust)
   # Accessible via https://daax-code.HOSTNAME.poley.dev
-  # NOTE: build context lives in the sibling daax-devtools repo. If that repo
-  # is not cloned alongside daax-web, only build/start this service after
-  # pulling a pre-built image via `docker pull daax-code-server:latest`.
   code-server:
+    # The fleet pulls the image publish-images.yml builds, scans and signs
+    # (ghcr.io/daax-dev/code-server@sha256:…), pinned per target in
+    # deploy/env/<host>.env as CODE_SERVER_IMAGE. Unset, it falls back to the
+    # local build of the vendored deploy/code-server/Dockerfile
+    # (scripts/build-code-server.sh), which no registry digest can pin.
     build:
-      context: ../../daax-devtools/devcontainer
-      dockerfile: Dockerfile.code-server
-    image: daax-code-server:latest
+      context: ./code-server
+      dockerfile: Dockerfile
+    image: ${CODE_SERVER_IMAGE:-daax-code-server:latest}
     container_name: daax-code-server
     restart: unless-stopped
 
@@ -632,6 +639,72 @@ services:
     ports:
       - "127.0.0.1:8081:80"
 
+  # Session monitoring, job orchestration and supply-chain provenance — the same
+  # three services the dx workstation stack runs (operator decision 2026-09-13:
+  # every host runs everything). Each is its repo's signed multi-arch image,
+  # pinned per target in deploy/env/<host>.env; the defaults below exist only so
+  # a bare `docker compose config` resolves. Loopback ports are for the host's
+  # Traefik; daax reaches them by service name on daax-net.
+  watchtower:
+    image: ${WATCHTOWER_IMAGE:-ghcr.io/daax-dev/watchtower:latest}
+    container_name: daax-watchtower
+    restart: unless-stopped
+    command: ["--port", "4220", "--db", "/data/watchtower.db"]
+    ports:
+      - "127.0.0.1:4220:4220"
+    volumes:
+      - daax-watchtower-data:/data
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - daax-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  hawkeye:
+    image: ${HAWKEYE_IMAGE:-ghcr.io/daax-dev/hawkeye:latest}
+    container_name: daax-hawkeye
+    restart: unless-stopped
+    environment:
+      - HAWKEYE_SERVER_ADDR=:4230
+      - HAWKEYE_LOG_LEVEL=info
+      - HAWKEYE_STORAGE_OPERATIONAL_DSN=/var/lib/hawkeye/operational.db
+      - HAWKEYE_STORAGE_EVENTS_DSN=/var/lib/hawkeye/events.db
+    ports:
+      - "127.0.0.1:4230:4230"
+    volumes:
+      - daax-hawkeye-data:/var/lib/hawkeye
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - daax-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  provenance:
+    image: ${PROVENANCE_IMAGE:-ghcr.io/daax-dev/provenance:latest}
+    container_name: daax-provenance
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4250:8080"
+    volumes:
+      - daax-provenance-data:/data
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - daax-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
   daax-net:
     # `name` is the real external network; the `daax-net` key above is just a
@@ -647,6 +720,12 @@ volumes:
   daax-recordings:
     driver: local
   daax-code-server-data:
+    driver: local
+  daax-watchtower-data:
+    driver: local
+  daax-hawkeye-data:
+    driver: local
+  daax-provenance-data:
     driver: local
   daax-pg-data:
     driver: local

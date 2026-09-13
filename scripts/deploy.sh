@@ -5,6 +5,7 @@
 # Usage:
 #   scripts/deploy.sh <target>          # deploy the named target
 #   scripts/deploy.sh --list            # list available targets
+#   scripts/deploy.sh --effective <t>   # print the target's effective image pins
 #   scripts/deploy.sh --help
 #
 # TARGET SELECTION IS CONFIG, NOT CODE. A <target> maps to deploy/env/<target>.env
@@ -176,6 +177,15 @@ do_rollback() {
   # running stack (if any) is untouched on its prior images. Restore the :latest
   # tags for hygiene, but do NOT force-recreate (no needless downtime).
   if [[ "$SWITCHED" != 1 ]]; then
+    # A positively FRESH host may still have gained a Postgres (phase_db) or a
+    # partial migrate before the failure; leave it in a known state, as the
+    # post-switch fresh path does.
+    if [[ "$STACK_EXISTED_AT_CAPTURE" != 1 ]] && ! had_prior_state "$STATEFILE"; then
+      log "no stack existed at capture — tearing down the partial fresh deploy"
+      compose down --remove-orphans >&2 || true
+      deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "pre-switch failure on a fresh deploy; torn down"
+      return 0
+    fi
     if had_prior_state "$STATEFILE" && ! restore_rollback_state "$STATEFILE"; then
       err "could not restore every prior image tag — the running stack was not switched, but verify its image tags manually"
       deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "pre-switch failure; running stack untouched, tag restore failed"
@@ -280,6 +290,14 @@ phase_capture() {
     "daax-terminal=${DAAX_TERMINAL_IMAGE:-ghcr.io/daax-dev/daax-terminal:latest}"; then
     fail capture "could not pin the running images under :rollback — refusing to deploy without a restorable baseline"
   fi
+  # A baseline with ONE of the two planes (e.g. a legacy single-container `daax`
+  # and no `daax-terminal`) cannot be rolled back to: recreating it through this
+  # compose file would bring up a split web plane with no terminal and call that
+  # the prior state. Refuse before any mutation; migrating such a host is a
+  # deliberate, manual step.
+  if [[ "$(awk -F'\t' '$3 != "-" {n++} END {print n+0}' "$STATEFILE")" == 1 ]]; then
+    fail capture "partial baseline: exactly one of daax / daax-terminal is running — not a topology this deploy can roll back to; migrate the host to the split deploy manually first"
+  fi
   CAPTURED=1
   # POSITIVE pre-mutation check (H1): did a stack exist BEFORE we touched
   # anything? This — not a per-container image inspect — decides fresh vs upgrade,
@@ -314,6 +332,8 @@ phase_build() {
   if [[ "${DAAX_DEPLOY_PULL:-0}" == "1" ]]; then
     log "phase: pull (published images)"
     compose pull daax terminal >&2 || fail build "image pull failed"
+    compose pull watchtower hawkeye provenance >&2 \
+      || log "supporting service pull failed (non-fatal; the fleet roller checks their digests)"
   else
     log "phase: build"
     export_build_stamp
@@ -397,6 +417,10 @@ phase_up() {
   # code-server is best-effort: its image may be operator-supplied and the
   # /code-server page degrades gracefully. Do not fail the deploy on it.
   compose up -d code-server >&2 || log "code-server did not start (non-fatal)"
+  # Same posture for the three supporting services: the fleet roller checks
+  # their running digests, so a failure here is reported there, not hidden.
+  compose up -d watchtower hawkeye provenance >&2 \
+    || log "watchtower/hawkeye/provenance did not all start (non-fatal)"
   deploy_log "$LOGFILE" "$ENV_NAME" "up" "ok" "web + terminal up (force-recreated)"
 }
 
@@ -444,8 +468,21 @@ main() {
   case "$target" in
     ""|-h|--help|help) usage; exit 0 ;;
     --list|list) list_targets; exit 0 ;;
+    --effective) ;;
     -*) err "unknown flag: $target"; usage; exit 2 ;;
   esac
+
+  # --effective <target>: the machine-readable contract dx scripts/deploy-fleet.sh
+  # reads instead of grepping this file or the env file. It sources the env file
+  # exactly as a deploy does and prints the images a deploy WOULD run, without
+  # overrides, secrets or any docker call. DEPLOY_SH_API names the contract: bump
+  # it when a fleet roller must not drive an older deploy.sh.
+  local effective=0
+  if [[ "$target" == --effective ]]; then
+    effective=1
+    target="${2:-}"
+    [[ -n "$target" ]] || { err "--effective requires a target"; exit 2; }
+  fi
 
   local env_file
   env_file="$(resolve_env_file "$ENV_DIR" "$target")" \
@@ -459,13 +496,24 @@ main() {
   source "$env_file"
   set +a
 
+  if [[ "$effective" == 1 ]]; then
+    printf 'DEPLOY_SH_API=2\n'
+    printf 'DAAX_IMAGE=%s\n' "${DAAX_IMAGE:-ghcr.io/daax-dev/daax-web:latest}"
+    printf 'DAAX_TERMINAL_IMAGE=%s\n' "${DAAX_TERMINAL_IMAGE:-ghcr.io/daax-dev/daax-terminal:latest}"
+    printf 'CODE_SERVER_IMAGE=%s\n' "${CODE_SERVER_IMAGE:-daax-code-server:latest}"
+    printf 'WATCHTOWER_IMAGE=%s\n' "${WATCHTOWER_IMAGE:-ghcr.io/daax-dev/watchtower:latest}"
+    printf 'HAWKEYE_IMAGE=%s\n' "${HAWKEYE_IMAGE:-ghcr.io/daax-dev/hawkeye:latest}"
+    printf 'PROVENANCE_IMAGE=%s\n' "${PROVENANCE_IMAGE:-ghcr.io/daax-dev/provenance:latest}"
+    exit 0
+  fi
+
   # Fleet roll (dx scripts/deploy-fleet.sh) hands every host the SAME verified
   # digest. The env file just sourced pins its own DAAX_IMAGE/DAAX_TERMINAL_IMAGE,
   # so a caller's plain DAAX_IMAGE is silently overwritten by the file's pin and
   # the host redeploys what it already runs. The *_OVERRIDE names win over the
   # file — and only as a digest reference, never a movable tag.
   local ov src
-  for ov in DAAX_IMAGE DAAX_TERMINAL_IMAGE; do
+  for ov in DAAX_IMAGE DAAX_TERMINAL_IMAGE CODE_SERVER_IMAGE WATCHTOWER_IMAGE HAWKEYE_IMAGE PROVENANCE_IMAGE; do
     src="${ov}_OVERRIDE"
     [[ -n "${!src:-}" ]] || continue
     if [[ ! "${!src}" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]; then

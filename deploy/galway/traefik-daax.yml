@@ -2,7 +2,7 @@
 # galway deploys with: scripts/deploy.sh galway (see deploy/galway/README.md).
 
 # Daax Traefik Dynamic Configuration
-# Copy to: /etc/traefik/dynamic/daax.yml
+# (historical) was installed at /etc/traefik/dynamic/daax.yml — do not copy.
 #
 # Routes for daax.galway.poley.dev
 #

@@ -57,6 +57,7 @@ case "$1" in
   version) exit 0 ;;
   image) exit 0 ;;                      # image inspect <img> -> present
   inspect)                             # inspect --format {{.Image}} <name>
+    if [[ -n "\${FAKE_PRIOR_ONLY:-}" && "\${@: -1}" != "\$FAKE_PRIOR_ONLY" ]]; then exit 1; fi
     if [[ "\${FAKE_PRIOR:-0}" == "1" ]]; then echo "prior-\${@: -1}"; exit 0; else exit 1; fi ;;
   tag)                                 # real docker refuses a digest destination
     if [[ "\${@: -1}" == *@sha256:* ]]; then
@@ -546,6 +547,113 @@ describe("deploy.sh image override (fleet roll)", () => {
     expect(readFileSync(log, "utf8")).toMatch(
       /"phase":"rollback","status":"degraded"/,
     );
+  });
+
+  it("--effective prints the env file's pins and the API version, with no docker call", () => {
+    resetDockerLog();
+    const r = spawnSync("bash", [DEPLOY_SH, "--effective", "pinned"], {
+      env: {
+        ...process.env,
+        DAAX_ENV_DIR: join(work, "env"),
+        DOCKER_BIN: join(binDir, "docker"),
+        FAKE_DOCKER_LOG: dockerLog,
+      },
+      encoding: "utf8",
+    });
+    expect(r.status).toBe(0);
+    const lines = r.stdout.trim().split("\n");
+    expect(lines[0]).toBe("DEPLOY_SH_API=2");
+    expect(lines).toContain(`DAAX_IMAGE=${PIN_WEB}`);
+    expect(lines).toContain(`DAAX_TERMINAL_IMAGE=${PIN_TERM}`);
+    for (const k of [
+      "CODE_SERVER_IMAGE",
+      "WATCHTOWER_IMAGE",
+      "HAWKEYE_IMAGE",
+      "PROVENANCE_IMAGE",
+    ])
+      expect(lines.filter((l) => l.startsWith(`${k}=`))).toHaveLength(1);
+    expect(readFileSync(dockerLog, "utf8")).toBe("");
+    // An override must NOT leak into what --effective reports as the pin.
+    const o = spawnSync("bash", [DEPLOY_SH, "--effective", "pinned"], {
+      env: {
+        ...process.env,
+        DAAX_ENV_DIR: join(work, "env"),
+        DAAX_IMAGE_OVERRIDE: TGT_WEB,
+      },
+      encoding: "utf8",
+    });
+    expect(o.stdout).toContain(`DAAX_IMAGE=${PIN_WEB}`);
+    const bad = spawnSync("bash", [DEPLOY_SH, "--effective", "nope"], {
+      env: { ...process.env, DAAX_ENV_DIR: join(work, "env") },
+      encoding: "utf8",
+    });
+    expect(bad.status).toBe(2);
+  });
+
+  it("a PARTIAL baseline (web running, terminal not) is refused before any mutation", () => {
+    resetDockerLog();
+    const log = freshLog("partial-baseline");
+    const res = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        FAKE_PRIOR: "1",
+        FAKE_PRIOR_ONLY: "daax",
+        FAKE_PS_NONEMPTY: "1",
+        DAAX_IMAGE_OVERRIDE: TGT_WEB,
+        DAAX_TERMINAL_IMAGE_OVERRIDE: TGT_TERM,
+      },
+      log,
+    );
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toMatch(/partial baseline/);
+    const dl = readFileSync(dockerLog, "utf8");
+    expect(dl).not.toMatch(/compose .*pull/);
+    expect(dl).not.toMatch(/compose .*up -d/);
+    expect(dl).not.toMatch(/compose .*down/);
+  });
+
+  it("a PRE-SWITCH failure on a FRESH host tears the partial deploy down", () => {
+    resetDockerLog();
+    const log = freshLog("fresh-preswitch");
+    const res = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        FAKE_PRIOR: "0",
+        FAKE_FAIL_PATTERN: "run --rm migrate",
+      },
+      log,
+    );
+    expect(res.status).not.toBe(0);
+    const dl = readFileSync(dockerLog, "utf8");
+    expect(dl).toMatch(/compose .*down --remove-orphans/);
+    expect(dl).not.toMatch(/up -d --force-recreate/);
+  });
+
+  it("accepts a CODE_SERVER_IMAGE digest override and rejects a tag", () => {
+    resetDockerLog();
+    const ok = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        CODE_SERVER_IMAGE_OVERRIDE: `ghcr.io/daax-dev/code-server@sha256:${"e".repeat(64)}`,
+      },
+      freshLog("cs-digest"),
+    );
+    expect(ok.status).toBe(0);
+    expect(ok.stdout).toMatch(
+      /image override: CODE_SERVER_IMAGE=ghcr\.io\/daax-dev\/code-server@sha256:e{64}/,
+    );
+    const bad = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        WATCHTOWER_IMAGE_OVERRIDE: "ghcr.io/daax-dev/watchtower:latest",
+      },
+      freshLog("wt-tag"),
+    );
+    expect(bad.status).toBe(2);
   });
 
   it("REJECTS a tag override before touching docker", () => {

@@ -109,6 +109,14 @@ assert_code_server_image() {
   if "$DOCKER_BIN" image inspect "$image" >/dev/null 2>&1; then
     return 0
   fi
+  # A digest-pinned registry image (the fleet: ghcr.io/daax-dev/code-server@
+  # sha256:…) is PULLED, never built — a local build cannot produce that digest.
+  if [[ "$image" == *@sha256:* ]]; then
+    echo "code-server image '$image' absent — pulling ..." >&2
+    "$DOCKER_BIN" pull "$image" >&2 && return 0
+    echo "code-server image '$image' could not be pulled (ghcr login?)." >&2
+    return 1
+  fi
   echo "code-server image '$image' absent — building via $builder ..." >&2
   if [[ -x "$builder" ]] && "$builder" >&2; then
     "$DOCKER_BIN" image inspect "$image" >/dev/null 2>&1 && return 0
