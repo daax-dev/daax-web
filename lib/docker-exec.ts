@@ -27,9 +27,9 @@ export const defaultDockerExec: DockerExec = async (args, opts) => {
 /**
  * True when an error from a `docker` shell-out means the daemon/socket is
  * unreachable — or the CLI itself is missing — as opposed to the docker
- * command failing (no such image/container, etc.). This is the expected state
- * of the split-deploy web container (F3 #100), which holds no
- * /var/run/docker.sock.
+ * command failing (no such image/container, etc.). This was the state of the
+ * split-deploy web container between F3 #100 and #501, when it held no
+ * /var/run/docker.sock, and is any host's state when the socket is missing.
  */
 export function isDockerUnavailableError(error: unknown): boolean {
   const err = error as NodeJS.ErrnoException & { stderr?: unknown };

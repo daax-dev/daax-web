@@ -169,7 +169,7 @@ services:
     # (start:web). The terminal plane (server/terminal-server.ts) runs in the
     # separate `terminal` service below. The image default CMD (start:prod =
     # both planes) is overridden here so this Traefik-facing service never runs
-    # the terminal server and — critically — never mounts the Docker socket.
+    # the terminal server. (It does mount the Docker socket — see #501 above.)
     command: ["bun", "run", "start:web"]
 
     depends_on:
@@ -184,10 +184,26 @@ services:
         condition: service_healthy
 
     # Hardening (#185 + F3 #100). The image runs as the unprivileged `node` user
-    # (UID 1000, Dockerfile `USER node`). Post-split this service holds NO Docker
-    # socket, so it needs no `group_add` — the socket + spawn machinery live only
-    # on the `terminal` service. no-new-privileges + cap_drop [ALL] are kept as
-    # defense-in-depth for the internet(Traefik)-facing plane.
+    # (UID 1000, Dockerfile `USER node`), with no-new-privileges + cap_drop [ALL]
+    # as defense-in-depth for the internet(Traefik)-facing plane.
+    #
+    # The Docker socket IS mounted here, and that is a reversal of F3 #100 made
+    # with eyes open. F3's scope was "deploy/docker-compose.yml + Traefik ONLY"
+    # and it moved the socket to the `terminal` service without touching any of
+    # the web routes that call Docker — so /containers, /testcontainers,
+    # /api/build/images and /api/ai/active-sessions have answered 503 (and one
+    # 500) in the split deploy ever since, while still working in every
+    # single-container mode (`bun dev`, `docker:run`). That is a regression the
+    # split did not intend, not a feature that was removed.
+    #
+    # What it costs: a container that can reach the socket can create a
+    # privileged one, so this plane is root-equivalent on the host and
+    # cap_drop/no-new-privileges do not bound that. The narrower options — a
+    # docker-socket-proxy on a private bridge, or routing these calls through the
+    # `terminal` plane that already holds the socket — were considered and are
+    # the better long-term answer; this is the operator's deliberate choice to
+    # restore the pages now. Access is by GROUP membership (group_add below),
+    # not by running as root.
     #   - no-new-privileges: blocks setuid/setgid escalation inside the container.
     #   - cap_drop [ALL]: no capability is required — the app binds only a high
     #     port (4200) and runs non-root; none are re-added.
@@ -203,6 +219,13 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+
+    # Grants /var/run/docker.sock access by group, paired with the non-root
+    # `node` user. scripts/deploy.sh exports DOCKER_GID from
+    # `stat -c '%g' /var/run/docker.sock`; the 999 default is only for runs that
+    # bypass it, and a wrong value fails as EACCES on the socket.
+    group_add:
+      - "${DOCKER_GID:-999}"
 
     # host.docker.internal must be DECLARED on Linux. Docker Desktop provides
     # the name for free, which is why this was never missed on the macOS
@@ -244,8 +267,12 @@ services:
       - "127.0.0.1:4200:4200" # Web UI
 
     volumes:
-      # No Docker socket here (F3 #100): the web plane does not spawn containers.
-      # The socket is mounted only on the `terminal` service.
+      # Docker socket — see the hardening note above for why this is here and
+      # what it costs. Consumed by lib/host-docker.ts and app/api/containers
+      # (dockerode) and by lib/docker-exec.ts (docker CLI shell-outs); both
+      # honour DOCKER_HOST, so a socket-proxy can replace this mount with no
+      # code change if the exposure is later narrowed.
+      - /var/run/docker.sock:/var/run/docker.sock
 
       # Workspace volume - projects to edit (read/write: the editor + MCP scan)
       # REQUIRED: Set DAAX_WORKSPACE to your projects directory
@@ -346,6 +373,9 @@ services:
 
       # Code-Server URL - set to your domain
       - NEXT_PUBLIC_CODE_SERVER_URL=${CODE_SERVER_URL:-https://daax-code.${HOSTNAME}.poley.dev/?folder=/workspace}
+      # The image /api/code-server checks and starts per project — the SAME
+      # digest-pinned image the code-server service below runs.
+      - CODE_SERVER_IMAGE=${CODE_SERVER_IMAGE:-daax-code-server:latest}
 
       # Docker network name — read by the web tier (lib/settings.ts). The spawn
       # machinery that actually attaches containers to it runs in the `terminal`
@@ -386,11 +416,12 @@ services:
       # Every host here runs DAAX_REQUIRE_AUTH=1, so all of them are the second
       # case and none of them had an admin.
       #
-      # SUBJECT form, not email/username: the subject is the immutable OIDC
-      # `sub`, matched exactly, and it is what Pocket ID's forward-auth actually
-      # sends (`c.Header("X-Forwarded-User", user.ID)`). An attribute entry is
-      # matched against mutable values the proxy forwards and is only as
-      # trustworthy as the IdP's email verification.
+      # The subject is the immutable OIDC `sub`, matched exactly, and it is what
+      # Pocket ID's forward-auth actually sends (`c.Header("X-Forwarded-User",
+      # user.ID)`). An attribute entry (email/username) is matched against
+      # mutable values the proxy forwards and is only as trustworthy as the
+      # IdP's email verification. The fleet env files list both, deliberately —
+      # deploy/env/<host>.env says why.
       #
       # Per-host: each host runs its own Pocket ID, so the same person has a
       # different subject on each. Set it in deploy/env/<host>.env.
@@ -401,9 +432,13 @@ services:
       # to reach a daemon elsewhere. Read by lib/agentview/server.ts.
       - AGENTVIEW_DAEMON_URL=${AGENTVIEW_DAEMON_URL:-}
 
-    # No group_add here (F3 #100): the web plane holds no Docker socket, so it
-    # needs no docker-group membership. Socket access is group-based on the
-    # `terminal` service only.
+      # watchtower / hawkeye / provenance on daax-net (services below).
+      - WATCHTOWER_API_URL=http://watchtower:4220
+      - HAWKEYE_API_URL=http://hawkeye:4230
+      - PROVENANCE_API_URL=http://provenance:8080
+
+    # Socket access for this plane is group-based: see the hardening block and
+    # group_add above (daax-web#501).
     networks:
       - daax-net
 
@@ -427,8 +462,9 @@ services:
   # Terminal plane (F3 frontend/backend split, #100).
   #
   # Runs ONLY server/terminal-server.ts (the `terminal` Dockerfile target =
-  # daax-terminal image). This is the sole holder of the Docker socket + the
-  # workspace spawn machinery, isolating it from the Traefik-facing web plane.
+  # daax-terminal image). It holds the Docker socket + the workspace spawn
+  # machinery. The web plane also mounts the socket since #501, so this split
+  # no longer isolates Docker access from the Traefik-facing plane.
   # Traefik's daax-ws router forwards wss://…/ws to 127.0.0.1:4201, now
   # published by THIS service.
   #
@@ -492,6 +528,11 @@ services:
       # Bind to all interfaces so the web container / Traefik reach it over daax-net.
       - TERMINAL_HOST=0.0.0.0
 
+      # The attention WebSocket bridge runs in THIS plane
+      # (server/handlers/attention-bridge.ts); without it, it falls back to
+      # host.docker.internal:4220, which a loopback-bound watchtower refuses.
+      - WATCHTOWER_API_URL=http://watchtower:4220
+
       # WS ticket verification — MUST match the web plane's value (see daax above).
       - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
       - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
@@ -540,14 +581,16 @@ services:
 
   # Code-Server (VS Code in browser) with language runtimes (Go, Node, Python, Rust)
   # Accessible via https://daax-code.HOSTNAME.poley.dev
-  # NOTE: build context lives in the sibling daax-devtools repo. If that repo
-  # is not cloned alongside daax-web, only build/start this service after
-  # pulling a pre-built image via `docker pull daax-code-server:latest`.
   code-server:
+    # The fleet pulls the image publish-images.yml builds, scans and signs
+    # (ghcr.io/daax-dev/code-server@sha256:…), pinned per target in
+    # deploy/env/<host>.env as CODE_SERVER_IMAGE. Unset, it falls back to the
+    # local build of the vendored deploy/code-server/Dockerfile
+    # (scripts/build-code-server.sh), which no registry digest can pin.
     build:
-      context: ../../daax-devtools/devcontainer
-      dockerfile: Dockerfile.code-server
-    image: daax-code-server:latest
+      context: ./code-server
+      dockerfile: Dockerfile
+    image: ${CODE_SERVER_IMAGE:-daax-code-server:latest}
     container_name: daax-code-server
     restart: unless-stopped
 
@@ -604,6 +647,106 @@ services:
     ports:
       - "127.0.0.1:8081:80"
 
+  # Session monitoring, job orchestration and supply-chain provenance — the same
+  # three services the dx workstation stack runs (operator decision 2026-09-13:
+  # every host runs everything). Each is its repo's signed multi-arch image,
+  # pinned per target in deploy/env/<host>.env; the defaults below exist only so
+  # a bare `docker compose config` resolves. Loopback ports are for the host's
+  # Traefik; daax reaches them by service name on daax-net.
+  #
+  # Hardened like the other planes: no-new-privileges + cap_drop [ALL]. Each was
+  # started that way on its pinned digest and served /health (2026-09-13); none
+  # needs a capability. Healthchecks use the wget each image ships, so
+  # `compose up --wait` (scripts/deploy.sh) blocks on a real answer.
+  watchtower:
+    image: ${WATCHTOWER_IMAGE:-ghcr.io/daax-dev/watchtower:latest}
+    container_name: daax-watchtower
+    restart: unless-stopped
+    command: ["--port", "4220", "--db", "/data/watchtower.db"]
+    ports:
+      - "127.0.0.1:4220:4220"
+    volumes:
+      - daax-watchtower-data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4220/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - daax-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  hawkeye:
+    image: ${HAWKEYE_IMAGE:-ghcr.io/daax-dev/hawkeye:latest}
+    container_name: daax-hawkeye
+    restart: unless-stopped
+    environment:
+      - HAWKEYE_SERVER_ADDR=:4230
+      - HAWKEYE_LOG_LEVEL=info
+      - HAWKEYE_STORAGE_OPERATIONAL_DSN=/var/lib/hawkeye/operational.db
+      - HAWKEYE_STORAGE_EVENTS_DSN=/var/lib/hawkeye/events.db
+    ports:
+      - "127.0.0.1:4230:4230"
+    volumes:
+      - daax-hawkeye-data:/var/lib/hawkeye
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4230/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - daax-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  provenance:
+    image: ${PROVENANCE_IMAGE:-ghcr.io/daax-dev/provenance:latest}
+    container_name: daax-provenance
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4250:8080"
+    volumes:
+      # Where the binary ACTUALLY writes its database. The image's entrypoint
+      # tests /data/provenance.db, but `provenance init` uses the default config
+      # path under the (root) user's home, so a /data mount persisted nothing —
+      # a recreate wiped the catalog. init is idempotent (pending migrations
+      # only), so the entrypoint re-running it each start is harmless.
+      - daax-provenance-data:/root/.local/share/provenance
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - daax-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
   daax-net:
     # `name` is the real external network; the `daax-net` key above is just a
@@ -619,6 +762,12 @@ volumes:
   daax-recordings:
     driver: local
   daax-code-server-data:
+    driver: local
+  daax-watchtower-data:
+    driver: local
+  daax-hawkeye-data:
+    driver: local
+  daax-provenance-data:
     driver: local
   daax-pg-data:
     driver: local

@@ -31,6 +31,25 @@ FROM codercom/code-server:4.136.2@sha256:c5124f5066506cfff7ac2dfa6bab254ea55062d
 
 USER root
 
+# ── Security upgrades from the base's own suite ───────────────────────────────
+# The base ships perl 5.40.1-6, and Debian has published 5.40.1-6+deb13u1 for
+# three CRITICALs with fixes available: CVE-2026-13221 (regex processing),
+# CVE-2026-42496 (perl-archive-tar path traversal) and CVE-2026-8376 (heap
+# overflow compiling regexes). Upstream has not rebuilt the image, so the
+# packages have to be upgraded in our own layer or the publish gate rejects
+# this image — which is exactly what it did on the first run after merge.
+#
+# Named packages rather than a blanket `apt-get upgrade`: a full upgrade lets
+# every package float ahead of the pinned base digest, so the digest stops
+# meaning anything. Drop this once the base itself carries +deb13u1.
+RUN apt-get update && apt-get install -y --no-install-recommends --only-upgrade \
+    libperl5.40 \
+    perl \
+    perl-base \
+    perl-modules-5.40 \
+    && perl -e 'print "perl ok\n"' \
+    && rm -rf /var/lib/apt/lists/*
+
 # ── System packages ────────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \

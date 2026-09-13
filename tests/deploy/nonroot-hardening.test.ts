@@ -135,6 +135,9 @@ interface ComposeService {
   volumes?: string[];
   environment?: string[] | Record<string, string>;
   command?: string[] | string;
+  image?: string;
+  ports?: string[];
+  healthcheck?: { test?: string[] | string };
 }
 
 /**
@@ -177,9 +180,15 @@ function expectSocketHardened(svc: ComposeService | undefined): void {
   expect(svc?.cap_drop ?? []).toContain("ALL");
   const groups = (svc?.group_add ?? []).map(String);
   expect(groups.length).toBeGreaterThan(0);
-  // Must reference the host docker GID env var, not a hardcoded root/0.
-  expect(groups.some((g) => g.includes("DOCKER_GID"))).toBe(true);
-  expect(groups).not.toContain("0");
+  // Exactly the host docker GID variable with a NON-ZERO fallback — never a
+  // hardcoded root group, and never a `${DOCKER_GID:-0}` that falls back to it.
+  expect(groups.length).toBe(1);
+  const m = groups[0].match(/^\$\{DOCKER_GID:-(\d+)\}$/);
+  expect(
+    m,
+    `group_add must be \${DOCKER_GID:-<gid>}, got ${groups[0]}`,
+  ).not.toBeNull();
+  expect(Number(m?.[1])).toBeGreaterThan(0);
 }
 
 describe("#185 root docker-compose.yml (combined container) keeps daax non-root hardening", () => {
@@ -196,7 +205,7 @@ describe("#185 root docker-compose.yml (combined container) keeps daax non-root 
   });
 });
 
-describe("#100 deploy/docker-compose.yml split: socket only on the terminal plane", () => {
+describe("#100 deploy/docker-compose.yml split: terminal plane + web plane, both socket-hardened", () => {
   const services = loadServices(resolve(repoRoot, "deploy/docker-compose.yml"));
   const daax = services.daax;
   const terminal = services.terminal;
@@ -211,15 +220,19 @@ describe("#100 deploy/docker-compose.yml split: socket only on the terminal plan
     expectSocketHardened(terminal);
   });
 
-  it("the Traefik-facing daax (web) service does NOT mount the Docker socket", () => {
-    expect(mountsDockerSocket(daax)).toBe(false);
+  // The web plane holds the socket again (daax-web#501): F3 moved it to the
+  // terminal plane without moving the web routes that call Docker, so
+  // /containers, /testcontainers, /api/build/images and /api/ai/active-sessions
+  // 503'd in the split deploy. That makes this plane root-equivalent on the
+  // host, an operator decision recorded in deploy/docker-compose.yml. What the
+  // tests still hold it to is the same non-root, group-based posture as the
+  // terminal plane — never root, never GID 0.
+  it("the Traefik-facing daax (web) service mounts the Docker socket (daax-web#501)", () => {
+    expect(mountsDockerSocket(daax)).toBe(true);
   });
 
-  it("the daax (web) service keeps defense-in-depth hardening but needs no group_add", () => {
-    expect(daax.security_opt ?? []).toContain("no-new-privileges:true");
-    expect(daax.cap_drop ?? []).toContain("ALL");
-    // No socket → no docker-group membership required.
-    expect(daax.group_add ?? []).toHaveLength(0);
+  it("the socket-bearing daax (web) service is non-root hardened (no-new-privileges, cap_drop ALL, group_add DOCKER_GID)", () => {
+    expectSocketHardened(daax);
   });
 
   it("the daax (web) service runs the web plane only (start:web, never the terminal)", () => {
@@ -228,8 +241,7 @@ describe("#100 deploy/docker-compose.yml split: socket only on the terminal plan
       : (daax.command ?? "");
     expect(cmd).toContain("start:web");
     // Must NOT run the terminal plane (start:terminal) or the combined default
-    // (start:prod) — those would re-couple the socket-free web tier to the
-    // terminal server.
+    // (start:prod) — those would re-couple the web tier to the terminal server.
     expect(cmd).not.toContain("start:terminal");
     expect(cmd).not.toContain("start:prod");
   });
@@ -247,5 +259,58 @@ describe("#100 deploy/docker-compose.yml split: socket only on the terminal plan
     expect(webVar).toBe("DAAX_WS_TOKEN_SECRET");
     expect(termVar).toBe("DAAX_WS_TOKEN_SECRET");
     expect(webVar).toBe(termVar);
+  });
+});
+
+describe("fleet supporting services in deploy/docker-compose.yml", () => {
+  const services = loadServices(resolve(repoRoot, "deploy/docker-compose.yml"));
+  const supporting = ["watchtower", "hawkeye", "provenance"] as const;
+
+  it.each(supporting)(
+    "%s is hardened (no-new-privileges, cap_drop ALL), loopback-only, never mounts the socket, and has a healthcheck",
+    (name) => {
+      const svc = services[name];
+      expect(svc, `${name} must be defined`).toBeDefined();
+      expect(svc.security_opt ?? []).toContain("no-new-privileges:true");
+      expect(svc.cap_drop ?? []).toEqual(["ALL"]);
+      expect(mountsDockerSocket(svc)).toBe(false);
+      for (const p of svc.ports ?? [])
+        expect(p.startsWith("127.0.0.1:")).toBe(true);
+      const test = svc.healthcheck?.test;
+      expect(Array.isArray(test) ? test.join(" ") : (test ?? "")).toMatch(
+        /\/health$/,
+      );
+    },
+  );
+
+  it("each runs the digest-selecting variable for its image", () => {
+    expect(services.watchtower.image).toMatch(/^\$\{WATCHTOWER_IMAGE:-/);
+    expect(services.hawkeye.image).toMatch(/^\$\{HAWKEYE_IMAGE:-/);
+    expect(services.provenance.image).toMatch(/^\$\{PROVENANCE_IMAGE:-/);
+    expect(services["code-server"].image).toMatch(/^\$\{CODE_SERVER_IMAGE:-/);
+  });
+
+  it("provenance persists where its binary actually writes the database", () => {
+    expect(services.provenance.volumes ?? []).toContain(
+      "daax-provenance-data:/root/.local/share/provenance",
+    );
+  });
+
+  it("the web plane checks the SAME code-server image the service runs", () => {
+    expect(envValue(services.daax, "CODE_SERVER_IMAGE")).toBe(
+      "${CODE_SERVER_IMAGE:-daax-code-server:latest}",
+    );
+    expect(services["code-server"].image).toBe(
+      "${CODE_SERVER_IMAGE:-daax-code-server:latest}",
+    );
+  });
+
+  it("the terminal plane (attention bridge) reaches watchtower by service name", () => {
+    expect(envValue(services.terminal, "WATCHTOWER_API_URL")).toBe(
+      "http://watchtower:4220",
+    );
+    expect(envValue(services.daax, "WATCHTOWER_API_URL")).toBe(
+      "http://watchtower:4220",
+    );
   });
 });

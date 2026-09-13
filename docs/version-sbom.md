@@ -146,11 +146,10 @@ in four groups:
   a re-pointed tag can't mislead); "this container" marks daax-web itself. Two
   containers on the same immutable image (web + migrate) share a row; containers
   on different generations of the same mutable tag remain separate. Bounded by
-  `DAAX_BUILD_STACK_MAX` (default 64). Needs the Docker socket: in the split
-  fleet/cloud deployment (`deploy/docker-compose.yml`) only `daax-terminal`
-  mounts it, so there the web plane answers 503 for this card and the per-image
-  SBOM — the section is for the single-container and from-source modes until
-  the terminal plane serves it.
+  `DAAX_BUILD_STACK_MAX` (default 64). Needs the Docker socket: the split
+  fleet/cloud deployment (`deploy/docker-compose.yml`) mounts it on the web
+  plane as well as `daax-terminal` since daax-web#501; a web plane without it
+  answers 503 for this card and the per-image SBOM.
 - **App runtime base** — the image the daax container is built `FROM`
   (`node:22-bookworm-slim` at the same immutable index digest pinned in the
   Dockerfile, so a later tag update cannot change what this row describes).
@@ -171,8 +170,8 @@ running image ID in the set computed fresh for that request (running stack +
 static refs, `findKnownImageRef`), so a caller cannot name an arbitrary image.
 Scan results are cached by immutable image ID; the set never is. When the daemon
 is unreachable the stack group is simply absent and the static set alone is the
-whitelist — absence, never a pass. In the F3 split deploy the web plane
-deliberately has no Docker socket, so there `/api/build/images` answers 503 and
+whitelist — absence, never a pass. Where the web plane has no Docker socket
+(any split deploy predating daax-web#501), `/api/build/images` answers 503 and
 the card reports Docker as unavailable.
 
 ### Generating the SBOM

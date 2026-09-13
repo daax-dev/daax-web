@@ -1,11 +1,11 @@
+# ARCHIVED 2026-09-13 — record of galway's pre-convergence topology. Do NOT apply.
+# galway deploys with: scripts/deploy.sh galway (see deploy/galway/README.md).
+
 # Daax Production Deployment
 #
 # This compose file is designed for deployment behind Traefik.
 # Ports are bound to localhost only - Traefik handles external access.
 #
-# Usage:
-#   docker compose up -d --build        # Build from local source
-#   docker compose up -d                # Use existing/cached image
 
 services:
   # Postgres — daax's single data engine (brain2daax #92/#93). Mirrors the repo's

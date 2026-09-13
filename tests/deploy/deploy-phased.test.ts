@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -28,6 +28,10 @@ import { join, resolve } from "node:path";
  * baseline is NEVER torn down.
  */
 
+// Every case spawns the real deploy.sh under bash. Under a full-suite run the
+// default 5s budget times out (observed on main too), so give the file 30s.
+vi.setConfig({ testTimeout: 30_000 });
+
 const REPO = resolve(__dirname, "../..");
 const DEPLOY_SH = join(REPO, "scripts/deploy.sh");
 const LIB_SH = join(REPO, "scripts/deploy-lib.sh");
@@ -41,8 +45,13 @@ let dockerLog: string;
 //   FAKE_PRIOR=1        -> `inspect --format` returns a prior image id (baseline)
 //   FAKE_PS_NONEMPTY=1  -> `compose ps -aq` reports a container (stack present)
 //   FAKE_PS_FAIL=1      -> `compose ps -aq` fails (docker unreachable / uncertain)
+//   FAKE_PRIOR_NAMES="a b" -> only these containers have a prior image
+//   FAKE_IMAGE_ABSENT=<ref> -> `image inspect <ref>` reports the image absent
+//   FAKE_ENV6_LOG       -> every call records all six compose image variables
 const FAKE_DOCKER = `#!/usr/bin/env bash
 echo "$*" >> "$FAKE_DOCKER_LOG"
+[[ -n "\${FAKE_ENV_LOG:-}" ]] && echo "\${DAAX_IMAGE:-} \${DAAX_TERMINAL_IMAGE:-}" >> "$FAKE_ENV_LOG"
+[[ -n "\${FAKE_ENV6_LOG:-}" && "$1" == compose ]] && echo "$* | \${DAAX_IMAGE:-} \${DAAX_TERMINAL_IMAGE:-} \${CODE_SERVER_IMAGE:-} \${WATCHTOWER_IMAGE:-} \${HAWKEYE_IMAGE:-} \${PROVENANCE_IMAGE:-}" >> "$FAKE_ENV6_LOG"
 args="$*"
 if [[ -n "\${FAKE_FAIL_PATTERN:-}" ]] && grep -qE "\$FAKE_FAIL_PATTERN" <<<"$args"; then
   echo "fake docker: forced failure on: $args" >&2
@@ -50,14 +59,52 @@ if [[ -n "\${FAKE_FAIL_PATTERN:-}" ]] && grep -qE "\$FAKE_FAIL_PATTERN" <<<"$arg
 fi
 case "$1" in
   version) exit 0 ;;
-  image) exit 0 ;;                      # image inspect <img> -> present
+  image)                               # image inspect <img> -> present unless named absent
+    [[ -n "\${FAKE_IMAGE_ABSENT:-}" && "\${@: -1}" == "\$FAKE_IMAGE_ABSENT" ]] && exit 1
+    exit 0 ;;
   inspect)                             # inspect --format {{.Image}} <name>
-    if [[ "\${FAKE_PRIOR:-0}" == "1" ]]; then echo "prior-\${@: -1}"; exit 0; else exit 1; fi ;;
-  tag) exit 0 ;;
+    # Like real docker: an absent container is "no such object" on stderr;
+    # FAKE_INSPECT_UNKNOWN=<name> is an inspect that fails for another reason.
+    if [[ -n "\${FAKE_INSPECT_UNKNOWN:-}" && "\${@: -1}" == "\$FAKE_INSPECT_UNKNOWN" ]]; then
+      echo "Cannot connect to the Docker daemon" >&2; exit 1
+    fi
+    nso() { echo "Error: No such object: $1" >&2; exit 1; }
+    if [[ -n "\${FAKE_PRIOR_ONLY:-}" && "\${@: -1}" != "\$FAKE_PRIOR_ONLY" ]]; then nso "\${@: -1}"; fi
+    if [[ -n "\${FAKE_PRIOR_NAMES:-}" && " \$FAKE_PRIOR_NAMES " != *" \${@: -1} "* ]]; then nso "\${@: -1}"; fi
+    if [[ "\${FAKE_PRIOR:-0}" == "1" ]]; then echo "prior-\${@: -1}"; exit 0; else nso "\${@: -1}"; fi ;;
+  tag)                                 # real docker refuses a digest destination
+    if [[ "\${@: -1}" == *@sha256:* ]]; then
+      echo "Error: refusing to create a tag with a digest reference" >&2; exit 1
+    fi
+    # FAKE_RETAG_FAIL=1: the SECOND pin of a destination fails (capture works,
+    # the re-pin during rollback does not).
+    if [[ "\${FAKE_RETAG_FAIL:-0}" == "1" ]] && grep -qxF "\${@: -1}" "\${FAKE_TAG_LOG:-/dev/null}" 2>/dev/null; then
+      exit 1
+    fi
+    [[ -n "\${FAKE_TAG_LOG:-}" ]] && echo "\${@: -1}" >> "$FAKE_TAG_LOG"
+    exit 0 ;;
   compose)
+    if grep -q 'config --hash' <<<"$args"; then
+      [[ "\${FAKE_CONFIG_FAIL:-0}" == "1" ]] && exit 1
+      printf 'daax %s\ncode-server %s\nevil;name %s\nterminal notahash\npostgres %s\n' "$(printf 'a%.0s' {1..64})" "$(printf 'b%.0s' {1..64})" "$(printf 'c%.0s' {1..64})" "$(printf 'd%.0s' {1..64})"
+      exit 0
+    fi
+    # Like real compose: an image ref with no local tag cannot start.
+    if [[ -n "\${FAKE_TAG_LOG:-}" ]] && grep -q 'up -d' <<<"$args"; then
+      for ref in "\${DAAX_IMAGE:-}" "\${DAAX_TERMINAL_IMAGE:-}" "\${CODE_SERVER_IMAGE:-}" "\${WATCHTOWER_IMAGE:-}" "\${HAWKEYE_IMAGE:-}" "\${PROVENANCE_IMAGE:-}"; do
+        if [[ "$ref" == *:rollback ]] && ! grep -qxF "$ref" "$FAKE_TAG_LOG"; then
+          echo "fake compose: no such image $ref" >&2; exit 1
+        fi
+      done
+    fi
     if grep -q 'ps -aq' <<<"$args"; then
       [[ "\${FAKE_PS_FAIL:-0}" == "1" ]] && exit 1
       [[ "\${FAKE_PS_NONEMPTY:-0}" == "1" ]] && echo "cid-abcdef"
+      # FAKE_PS_SERVICES="svc …": a container exists only for these services,
+      # reported only when the ps asks about one of them.
+      for svc in \${FAKE_PS_SERVICES:-}; do
+        grep -qw -- "$svc" <<<"$args" && { echo "cid-$svc"; break; }
+      done
       exit 0
     fi
     exit 0 ;;
@@ -370,6 +417,670 @@ describe("deploy.sh preflight — fail-closed", () => {
     expect(readFileSync(log, "utf8")).toMatch(
       /"phase":"preflight","status":"fail"/,
     );
+  });
+});
+
+describe("deploy.sh image override (fleet roll)", () => {
+  const PIN_WEB = `ghcr.io/daax-dev/daax-web@sha256:${"a".repeat(64)}`;
+  const PIN_TERM = `ghcr.io/daax-dev/daax-terminal@sha256:${"b".repeat(64)}`;
+  const TGT_WEB = `ghcr.io/daax-dev/daax-web@sha256:${"c".repeat(64)}`;
+  const TGT_TERM = `ghcr.io/daax-dev/daax-terminal@sha256:${"d".repeat(64)}`;
+
+  beforeAll(() => {
+    writeFileSync(
+      join(work, "env", "pinned.env"),
+      [
+        "DAAX_HOSTNAME=testhost",
+        `DAAX_WORKSPACE=${join(work, "ws")}`,
+        `CLAUDE_CONFIG_PATH=${join(work, "claude.json")}`,
+        "DAAX_PG_MANAGED=0",
+        "DAAX_DEPLOY_PULL=1",
+        'DAAX_REQUIRED_SECRETS="TEST_SECRET_A"',
+        `DAAX_IMAGE=${PIN_WEB}`,
+        `DAAX_TERMINAL_IMAGE=${PIN_TERM}`,
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("without an override, compose runs the env file's pinned digests", () => {
+    const envLog = join(work, "env-pin.log");
+    writeFileSync(envLog, "");
+    resetDockerLog();
+    const res = runDeploy(
+      "pinned",
+      { TEST_SECRET_A: "x", FAKE_ENV_LOG: envLog },
+      freshLog("override-none"),
+    );
+    expect(res.status).toBe(0);
+    const seen = readFileSync(envLog, "utf8");
+    expect(seen).toContain(`${PIN_WEB} ${PIN_TERM}`);
+    expect(seen).not.toContain(TGT_WEB);
+  });
+
+  it("*_OVERRIDE digests win over the env file's pins for every compose call", () => {
+    const envLog = join(work, "env-override.log");
+    writeFileSync(envLog, "");
+    resetDockerLog();
+    // A plain DAAX_IMAGE from the caller is what the env file overwrites — the
+    // defect this guards against. It must NOT be what compose sees.
+    const res = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        FAKE_ENV_LOG: envLog,
+        DAAX_IMAGE_OVERRIDE: TGT_WEB,
+        DAAX_TERMINAL_IMAGE_OVERRIDE: TGT_TERM,
+      },
+      freshLog("override-digest"),
+    );
+    expect(res.status).toBe(0);
+    const lines = readFileSync(envLog, "utf8").trim().split("\n");
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) expect(l).toBe(`${TGT_WEB} ${TGT_TERM}`);
+    expect(readFileSync(dockerLog, "utf8")).toMatch(
+      /compose .*pull daax terminal/,
+    );
+  });
+
+  it("POST-UP failure with digest refs rolls compose back to repo:rollback, not the failed digest", () => {
+    const envLog = join(work, "env-rollback.log");
+    writeFileSync(envLog, "");
+    resetDockerLog();
+    const res = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        FAKE_ENV_LOG: envLog,
+        FAKE_PRIOR: "1",
+        FAKE_PS_NONEMPTY: "1",
+        FAKE_HTTP_CODE: "503",
+        FAKE_TAG_LOG: join(work, "tags-rollback.log"),
+        DAAX_IMAGE_OVERRIDE: TGT_WEB,
+        DAAX_TERMINAL_IMAGE_OVERRIDE: TGT_TERM,
+      },
+      freshLog("override-rollback"),
+    );
+    expect(res.status).not.toBe(0);
+    const dl = readFileSync(dockerLog, "utf8");
+    expect(dl).toMatch(/tag prior-daax ghcr\.io\/daax-dev\/daax-web:rollback/);
+    expect(dl).toMatch(
+      /tag prior-daax-terminal ghcr\.io\/daax-dev\/daax-terminal:rollback/,
+    );
+    // The recreate after rollback is the LAST compose call: it must run the
+    // captured prior images, never the digest that just failed health.
+    const lines = readFileSync(envLog, "utf8").trim().split("\n");
+    expect(lines.at(-1)).toBe(
+      "ghcr.io/daax-dev/daax-web:rollback ghcr.io/daax-dev/daax-terminal:rollback",
+    );
+    expect(res.stderr).not.toMatch(/could not restore/);
+  });
+
+  it("capture that cannot pin :rollback FAILS before pulling or switching anything", () => {
+    resetDockerLog();
+    const log = freshLog("capture-tag-fail");
+    const res = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        FAKE_PRIOR: "1",
+        FAKE_PS_NONEMPTY: "1",
+        FAKE_FAIL_PATTERN: "^tag prior-daax ",
+        DAAX_IMAGE_OVERRIDE: TGT_WEB,
+        DAAX_TERMINAL_IMAGE_OVERRIDE: TGT_TERM,
+      },
+      log,
+    );
+    expect(res.status).not.toBe(0);
+    const dl = readFileSync(dockerLog, "utf8");
+    expect(dl).not.toMatch(/compose .*pull/);
+    expect(dl).not.toMatch(/compose .*up -d/);
+    expect(dl).not.toMatch(/compose .*down/);
+    expect(readFileSync(log, "utf8")).toMatch(
+      /"phase":"capture","status":"fail"/,
+    );
+  });
+
+  it("a rollback whose re-pin fails does NOT recreate, and logs degraded", () => {
+    const tagLog = join(work, "tags-retag-fail.log");
+    writeFileSync(tagLog, "");
+    resetDockerLog();
+    const log = freshLog("retag-fail");
+    const res = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        FAKE_PRIOR: "1",
+        FAKE_PS_NONEMPTY: "1",
+        FAKE_HTTP_CODE: "503",
+        FAKE_TAG_LOG: tagLog,
+        FAKE_RETAG_FAIL: "1",
+        DAAX_IMAGE_OVERRIDE: TGT_WEB,
+        DAAX_TERMINAL_IMAGE_OVERRIDE: TGT_TERM,
+      },
+      log,
+    );
+    expect(res.status).not.toBe(0);
+    const ups = readFileSync(dockerLog, "utf8").match(
+      /up -d --force-recreate/g,
+    );
+    // Exactly the deploy's own recreate — none for the failed rollback.
+    expect(ups?.length).toBe(1);
+    expect(res.stderr).toMatch(/NOT recreating/);
+    expect(readFileSync(log, "utf8")).toMatch(
+      /"phase":"rollback","status":"degraded"/,
+    );
+  });
+
+  it("--effective prints per-service compose config hashes only when secrets are present, never their values", () => {
+    const base = {
+      ...process.env,
+      DAAX_ENV_DIR: join(work, "env"),
+      DOCKER_BIN: join(binDir, "docker"),
+      FAKE_DOCKER_LOG: dockerLog,
+    };
+    resetDockerLog();
+    const withSecrets = spawnSync(
+      "bash",
+      [DEPLOY_SH, "--effective", "pinned"],
+      {
+        env: { ...base, TEST_SECRET_A: "s3cr3t-value-must-not-print" },
+        encoding: "utf8",
+      },
+    );
+    expect(withSecrets.status).toBe(0);
+    const lines = withSecrets.stdout.trim().split("\n");
+    expect(lines).toContain(`CONFIG_HASH_DAAX=${"a".repeat(64)}`);
+    expect(lines).toContain(`CONFIG_HASH_CODE_SERVER=${"b".repeat(64)}`);
+    // Malformed service names and hashes from compose are dropped, not echoed.
+    expect(withSecrets.stdout).not.toMatch(
+      /EVIL|NOTAHASH|CONFIG_HASH_TERMINAL/i,
+    );
+    // postgres's hash would be an oracle for DAAX_PG_PASSWORD; never emitted.
+    expect(withSecrets.stdout).not.toMatch(/CONFIG_HASH_POSTGRES/);
+    expect(withSecrets.stdout + withSecrets.stderr).not.toContain(
+      "s3cr3t-value-must-not-print",
+    );
+    expect(readFileSync(dockerLog, "utf8")).toMatch(
+      /compose .*config --hash \*/,
+    );
+
+    const without = spawnSync("bash", [DEPLOY_SH, "--effective", "pinned"], {
+      env: base,
+      encoding: "utf8",
+    });
+    expect(without.status).toBe(0);
+    expect(without.stdout).toContain("CONFIG_HASH_UNAVAILABLE=missing-secrets");
+    expect(without.stdout).not.toMatch(/^CONFIG_HASH_DAAX=/m);
+
+    const failed = spawnSync("bash", [DEPLOY_SH, "--effective", "pinned"], {
+      env: { ...base, TEST_SECRET_A: "x", FAKE_CONFIG_FAIL: "1" },
+      encoding: "utf8",
+    });
+    expect(failed.stdout).toContain(
+      "CONFIG_HASH_UNAVAILABLE=compose-config-failed",
+    );
+  });
+
+  it("--effective prints the env file's pins and the API version, with no docker call", () => {
+    resetDockerLog();
+    const r = spawnSync("bash", [DEPLOY_SH, "--effective", "pinned"], {
+      env: {
+        ...process.env,
+        DAAX_ENV_DIR: join(work, "env"),
+        DOCKER_BIN: join(binDir, "docker"),
+        FAKE_DOCKER_LOG: dockerLog,
+      },
+      encoding: "utf8",
+    });
+    expect(r.status).toBe(0);
+    const lines = r.stdout.trim().split("\n");
+    expect(lines[0]).toBe("DEPLOY_SH_API=2");
+    expect(lines).toContain(`DAAX_IMAGE=${PIN_WEB}`);
+    expect(lines).toContain(`DAAX_TERMINAL_IMAGE=${PIN_TERM}`);
+    for (const k of [
+      "CODE_SERVER_IMAGE",
+      "WATCHTOWER_IMAGE",
+      "HAWKEYE_IMAGE",
+      "PROVENANCE_IMAGE",
+    ])
+      expect(lines.filter((l) => l.startsWith(`${k}=`))).toHaveLength(1);
+    expect(readFileSync(dockerLog, "utf8")).toBe("");
+    // An override must NOT leak into what --effective reports as the pin.
+    const o = spawnSync("bash", [DEPLOY_SH, "--effective", "pinned"], {
+      env: {
+        ...process.env,
+        DAAX_ENV_DIR: join(work, "env"),
+        DAAX_IMAGE_OVERRIDE: TGT_WEB,
+      },
+      encoding: "utf8",
+    });
+    expect(o.stdout).toContain(`DAAX_IMAGE=${PIN_WEB}`);
+    const bad = spawnSync("bash", [DEPLOY_SH, "--effective", "nope"], {
+      env: { ...process.env, DAAX_ENV_DIR: join(work, "env") },
+      encoding: "utf8",
+    });
+    expect(bad.status).toBe(2);
+  });
+
+  it("a PARTIAL baseline (web running, terminal not) is refused before any mutation", () => {
+    resetDockerLog();
+    const log = freshLog("partial-baseline");
+    const res = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        FAKE_PRIOR: "1",
+        FAKE_PRIOR_ONLY: "daax",
+        FAKE_PS_NONEMPTY: "1",
+        DAAX_IMAGE_OVERRIDE: TGT_WEB,
+        DAAX_TERMINAL_IMAGE_OVERRIDE: TGT_TERM,
+      },
+      log,
+    );
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toMatch(/partial baseline/);
+    const dl = readFileSync(dockerLog, "utf8");
+    // Refused on inspect alone: capture must not have re-pointed ANY :rollback.
+    expect(dl).not.toMatch(/^tag /m);
+    expect(dl).not.toMatch(/compose .*pull/);
+    expect(dl).not.toMatch(/compose .*up -d/);
+    expect(dl).not.toMatch(/compose .*down/);
+  });
+
+  it("a PRE-SWITCH failure on a FRESH host tears the partial deploy down", () => {
+    resetDockerLog();
+    const log = freshLog("fresh-preswitch");
+    const res = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        FAKE_PRIOR: "0",
+        FAKE_FAIL_PATTERN: "run --rm migrate",
+      },
+      log,
+    );
+    expect(res.status).not.toBe(0);
+    const dl = readFileSync(dockerLog, "utf8");
+    expect(dl).toMatch(/compose .*down --remove-orphans/);
+    expect(dl).not.toMatch(/up -d --force-recreate/);
+  });
+
+  it("accepts a CODE_SERVER_IMAGE digest override and rejects a tag", () => {
+    resetDockerLog();
+    const ok = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        CODE_SERVER_IMAGE_OVERRIDE: `ghcr.io/daax-dev/code-server@sha256:${"e".repeat(64)}`,
+      },
+      freshLog("cs-digest"),
+    );
+    expect(ok.status).toBe(0);
+    expect(ok.stdout).toMatch(
+      /image override: CODE_SERVER_IMAGE=ghcr\.io\/daax-dev\/code-server@sha256:e{64}/,
+    );
+    const bad = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        WATCHTOWER_IMAGE_OVERRIDE: "ghcr.io/daax-dev/watchtower:latest",
+      },
+      freshLog("wt-tag"),
+    );
+    expect(bad.status).toBe(2);
+  });
+
+  describe("all six services", () => {
+    const d = (c: string) => c.repeat(64);
+    const SIX = {
+      DAAX_IMAGE_OVERRIDE: `ghcr.io/daax-dev/daax-web@sha256:${d("1")}`,
+      DAAX_TERMINAL_IMAGE_OVERRIDE: `ghcr.io/daax-dev/daax-terminal@sha256:${d("2")}`,
+      CODE_SERVER_IMAGE_OVERRIDE: `ghcr.io/daax-dev/code-server@sha256:${d("3")}`,
+      WATCHTOWER_IMAGE_OVERRIDE: `ghcr.io/daax-dev/watchtower@sha256:${d("4")}`,
+      HAWKEYE_IMAGE_OVERRIDE: `ghcr.io/daax-dev/hawkeye@sha256:${d("5")}`,
+      PROVENANCE_IMAGE_OVERRIDE: `ghcr.io/daax-dev/provenance@sha256:${d("6")}`,
+    };
+    const targetLine = Object.values(SIX).join(" ");
+    const rollbackLine = [
+      "ghcr.io/daax-dev/daax-web:rollback",
+      "ghcr.io/daax-dev/daax-terminal:rollback",
+      "ghcr.io/daax-dev/code-server:rollback",
+      "ghcr.io/daax-dev/watchtower:rollback",
+      "ghcr.io/daax-dev/hawkeye:rollback",
+      "ghcr.io/daax-dev/provenance:rollback",
+    ].join(" ");
+    const env6 = (name: string) => {
+      const f = join(work, `env6-${name}.log`);
+      writeFileSync(f, "");
+      return f;
+    };
+    const composeLines = (f: string) =>
+      readFileSync(f, "utf8").trim().split("\n").filter(Boolean);
+
+    it("every compose call sees all six override digests", () => {
+      const f = env6("propagate");
+      resetDockerLog();
+      const res = runDeploy(
+        "pinned",
+        { TEST_SECRET_A: "x", FAKE_ENV6_LOG: f, ...SIX },
+        freshLog("six-propagate"),
+      );
+      expect(res.status).toBe(0);
+      const lines = composeLines(f);
+      expect(lines.length).toBeGreaterThan(3);
+      for (const l of lines) expect(l.split(" | ")[1]).toBe(targetLine);
+      const dl = readFileSync(dockerLog, "utf8");
+      expect(dl).toMatch(/compose .*pull watchtower hawkeye provenance/);
+      expect(dl).toMatch(
+        /compose .*up -d --wait --wait-timeout 120 code-server watchtower hawkeye provenance/,
+      );
+    });
+
+    it("an ABSENT code-server digest is pulled exactly, before any compose call", () => {
+      resetDockerLog();
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_IMAGE_ABSENT: SIX.CODE_SERVER_IMAGE_OVERRIDE,
+          ...SIX,
+        },
+        freshLog("cs-pull"),
+      );
+      expect(res.status).toBe(0);
+      const dl = readFileSync(dockerLog, "utf8").split("\n");
+      const iPull = dl.indexOf(`pull ${SIX.CODE_SERVER_IMAGE_OVERRIDE}`);
+      expect(iPull).toBeGreaterThanOrEqual(0);
+      expect(
+        dl.findIndex((l) => /^compose .*(pull|up|run)/.test(l)),
+      ).toBeGreaterThan(iPull);
+    });
+
+    it("a FAILED code-server digest pull fails preflight with nothing switched", () => {
+      resetDockerLog();
+      const log = freshLog("cs-pull-fail");
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_IMAGE_ABSENT: SIX.CODE_SERVER_IMAGE_OVERRIDE,
+          FAKE_FAIL_PATTERN: "^pull ghcr\\.io/daax-dev/code-server@",
+          ...SIX,
+        },
+        log,
+      );
+      expect(res.status).not.toBe(0);
+      const dl = readFileSync(dockerLog, "utf8");
+      expect(dl).toContain(`pull ${SIX.CODE_SERVER_IMAGE_OVERRIDE}`);
+      expect(dl).not.toMatch(/compose .*up -d/);
+      expect(readFileSync(log, "utf8")).toMatch(
+        /"phase":"preflight","status":"fail"/,
+      );
+    });
+
+    it("a supporting-service pull failure is FATAL before the switch", () => {
+      resetDockerLog();
+      const log = freshLog("support-pull-fail");
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_FAIL_PATTERN: "pull watchtower hawkeye provenance",
+          ...SIX,
+        },
+        log,
+      );
+      expect(res.status).not.toBe(0);
+      expect(readFileSync(dockerLog, "utf8")).not.toMatch(
+        /up -d --force-recreate/,
+      );
+      expect(readFileSync(log, "utf8")).toMatch(
+        /"phase":"build","status":"fail"/,
+      );
+    });
+
+    it("POST-UP failure restores and recreates ALL SIX on their :rollback tags", () => {
+      const f = env6("rollback-all");
+      const tagLog = join(work, "tags-six.log");
+      writeFileSync(tagLog, "");
+      resetDockerLog();
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "1",
+          FAKE_PS_NONEMPTY: "1",
+          FAKE_HTTP_CODE: "503",
+          FAKE_TAG_LOG: tagLog,
+          FAKE_ENV6_LOG: f,
+          ...SIX,
+        },
+        freshLog("six-rollback"),
+      );
+      expect(res.status).not.toBe(0);
+      const last = composeLines(f).at(-1) ?? "";
+      expect(last).toMatch(
+        /up -d --force-recreate --wait --wait-timeout 120 daax terminal code-server watchtower hawkeye provenance \|/,
+      );
+      expect(last.split(" | ")[1]).toBe(rollbackLine);
+      expect(res.stderr).not.toMatch(/could not restore/);
+    });
+
+    it("rollback REMOVES supporting services absent at capture instead of recreating them", () => {
+      const f = env6("rollback-absent");
+      resetDockerLog();
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "1",
+          FAKE_PRIOR_NAMES: "daax daax-terminal",
+          FAKE_PS_NONEMPTY: "1",
+          FAKE_HTTP_CODE: "503",
+          FAKE_ENV6_LOG: f,
+          ...SIX,
+        },
+        freshLog("six-rollback-absent"),
+      );
+      expect(res.status).not.toBe(0);
+      const dl = readFileSync(dockerLog, "utf8");
+      expect(dl).toMatch(
+        /compose .*rm -sf code-server watchtower hawkeye provenance/,
+      );
+      const last = composeLines(f).at(-1) ?? "";
+      expect(last).toMatch(
+        /up -d --force-recreate --wait --wait-timeout 120 daax terminal \|/,
+      );
+      // Only the two planes that ran are pointed at :rollback.
+      expect(last.split(" | ")[1].split(" ").slice(0, 2)).toEqual([
+        "ghcr.io/daax-dev/daax-web:rollback",
+        "ghcr.io/daax-dev/daax-terminal:rollback",
+      ]);
+    });
+
+    it("an inspect that FAILS (not 'no such object') for a supporting service refuses capture", () => {
+      resetDockerLog();
+      const log = freshLog("inspect-unknown");
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "1",
+          FAKE_PS_NONEMPTY: "1",
+          FAKE_INSPECT_UNKNOWN: "daax-watchtower",
+          ...SIX,
+        },
+        log,
+      );
+      expect(res.status).not.toBe(0);
+      expect(readFileSync(dockerLog, "utf8")).not.toMatch(
+        /compose .*(pull|up -d|rm -sf|down)/,
+      );
+      expect(readFileSync(log, "utf8")).toMatch(
+        /"phase":"capture","status":"fail"/,
+      );
+    });
+
+    it("an UNWRITABLE rollback statefile fails capture before any pull or switch", () => {
+      resetDockerLog();
+      const log = freshLog("statefile-unwritable");
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "1",
+          FAKE_PS_NONEMPTY: "1",
+          DAAX_ROLLBACK_STATE: join(work, "no-such-dir", "rollback.state"),
+          ...SIX,
+        },
+        log,
+      );
+      expect(res.status).not.toBe(0);
+      const dl = readFileSync(dockerLog, "utf8");
+      expect(dl).not.toMatch(/compose .*(pull|up -d|run --rm)/);
+      expect(readFileSync(log, "utf8")).toMatch(
+        /"phase":"capture","status":"fail"/,
+      );
+    });
+
+    it("a rollback statefile path that is a DIRECTORY fails capture (mv would succeed into it)", () => {
+      const dir = join(work, "statefile-is-a-dir");
+      mkdirSync(dir, { recursive: true });
+      resetDockerLog();
+      const log = freshLog("statefile-dir");
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "1",
+          FAKE_PS_NONEMPTY: "1",
+          DAAX_ROLLBACK_STATE: dir,
+          ...SIX,
+        },
+        log,
+      );
+      expect(res.status).not.toBe(0);
+      expect(readFileSync(dockerLog, "utf8")).not.toMatch(
+        /compose .*(pull|up -d|run --rm)/,
+      );
+      expect(readFileSync(log, "utf8")).toMatch(
+        /"phase":"capture","status":"fail"/,
+      );
+      expect(readdirSync(dir)).toEqual([]);
+    });
+
+    it("an inspect that FAILS for an app plane refuses before any tag", () => {
+      resetDockerLog();
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "1",
+          FAKE_INSPECT_UNKNOWN: "daax-terminal",
+          ...SIX,
+        },
+        freshLog("inspect-unknown-app"),
+      );
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toMatch(/cannot determine whether daax/);
+      expect(readFileSync(dockerLog, "utf8")).not.toMatch(/^tag /m);
+    });
+
+    it("a stack where ONLY a supporting service exists counts as PRESENT: never torn down", () => {
+      // No inspect baseline at all (FAKE_PRIOR=0) — only `compose ps` can see
+      // the watchtower container, and only if it asks about all six services.
+      resetDockerLog();
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "0",
+          FAKE_PS_SERVICES: "watchtower",
+          FAKE_FAIL_PATTERN: "run --rm migrate",
+          ...SIX,
+        },
+        freshLog("support-only"),
+      );
+      expect(res.status).not.toBe(0);
+      expect(readFileSync(dockerLog, "utf8")).not.toMatch(/compose .*down/);
+    });
+
+    it("a FAILED removal of absent services makes the rollback DEGRADED, not ok", () => {
+      resetDockerLog();
+      const log = freshLog("rm-fail");
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "1",
+          FAKE_PRIOR_NAMES: "daax daax-terminal",
+          FAKE_PS_NONEMPTY: "1",
+          FAKE_HTTP_CODE: "503",
+          FAKE_FAIL_PATTERN: "rm -sf",
+          ...SIX,
+        },
+        log,
+      );
+      expect(res.status).not.toBe(0);
+      const jl = readFileSync(log, "utf8");
+      expect(jl).toMatch(/"phase":"rollback","status":"degraded"/);
+      expect(jl).not.toMatch(/"phase":"rollback","status":"ok"/);
+    });
+
+    it("a FAILED fresh-deploy teardown is DEGRADED, not ok", () => {
+      resetDockerLog();
+      const log = freshLog("down-fail");
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "0",
+          FAKE_FAIL_PATTERN: "run --rm migrate|down --remove-orphans",
+          ...SIX,
+        },
+        log,
+      );
+      expect(res.status).not.toBe(0);
+      const jl = readFileSync(log, "utf8");
+      expect(jl).toMatch(/"phase":"rollback","status":"degraded"/);
+      expect(jl).not.toMatch(/"phase":"rollback","status":"ok"/);
+    });
+
+    it("a supporting-service health failure after the switch rolls back", () => {
+      resetDockerLog();
+      const log = freshLog("support-up-fail");
+      const res = runDeploy(
+        "pinned",
+        {
+          TEST_SECRET_A: "x",
+          FAKE_PRIOR: "1",
+          FAKE_PS_NONEMPTY: "1",
+          FAKE_FAIL_PATTERN: "up -d --wait --wait-timeout 120 code-server",
+          ...SIX,
+        },
+        log,
+      );
+      expect(res.status).not.toBe(0);
+      const jl = readFileSync(log, "utf8");
+      expect(jl).toMatch(/"phase":"up","status":"fail"/);
+      expect(jl).toMatch(/"phase":"rollback","status":"ok"/);
+    });
+  });
+
+  it("REJECTS a tag override before touching docker", () => {
+    resetDockerLog();
+    const res = runDeploy(
+      "pinned",
+      {
+        TEST_SECRET_A: "x",
+        DAAX_IMAGE_OVERRIDE: "ghcr.io/daax-dev/daax-web:latest",
+      },
+      freshLog("override-tag"),
+    );
+    expect(res.status).toBe(2);
+    expect(res.stderr).toMatch(/DAAX_IMAGE_OVERRIDE must be an image@sha256/);
+    expect(readFileSync(dockerLog, "utf8")).toBe("");
   });
 });
 

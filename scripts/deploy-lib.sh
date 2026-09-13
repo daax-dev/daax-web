@@ -109,6 +109,14 @@ assert_code_server_image() {
   if "$DOCKER_BIN" image inspect "$image" >/dev/null 2>&1; then
     return 0
   fi
+  # A digest-pinned registry image (the fleet: ghcr.io/daax-dev/code-server@
+  # sha256:…) is PULLED, never built — a local build cannot produce that digest.
+  if [[ "$image" == *@sha256:* ]]; then
+    echo "code-server image '$image' absent — pulling ..." >&2
+    "$DOCKER_BIN" pull "$image" >&2 && return 0
+    echo "code-server image '$image' could not be pulled (ghcr login?)." >&2
+    return 1
+  fi
   echo "code-server image '$image' absent — building via $builder ..." >&2
   if [[ -x "$builder" ]] && "$builder" >&2; then
     "$DOCKER_BIN" image inspect "$image" >/dev/null 2>&1 && return 0
@@ -208,26 +216,128 @@ rollback_tag_for() {
   printf '%s:rollback' "$prefix$last"
 }
 
+# The six services a deploy manages, keyed by CONTAINER name: the compose
+# service that runs it, and the compose variable that selects its image.
+#   daax -> daax / DAAX_IMAGE          daax-terminal -> terminal / DAAX_TERMINAL_IMAGE
+#   daax-code-server -> code-server / CODE_SERVER_IMAGE
+#   daax-watchtower -> watchtower / WATCHTOWER_IMAGE
+#   daax-hawkeye -> hawkeye / HAWKEYE_IMAGE
+#   daax-provenance -> provenance / PROVENANCE_IMAGE
+service_compose_name() {
+  case "$1" in
+    daax) echo daax ;;
+    daax-terminal) echo terminal ;;
+    daax-code-server) echo code-server ;;
+    daax-watchtower) echo watchtower ;;
+    daax-hawkeye) echo hawkeye ;;
+    daax-provenance) echo provenance ;;
+    *) return 1 ;;
+  esac
+}
+service_image_var() {
+  case "$1" in
+    daax) echo DAAX_IMAGE ;;
+    daax-terminal) echo DAAX_TERMINAL_IMAGE ;;
+    daax-code-server) echo CODE_SERVER_IMAGE ;;
+    daax-watchtower) echo WATCHTOWER_IMAGE ;;
+    daax-hawkeye) echo HAWKEYE_IMAGE ;;
+    daax-provenance) echo PROVENANCE_IMAGE ;;
+    *) return 1 ;;
+  esac
+}
+
+# running_image_id <container> — prints the image id the container runs and
+# returns 0; prints nothing and returns 0 when the container positively does not
+# exist ("no such object"); returns 2 when docker could not say (daemon down,
+# permission, timeout). Absent and unknown must never be confused: an unknown
+# service recorded as absent is REMOVED by rollback. Read-only.
+running_image_id() {
+  local out rc=0
+  # stdout and stderr together: on success inspect prints only the id; on
+  # failure the text is what tells absent from unknown.
+  out="$("$DOCKER_BIN" inspect --format '{{.Image}}' "$1" 2>&1)" || rc=$?
+  if ((rc == 0)); then
+    printf '%s' "$out"
+    return 0
+  fi
+  if [[ "${out,,}" == *"no such object"* || "${out,,}" == *"no such container"* ]]; then
+    return 0
+  fi
+  return 2
+}
+
+# app_pair_state — "partial" when exactly ONE of daax / daax-terminal is
+# running, "unknown" when docker cannot say for either, else "ok". Read-only
+# (inspect only), so the caller can refuse BEFORE capture tags anything.
+app_pair_state() {
+  local web term
+  web="$(running_image_id daax)" || { echo unknown; return 0; }
+  term="$(running_image_id daax-terminal)" || { echo unknown; return 0; }
+  if { [[ -n "$web" ]] && [[ -z "$term" ]]; } || { [[ -z "$web" ]] && [[ -n "$term" ]]; }; then
+    echo partial
+  else
+    echo ok
+  fi
+}
+
+# rollback_services <statefile> present|absent — compose service names whose
+# container DID (present) or did NOT (absent) run an image at capture.
+rollback_services() {
+  local statefile="$1" want="$2" name tag imgid svc out=""
+  [[ -f "$statefile" ]] || return 0
+  while IFS=$'\t' read -r name tag imgid; do
+    svc="$(service_compose_name "$name")" || continue
+    if [[ "$imgid" == "-" || -z "$imgid" ]]; then
+      [[ "$want" == absent ]] && out="$out $svc"
+    else
+      [[ "$want" == present ]] && out="$out $svc"
+    fi
+  done <"$statefile"
+  printf '%s' "${out# }"
+}
+
 # capture_rollback_state <statefile> <service:image-tag>...
 # Each arg is "container_name=image_tag" (e.g. "daax=daax:latest").
+# Returns non-zero if a running image could not be pinned under :rollback, or if
+# docker could not say whether a service exists — the baseline would then not
+# be restorable (or would remove a service that was running), so the caller
+# must not deploy. A tag written before such a failure points at an image that
+# is still running, so it changes nothing a later rollback relies on.
 capture_rollback_state() {
   local statefile="$1"; shift
-  : >"$statefile"
-  local pair name tag imgid
+  local pair name tag imgid rc=0 lines=""
   for pair in "$@"; do
     name="${pair%%=*}"
     tag="${pair#*=}"
-    imgid="$("$DOCKER_BIN" inspect --format '{{.Image}}' "$name" 2>/dev/null || true)"
+    if ! imgid="$(running_image_id "$name")"; then
+      rc=1
+      continue
+    fi
     if [[ -n "$imgid" ]]; then
       # Pin the running image under a stable rollback tag so a rebuild of `tag`
       # does not garbage away the bytes we may need to restore.
-      "$DOCKER_BIN" tag "$imgid" "$(rollback_tag_for "$tag")" >/dev/null 2>&1 || true
-      printf '%s\t%s\t%s\n' "$name" "$tag" "$imgid" >>"$statefile"
+      "$DOCKER_BIN" tag "$imgid" "$(rollback_tag_for "$tag")" >/dev/null 2>&1 || rc=1
+      lines+="$name"$'\t'"$tag"$'\t'"$imgid"$'\n'
     else
       # No prior container → nothing to restore for this service (fresh deploy).
-      printf '%s\t%s\t%s\n' "$name" "$tag" "-" >>"$statefile"
+      lines+="$name"$'\t'"$tag"$'\t-\n'
     fi
   done
+  # One checked write through a unique temp file and a rename: callers run this
+  # under `if !`, where errexit is off, so an unwritable statefile would
+  # otherwise pass silently and the deploy would proceed with no baseline to
+  # roll back to. A directory or symlink at the target is refused — `mv` would
+  # move the temp file INTO a directory and succeed, and a predictable temp name
+  # could be pre-planted as a symlink.
+  local tmp
+  [[ -d "$statefile" || -L "$statefile" ]] && return 1
+  tmp="$(mktemp "$(dirname -- "$statefile")/.daax-rollback.XXXXXX" 2>/dev/null)" || return 1
+  if ! printf '%s' "$lines" >"$tmp" 2>/dev/null || ! mv -f -- "$tmp" "$statefile" 2>/dev/null; then
+    rm -f -- "$tmp" 2>/dev/null
+    return 1
+  fi
+  [[ -f "$statefile" && ! -L "$statefile" ]] || return 1
+  return "$rc"
 }
 
 # had_prior_state <statefile> — true if ANY captured service had a running image
@@ -238,18 +348,41 @@ had_prior_state() {
   awk -F'\t' '$3 != "-" {found=1} END {exit found?0:1}' "$statefile"
 }
 
-# restore_rollback_state <statefile> — re-tag each captured :latest back to the
-# prior running image id. Returns 0 even if some services had no prior image
+# restore_rollback_state <statefile> — point each captured service back at its
+# prior running image id. Services with no prior image are skipped
 # (fresh-deploy services are simply left for the caller to `compose down`).
+#
+# A TAG ref (repo:latest) is re-tagged back to the prior id. A DIGEST ref
+# (repo@sha256:…, what the fleet pins) cannot be: Docker refuses "to create a
+# tag with a digest reference", so re-tagging silently did nothing and the
+# recreate brought the failed digest straight back. For those, the compose
+# image variable is exported to the repo:rollback tag capture made instead.
+# The rollback tag is re-pinned to the captured id before it is exported, so a
+# stale :rollback left by an earlier deploy is never what compose starts; if
+# that re-pin fails the variable is NOT exported. Returns non-zero if any
+# restore could not be made — the caller must then not recreate.
 restore_rollback_state() {
   local statefile="$1"
   [[ -f "$statefile" ]] || return 0
-  local name tag imgid
+  local name tag imgid rb var rc=0
   while IFS=$'\t' read -r name tag imgid; do
     [[ "$imgid" == "-" || -z "$imgid" ]] && continue
-    "$DOCKER_BIN" tag "$imgid" "$tag" >/dev/null 2>&1 || true
+    if [[ "$tag" == *@sha256:* ]]; then
+      rb="$(rollback_tag_for "$tag")"
+      if ! var="$(service_image_var "$name")"; then
+        rc=1
+        continue
+      fi
+      if ! "$DOCKER_BIN" tag "$imgid" "$rb" >/dev/null 2>&1; then
+        rc=1
+        continue
+      fi
+      export "$var=$rb"
+    else
+      "$DOCKER_BIN" tag "$imgid" "$tag" >/dev/null 2>&1 || rc=1
+    fi
   done <"$statefile"
-  return 0
+  return "$rc"
 }
 
 # --- post-deploy health (F7) ---------------------------------------------------

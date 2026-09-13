@@ -5,6 +5,7 @@
 # Usage:
 #   scripts/deploy.sh <target>          # deploy the named target
 #   scripts/deploy.sh --list            # list available targets
+#   scripts/deploy.sh --effective <t>   # print the target's effective image pins
 #   scripts/deploy.sh --help
 #
 # TARGET SELECTION IS CONFIG, NOT CODE. A <target> maps to deploy/env/<target>.env
@@ -142,7 +143,7 @@ SWITCHED=0
 STACK_EXISTED_AT_CAPTURE=0
 
 # stack_present — POSITIVE check: returns 0 (present-or-UNKNOWN) unless a
-# `compose ps` SUCCEEDS and reports NO containers for the app services. A failed
+# `compose ps` SUCCEEDS and reports NO containers for any of the six services. A failed
 # ps (docker unreachable) returns 0 so uncertainty never authorizes a teardown.
 stack_present() {
   local out rc=0
@@ -151,7 +152,7 @@ stack_present() {
   # `out="$(compose ps …)"` is a simple command whose failure would trip errexit
   # (and the ERR trap → an unwanted rollback) in any non-if/&&/|| call context.
   # Guarding it here keeps the "uncertain -> present" intent regardless of caller.
-  out="$(compose ps -aq daax terminal 2>/dev/null)" || rc=$?
+  out="$(compose ps -aq daax terminal code-server watchtower hawkeye provenance 2>/dev/null)" || rc=$?
   if ((rc != 0)); then
     return 0 # uncertain -> treat as present (never tear down on doubt)
   fi
@@ -176,7 +177,24 @@ do_rollback() {
   # running stack (if any) is untouched on its prior images. Restore the :latest
   # tags for hygiene, but do NOT force-recreate (no needless downtime).
   if [[ "$SWITCHED" != 1 ]]; then
-    had_prior_state "$STATEFILE" && restore_rollback_state "$STATEFILE"
+    # A positively FRESH host may still have gained a Postgres (phase_db) or a
+    # partial migrate before the failure; leave it in a known state, as the
+    # post-switch fresh path does.
+    if [[ "$STACK_EXISTED_AT_CAPTURE" != 1 ]] && ! had_prior_state "$STATEFILE"; then
+      log "no stack existed at capture — tearing down the partial fresh deploy"
+      if compose down --remove-orphans >&2; then
+        deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "pre-switch failure on a fresh deploy; torn down"
+      else
+        err "teardown of the partial fresh deploy FAILED — manual intervention required"
+        deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "pre-switch failure on a fresh deploy; teardown failed"
+      fi
+      return 0
+    fi
+    if had_prior_state "$STATEFILE" && ! restore_rollback_state "$STATEFILE"; then
+      err "could not restore every prior image tag — the running stack was not switched, but verify its image tags manually"
+      deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "pre-switch failure; running stack untouched, tag restore failed"
+      return 0
+    fi
     log "pre-switch failure — running stack left in place (no recreate)"
     deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "pre-switch failure; running stack untouched, tags restored"
     return 0
@@ -185,10 +203,34 @@ do_rollback() {
   # SWITCHED: the app plane was (partially) recreated onto new images.
   if had_prior_state "$STATEFILE"; then
     # Known baseline → restore prior images and force-recreate.
-    restore_rollback_state "$STATEFILE"
-    if compose up -d --force-recreate --wait --wait-timeout 120 daax terminal >&2; then
-      ok "rolled back to prior running images"
-      deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "prior images restored and running"
+    if ! restore_rollback_state "$STATEFILE"; then
+      # Recreating now would start the failed image, or a stale one, and call it
+      # a rollback. Leave the stack as it is and say so.
+      err "could not restore every prior image; NOT recreating — manual intervention required"
+      deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "prior image restore failed; stack left as-is, not recreated"
+      return 0
+    fi
+    # Recreate every service that ran at capture on its prior image, and remove
+    # the ones this deploy introduced — a service that did not exist before is
+    # not part of the state being restored.
+    local present absent cleanup=ok
+    present="$(rollback_services "$STATEFILE" present)"
+    absent="$(rollback_services "$STATEFILE" absent)"
+    if [[ -n "$absent" ]]; then
+      # shellcheck disable=SC2086 # word-split on purpose: service names
+      if ! compose rm -sf $absent >&2; then
+        err "could not remove services absent at capture: $absent — manual intervention required"
+        cleanup=failed
+      fi
+    fi
+    # shellcheck disable=SC2086
+    if compose up -d --force-recreate --wait --wait-timeout 120 $present >&2; then
+      if [[ "$cleanup" == ok ]]; then
+        ok "rolled back to prior running images"
+        deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "prior images restored and running ($present)"
+      else
+        deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "prior images restored ($present) but services absent at capture were not removed ($absent)"
+      fi
     else
       err "rollback restore did not converge; manual intervention required"
       deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "prior images restored but stack did not become healthy"
@@ -203,8 +245,12 @@ do_rollback() {
     # Positively fresh at capture (compose ps reported no stack) → tear down the
     # partial deploy so the host is left in a KNOWN state.
     log "no stack existed at capture — tearing down the partial fresh deploy"
-    compose down --remove-orphans >&2 || true
-    deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "fresh deploy torn down (no stack at capture)"
+    if compose down --remove-orphans >&2; then
+      deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "ok" "fresh deploy torn down (no stack at capture)"
+    else
+      err "teardown of the partial fresh deploy FAILED — manual intervention required"
+      deploy_log "$LOGFILE" "$ENV_NAME" "rollback" "degraded" "fresh deploy teardown failed"
+    fi
   fi
 }
 
@@ -263,9 +309,27 @@ phase_capture() {
   # a local `daax:latest`/`daax-terminal:latest` would retag/restore the WRONG
   # refs, so `compose up` would keep the new/broken GHCR tags and rollback would
   # be a silent no-op unless DAAX_IMAGE/DAAX_TERMINAL_IMAGE were set per-env.
-  capture_rollback_state "$STATEFILE" \
+  # A baseline that cannot be pinned cannot be restored: fail BEFORE any
+  # mutation (CAPTURED stays 0, so the failure path touches nothing).
+  # A baseline with ONE of the two app planes (e.g. a legacy single-container
+  # `daax` and no `daax-terminal`) cannot be rolled back to: recreating it
+  # through this compose file would bring up a split web plane with no terminal
+  # and call that the prior state. Checked by inspect alone, BEFORE capture
+  # re-points any :rollback tag; migrating such a host is a manual step. The
+  # four supporting services may legitimately be absent (first convergence).
+  case "$(app_pair_state)" in
+    partial) fail capture "partial baseline: exactly one of daax / daax-terminal is running — not a topology this deploy can roll back to; migrate the host to the split deploy manually first" ;;
+    unknown) fail capture "cannot determine whether daax / daax-terminal exist (docker inspect failed) — refusing to deploy on an unknown baseline" ;;
+  esac
+  if ! capture_rollback_state "$STATEFILE" \
     "daax=${DAAX_IMAGE:-ghcr.io/daax-dev/daax-web:latest}" \
-    "daax-terminal=${DAAX_TERMINAL_IMAGE:-ghcr.io/daax-dev/daax-terminal:latest}"
+    "daax-terminal=${DAAX_TERMINAL_IMAGE:-ghcr.io/daax-dev/daax-terminal:latest}" \
+    "daax-code-server=${CODE_SERVER_IMAGE:-daax-code-server:latest}" \
+    "daax-watchtower=${WATCHTOWER_IMAGE:-ghcr.io/daax-dev/watchtower:latest}" \
+    "daax-hawkeye=${HAWKEYE_IMAGE:-ghcr.io/daax-dev/hawkeye:latest}" \
+    "daax-provenance=${PROVENANCE_IMAGE:-ghcr.io/daax-dev/provenance:latest}"; then
+    fail capture "could not pin every running image under :rollback, or could not tell whether a service exists — refusing to deploy without a restorable baseline"
+  fi
   CAPTURED=1
   # POSITIVE pre-mutation check (H1): did a stack exist BEFORE we touched
   # anything? This — not a per-container image inspect — decides fresh vs upgrade,
@@ -305,6 +369,11 @@ phase_build() {
     export_build_stamp
     compose build --pull daax terminal >&2 || fail build "image build failed"
   fi
+  # The supporting services are always registry images — built elsewhere,
+  # signed, pinned — so they are pulled in both modes, and a failure is fatal:
+  # a deploy that reports success must be running all of them.
+  compose pull watchtower hawkeye provenance >&2 \
+    || fail build "supporting service image pull failed (watchtower/hawkeye/provenance)"
   deploy_log "$LOGFILE" "$ENV_NAME" "build" "ok" "images ready (pull=${DAAX_DEPLOY_PULL:-0})"
 }
 
@@ -380,10 +449,12 @@ phase_up() {
   SWITCHED=1
   compose up -d --force-recreate --wait --wait-timeout 120 daax terminal >&2 \
     || fail up "web/terminal stack did not become healthy"
-  # code-server is best-effort: its image may be operator-supplied and the
-  # /code-server page degrades gracefully. Do not fail the deploy on it.
-  compose up -d code-server >&2 || log "code-server did not start (non-fatal)"
-  deploy_log "$LOGFILE" "$ENV_NAME" "up" "ok" "web + terminal up (force-recreated)"
+  # code-server and the three supporting services are part of the stack every
+  # host runs (pinned per target), so they gate the deploy like the app planes:
+  # --wait blocks on each healthcheck, and a failure rolls back all six.
+  compose up -d --wait --wait-timeout 120 code-server watchtower hawkeye provenance >&2 \
+    || fail up "code-server/watchtower/hawkeye/provenance did not become healthy"
+  deploy_log "$LOGFILE" "$ENV_NAME" "up" "ok" "web + terminal (force-recreated) and supporting services up"
 }
 
 phase_health() {
@@ -430,8 +501,21 @@ main() {
   case "$target" in
     ""|-h|--help|help) usage; exit 0 ;;
     --list|list) list_targets; exit 0 ;;
+    --effective) ;;
     -*) err "unknown flag: $target"; usage; exit 2 ;;
   esac
+
+  # --effective <target>: the machine-readable contract dx scripts/deploy-fleet.sh
+  # reads instead of grepping this file or the env file. It sources the env file
+  # exactly as a deploy does and prints the images a deploy WOULD run, without
+  # overrides, secrets or any docker call. DEPLOY_SH_API names the contract: bump
+  # it when a fleet roller must not drive an older deploy.sh.
+  local effective=0
+  if [[ "$target" == --effective ]]; then
+    effective=1
+    target="${2:-}"
+    [[ -n "$target" ]] || { err "--effective requires a target"; exit 2; }
+  fi
 
   local env_file
   env_file="$(resolve_env_file "$ENV_DIR" "$target")" \
@@ -444,6 +528,62 @@ main() {
   # shellcheck disable=SC1090
   source "$env_file"
   set +a
+
+  if [[ "$effective" == 1 ]]; then
+    printf 'DEPLOY_SH_API=2\n'
+    printf 'DAAX_IMAGE=%s\n' "${DAAX_IMAGE:-ghcr.io/daax-dev/daax-web:latest}"
+    printf 'DAAX_TERMINAL_IMAGE=%s\n' "${DAAX_TERMINAL_IMAGE:-ghcr.io/daax-dev/daax-terminal:latest}"
+    printf 'CODE_SERVER_IMAGE=%s\n' "${CODE_SERVER_IMAGE:-daax-code-server:latest}"
+    printf 'WATCHTOWER_IMAGE=%s\n' "${WATCHTOWER_IMAGE:-ghcr.io/daax-dev/watchtower:latest}"
+    printf 'HAWKEYE_IMAGE=%s\n' "${HAWKEYE_IMAGE:-ghcr.io/daax-dev/hawkeye:latest}"
+    printf 'PROVENANCE_IMAGE=%s\n' "${PROVENANCE_IMAGE:-ghcr.io/daax-dev/provenance:latest}"
+    # Compose's per-service config hash — what docker stamps on a container as
+    # com.docker.compose.config-hash. The fleet roller compares it to the running
+    # container, because the same image under an older compose definition is not
+    # the same deployment. The hash covers interpolated values, secrets included,
+    # so it exists only when every required secret is in the environment; the
+    # values themselves are never printed. `compose config` reads files only —
+    # no daemon. The hashes describe the PINNED images above: a caller that
+    # deploys *_OVERRIDE digests different from the pins cannot compare them.
+    if assert_required_secrets >/dev/null 2>&1; then
+      export_compose_env
+      local hashes svc hash key
+      if hashes="$(compose config --hash '*' 2>/dev/null)" && [[ -n "$hashes" ]]; then
+        while read -r svc hash; do
+          [[ "$svc" =~ ^[a-z0-9][a-z0-9_-]*$ && "$hash" =~ ^[0-9a-f]{64}$ ]] || continue
+          # Only the six services the fleet roller verifies. postgres, migrate and
+          # pg-backup interpolate DAAX_PG_PASSWORD, so their hash would be an
+          # offline guessing oracle for it, and nothing compares them.
+          case "$svc" in daax|terminal|code-server|watchtower|hawkeye|provenance) ;; *) continue ;; esac
+          key="$(printf %s "$svc" | tr "a-z-" "A-Z_")"
+          printf 'CONFIG_HASH_%s=%s\n' "$key" "$hash"
+        done <<<"$hashes"
+      else
+        printf 'CONFIG_HASH_UNAVAILABLE=compose-config-failed\n'
+      fi
+    else
+      printf 'CONFIG_HASH_UNAVAILABLE=missing-secrets\n'
+    fi
+    exit 0
+  fi
+
+  # Fleet roll (dx scripts/deploy-fleet.sh) hands every host the SAME verified
+  # digest. The env file just sourced pins its own DAAX_IMAGE/DAAX_TERMINAL_IMAGE,
+  # so a caller's plain DAAX_IMAGE is silently overwritten by the file's pin and
+  # the host redeploys what it already runs. The *_OVERRIDE names win over the
+  # file — and only as a digest reference, never a movable tag.
+  local ov src
+  for ov in DAAX_IMAGE DAAX_TERMINAL_IMAGE CODE_SERVER_IMAGE WATCHTOWER_IMAGE HAWKEYE_IMAGE PROVENANCE_IMAGE; do
+    src="${ov}_OVERRIDE"
+    [[ -n "${!src:-}" ]] || continue
+    if [[ ! "${!src}" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]; then
+      err "$src must be an image@sha256:<64 hex> digest reference, got '${!src}'"
+      exit 2
+    fi
+    log "image override: $ov=${!src} (env file had ${!ov:-unset})"
+    printf -v "$ov" '%s' "${!src}"
+    export "${ov?}"
+  done
 
   export_compose_env
 
