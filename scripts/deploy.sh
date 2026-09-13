@@ -537,6 +537,28 @@ main() {
     printf 'WATCHTOWER_IMAGE=%s\n' "${WATCHTOWER_IMAGE:-ghcr.io/daax-dev/watchtower:latest}"
     printf 'HAWKEYE_IMAGE=%s\n' "${HAWKEYE_IMAGE:-ghcr.io/daax-dev/hawkeye:latest}"
     printf 'PROVENANCE_IMAGE=%s\n' "${PROVENANCE_IMAGE:-ghcr.io/daax-dev/provenance:latest}"
+    # Compose's per-service config hash — what docker stamps on a container as
+    # com.docker.compose.config-hash. The fleet roller compares it to the running
+    # container, because the same image under an older compose definition is not
+    # the same deployment. The hash covers interpolated values, secrets included,
+    # so it exists only when every required secret is in the environment; the
+    # values themselves are never printed. `compose config` reads files only —
+    # no daemon.
+    if assert_required_secrets >/dev/null 2>&1; then
+      export_compose_env
+      local hashes svc hash key
+      if hashes="$(compose config --hash '*' 2>/dev/null)" && [[ -n "$hashes" ]]; then
+        while read -r svc hash; do
+          [[ "$svc" =~ ^[a-z0-9][a-z0-9_-]*$ && "$hash" =~ ^[0-9a-f]{64}$ ]] || continue
+          key="$(printf %s "$svc" | tr "a-z-" "A-Z_")"
+          printf 'CONFIG_HASH_%s=%s\n' "$key" "$hash"
+        done <<<"$hashes"
+      else
+        printf 'CONFIG_HASH_UNAVAILABLE=compose-config-failed\n'
+      fi
+    else
+      printf 'CONFIG_HASH_UNAVAILABLE=missing-secrets\n'
+    fi
     exit 0
   fi
 

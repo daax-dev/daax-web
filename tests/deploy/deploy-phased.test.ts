@@ -84,6 +84,11 @@ case "$1" in
     [[ -n "\${FAKE_TAG_LOG:-}" ]] && echo "\${@: -1}" >> "$FAKE_TAG_LOG"
     exit 0 ;;
   compose)
+    if grep -q 'config --hash' <<<"$args"; then
+      [[ "\${FAKE_CONFIG_FAIL:-0}" == "1" ]] && exit 1
+      printf 'daax %s\ncode-server %s\nevil;name %s\nterminal notahash\n' "$(printf 'a%.0s' {1..64})" "$(printf 'b%.0s' {1..64})" "$(printf 'c%.0s' {1..64})"
+      exit 0
+    fi
     # Like real compose: an image ref with no local tag cannot start.
     if [[ -n "\${FAKE_TAG_LOG:-}" ]] && grep -q 'up -d' <<<"$args"; then
       for ref in "\${DAAX_IMAGE:-}" "\${DAAX_TERMINAL_IMAGE:-}" "\${CODE_SERVER_IMAGE:-}" "\${WATCHTOWER_IMAGE:-}" "\${HAWKEYE_IMAGE:-}" "\${PROVENANCE_IMAGE:-}"; do
@@ -564,6 +569,54 @@ describe("deploy.sh image override (fleet roll)", () => {
     expect(res.stderr).toMatch(/NOT recreating/);
     expect(readFileSync(log, "utf8")).toMatch(
       /"phase":"rollback","status":"degraded"/,
+    );
+  });
+
+  it("--effective prints per-service compose config hashes only when secrets are present, never their values", () => {
+    const base = {
+      ...process.env,
+      DAAX_ENV_DIR: join(work, "env"),
+      DOCKER_BIN: join(binDir, "docker"),
+      FAKE_DOCKER_LOG: dockerLog,
+    };
+    resetDockerLog();
+    const withSecrets = spawnSync(
+      "bash",
+      [DEPLOY_SH, "--effective", "pinned"],
+      {
+        env: { ...base, TEST_SECRET_A: "s3cr3t-value-must-not-print" },
+        encoding: "utf8",
+      },
+    );
+    expect(withSecrets.status).toBe(0);
+    const lines = withSecrets.stdout.trim().split("\n");
+    expect(lines).toContain(`CONFIG_HASH_DAAX=${"a".repeat(64)}`);
+    expect(lines).toContain(`CONFIG_HASH_CODE_SERVER=${"b".repeat(64)}`);
+    // Malformed service names and hashes from compose are dropped, not echoed.
+    expect(withSecrets.stdout).not.toMatch(
+      /EVIL|NOTAHASH|CONFIG_HASH_TERMINAL/i,
+    );
+    expect(withSecrets.stdout + withSecrets.stderr).not.toContain(
+      "s3cr3t-value-must-not-print",
+    );
+    expect(readFileSync(dockerLog, "utf8")).toMatch(
+      /compose .*config --hash \*/,
+    );
+
+    const without = spawnSync("bash", [DEPLOY_SH, "--effective", "pinned"], {
+      env: base,
+      encoding: "utf8",
+    });
+    expect(without.status).toBe(0);
+    expect(without.stdout).toContain("CONFIG_HASH_UNAVAILABLE=missing-secrets");
+    expect(without.stdout).not.toMatch(/^CONFIG_HASH_DAAX=/m);
+
+    const failed = spawnSync("bash", [DEPLOY_SH, "--effective", "pinned"], {
+      env: { ...base, TEST_SECRET_A: "x", FAKE_CONFIG_FAIL: "1" },
+      encoding: "utf8",
+    });
+    expect(failed.stdout).toContain(
+      "CONFIG_HASH_UNAVAILABLE=compose-config-failed",
     );
   });
 
