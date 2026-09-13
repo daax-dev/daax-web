@@ -86,7 +86,7 @@ case "$1" in
   compose)
     if grep -q 'config --hash' <<<"$args"; then
       [[ "\${FAKE_CONFIG_FAIL:-0}" == "1" ]] && exit 1
-      printf 'daax %s\ncode-server %s\nevil;name %s\nterminal notahash\n' "$(printf 'a%.0s' {1..64})" "$(printf 'b%.0s' {1..64})" "$(printf 'c%.0s' {1..64})"
+      printf 'daax %s\ncode-server %s\nevil;name %s\nterminal notahash\npostgres %s\n' "$(printf 'a%.0s' {1..64})" "$(printf 'b%.0s' {1..64})" "$(printf 'c%.0s' {1..64})" "$(printf 'd%.0s' {1..64})"
       exit 0
     fi
     # Like real compose: an image ref with no local tag cannot start.
@@ -596,6 +596,8 @@ describe("deploy.sh image override (fleet roll)", () => {
     expect(withSecrets.stdout).not.toMatch(
       /EVIL|NOTAHASH|CONFIG_HASH_TERMINAL/i,
     );
+    // postgres's hash would be an oracle for DAAX_PG_PASSWORD; never emitted.
+    expect(withSecrets.stdout).not.toMatch(/CONFIG_HASH_POSTGRES/);
     expect(withSecrets.stdout + withSecrets.stderr).not.toContain(
       "s3cr3t-value-must-not-print",
     );
