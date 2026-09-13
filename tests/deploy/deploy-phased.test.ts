@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -27,6 +27,10 @@ import { join, resolve } from "node:path";
  * and the prod-safety test proves a stack that EXISTS but has no captured
  * baseline is NEVER torn down.
  */
+
+// Every case spawns the real deploy.sh under bash. Under a full-suite run the
+// default 5s budget times out (observed on main too), so give the file 30s.
+vi.setConfig({ testTimeout: 30_000 });
 
 const REPO = resolve(__dirname, "../..");
 const DEPLOY_SH = join(REPO, "scripts/deploy.sh");
@@ -392,9 +396,7 @@ describe("deploy.sh preflight — fail-closed", () => {
   });
 });
 
-// Each case spawns the real deploy.sh; under a full-suite run the default 5s
-// test timeout is not enough headroom.
-describe("deploy.sh image override (fleet roll)", { timeout: 30_000 }, () => {
+describe("deploy.sh image override (fleet roll)", () => {
   const PIN_WEB = `ghcr.io/daax-dev/daax-web@sha256:${"a".repeat(64)}`;
   const PIN_TERM = `ghcr.io/daax-dev/daax-terminal@sha256:${"b".repeat(64)}`;
   const TGT_WEB = `ghcr.io/daax-dev/daax-web@sha256:${"c".repeat(64)}`;
