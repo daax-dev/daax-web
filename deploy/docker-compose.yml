@@ -184,10 +184,26 @@ services:
         condition: service_healthy
 
     # Hardening (#185 + F3 #100). The image runs as the unprivileged `node` user
-    # (UID 1000, Dockerfile `USER node`). Post-split this service holds NO Docker
-    # socket, so it needs no `group_add` — the socket + spawn machinery live only
-    # on the `terminal` service. no-new-privileges + cap_drop [ALL] are kept as
-    # defense-in-depth for the internet(Traefik)-facing plane.
+    # (UID 1000, Dockerfile `USER node`), with no-new-privileges + cap_drop [ALL]
+    # as defense-in-depth for the internet(Traefik)-facing plane.
+    #
+    # The Docker socket IS mounted here, and that is a reversal of F3 #100 made
+    # with eyes open. F3's scope was "deploy/docker-compose.yml + Traefik ONLY"
+    # and it moved the socket to the `terminal` service without touching any of
+    # the web routes that call Docker — so /containers, /testcontainers,
+    # /api/build/images and /api/ai/active-sessions have answered 503 (and one
+    # 500) in the split deploy ever since, while still working in every
+    # single-container mode (`bun dev`, `docker:run`). That is a regression the
+    # split did not intend, not a feature that was removed.
+    #
+    # What it costs: a container that can reach the socket can create a
+    # privileged one, so this plane is root-equivalent on the host and
+    # cap_drop/no-new-privileges do not bound that. The narrower options — a
+    # docker-socket-proxy on a private bridge, or routing these calls through the
+    # `terminal` plane that already holds the socket — were considered and are
+    # the better long-term answer; this is the operator's deliberate choice to
+    # restore the pages now. Access is by GROUP membership (group_add below),
+    # not by running as root.
     #   - no-new-privileges: blocks setuid/setgid escalation inside the container.
     #   - cap_drop [ALL]: no capability is required — the app binds only a high
     #     port (4200) and runs non-root; none are re-added.
@@ -203,6 +219,13 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+
+    # Grants /var/run/docker.sock access by group, paired with the non-root
+    # `node` user. scripts/deploy.sh exports DOCKER_GID from
+    # `stat -c '%g' /var/run/docker.sock`; the 999 default is only for runs that
+    # bypass it, and a wrong value fails as EACCES on the socket.
+    group_add:
+      - "${DOCKER_GID:-999}"
 
     # host.docker.internal must be DECLARED on Linux. Docker Desktop provides
     # the name for free, which is why this was never missed on the macOS
@@ -244,8 +267,12 @@ services:
       - "127.0.0.1:4200:4200" # Web UI
 
     volumes:
-      # No Docker socket here (F3 #100): the web plane does not spawn containers.
-      # The socket is mounted only on the `terminal` service.
+      # Docker socket — see the hardening note above for why this is here and
+      # what it costs. Consumed by lib/host-docker.ts and app/api/containers
+      # (dockerode) and by lib/docker-exec.ts (docker CLI shell-outs); both
+      # honour DOCKER_HOST, so a socket-proxy can replace this mount with no
+      # code change if the exposure is later narrowed.
+      - /var/run/docker.sock:/var/run/docker.sock
 
       # Workspace volume - projects to edit (read/write: the editor + MCP scan)
       # REQUIRED: Set DAAX_WORKSPACE to your projects directory
