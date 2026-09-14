@@ -283,27 +283,31 @@ phase_preflight() {
   fi
 
   assert_required_secrets || fail preflight "required secret(s) missing/empty for target '$ENV_NAME'"
-  # Agent View's token directory is bind-mounted into daax. Docker CREATES a
-  # missing bind source as root, which would leave a root-owned directory the
-  # renewal job can never write — so it must already exist, be a real directory
-  # (not a symlink) and belong to the user deploying. A missing token inside it
-  # only degrades the Agent View tab, so that is a warning, not a failure.
-  # The container reads it as the image's `node` user (uid 1000), so that is the
-  # owner the directory and token must have — not merely the deploying user.
-  if [[ -n "${AGENTVIEW_TOKEN_HOST_DIR:-}" ]]; then
-    local want_uid="${DAAX_AGENTVIEW_TOKEN_UID:-1000}" dir_uid tok_meta
-    [[ "$AGENTVIEW_TOKEN_HOST_DIR" == /* && -d "$AGENTVIEW_TOKEN_HOST_DIR" && ! -L "$AGENTVIEW_TOKEN_HOST_DIR" ]] \
-      || fail preflight "AGENTVIEW_TOKEN_HOST_DIR must be an existing directory, not a symlink: $AGENTVIEW_TOKEN_HOST_DIR (install with deploy/host/install-agentview-token.sh)"
+  # Agent View over the tailnet is ONE configuration of three settings, checked
+  # as a set: an https AGENTVIEW_DAEMON_URL, AGENTVIEW_DAEMON_TOKEN_FILE inside
+  # the /run/agentview mount, and AGENTVIEW_TOKEN_HOST_DIR as that mount's host
+  # side. Any one without the others deploys something that cannot work (an
+  # empty named volume, or an https daemon asked with no session), so preflight
+  # refuses it. The directory must already exist — docker would create a missing
+  # bind source as root — and it and the token must belong to the uid the
+  # container reads them as: the image's `node` user, 1000.
+  if [[ "${AGENTVIEW_DAEMON_URL:-}" == https://* || -n "${AGENTVIEW_DAEMON_TOKEN_FILE:-}" || -n "${AGENTVIEW_TOKEN_HOST_DIR:-}" ]]; then
+    local want_uid="${DAAX_AGENTVIEW_TOKEN_UID:-1000}" dir_uid tok_meta tok_host
+    [[ "${AGENTVIEW_DAEMON_URL:-}" =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$ ]] \
+      || fail preflight "Agent View over the tailnet needs AGENTVIEW_DAEMON_URL=https://agents.<host>.poley.dev (got '${AGENTVIEW_DAEMON_URL:-}')"
+    [[ "${AGENTVIEW_DAEMON_TOKEN_FILE:-}" =~ ^/run/agentview/[A-Za-z0-9._-]+$ ]] \
+      || fail preflight "AGENTVIEW_DAEMON_TOKEN_FILE must name a file in the /run/agentview mount (got '${AGENTVIEW_DAEMON_TOKEN_FILE:-}')"
+    [[ "${AGENTVIEW_TOKEN_HOST_DIR:-}" == /* && -d "${AGENTVIEW_TOKEN_HOST_DIR:-}" && ! -L "${AGENTVIEW_TOKEN_HOST_DIR:-}" ]] \
+      || fail preflight "AGENTVIEW_TOKEN_HOST_DIR must be an existing directory, not a symlink: '${AGENTVIEW_TOKEN_HOST_DIR:-}' (install with deploy/host/install-agentview-token.sh)"
     dir_uid="$(stat -c '%u' "$AGENTVIEW_TOKEN_HOST_DIR" 2>/dev/null || stat -f '%u' "$AGENTVIEW_TOKEN_HOST_DIR")"
     [[ "$dir_uid" == "$want_uid" ]] \
       || fail preflight "AGENTVIEW_TOKEN_HOST_DIR is owned by uid $dir_uid; the daax container reads it as uid $want_uid (node)"
-    if [[ -e "$AGENTVIEW_TOKEN_HOST_DIR/token" || -L "$AGENTVIEW_TOKEN_HOST_DIR/token" ]]; then
-      tok_meta="$(stat -c '%u %a' "$AGENTVIEW_TOKEN_HOST_DIR/token" 2>/dev/null || stat -f '%u %Lp' "$AGENTVIEW_TOKEN_HOST_DIR/token")"
-      [[ ! -L "$AGENTVIEW_TOKEN_HOST_DIR/token" && -f "$AGENTVIEW_TOKEN_HOST_DIR/token" && "$tok_meta" =~ ^${want_uid}\ (600|400)$ ]] \
-        || fail preflight "the Agent View token must be a regular file owned by uid $want_uid, mode 0600 or 0400 (found: ${tok_meta:-not a regular file}) — re-run deploy/host/agentview-token-renew.sh"
-    else
-      err "WARNING: no Agent View token in $AGENTVIEW_TOKEN_HOST_DIR — the Agent View tab will be refused until deploy/host/install-agentview-token.sh has run"
-    fi
+    tok_host="$AGENTVIEW_TOKEN_HOST_DIR/${AGENTVIEW_DAEMON_TOKEN_FILE#/run/agentview/}"
+    [[ -f "$tok_host" && ! -L "$tok_host" ]] \
+      || fail preflight "no Agent View token at $tok_host — run deploy/host/install-agentview-token.sh first"
+    tok_meta="$(stat -c '%u %a' "$tok_host" 2>/dev/null || stat -f '%u %Lp' "$tok_host")"
+    [[ "$tok_meta" =~ ^${want_uid}\ (600|400)$ ]] \
+      || fail preflight "the Agent View token must be owned by uid $want_uid, mode 0600 or 0400 (found: $tok_meta) — re-run deploy/host/agentview-token-renew.sh"
   fi
   assert_code_server_image "$BUILD_CODE_SERVER" || fail preflight "code-server image preflight failed"
   # NOTE: no managed-Postgres reachability gate here. Managed mode (DAAX_PG_MANAGED=1)

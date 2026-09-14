@@ -35,6 +35,7 @@ let reply: { status: number; body: unknown } = { status: 200, body: {} };
 let nodeStatus = 200;
 let nodeAuth: string | undefined;
 let logoutStatus = 200;
+let logoutBody = JSON.stringify({ signed_out: true });
 let logouts: Array<{ auth?: string; contentType?: string }> = [];
 let mints = 0;
 let lastRequest: { method?: string; contentType?: string; body: string };
@@ -59,7 +60,7 @@ beforeAll(async () => {
           contentType: req.headers["content-type"],
         });
         res.writeHead(logoutStatus, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ signed_out: true }));
+        res.end(logoutBody);
         return;
       }
       if (req.url === "/api/v1/node") {
@@ -86,6 +87,7 @@ beforeEach(() => {
   nodeStatus = 200;
   nodeAuth = undefined;
   logoutStatus = 200;
+  logoutBody = JSON.stringify({ signed_out: true });
   logouts = [];
 });
 
@@ -282,11 +284,43 @@ describeIfPython("agentview-token-renew.sh", { timeout: 30_000 }, () => {
     logoutStatus = 500;
     const r = await run();
     expect(r.status).not.toBe(0);
-    expect(r.stderr).toMatch(/revoking the exposed one failed/);
+    expect(r.stderr).toMatch(/queued/);
     expect(readFileSync(join(dir(), "token"), "utf8").trim()).toBe(TOKEN_2);
-    expect(readdirSync(dir()).filter((f) => f.startsWith(".exposed"))).toEqual(
+    // The exposed token is kept, private, until agentd confirms the logout.
+    const pending = join(dir(), ".pending-revoke");
+    expect(readFileSync(pending, "utf8").trim()).toBe(TOKEN_1);
+    expect(statSync(pending).mode & 0o777).toBe(0o600);
+    expect(r.stdout + r.stderr).not.toContain(TOKEN_1);
+
+    // The next run retries it first, even though the new token needs no renewal.
+    logoutStatus = 200;
+    logouts = [];
+    const again = await run();
+    expect(again.status).toBe(0);
+    expect(logouts.map((l) => l.auth)).toEqual([`Bearer ${TOKEN_1}`]);
+    expect(existsSync(pending)).toBe(false);
+    expect(mints).toBe(2);
+    expect(readdirSync(dir()).filter((f) => f.startsWith(".revoke"))).toEqual(
       [],
     );
+  });
+
+  it("does not treat a logout answer without signed_out as a revocation", async () => {
+    reply = valid();
+    expect((await run()).status).toBe(0);
+    chmodSync(join(dir(), "token"), 0o644);
+    reply = {
+      status: 200,
+      body: {
+        token: TOKEN_2,
+        subject: "peer:federation",
+        expires_at: inDays(30),
+      },
+    };
+    logoutBody = "{}";
+    const r = await run();
+    expect(r.status).not.toBe(0);
+    expect(existsSync(join(dir(), ".pending-revoke"))).toBe(true);
   });
 
   it("does not revoke anything on an ordinary renewal", async () => {
@@ -343,7 +377,8 @@ describeIfPython("agentview-token-renew.sh", { timeout: 30_000 }, () => {
         "# --public-origin=https://127.0.0.1:3",
         "--auth=oidc",
         "--public-origin=https://127.0.0.1:2",
-        "--public-origin=https://127.0.0.1:1",
+        // Go also accepts a single dash, and agentd a trailing slash.
+        "-public-origin=https://127.0.0.1:1/",
         "",
       ].join("\n"),
     );

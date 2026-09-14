@@ -54,10 +54,12 @@ token="$DIR/token"; expires="$DIR/token.expires"
 # still accepted there. Read from agentd's own flags; absent = skip that probe.
 # The flags file holds one flag per line; agentd ignores anything that is not a
 # flag line and, like Go's flag package, the LAST occurrence wins (dist-agent
-# scripts/deploy-fleet.sh reads --addr the same way). Only a well-formed https
-# origin is used; anything else skips the probe rather than sending the token.
-public_origin=$(grep -h '^[[:space:]]*--public-origin=' "$HOME/.dist-agent/agentd.flags" 2>/dev/null |
-  tail -n 1 | sed 's/^[[:space:]]*--public-origin=//' | tr -d '[:space:]' || true)
+# scripts/deploy-fleet.sh reads --addr the same way). Go's flag package accepts
+# one or two leading dashes, and agentd accepts a trailing slash on the origin;
+# both are normalized. Only a well-formed https origin is used; anything else
+# skips the probe rather than sending the token somewhere unexpected.
+public_origin=$(grep -hE '^[[:space:]]*-{1,2}public-origin=' "$HOME/.dist-agent/agentd.flags" 2>/dev/null |
+  tail -n 1 | sed -E 's/^[[:space:]]*-{1,2}public-origin=//; s#/+[[:space:]]*$##' | tr -d '[:space:]' || true)
 [[ "$public_origin" =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$ ]] || public_origin=""
 # Tests only: a loopback stand-in for that origin.
 if [ -n "${AGENTD_PUBLIC_ORIGIN_TEST_URL:-}" ]; then
@@ -67,6 +69,29 @@ if [ -n "${AGENTD_PUBLIC_ORIGIN_TEST_URL:-}" ]; then
 fi
 
 exposed=0
+pending="$DIR/.pending-revoke"
+
+# An exposed session that still has to be ended at the daemon. Its token is kept
+# (0600, this directory) until agentd confirms the logout, so a failure is
+# retried on the next run instead of being forgotten.
+revoke_pending() {
+  [ -f "$pending" ] || return 0
+  local out code verdict
+  out=$(mktemp "$DIR/.revoke.XXXXXX")
+  # agentctl auth revoke's route. The token rides curl's config on stdin.
+  code=$(printf 'header = "Authorization: Bearer %s"\nurl = "%s/auth/logout"\n' "$(tr -d '[:space:]' <"$pending")" "$DAEMON" |
+    curl -s -K - -m 15 -o "$out" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{}' || true)
+  verdict=$("$PY" -c 'import json,sys; v=json.load(open(sys.argv[1])).get("signed_out"); print(v if isinstance(v,bool) else "")' "$out" 2>/dev/null || true)
+  rm -f "$out"
+  if [ "$code" != 200 ] || [ -z "$verdict" ]; then
+    die "revoking an exposed session failed (HTTP ${code:-none}); it stays queued in $pending and is retried on the next run"
+  fi
+  rm -f "$pending"
+  log "revoked the exposed session (signed_out=$verdict)"
+}
+
+# Retry a revocation an earlier run could not complete, before anything else.
+revoke_pending
 # A token file is usable only as a regular file owned by this user with no
 # group/other access. Anything with group/other bits (a restored backup at 0644)
 # or a symlink is treated as exposed: a fresh session replaces it. An owner-only
@@ -123,7 +148,7 @@ if still_good; then
 fi
 
 resp=$(mktemp "$DIR/.mint.XXXXXX"); new=$(mktemp "$DIR/.token.XXXXXX")
-trap 'rm -f "$resp" "$new" "$DIR"/.exposed.* "$DIR"/.revoke.*' EXIT
+trap 'rm -f "$resp" "$new" "$DIR"/.revoke.* "$DIR"/.pending-revoke.??????' EXIT
 # Loopback-only route; its admission check is the socket. JSON content type and
 # no Origin satisfy guardBrowserWrite. The response body (which holds the token)
 # goes to a 0600 file in this directory, never to a pipe or the terminal.
@@ -146,30 +171,19 @@ open(sys.argv[2], "w").write(token + "\n")
 open(sys.argv[3], "w").write(exp + "\n")
 PY
 chmod 0600 "$new"; chmod 0644 "$expires.new"
-old=""
+unrevoked=0
 if [ "$exposed" = 1 ]; then
-  # Keep the exposed value (0600, this directory) only long enough to revoke it.
-  old=$(mktemp "$DIR/.exposed.XXXXXX")
-  if ! cat "$token" >"$old" 2>/dev/null; then
-    rm -f "$old"; old=""
-    unrevoked=1
+  # Queue the exposed token for revocation BEFORE it is replaced, atomically.
+  q=$(mktemp "$DIR/.pending-revoke.XXXXXX")
+  if cat "$token" >"$q" 2>/dev/null; then
+    chmod 0600 "$q"; mv -f "$q" "$pending"
+  else
+    rm -f "$q"; unrevoked=1
   fi
 fi
 mv -f "$new" "$token"
 mv -f "$expires.new" "$expires"
 log "minted a read-only peer session, valid until $(cat "$expires")"
 
-if [ -n "$old" ]; then
-  # Anyone who copied the exposed token keeps its access until it is revoked:
-  # end that session at the daemon (agentctl auth revoke's route). The token
-  # rides curl's config on stdin, never argv.
-  out=$(mktemp "$DIR/.revoke.XXXXXX")
-  code=$(printf 'header = "Authorization: Bearer %s"\nurl = "%s/auth/logout"\n' "$(tr -d '[:space:]' <"$old")" "$DAEMON" |
-    curl -s -K - -m 15 -o "$out" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{}' || true)
-  rm -f "$old"
-  ended=$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("signed_out"))' "$out" 2>/dev/null || true)
-  rm -f "$out"
-  [ "$code" = 200 ] || die "the new token is in place, but revoking the exposed one failed (HTTP ${code:-none}); revoke it with agentctl auth sessions/revoke"
-  log "revoked the exposed session (signed_out=$ended)"
-fi
-[ "${unrevoked:-0}" = 0 ] || die "the new token is in place, but the exposed one could not be read to revoke it; revoke it with agentctl auth sessions/revoke"
+revoke_pending
+[ "$unrevoked" = 0 ] || die "the new token is in place, but the exposed one could not be read to revoke it; list and end it with agentctl auth sessions"

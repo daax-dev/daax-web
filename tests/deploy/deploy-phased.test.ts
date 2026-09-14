@@ -1069,50 +1069,83 @@ describe("deploy.sh image override (fleet roll)", () => {
     });
   });
 
-  it("AGENTVIEW_TOKEN_HOST_DIR must exist, belong to the container uid, and hold only a private token", () => {
+  it("Agent View's tailnet settings are validated as one set before anything is mounted", () => {
     const uid = String(process.getuid?.() ?? 1000);
-    const base = { TEST_SECRET_A: "x", DAAX_AGENTVIEW_TOKEN_UID: uid };
     const missing = join(work, "agentview-missing");
     const real = join(work, "agentview-real");
     const link = join(work, "agentview-link");
     rmSync(real, { recursive: true, force: true });
     mkdirSync(real, { recursive: true });
     if (!existsSync(link)) symlinkSync(real, link);
+    const tuple = {
+      TEST_SECRET_A: "x",
+      DAAX_AGENTVIEW_TOKEN_UID: uid,
+      AGENTVIEW_DAEMON_URL: "https://agents.testhost.poley.dev",
+      AGENTVIEW_DAEMON_TOKEN_FILE: "/run/agentview/token",
+      AGENTVIEW_TOKEN_HOST_DIR: real,
+    };
     const deploy = (env: Record<string, string>, name: string) => {
       resetDockerLog();
-      return runDeploy("pinned", { ...base, ...env }, freshLog(name));
+      return runDeploy("pinned", { ...tuple, ...env }, freshLog(name));
+    };
+    const refused = (
+      env: Record<string, string>,
+      name: string,
+      why: RegExp,
+    ) => {
+      const r = deploy(env, name);
+      expect(r.status, name).not.toBe(0);
+      expect(r.stderr, name).toMatch(why);
+      expect(readFileSync(dockerLog, "utf8"), name).not.toMatch(
+        /compose .*(pull|up)/,
+      );
     };
 
-    const noDir = deploy({ AGENTVIEW_TOKEN_HOST_DIR: missing }, "av-missing");
-    expect(noDir.status).not.toBe(0);
-    expect(noDir.stderr).toMatch(
-      /AGENTVIEW_TOKEN_HOST_DIR must be an existing directory/,
+    refused(
+      { AGENTVIEW_TOKEN_HOST_DIR: missing },
+      "av-missing",
+      /must be an existing directory/,
     );
-    expect(readFileSync(dockerLog, "utf8")).not.toMatch(/compose .*(pull|up)/);
-
-    expect(
-      deploy({ AGENTVIEW_TOKEN_HOST_DIR: link }, "av-link").status,
-    ).not.toBe(0);
-
-    const wrongUid = deploy(
-      { AGENTVIEW_TOKEN_HOST_DIR: real, DAAX_AGENTVIEW_TOKEN_UID: "99999" },
+    refused({ AGENTVIEW_TOKEN_HOST_DIR: link }, "av-link", /not a symlink/);
+    refused(
+      { DAAX_AGENTVIEW_TOKEN_UID: "99999" },
       "av-uid",
+      /reads it as uid 99999/,
     );
-    expect(wrongUid.status).not.toBe(0);
-    expect(wrongUid.stderr).toMatch(/reads it as uid 99999/);
-
-    const noToken = deploy({ AGENTVIEW_TOKEN_HOST_DIR: real }, "av-notoken");
-    expect(noToken.status).toBe(0);
-    expect(noToken.stderr).toMatch(/no Agent View token/);
+    refused({}, "av-notoken", /no Agent View token/);
+    // Incoherent sets: each setting alone cannot work.
+    refused(
+      { AGENTVIEW_DAEMON_TOKEN_FILE: "" },
+      "av-https-notoken",
+      /AGENTVIEW_DAEMON_TOKEN_FILE must name/,
+    );
+    refused(
+      { AGENTVIEW_DAEMON_URL: "", AGENTVIEW_DAEMON_TOKEN_FILE: "" },
+      "av-dir-only",
+      /AGENTVIEW_DAEMON_URL=https/,
+    );
+    refused(
+      { AGENTVIEW_TOKEN_HOST_DIR: "" },
+      "av-no-dir",
+      /AGENTVIEW_TOKEN_HOST_DIR must be/,
+    );
+    refused(
+      { AGENTVIEW_DAEMON_TOKEN_FILE: "/etc/passwd" },
+      "av-outside-mount",
+      /in the \/run\/agentview mount/,
+    );
 
     writeFileSync(join(real, "token"), "t\n");
     chmodSync(join(real, "token"), 0o644);
-    const exposed = deploy({ AGENTVIEW_TOKEN_HOST_DIR: real }, "av-exposed");
-    expect(exposed.status).not.toBe(0);
-    expect(exposed.stderr).toMatch(/mode 0600 or 0400/);
+    refused({}, "av-exposed", /mode 0600 or 0400/);
 
     chmodSync(join(real, "token"), 0o600);
-    expect(deploy({ AGENTVIEW_TOKEN_HOST_DIR: real }, "av-ok").status).toBe(0);
+    expect(deploy({}, "av-ok").status).toBe(0);
+
+    // Not configured at all: nothing is checked.
+    resetDockerLog();
+    const off = runDeploy("pinned", { TEST_SECRET_A: "x" }, freshLog("av-off"));
+    expect(off.status).toBe(0);
   });
 
   it("REJECTS a tag override before touching docker", () => {

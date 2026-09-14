@@ -59,6 +59,7 @@ function setup({
   ssExit = 0,
   withSs = true,
   mainPid = "4242",
+  stopExit = 0,
 }: {
   env?: string;
   probe?: string;
@@ -67,6 +68,7 @@ function setup({
   ssExit?: number;
   withSs?: boolean;
   mainPid?: string;
+  stopExit?: number;
 } = {}) {
   stub(
     "docker",
@@ -80,7 +82,8 @@ esac`,
     "systemctl",
     `echo "systemctl $*" >> "${log}"
 case "$*" in
-  *is-active*) echo ${relayState} ;;
+  *is-active*) echo "${relayState}" ;;
+  *"stop agentd-docker-relay"*) exit ${stopExit} ;;
   *"show -p MainPID"*) echo ${mainPid} ;;
   *) exit 0 ;;
 esac`,
@@ -108,8 +111,7 @@ const relayFiles = () =>
   existsSync(join(home, ".config/systemd/user/agentd-docker-relay.service")) ||
   existsSync(join(home, ".local/bin/agentd-docker-relay"));
 const stopped = () =>
-  existsSync(log) &&
-  /disable --now agentd-docker-relay/.test(readFileSync(log, "utf8"));
+  existsSync(log) && /stop agentd-docker-relay/.test(readFileSync(log, "utf8"));
 
 describe("retire-agentd-relay.sh", () => {
   it("retires the relay once daax reads agentd over the tailnet and only agentd listens", () => {
@@ -133,7 +135,7 @@ describe("retire-agentd-relay.sh", () => {
     setup({ probe: "401" });
     const r = run();
     expect(r.status).not.toBe(0);
-    expect(r.stderr).toMatch(/HTTP 401/);
+    expect(r.stderr).toMatch(/answered 401/);
     expect(stopped()).toBe(false);
     expect(relayFiles()).toBe(true);
   });
@@ -142,7 +144,39 @@ describe("retire-agentd-relay.sh", () => {
     setup({ relayState: "active" });
     const r = run();
     expect(r.status).not.toBe(0);
-    expect(r.stderr).toMatch(/still active/);
+    expect(r.stderr).toMatch(/is .active. after stop/);
+    expect(relayFiles()).toBe(true);
+  });
+
+  it("refuses when daax has no admin subject to verify Agent View with", () => {
+    setup({ probe: "noauth" });
+    const r = run();
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/DAAX_ADMIN_USERS/);
+    expect(stopped()).toBe(false);
+  });
+
+  it("removes nothing when the stop itself fails", () => {
+    setup({ stopExit: 1 });
+    const r = run();
+    expect(r.status).not.toBe(0);
+    expect(relayFiles()).toBe(true);
+  });
+
+  it("removes nothing when the relay's state is unknown after stop", () => {
+    setup({ relayState: "" });
+    const r = run();
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/not inactive/);
+    expect(relayFiles()).toBe(true);
+  });
+
+  it("removes nothing when the listener check fails after the stop", () => {
+    setup({
+      listeners: `${AGENTD_ONLY}\nLISTEN 0 5 172.22.0.1:7717 0.0.0.0:* users:(("socat",pid=99,fd=5))`,
+    });
+    const r = run();
+    expect(r.status).not.toBe(0);
     expect(relayFiles()).toBe(true);
   });
 
