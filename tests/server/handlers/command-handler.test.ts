@@ -134,25 +134,43 @@ describe("buildFullCommand", () => {
   });
 
   describe("copilot command", () => {
-    const copilotPath =
-      "/home/vscode/.local/share/pnpm/global/5/node_modules/@github/copilot/index.js";
+    // The entrypoint is resolved at RUN TIME. The previous hardcoded path
+    // pinned pnpm's global store version ("global/5"); pnpm has since moved to
+    // "global/v11", so that path exists in no current agent image and every
+    // copilot session died on "cannot find module". Assert the resolution
+    // SHAPE, not a literal path — pinning a store version again is the bug.
+    const resolvesEntrypoint = (result: string) => {
+      // Must not hardcode any pnpm global store version.
+      expect(result).not.toMatch(/pnpm\/global\/[^*]+\/node_modules/);
+      // Resolves via find with a QUOTED pattern (zsh aborts on an unmatched
+      // glob and prints "no matches found" into the user's session).
+      expect(result).toContain(
+        "find /home/vscode/.local/share/pnpm/global -maxdepth 4 -path '*/@github/copilot/index.js'",
+      );
+      // Falls back to the PATH shim when no JS entrypoint is present.
+      expect(result).toContain("else exec copilot");
+    };
 
-    it("transforms bare copilot command to node execution", () => {
+    it("resolves the copilot entrypoint at run time for a bare command", () => {
       const result = buildFullCommand("copilot");
 
-      expect(result).toBe(`node ${copilotPath}`);
+      resolvesEntrypoint(result);
+      expect(result).toContain('exec node "$COPILOT_JS"');
     });
 
-    it("transforms copilot with arguments", () => {
+    it("passes arguments through to both the node and shim paths", () => {
       const result = buildFullCommand("copilot --help");
 
-      expect(result).toBe(`node ${copilotPath} --help`);
+      resolvesEntrypoint(result);
+      expect(result).toContain('exec node "$COPILOT_JS" --help');
+      expect(result).toContain("exec copilot --help");
     });
 
     it("transforms copilot with complex arguments", () => {
       const result = buildFullCommand("copilot chat --continue");
 
-      expect(result).toBe(`node ${copilotPath} chat --continue`);
+      resolvesEntrypoint(result);
+      expect(result).toContain('exec node "$COPILOT_JS" chat --continue');
     });
 
     it("does not match copilot-test (word boundary)", () => {
