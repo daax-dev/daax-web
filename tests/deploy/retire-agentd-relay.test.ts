@@ -5,7 +5,7 @@
  * the script must never report success while anything but agentd listens.
  */
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -18,6 +18,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+
+// Every case spawns the real script through stubbed tools; under a full-suite
+// run the default 5s budget is exceeded (review r7), so give the file 30s.
+vi.setConfig({ testTimeout: 30_000 });
 
 const SCRIPT = resolve(__dirname, "../../deploy/host/retire-agentd-relay.sh");
 
