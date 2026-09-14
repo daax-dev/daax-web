@@ -76,7 +76,8 @@ The server reads these at request time (no `NEXT_PUBLIC_` equivalents):
 
 A signal requires a verified Pocket ID subject through daax's existing forward-auth
 configuration. The local-operator bypass has no subject and receives 403. Only the
-signal POST asserts identity; all GETs remain Accept-only and raw payloads remain
+signal POST asserts identity; GETs forward only `Accept`, plus the configured read-only
+peer bearer when the daemon is reached over https, and raw payloads remain
 excluded. The daemon must admit that subject and the proof secret. The incoming
 forwarded subject must carry a matching `X-Daax-Proxy-Secret` proof against
 `DAAX_PROXY_SECRET` (or its configured rotation value); legacy host-dev identity

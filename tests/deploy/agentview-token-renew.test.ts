@@ -33,6 +33,8 @@ let server: Server;
 let port = 0;
 let reply: { status: number; body: unknown } = { status: 200, body: {} };
 let nodeStatus = 200;
+// When set, only this bearer gets nodeStatus; any other token is accepted.
+let refusedBearer: string | undefined;
 let nodeAuth: string | undefined;
 let logoutStatus = 200;
 let logoutBody = JSON.stringify({ signed_out: true });
@@ -65,7 +67,11 @@ beforeAll(async () => {
       }
       if (req.url === "/api/v1/node") {
         nodeAuth = req.headers.authorization;
-        res.writeHead(nodeStatus, { "Content-Type": "application/json" });
+        const status =
+          refusedBearer && nodeAuth !== `Bearer ${refusedBearer}`
+            ? 200
+            : nodeStatus;
+        res.writeHead(status, { "Content-Type": "application/json" });
         res.end("{}");
         return;
       }
@@ -85,6 +91,7 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "daax-agentview-renew-"));
   mints = 0;
   nodeStatus = 200;
+  refusedBearer = undefined;
   nodeAuth = undefined;
   logoutStatus = 200;
   logoutBody = JSON.stringify({ signed_out: true });
@@ -308,6 +315,22 @@ describeIfPython("agentview-token-renew.sh", { timeout: 30_000 }, () => {
     expect(r.stdout + r.stderr).not.toContain(TOKEN_1);
   });
 
+  it("revokes an exposed session directly even with a proxy in the environment", async () => {
+    reply = valid();
+    expect((await run()).status).toBe(0);
+    chmodSync(join(dir(), "token"), 0o644);
+    reply = { status: 200, body: { ...valid().body, token: TOKEN_2 } };
+    const r = await run(undefined, {
+      http_proxy: "http://127.0.0.1:9",
+      HTTP_PROXY: "http://127.0.0.1:9",
+      ALL_PROXY: "http://127.0.0.1:9",
+    });
+    expect(r.status).toBe(0);
+    expect(logouts).toEqual([
+      { auth: `Bearer ${TOKEN_1}`, contentType: "application/json" },
+    ]);
+  });
+
   it("fails loudly, new token in place, when the exposed session cannot be revoked", async () => {
     reply = valid();
     expect((await run()).status).toBe(0);
@@ -390,8 +413,36 @@ describeIfPython("agentview-token-renew.sh", { timeout: 30_000 }, () => {
     reply = valid();
     expect((await run()).status).toBe(0);
     nodeStatus = 401;
+    refusedBearer = TOKEN_1;
+    reply = { status: 200, body: { ...valid().body, token: TOKEN_2 } };
     expect((await run(undefined, probe())).status).toBe(0);
     expect(mints).toBe(2);
+    expect(readFileSync(join(dir(), "token"), "utf8").trim()).toBe(TOKEN_2);
+  });
+
+  it("does not install a new session the public origin refuses", async () => {
+    reply = valid();
+    nodeStatus = 403;
+    const r = await run(undefined, probe());
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/not accepted at/);
+    expect(existsSync(join(dir(), "token"))).toBe(false);
+  });
+
+  it("verifies through the public origin directly even with a proxy in the environment", async () => {
+    reply = valid();
+    expect((await run()).status).toBe(0);
+    const proxied = {
+      ...probe(),
+      http_proxy: "http://127.0.0.1:9",
+      HTTP_PROXY: "http://127.0.0.1:9",
+      ALL_PROXY: "http://127.0.0.1:9",
+    };
+    // Kept (200 via a direct request) — through the dead proxy it would be
+    // "could not verify" and still exit 0, so assert the daemon saw the bearer.
+    nodeAuth = undefined;
+    expect((await run(undefined, proxied)).status).toBe(0);
+    expect(nodeAuth).toBe(`Bearer ${TOKEN_1}`);
   });
 
   it("does NOT mint on a 403: that is configuration, not an expired session", async () => {

@@ -178,6 +178,15 @@ open(sys.argv[2], "w").write(token + "\n")
 open(sys.argv[3], "w").write(exp + "\n")
 PY
 chmod 0600 "$new"; chmod 0644 "$expires.new"
+# Prove the new session works where daax will use it — through the public
+# origin, over the tailnet — before it replaces anything. A mint that loopback
+# accepts but the public route refuses (DNS, Traefik, Host policy) must fail
+# here, not as 401/403 on every Agent View read after the deploy.
+if [ -n "$public_origin" ]; then
+  code=$(printf 'header = "Authorization: Bearer %s"\nurl = "%s/api/v1/node"\n' "$(cat "$new")" "$public_origin" |
+    curl --noproxy '*' -s -K - -o /dev/null -m 15 -w '%{http_code}' || true)
+  [ "$code" = 200 ] || die "the new session was not accepted at $public_origin (HTTP ${code:-none}); the stored token is unchanged"
+fi
 unrevoked=0
 if [ "$exposed" = 1 ]; then
   # Queue the exposed token for revocation BEFORE it is replaced, atomically.

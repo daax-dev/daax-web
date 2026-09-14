@@ -1,5 +1,7 @@
 /** Agent View: payload-free GETs and one declared POST signal (ADR 0026).
- * Identity assertions are sent on the POST only; GETs remain Accept-only.
+ * Identity assertions are sent on the POST only; GETs forward only Accept, plus the
+ * configured read-only peer bearer when the daemon is reached over https — never
+ * browser identity headers.
  */
 
 import { NextResponse } from "next/server";

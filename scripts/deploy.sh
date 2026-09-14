@@ -311,9 +311,10 @@ phase_preflight() {
     # The same shape the runtime accepts (lib/agentview/server.ts TOKEN_SHAPE):
     # one line, one token. Checked here so a bad file fails the deploy instead of
     # every Agent View read answering 502 afterwards. The value is never printed.
-    # (bash ERE caps a repeat count at 255, so the length is checked separately.)
-    local tok_body; tok_body="$(tr -d '\n' <"$tok_host")"
-    [[ "$(wc -l <"$tok_host" | tr -d ' ')" -le 1 && "$tok_body" =~ ^[A-Za-z0-9_-]+$ && ${#tok_body} -ge 16 && ${#tok_body} -le 512 ]] \
+    # Exactly one record: the token, optionally followed by one newline — the same
+    # fullmatch the renewer uses. Not flattened first, so "TOKEN\nsecond" with no
+    # final newline is refused like any other second line.
+    python3 -c 'import re,sys; sys.exit(0 if re.fullmatch(r"[A-Za-z0-9_-]{16,512}\n?", open(sys.argv[1]).read()) else 1)' "$tok_host" \
       || fail preflight "the Agent View token at $tok_host is not one session token — re-run deploy/host/agentview-token-renew.sh"
   fi
   assert_code_server_image "$BUILD_CODE_SERVER" || fail preflight "code-server image preflight failed"

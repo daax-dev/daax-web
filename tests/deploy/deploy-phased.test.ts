@@ -1149,6 +1149,9 @@ describe("deploy.sh image override (fleet roll)", () => {
     refused({}, "av-badshape", /not one session token/);
     writeFileSync(join(real, "token"), "A".repeat(43) + "\nsecond\n");
     refused({}, "av-twolines", /not one session token/);
+    // A second record without a final newline must not slip through.
+    writeFileSync(join(real, "token"), "A".repeat(43) + "\nsecond");
+    refused({}, "av-twolines-noeol", /not one session token/);
     writeFileSync(join(real, "token"), "A".repeat(43) + "\n");
 
     // Not configured at all: nothing is checked.
