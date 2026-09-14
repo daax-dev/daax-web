@@ -40,4 +40,3 @@ if [ ! -f "$dir/token" ] || [ -L "$dir/token" ] || { [ "$meta" != "1000 600" ] &
   exit 1
 fi
 echo "Agent View session ready in $dir (expires $(cat "$dir/token.expires")); renewed by agentview-token-renew.timer"
-

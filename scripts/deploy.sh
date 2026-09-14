@@ -308,6 +308,13 @@ phase_preflight() {
     tok_meta="$(stat -c '%u %a' "$tok_host" 2>/dev/null || stat -f '%u %Lp' "$tok_host")"
     [[ "$tok_meta" =~ ^${want_uid}\ (600|400)$ ]] \
       || fail preflight "the Agent View token must be owned by uid $want_uid, mode 0600 or 0400 (found: $tok_meta) — re-run deploy/host/agentview-token-renew.sh"
+    # The same shape the runtime accepts (lib/agentview/server.ts TOKEN_SHAPE):
+    # one line, one token. Checked here so a bad file fails the deploy instead of
+    # every Agent View read answering 502 afterwards. The value is never printed.
+    # (bash ERE caps a repeat count at 255, so the length is checked separately.)
+    local tok_body; tok_body="$(tr -d '\n' <"$tok_host")"
+    [[ "$(wc -l <"$tok_host" | tr -d ' ')" -le 1 && "$tok_body" =~ ^[A-Za-z0-9_-]+$ && ${#tok_body} -ge 16 && ${#tok_body} -le 512 ]] \
+      || fail preflight "the Agent View token at $tok_host is not one session token — re-run deploy/host/agentview-token-renew.sh"
   fi
   assert_code_server_image "$BUILD_CODE_SERVER" || fail preflight "code-server image preflight failed"
   # NOTE: no managed-Postgres reachability gate here. Managed mode (DAAX_PG_MANAGED=1)

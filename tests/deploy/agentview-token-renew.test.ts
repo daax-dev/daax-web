@@ -145,6 +145,45 @@ describeIfPython("agentview-token-renew.sh", { timeout: 30_000 }, () => {
     expect(r.stdout + r.stderr).not.toContain(TOKEN_1);
   });
 
+  it("goes direct to agentd even with a proxy in the environment", async () => {
+    reply = {
+      status: 200,
+      body: {
+        token: TOKEN_1,
+        subject: "peer:federation",
+        expires_at: inDays(30),
+      },
+    };
+    // An unreachable proxy: if curl honoured it, the mint (and the bearer on
+    // every later request) would go to the proxy and this run would fail.
+    const r = await run(undefined, {
+      http_proxy: "http://127.0.0.1:9",
+      HTTP_PROXY: "http://127.0.0.1:9",
+      https_proxy: "http://127.0.0.1:9",
+      ALL_PROXY: "http://127.0.0.1:9",
+    });
+    expect(r.status).toBe(0);
+    expect(mints).toBe(1);
+  });
+
+  it("replaces a stored token that is not one session token", async () => {
+    mkdirSync(dir(), { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir(), "token"), "t\n", { mode: 0o600 });
+    writeFileSync(join(dir(), "token.expires"), inDays(30) + "\n");
+    reply = {
+      status: 200,
+      body: {
+        token: TOKEN_1,
+        subject: "peer:federation",
+        expires_at: inDays(30),
+      },
+    };
+    const r = await run();
+    expect(r.status).toBe(0);
+    expect(mints).toBe(1);
+    expect(readFileSync(join(dir(), "token"), "utf8").trim()).toBe(TOKEN_1);
+  });
+
   it("does not mint again while the stored session has more than 10 days left", async () => {
     reply = {
       status: 200,

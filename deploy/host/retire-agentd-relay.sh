@@ -42,6 +42,7 @@ command -v systemctl >/dev/null 2>&1 || die "systemctl is required"
 envs=$("$DOCKER" inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$CONTAINER" 2>/dev/null) \
   || die "no running '$CONTAINER' container to verify"
 url=$(printf '%s\n' "$envs" | sed -n 's/^AGENTVIEW_DAEMON_URL=//p' | tail -1)
+url=${url%/}   # deploy.sh accepts, and the runtime normalizes, one trailing slash
 tokfile=$(printf '%s\n' "$envs" | sed -n 's/^AGENTVIEW_DAEMON_TOKEN_FILE=//p' | tail -1)
 [[ "$url" =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$ ]] \
   || die "daax is not configured for the tailnet path (AGENTVIEW_DAEMON_URL='$url'); deploy it first"

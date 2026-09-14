@@ -1135,12 +1135,21 @@ describe("deploy.sh image override (fleet roll)", () => {
       /in the \/run\/agentview mount/,
     );
 
-    writeFileSync(join(real, "token"), "t\n");
+    writeFileSync(join(real, "token"), "A".repeat(43) + "\n");
     chmodSync(join(real, "token"), 0o644);
     refused({}, "av-exposed", /mode 0600 or 0400/);
 
     chmodSync(join(real, "token"), 0o600);
     expect(deploy({}, "av-ok").status).toBe(0);
+
+    // The shape the runtime accepts: a file that is not one token fails here,
+    // not as a 502 on every Agent View read after the deploy.
+    writeFileSync(join(real, "token"), "t\n");
+    chmodSync(join(real, "token"), 0o600);
+    refused({}, "av-badshape", /not one session token/);
+    writeFileSync(join(real, "token"), "A".repeat(43) + "\nsecond\n");
+    refused({}, "av-twolines", /not one session token/);
+    writeFileSync(join(real, "token"), "A".repeat(43) + "\n");
 
     // Not configured at all: nothing is checked.
     resetDockerLog();

@@ -121,6 +121,21 @@ describe("retire-agentd-relay.sh", () => {
     expect(r.status).toBe(0);
     expect(relayFiles()).toBe(false);
     expect(r.stdout).toMatch(/relay retired/);
+    // The verdict must come from daax's own authenticated Agent View route,
+    // not from whatever `docker exec` happens to print.
+    const calls = readFileSync(log, "utf8");
+    expect(calls).toMatch(/docker exec daax node -e .*\/api\/agentview\/node/);
+    expect(calls).toMatch(/DAAX_PROXY_SECRET/);
+  });
+
+  it("accepts a daemon URL with one trailing slash, as deploy.sh and the runtime do", () => {
+    setup({
+      env: "AGENTVIEW_DAEMON_URL=https://agents.galway.poley.dev/\\nAGENTVIEW_DAEMON_TOKEN_FILE=/run/agentview/token",
+    });
+    const r = run();
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+    expect(relayFiles()).toBe(false);
   });
 
   it("refuses, changing nothing, when daax is not on the tailnet path yet", () => {

@@ -80,7 +80,7 @@ revoke_pending() {
   out=$(mktemp "$DIR/.revoke.XXXXXX")
   # agentctl auth revoke's route. The token rides curl's config on stdin.
   code=$(printf 'header = "Authorization: Bearer %s"\nurl = "%s/auth/logout"\n' "$(tr -d '[:space:]' <"$pending")" "$DAEMON" |
-    curl -s -K - -m 15 -o "$out" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{}' || true)
+    curl --noproxy '*' -s -K - -m 15 -o "$out" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{}' || true)
   verdict=$("$PY" -c 'import json,sys; v=json.load(open(sys.argv[1])).get("signed_out"); print(v if isinstance(v,bool) else "")' "$out" 2>/dev/null || true)
   rm -f "$out"
   if [ "$code" != 200 ] || [ -z "$verdict" ]; then
@@ -120,6 +120,13 @@ still_good() {
   else
     return 1
   fi
+  # Same shape daax accepts at runtime (lib/agentview/server.ts TOKEN_SHAPE): a
+  # malformed file would pass every other check here and 502 every read, so it
+  # is replaced rather than kept.
+  if ! "$PY" -c 'import re,sys; sys.exit(0 if re.fullmatch(r"[A-Za-z0-9_-]{16,512}\n?", open(sys.argv[1]).read()) else 1)' "$token"; then
+    log "stored token is not one session token; replacing it"
+    return 1
+  fi
   [ -f "$expires" ] || return 1
   "$PY" - "$expires" "$RENEW_WITHIN_DAYS" <<'PY' || return 1
 import sys, datetime
@@ -130,7 +137,7 @@ PY
   [ -n "$public_origin" ] || return 0
   # The token rides curl's config on stdin, never argv.
   code=$(printf 'header = "Authorization: Bearer %s"\nurl = "%s/api/v1/node"\n' "$(cat "$token")" "$public_origin" |
-    curl -s -K - -o /dev/null -m 15 -w '%{http_code}' || true)
+    curl --noproxy '*' -s -K - -o /dev/null -m 15 -w '%{http_code}' || true)
   case "$code" in
     200) return 0 ;;
     # 401 is agentd refusing the session itself: renew.
@@ -152,7 +159,7 @@ trap 'rm -f "$resp" "$new" "$DIR"/.revoke.* "$DIR"/.pending-revoke.??????' EXIT
 # Loopback-only route; its admission check is the socket. JSON content type and
 # no Origin satisfy guardBrowserWrite. The response body (which holds the token)
 # goes to a 0600 file in this directory, never to a pipe or the terminal.
-code=$(curl -s -m 15 -o "$resp" -w '%{http_code}' -X POST \
+code=$(curl --noproxy '*' -s -m 15 -o "$resp" -w '%{http_code}' -X POST \
   -H 'Content-Type: application/json' --data '{"audience":"peer"}' \
   "$DAEMON/api/v1/auth/session" || true)
 [ "$code" = 200 ] || die "agentd at $DAEMON did not mint a session (HTTP ${code:-none})"
