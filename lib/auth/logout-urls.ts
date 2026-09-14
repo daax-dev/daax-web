@@ -29,7 +29,10 @@
 /** Same-origin forward-auth portal logout (portal `main`). */
 export const DEFAULT_FORWARD_AUTH_LOGOUT_URL = "/portals/main/logout";
 
-/** Legacy non-fleet default, kept for localhost and other hosts. */
+/**
+ * Non-fleet default IdP (localhost and other hosts): the legacy shared
+ * instance. Only its origin is used — see `identityProviderOrigin`.
+ */
 export const DEFAULT_OIDC_END_SESSION_URL =
   "https://auth.poley.dev/api/oidc/end-session";
 
@@ -46,13 +49,16 @@ const FLEET_DAAX_HOSTNAME =
 
 export interface LogoutLocation {
   hostname: string;
-  origin: string;
 }
 
 export interface LogoutEnv {
   /** `NEXT_PUBLIC_LOGOUT_URL`; empty/undefined means unset. */
   logoutUrl?: string;
-  /** `NEXT_PUBLIC_OIDC_END_SESSION_URL`; empty/undefined means unset. */
+  /**
+   * `NEXT_PUBLIC_OIDC_END_SESSION_URL`; empty/undefined means unset. Only its
+   * http(s) ORIGIN selects the IdP: the no-hint end-session call ends no
+   * session in Pocket ID v2.14.0, so it is never navigated to.
+   */
   endSessionUrl?: string;
 }
 
@@ -69,8 +75,16 @@ export function fleetHostFromHostname(hostname: string): string | null {
   return match ? match[1] : null;
 }
 
-function legacyEndSessionUrl(endSessionUrl: string, origin: string): string {
-  return `${endSessionUrl}?post_logout_redirect_uri=${encodeURIComponent(origin)}`;
+/** http(s) origin of a configured IdP URL, or null if unusable. */
+export function identityProviderOrigin(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:"
+      ? parsed.origin
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export function deriveLogoutUrls(
@@ -78,30 +92,18 @@ export function deriveLogoutUrls(
   env: LogoutEnv = {},
 ): LogoutUrls {
   const forwardAuthLogoutUrl = env.logoutUrl || DEFAULT_FORWARD_AUTH_LOGOUT_URL;
+  const pocketIdLogout = (origin: string) => ({
+    forwardAuthLogoutUrl,
+    identityProviderLogoutUrl: `${origin}${POCKET_ID_LOGOUT_PATH}`,
+  });
 
-  if (env.endSessionUrl) {
-    return {
-      forwardAuthLogoutUrl,
-      identityProviderLogoutUrl: legacyEndSessionUrl(
-        env.endSessionUrl,
-        location.origin,
-      ),
-    };
-  }
+  const overrideOrigin = env.endSessionUrl
+    ? identityProviderOrigin(env.endSessionUrl)
+    : null;
+  if (overrideOrigin) return pocketIdLogout(overrideOrigin);
 
   const host = fleetHostFromHostname(location.hostname);
-  if (host) {
-    return {
-      forwardAuthLogoutUrl,
-      identityProviderLogoutUrl: `https://auth.${host}.poley.dev${POCKET_ID_LOGOUT_PATH}`,
-    };
-  }
+  if (host) return pocketIdLogout(`https://auth.${host}.poley.dev`);
 
-  return {
-    forwardAuthLogoutUrl,
-    identityProviderLogoutUrl: legacyEndSessionUrl(
-      DEFAULT_OIDC_END_SESSION_URL,
-      location.origin,
-    ),
-  };
+  return pocketIdLogout(new URL(DEFAULT_OIDC_END_SESSION_URL).origin);
 }

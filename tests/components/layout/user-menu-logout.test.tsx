@@ -165,8 +165,6 @@ describe("UserMenu logout", () => {
 
     await waitFor(() => expect(assign).toHaveBeenCalledTimes(1));
     expect(fetchMock.mock.calls[0][0]).toBe("/portals/other/logout");
-    expect(assign).toHaveBeenCalledWith(
-      `https://idp.example.com/api/oidc/end-session?post_logout_redirect_uri=${encodeURIComponent("https://daax.kinsale.poley.dev")}`,
-    );
+    expect(assign).toHaveBeenCalledWith("https://idp.example.com/logout");
   });
 });
