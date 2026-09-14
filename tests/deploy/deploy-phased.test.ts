@@ -9,6 +9,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -1066,6 +1067,43 @@ describe("deploy.sh image override (fleet roll)", () => {
       expect(jl).toMatch(/"phase":"up","status":"fail"/);
       expect(jl).toMatch(/"phase":"rollback","status":"ok"/);
     });
+  });
+
+  it("AGENTVIEW_TOKEN_HOST_DIR must exist as a real directory before anything is mounted", () => {
+    const missing = join(work, "agentview-missing");
+    const real = join(work, "agentview-real");
+    const link = join(work, "agentview-link");
+    mkdirSync(real, { recursive: true });
+    if (!existsSync(link)) symlinkSync(real, link);
+
+    resetDockerLog();
+    const refused = runDeploy(
+      "pinned",
+      { TEST_SECRET_A: "x", AGENTVIEW_TOKEN_HOST_DIR: missing },
+      freshLog("agentview-dir-missing"),
+    );
+    expect(refused.status).not.toBe(0);
+    expect(refused.stderr).toMatch(
+      /AGENTVIEW_TOKEN_HOST_DIR must be an existing directory/,
+    );
+    expect(readFileSync(dockerLog, "utf8")).not.toMatch(/compose .*(pull|up)/);
+
+    resetDockerLog();
+    const viaLink = runDeploy(
+      "pinned",
+      { TEST_SECRET_A: "x", AGENTVIEW_TOKEN_HOST_DIR: link },
+      freshLog("agentview-dir-link"),
+    );
+    expect(viaLink.status).not.toBe(0);
+
+    resetDockerLog();
+    const ok = runDeploy(
+      "pinned",
+      { TEST_SECRET_A: "x", AGENTVIEW_TOKEN_HOST_DIR: real },
+      freshLog("agentview-dir-ok"),
+    );
+    expect(ok.status).toBe(0);
+    expect(ok.stderr).toMatch(/no Agent View token/);
   });
 
   it("REJECTS a tag override before touching docker", () => {

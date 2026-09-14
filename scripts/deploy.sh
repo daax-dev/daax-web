@@ -283,6 +283,17 @@ phase_preflight() {
   fi
 
   assert_required_secrets || fail preflight "required secret(s) missing/empty for target '$ENV_NAME'"
+  # Agent View's token directory is bind-mounted into daax. Docker CREATES a
+  # missing bind source as root, which would leave a root-owned directory the
+  # renewal job can never write — so it must already exist, be a real directory
+  # (not a symlink) and belong to the user deploying. A missing token inside it
+  # only degrades the Agent View tab, so that is a warning, not a failure.
+  if [[ -n "${AGENTVIEW_TOKEN_HOST_DIR:-}" ]]; then
+    [[ "$AGENTVIEW_TOKEN_HOST_DIR" == /* && -d "$AGENTVIEW_TOKEN_HOST_DIR" && ! -L "$AGENTVIEW_TOKEN_HOST_DIR" && -O "$AGENTVIEW_TOKEN_HOST_DIR" ]] \
+      || fail preflight "AGENTVIEW_TOKEN_HOST_DIR must be an existing directory owned by $(id -un), not a symlink: $AGENTVIEW_TOKEN_HOST_DIR (install with deploy/host/install-agentview-token.sh)"
+    [[ -f "$AGENTVIEW_TOKEN_HOST_DIR/token" ]] \
+      || err "WARNING: no Agent View token in $AGENTVIEW_TOKEN_HOST_DIR — the Agent View tab will be refused until deploy/host/install-agentview-token.sh has run"
+  fi
   assert_code_server_image "$BUILD_CODE_SERVER" || fail preflight "code-server image preflight failed"
   # NOTE: no managed-Postgres reachability gate here. Managed mode (DAAX_PG_MANAGED=1)
   # fails closed above, so the only path reaching this point is compose-local

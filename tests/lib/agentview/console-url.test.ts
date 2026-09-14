@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { daemonConsoleUrl } from "@/lib/agentview/console-url";
+import {
+  consoleLoginUrl,
+  consoleOrigin,
+  daemonConsoleUrl,
+} from "@/lib/agentview/console-url";
 
 const at = (hostname: string, protocol = "https:") => ({ protocol, hostname });
 
@@ -40,5 +44,26 @@ describe("daemonConsoleUrl", () => {
     expect(
       daemonConsoleUrl(at("daax.galway.poley.dev"), "https://x.example/ui//"),
     ).toBe("https://x.example/ui");
+  });
+});
+
+describe("consoleOrigin / consoleLoginUrl", () => {
+  it("scopes postMessage to the daemon page's own origin", () => {
+    expect(consoleOrigin("https://agents.galway.poley.dev")).toBe(
+      "https://agents.galway.poley.dev",
+    );
+    expect(consoleOrigin("http://localhost:7717")).toBe(
+      "http://localhost:7717",
+    );
+    expect(consoleOrigin("https://x.example/ui")).toBe("https://x.example");
+  });
+
+  it("points sign-in at agentd's login on the same origin", () => {
+    expect(consoleLoginUrl("https://agents.galway.poley.dev")).toBe(
+      "https://agents.galway.poley.dev/auth/login",
+    );
+    expect(consoleLoginUrl("https://x.example/ui/")).toBe(
+      "https://x.example/ui/auth/login",
+    );
   });
 });

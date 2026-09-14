@@ -11,7 +11,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "next-themes";
 import { ContainerEmbed } from "@/components/ContainerEmbed";
-import { daemonConsoleUrl } from "@/lib/agentview/console-url";
+import {
+  consoleLoginUrl,
+  consoleOrigin,
+  daemonConsoleUrl,
+} from "@/lib/agentview/console-url";
 
 export function DaemonConsole() {
   const { resolvedTheme } = useTheme();
@@ -35,13 +39,15 @@ export function DaemonConsole() {
   }, [resolvedTheme, initialTheme]);
 
   useEffect(() => {
-    if (!resolvedTheme) return;
+    if (!resolvedTheme || !baseUrl) return;
     const iframe = wrapper.current?.querySelector("iframe");
+    // Only to agentd's own origin: if the frame has navigated elsewhere (a login
+    // redirect), the browser drops the message instead of delivering it there.
     iframe?.contentWindow?.postMessage(
       { type: "agentview:theme", theme: resolvedTheme },
-      "*",
+      consoleOrigin(baseUrl),
     );
-  }, [resolvedTheme]);
+  }, [resolvedTheme, baseUrl]);
 
   if (!baseUrl || !initialTheme) {
     return (
@@ -56,7 +62,18 @@ export function DaemonConsole() {
       <p className="text-xs text-muted-foreground">
         This is the daemon&apos;s own page, served by agentd at{" "}
         <span className="font-mono">{baseUrl}</span>; nothing here is rendered
-        by daax.
+        by daax. Blank or asking to sign in?{" "}
+        <a
+          href={consoleLoginUrl(baseUrl)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-2 hover:text-foreground"
+          data-testid="agentview-console-signin"
+        >
+          Sign in to agentd
+        </a>{" "}
+        in a new tab — its login cannot run inside this frame — then reload the
+        frame.
       </p>
       <ContainerEmbed
         baseUrl={baseUrl}

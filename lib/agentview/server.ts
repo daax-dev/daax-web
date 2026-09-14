@@ -14,6 +14,12 @@
  * an explicit AGENTVIEW_DAEMON_URL always wins; in container mode
  * (HOST_WORKSPACE_PATH set) reach the host through host.docker.internal, which
  * docker-compose wires via `extra_hosts`; otherwise loopback for host-dev.
+ *
+ * The fleet sets AGENTVIEW_DAEMON_URL=https://agents.<host>.poley.dev — agentd
+ * on the tailnet, the same address fleet peers federate to — and names a
+ * read-only peer session in AGENTVIEW_DAEMON_TOKEN_FILE, sent as a bearer token
+ * on reads (see `daemonReadHeaders`). Off loopback agentd withholds raw
+ * payloads (dist-agent ADR 0014), which this proxy never forwards anyway.
  */
 
 import "server-only";
@@ -238,6 +244,60 @@ export function resolveDaemonPath(
   return null;
 }
 
+/** A bearer token read for the daemon was unusable; never carries the value. */
+export class DaemonTokenError extends Error {}
+
+/** agentd mints opaque base64url values; anything else is not a token. */
+const TOKEN_SHAPE = /^[A-Za-z0-9_-]{16,512}$/;
+
+/**
+ * The headers a READ sends: `Accept`, plus `Authorization: Bearer <token>` when
+ * — and only when — the daemon is addressed over https and
+ * AGENTVIEW_DAEMON_TOKEN_FILE names the session to present.
+ *
+ * - https only: a bearer token sent over plain HTTP crosses the wire in the
+ *   clear. agentctl refuses the same thing (credentialMayCross); loopback and
+ *   the container-mode default carry no token and need none.
+ * - Read on every request from the one opened file whose mode is checked, so a
+ *   renewal (an atomic rename into the mounted directory) takes effect with no
+ *   restart, and a file anything else on the host could read is refused.
+ * - A named file that cannot be used throws DaemonTokenError, which the caller
+ *   turns into a structured failure WITHOUT sending: an unauthenticated request
+ *   would only answer 401 and hide the real cause. The message never contains
+ *   the value.
+ * - Redirects are never followed (`redirect: "manual"` in daemonRequest), so the
+ *   token cannot be carried to an origin other than the configured one.
+ */
+export async function daemonReadHeaders(
+  base: string,
+  accept: string,
+): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { Accept: accept };
+  const name = "AGENTVIEW_DAEMON_TOKEN_FILE";
+  const path = process.env[name]?.trim();
+  if (!path || !base.startsWith("https://")) return headers;
+  let token = "";
+  try {
+    const file = await open(path, "r");
+    try {
+      const stat = await file.stat();
+      if (!stat.isFile() || (stat.mode & 0o077) !== 0)
+        throw new Error("not a private regular file");
+      token = (await file.readFile("utf8")).trim();
+    } finally {
+      await file.close();
+    }
+  } catch {
+    throw new DaemonTokenError(
+      `${name} must name a readable regular file private to its owner (mode 0600 or 0400)`,
+    );
+  }
+  if (!TOKEN_SHAPE.test(token))
+    throw new DaemonTokenError(`${name} does not contain one session token`);
+  headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
 /** Max ms to wait for the daemon to *answer*; the stream body is unbounded. */
 export const DAEMON_CONNECT_TIMEOUT_MS = 5_000;
 
@@ -280,9 +340,10 @@ export interface FetchDaemonOptions {
 }
 
 /**
- * One GET to the daemon. Sends only an `Accept` header — never the daax
- * session cookie, never any incoming header — because the daemon's session is
- * the operator's, not the browser's, and a proxied cookie would be a confused
+ * One GET to the daemon. Sends only `Accept` and, for an https daemon, the
+ * configured read session (`daemonReadHeaders`) — never the daax session
+ * cookie, never any incoming header — because the daemon's session is the
+ * operator's, not the browser's, and a proxied cookie would be a confused
  * deputy. Transport failures (refused connection, DNS, the 5 s connect
  * timeout, a caller abort) resolve to `{ ok:false, kind:"unreachable" }`; an
  * HTTP answer of any status is `{ ok:true, res }` for the caller to interpret.
@@ -297,6 +358,14 @@ export async function fetchDaemon(
 ): Promise<DaemonFetchResult> {
   const base = agentviewDaemonUrl();
   const url = `${base}/api/v1/${path}${query ? `?${query}` : ""}`;
+  let headers: Record<string, string>;
+  try {
+    headers = await daemonReadHeaders(base, accept);
+  } catch (err) {
+    if (err instanceof DaemonTokenError)
+      return { ok: false, kind: "unreachable", message: err.message };
+    throw err;
+  }
   const { signal: combined, cleanup } = withTimeout(
     signal,
     DAEMON_CONNECT_TIMEOUT_MS,
@@ -304,7 +373,7 @@ export async function fetchDaemon(
   try {
     const res = await daemonRequest(url, {
       method: "GET",
-      headers: { Accept: accept },
+      headers,
       signal: combined,
     });
     return { ok: true, res };

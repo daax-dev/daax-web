@@ -1,0 +1,11 @@
+[Unit]
+Description=Renew daax Agent View's read-only agentd session daily
+
+[Timer]
+OnBootSec=2min
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
