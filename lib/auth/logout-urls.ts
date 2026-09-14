@@ -1,8 +1,12 @@
 /**
  * Logout URL derivation for the two-step daax logout.
  *
- * The fleet gates daax with traefik-forward-auth v4.14.1 against each host's
- * OWN Pocket ID v2.14.0 (`auth.<host>.poley.dev`). `NEXT_PUBLIC_*` values are
+ * Target: the fleet's identity-cutover architecture (operator decision
+ * 2026-09-13) — every host gates daax with traefik-forward-auth v4.14.1
+ * (`/portals/*` routed to it on every app host) against the host's OWN
+ * upstream Pocket ID v2.14.0 (`auth.<host>.poley.dev`). Before a host's
+ * cutover the POST hits the old gate (harmless) and only the Pocket ID step
+ * has effect. `NEXT_PUBLIC_*` values are
  * inlined at build time, and one image is deployed to every host, so the
  * per-host URLs are derived at runtime from `window.location`.
  *
@@ -18,7 +22,8 @@
  *   `post_logout_redirect_uri`. daax never holds an ID token (forward-auth
  *   keeps only its own session JWT), so on the fleet the browser goes straight
  *   to Pocket ID's `/logout` sign-out page — the same destination, without the
- *   failing hop.
+ *   failing hop. The user confirms "Sign out" there; that page is what ends
+ *   the Pocket ID session (frontend/src/routes/logout/+page.svelte:17-22).
  */
 
 /** Same-origin forward-auth portal logout (portal `main`). */

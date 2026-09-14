@@ -57,7 +57,13 @@ describe("UserMenu logout", () => {
     order = [];
     fetchMock = vi.fn(async () => {
       order.push("fetch");
-      return new Response(null, { status: 200 });
+      // forward-auth v4.14.1 answers 303; with redirect:"manual" the browser
+      // hands back an opaque-redirect response (status 0) and does not follow.
+      return {
+        type: "opaqueredirect",
+        status: 0,
+        ok: false,
+      } as unknown as Response;
     });
     global.fetch = fetchMock as unknown as typeof fetch;
   });
@@ -92,6 +98,39 @@ describe("UserMenu logout", () => {
       "https://auth.kinsale.poley.dev/logout",
     );
     expect(order).toEqual(["fetch", "assign"]);
+  });
+
+  it("never calls Pocket ID end-session (no id_token_hint) and never follows the 303", async () => {
+    const assign = stubLocation(
+      "daax.galway.poley.dev",
+      "https://daax.galway.poley.dev",
+    );
+
+    await clickLogout();
+
+    await waitFor(() => expect(assign).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(init.redirect).toBe("manual");
+    expect(init.method).toBe("POST");
+    expect(String(url)).not.toContain("end-session");
+    expect(String(assign.mock.calls[0][0])).not.toContain("end-session");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("still navigates to Pocket ID when the gate answers non-2xx (pre-cutover host)", async () => {
+    const assign = stubLocation(
+      "daax.kinsale.poley.dev",
+      "https://daax.kinsale.poley.dev",
+    );
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 401 }));
+
+    await clickLogout();
+
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith(
+        "https://auth.kinsale.poley.dev/logout",
+      ),
+    );
   });
 
   it("still navigates to Pocket ID when the forward-auth POST fails", async () => {
