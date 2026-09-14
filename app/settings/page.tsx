@@ -105,6 +105,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 
+import { HomepageCardsHelp } from "@/components/settings/HomepageCardsHelp";
 import { useAdminAccess } from "@/hooks/use-admin-access";
 import { useProject } from "@/lib/project-context";
 import { buildProjectTree, type ProjectTreeNode } from "@/lib/project-tree";
@@ -3595,6 +3596,7 @@ function SettingsInner() {
                     color to change the card accent. Blue and green cards have
                     colored borders; white cards use the default style.
                   </p>
+                  <HomepageCardsHelp />
                 </CardContent>
               </Card>
 
