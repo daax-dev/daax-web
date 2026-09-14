@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew daax Agent View's read-only agentd session
+After=agentd.service
+Wants=agentd.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/agentview-token-renew

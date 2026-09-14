@@ -227,37 +227,21 @@ services:
     group_add:
       - "${DOCKER_GID:-999}"
 
-    # host.docker.internal must be DECLARED on Linux. Docker Desktop provides
-    # the name for free, which is why this was never missed on the macOS
-    # workstation and why Agent View was dead on every Linux host in the fleet:
-    # lib/agentview/server.ts dials http://host.docker.internal:7717 in
-    # container mode, the name did not resolve, and the UI reported the daemon
-    # unreachable — correctly, from where it was standing.
+    # host.docker.internal must be DECLARED on Linux (Docker Desktop provides it
+    # for free). It is the container-mode default for Agent View
+    # (lib/agentview/server.ts: http://host.docker.internal:7717, with the Host
+    # pinned to 127.0.0.1:7717) and for the watchtower/provenance defaults, so
+    # single-host container runs without AGENTVIEW_DAEMON_URL keep working.
     #
-    # This maps it to the host gateway. Harmless where the name already exists.
+    # The fleet does NOT use it for Agent View (decision 2026-09-14): each
+    # target sets AGENTVIEW_DAEMON_URL=https://agents.<host>.poley.dev — agentd
+    # on the tailnet, the address fleet peers federate to — and presents a
+    # read-only peer session (AGENTVIEW_DAEMON_TOKEN_FILE below). agentd stays on
+    # loopback; there is no host relay and no extra network. Off loopback agentd
+    # withholds raw payloads (dist-agent ADR 0014), which this proxy never
+    # forwards, and refuses control to a peer session (the signal POST).
     #
-    # The Linux half that was "tracked separately" has an answer, measured on
-    # galway 2026-09-10, and it is NOT to re-bind the daemon. agentd's loopback
-    # exemption is a property of the LISTENER, not the peer: cmd/agentd/listen.go
-    # wraps the socket in loopbackListener only for a loopback bind, and
-    # internal/api/authmiddleware.go's sessionRequired reads that stamp. Bind
-    # agentd to 0.0.0.0 or a bridge address and it becomes the network listener,
-    # so every Agent View read — which carries no credential — 401s.
-    # --trusted-proxy* does not close it either: daax asserts an identity only on
-    # POST agents/{id}/signal, never on a read.
-    #
-    # What works is to leave agentd on 127.0.0.1:7717 and put a relay on the host
-    # that listens on this gateway address and forwards to it: the onward hop
-    # originates from loopback, so the exemption applies. The Host header is
-    # already pinned to 127.0.0.1:7717 by the proxy's own fetchDaemon, so
-    # internal/api/host.go's guardHost is satisfied wherever the socket lands.
-    # galway runs that relay as a socat systemd user unit.
-    #
-    # DAAX_HOST_GATEWAY narrows WHERE that relay has to listen. `host-gateway` is
-    # the portable default and on Linux resolves to docker0 (172.17.0.1), which
-    # every container on the machine can reach — and what the relay fronts is an
-    # unauthenticated API that serves raw prompts and working-tree diffs. A
-    # target that cares sets this to its own bridge gateway instead.
+    # DAAX_HOST_GATEWAY overrides where the name points (default host-gateway).
     extra_hosts:
       - "host.docker.internal:${DAAX_HOST_GATEWAY:-host-gateway}"
 
@@ -281,6 +265,13 @@ services:
 
       # Persist application data
       - daax-data:/app/data
+
+      # Agent View's read session for agentd (fleet targets). A DIRECTORY, not
+      # the token file: deploy/host/agentview-token-renew.sh replaces the file by
+      # atomic rename, and a single-file bind would stay pinned to the old inode.
+      # Unset, this is an empty named volume, so the compose file validates and
+      # nothing is mounted from the host. Read-only; the container never writes it.
+      - ${AGENTVIEW_TOKEN_HOST_DIR:-daax-agentview-token}:/run/agentview:ro
 
       # Terminal recordings (F3 #100): the recorder runs in the `terminal`
       # service and writes ~/.daax/recordings (= /home/node/.daax); this web
@@ -431,6 +422,9 @@ services:
       # defaults to http://host.docker.internal:7717 in container mode; set this
       # to reach a daemon elsewhere. Read by lib/agentview/server.ts.
       - AGENTVIEW_DAEMON_URL=${AGENTVIEW_DAEMON_URL:-}
+      # The bearer session presented to an https daemon: a file inside the
+      # directory mounted at /run/agentview (volumes, below). Empty = no token.
+      - AGENTVIEW_DAEMON_TOKEN_FILE=${AGENTVIEW_DAEMON_TOKEN_FILE:-}
 
       # watchtower / hawkeye / provenance on daax-net (services below).
       - WATCHTOWER_API_URL=http://watchtower:4220
@@ -758,6 +752,10 @@ networks:
 
 volumes:
   daax-data:
+    driver: local
+  # Empty placeholder for the Agent View token directory when a target sets no
+  # AGENTVIEW_TOKEN_HOST_DIR (host-dev style container runs).
+  daax-agentview-token:
     driver: local
   daax-recordings:
     driver: local

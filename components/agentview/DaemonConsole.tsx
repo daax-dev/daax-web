@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * The daemon's own page, embedded. The URL is `NEXT_PUBLIC_AGENTVIEW_UI_URL`
- * when set, else the daemon's default port on the host serving this page —
- * the same idiom `app/code-server/page.tsx` uses. The theme is passed once in
+ * The daemon's own page, embedded. The URL comes from `daemonConsoleUrl`:
+ * `NEXT_PUBLIC_AGENTVIEW_UI_URL` when set, `agents.<host>.poley.dev` on a fleet
+ * name, else the daemon's port on this host (development). The theme is passed once in
  * the query string and thereafter by `postMessage`, so a theme change does
  * not reload the iframe.
  */
@@ -11,8 +11,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "next-themes";
 import { ContainerEmbed } from "@/components/ContainerEmbed";
-
-const DAEMON_PORT = 7717;
+import {
+  consoleLoginUrl,
+  consoleOrigin,
+  daemonConsoleUrl,
+} from "@/lib/agentview/console-url";
 
 export function DaemonConsole() {
   const { resolvedTheme } = useTheme();
@@ -22,11 +25,11 @@ export function DaemonConsole() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const envUrl = process.env.NEXT_PUBLIC_AGENTVIEW_UI_URL;
     setBaseUrl(
-      envUrl
-        ? envUrl.replace(/\/+$/, "")
-        : `${window.location.protocol}//${window.location.hostname}:${DAEMON_PORT}`,
+      daemonConsoleUrl(
+        window.location,
+        process.env.NEXT_PUBLIC_AGENTVIEW_UI_URL,
+      ),
     );
   }, []);
 
@@ -36,13 +39,15 @@ export function DaemonConsole() {
   }, [resolvedTheme, initialTheme]);
 
   useEffect(() => {
-    if (!resolvedTheme) return;
+    if (!resolvedTheme || !baseUrl) return;
     const iframe = wrapper.current?.querySelector("iframe");
+    // Only to agentd's own origin: if the frame has navigated elsewhere (a login
+    // redirect), the browser drops the message instead of delivering it there.
     iframe?.contentWindow?.postMessage(
       { type: "agentview:theme", theme: resolvedTheme },
-      "*",
+      consoleOrigin(baseUrl),
     );
-  }, [resolvedTheme]);
+  }, [resolvedTheme, baseUrl]);
 
   if (!baseUrl || !initialTheme) {
     return (
@@ -57,7 +62,18 @@ export function DaemonConsole() {
       <p className="text-xs text-muted-foreground">
         This is the daemon&apos;s own page, served by agentd at{" "}
         <span className="font-mono">{baseUrl}</span>; nothing here is rendered
-        by daax.
+        by daax. Blank or asking to sign in?{" "}
+        <a
+          href={consoleLoginUrl(baseUrl)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-2 hover:text-foreground"
+          data-testid="agentview-console-signin"
+        >
+          Sign in to agentd
+        </a>{" "}
+        in a new tab — its login cannot run inside this frame — then reload the
+        frame.
       </p>
       <ContainerEmbed
         baseUrl={baseUrl}
