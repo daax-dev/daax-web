@@ -305,4 +305,20 @@ describeIfPython("agentview-token-renew.sh", { timeout: 30_000 }, () => {
     expect(readFileSync(join(custom, "token"), "utf8").trim()).toBe(TOKEN_1);
     expect(existsSync(dir())).toBe(false);
   });
+
+  it("normalizes an owner-only token mode to 0600 instead of minting", async () => {
+    reply = {
+      status: 200,
+      body: {
+        token: TOKEN_1,
+        subject: "peer:federation",
+        expires_at: inDays(30),
+      },
+    };
+    expect((await run()).status).toBe(0);
+    chmodSync(join(dir(), "token"), 0o700);
+    expect((await run()).status).toBe(0);
+    expect(mints).toBe(1);
+    expect(statSync(join(dir(), "token")).mode & 0o777).toBe(0o600);
+  });
 });

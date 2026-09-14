@@ -60,12 +60,22 @@ if [ -n "${AGENTD_PUBLIC_ORIGIN_TEST_URL:-}" ]; then
   public_origin=$AGENTD_PUBLIC_ORIGIN_TEST_URL
 fi
 
-# A token file is usable only as a regular, singly-named file owned by this
-# user with no group/other access. Anything else (a restored backup at 0644, a
-# symlink) is treated as exposed: a fresh session replaces it.
+# A token file is usable only as a regular file owned by this user with no
+# group/other access. Anything with group/other bits (a restored backup at 0644)
+# or a symlink is treated as exposed: a fresh session replaces it. An owner-only
+# mode that is not 0600/0400 (0700, 0500) exposed nothing and is normalized to
+# 0600, the one contract daax, deploy.sh and the installer all accept.
 private_token() {
   [ -f "$token" ] && [ ! -L "$token" ] && [ -O "$token" ] || return 1
-  "$PY" -c 'import os,sys,stat; st=os.lstat(sys.argv[1]); sys.exit(0 if stat.S_IMODE(st.st_mode) & 0o077 == 0 else 1)' "$token"
+  "$PY" - "$token" <<'PY' || return 1
+import os, stat, sys
+path = sys.argv[1]
+mode = stat.S_IMODE(os.lstat(path).st_mode)
+if mode & 0o077:
+    sys.exit(1)
+if mode not in (0o600, 0o400):
+    os.chmod(path, 0o600)
+PY
 }
 
 still_good() {
