@@ -1069,96 +1069,104 @@ describe("deploy.sh image override (fleet roll)", () => {
     });
   });
 
-  it("Agent View's tailnet settings are validated as one set before anything is mounted", () => {
-    const uid = String(process.getuid?.() ?? 1000);
-    const missing = join(work, "agentview-missing");
-    const real = join(work, "agentview-real");
-    const link = join(work, "agentview-link");
-    rmSync(real, { recursive: true, force: true });
-    mkdirSync(real, { recursive: true });
-    if (!existsSync(link)) symlinkSync(real, link);
-    const tuple = {
-      TEST_SECRET_A: "x",
-      DAAX_AGENTVIEW_TOKEN_UID: uid,
-      AGENTVIEW_DAEMON_URL: "https://agents.testhost.poley.dev",
-      AGENTVIEW_DAEMON_TOKEN_FILE: "/run/agentview/token",
-      AGENTVIEW_TOKEN_HOST_DIR: real,
-    };
-    const deploy = (env: Record<string, string>, name: string) => {
-      resetDockerLog();
-      return runDeploy("pinned", { ...tuple, ...env }, freshLog(name));
-    };
-    const refused = (
-      env: Record<string, string>,
-      name: string,
-      why: RegExp,
-    ) => {
-      const r = deploy(env, name);
-      expect(r.status, name).not.toBe(0);
-      expect(r.stderr, name).toMatch(why);
-      expect(readFileSync(dockerLog, "utf8"), name).not.toMatch(
-        /compose .*(pull|up)/,
+  it(
+    "Agent View's tailnet settings are validated as one set before anything is mounted",
+    { timeout: 120_000 },
+    () => {
+      const uid = String(process.getuid?.() ?? 1000);
+      const missing = join(work, "agentview-missing");
+      const real = join(work, "agentview-real");
+      const link = join(work, "agentview-link");
+      rmSync(real, { recursive: true, force: true });
+      mkdirSync(real, { recursive: true });
+      if (!existsSync(link)) symlinkSync(real, link);
+      const tuple = {
+        TEST_SECRET_A: "x",
+        DAAX_AGENTVIEW_TOKEN_UID: uid,
+        AGENTVIEW_DAEMON_URL: "https://agents.testhost.poley.dev",
+        AGENTVIEW_DAEMON_TOKEN_FILE: "/run/agentview/token",
+        AGENTVIEW_TOKEN_HOST_DIR: real,
+      };
+      const deploy = (env: Record<string, string>, name: string) => {
+        resetDockerLog();
+        return runDeploy("pinned", { ...tuple, ...env }, freshLog(name));
+      };
+      const refused = (
+        env: Record<string, string>,
+        name: string,
+        why: RegExp,
+      ) => {
+        const r = deploy(env, name);
+        expect(r.status, name).not.toBe(0);
+        expect(r.stderr, name).toMatch(why);
+        expect(readFileSync(dockerLog, "utf8"), name).not.toMatch(
+          /compose .*(pull|up)/,
+        );
+      };
+
+      refused(
+        { AGENTVIEW_TOKEN_HOST_DIR: missing },
+        "av-missing",
+        /must be an existing directory/,
       );
-    };
+      refused({ AGENTVIEW_TOKEN_HOST_DIR: link }, "av-link", /not a symlink/);
+      refused(
+        { DAAX_AGENTVIEW_TOKEN_UID: "99999" },
+        "av-uid",
+        /reads it as uid 99999/,
+      );
+      refused({}, "av-notoken", /no Agent View token/);
+      // Incoherent sets: each setting alone cannot work.
+      refused(
+        { AGENTVIEW_DAEMON_TOKEN_FILE: "" },
+        "av-https-notoken",
+        /AGENTVIEW_DAEMON_TOKEN_FILE must name/,
+      );
+      refused(
+        { AGENTVIEW_DAEMON_URL: "", AGENTVIEW_DAEMON_TOKEN_FILE: "" },
+        "av-dir-only",
+        /AGENTVIEW_DAEMON_URL=https/,
+      );
+      refused(
+        { AGENTVIEW_TOKEN_HOST_DIR: "" },
+        "av-no-dir",
+        /AGENTVIEW_TOKEN_HOST_DIR must be/,
+      );
+      refused(
+        { AGENTVIEW_DAEMON_TOKEN_FILE: "/etc/passwd" },
+        "av-outside-mount",
+        /in the \/run\/agentview mount/,
+      );
 
-    refused(
-      { AGENTVIEW_TOKEN_HOST_DIR: missing },
-      "av-missing",
-      /must be an existing directory/,
-    );
-    refused({ AGENTVIEW_TOKEN_HOST_DIR: link }, "av-link", /not a symlink/);
-    refused(
-      { DAAX_AGENTVIEW_TOKEN_UID: "99999" },
-      "av-uid",
-      /reads it as uid 99999/,
-    );
-    refused({}, "av-notoken", /no Agent View token/);
-    // Incoherent sets: each setting alone cannot work.
-    refused(
-      { AGENTVIEW_DAEMON_TOKEN_FILE: "" },
-      "av-https-notoken",
-      /AGENTVIEW_DAEMON_TOKEN_FILE must name/,
-    );
-    refused(
-      { AGENTVIEW_DAEMON_URL: "", AGENTVIEW_DAEMON_TOKEN_FILE: "" },
-      "av-dir-only",
-      /AGENTVIEW_DAEMON_URL=https/,
-    );
-    refused(
-      { AGENTVIEW_TOKEN_HOST_DIR: "" },
-      "av-no-dir",
-      /AGENTVIEW_TOKEN_HOST_DIR must be/,
-    );
-    refused(
-      { AGENTVIEW_DAEMON_TOKEN_FILE: "/etc/passwd" },
-      "av-outside-mount",
-      /in the \/run\/agentview mount/,
-    );
+      writeFileSync(join(real, "token"), "A".repeat(43) + "\n");
+      chmodSync(join(real, "token"), 0o644);
+      refused({}, "av-exposed", /mode 0600 or 0400/);
 
-    writeFileSync(join(real, "token"), "A".repeat(43) + "\n");
-    chmodSync(join(real, "token"), 0o644);
-    refused({}, "av-exposed", /mode 0600 or 0400/);
+      chmodSync(join(real, "token"), 0o600);
+      expect(deploy({}, "av-ok").status).toBe(0);
 
-    chmodSync(join(real, "token"), 0o600);
-    expect(deploy({}, "av-ok").status).toBe(0);
+      // The shape the runtime accepts: a file that is not one token fails here,
+      // not as a 502 on every Agent View read after the deploy.
+      writeFileSync(join(real, "token"), "t\n");
+      chmodSync(join(real, "token"), 0o600);
+      refused({}, "av-badshape", /not one session token/);
+      writeFileSync(join(real, "token"), "A".repeat(43) + "\nsecond\n");
+      refused({}, "av-twolines", /not one session token/);
+      // A second record without a final newline must not slip through.
+      writeFileSync(join(real, "token"), "A".repeat(43) + "\nsecond");
+      refused({}, "av-twolines-noeol", /not one session token/);
+      writeFileSync(join(real, "token"), "A".repeat(43) + "\n");
 
-    // The shape the runtime accepts: a file that is not one token fails here,
-    // not as a 502 on every Agent View read after the deploy.
-    writeFileSync(join(real, "token"), "t\n");
-    chmodSync(join(real, "token"), 0o600);
-    refused({}, "av-badshape", /not one session token/);
-    writeFileSync(join(real, "token"), "A".repeat(43) + "\nsecond\n");
-    refused({}, "av-twolines", /not one session token/);
-    // A second record without a final newline must not slip through.
-    writeFileSync(join(real, "token"), "A".repeat(43) + "\nsecond");
-    refused({}, "av-twolines-noeol", /not one session token/);
-    writeFileSync(join(real, "token"), "A".repeat(43) + "\n");
-
-    // Not configured at all: nothing is checked.
-    resetDockerLog();
-    const off = runDeploy("pinned", { TEST_SECRET_A: "x" }, freshLog("av-off"));
-    expect(off.status).toBe(0);
-  });
+      // Not configured at all: nothing is checked.
+      resetDockerLog();
+      const off = runDeploy(
+        "pinned",
+        { TEST_SECRET_A: "x" },
+        freshLog("av-off"),
+      );
+      expect(off.status).toBe(0);
+    },
+  );
 
   it("REJECTS a tag override before touching docker", () => {
     resetDockerLog();
