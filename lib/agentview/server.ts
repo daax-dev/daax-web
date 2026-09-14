@@ -131,10 +131,10 @@ async function daemonRequest(
         // ReadableStream, whose getReader overloads do not structurally match
         // the DOM lib's — the two are the same object at runtime and TypeScript
         // will not accept a direct cast between them.
-        const body = Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>;
-        resolve(
-          new Response(body, { status: res.statusCode ?? 502, headers }),
-        );
+        const body = Readable.toWeb(
+          res,
+        ) as unknown as ReadableStream<Uint8Array>;
+        resolve(new Response(body, { status: res.statusCode ?? 502, headers }));
       },
     );
     req.on("error", reject);

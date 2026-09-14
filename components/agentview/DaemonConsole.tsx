@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * The daemon's own page, embedded. The URL is `NEXT_PUBLIC_AGENTVIEW_UI_URL`
- * when set, else the daemon's default port on the host serving this page —
- * the same idiom `app/code-server/page.tsx` uses. The theme is passed once in
+ * The daemon's own page, embedded. The URL comes from `daemonConsoleUrl`:
+ * `NEXT_PUBLIC_AGENTVIEW_UI_URL` when set, `agents.<host>.poley.dev` on a fleet
+ * name, else the daemon's port on this host (development). The theme is passed once in
  * the query string and thereafter by `postMessage`, so a theme change does
  * not reload the iframe.
  */
@@ -11,8 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "next-themes";
 import { ContainerEmbed } from "@/components/ContainerEmbed";
-
-const DAEMON_PORT = 7717;
+import { daemonConsoleUrl } from "@/lib/agentview/console-url";
 
 export function DaemonConsole() {
   const { resolvedTheme } = useTheme();
@@ -22,11 +21,11 @@ export function DaemonConsole() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const envUrl = process.env.NEXT_PUBLIC_AGENTVIEW_UI_URL;
     setBaseUrl(
-      envUrl
-        ? envUrl.replace(/\/+$/, "")
-        : `${window.location.protocol}//${window.location.hostname}:${DAEMON_PORT}`,
+      daemonConsoleUrl(
+        window.location,
+        process.env.NEXT_PUBLIC_AGENTVIEW_UI_URL,
+      ),
     );
   }, []);
 

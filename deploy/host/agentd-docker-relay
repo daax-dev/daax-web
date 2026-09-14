@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#
+# agentd-docker-relay — carry connections from the daax Docker network to
+# agentd's loopback listener.
+#
+# agentd binds 127.0.0.1:7717 and MUST keep doing so: cmd/agentd/listen.go's
+# newLocalListener wraps the socket in loopbackListener only when the bound
+# address is loopback, and internal/api/authmiddleware.go's sessionRequired
+# exempts requests arriving there from needing a session. daax's Agent View
+# proxy sends no credential on reads, so a daemon bound to a bridge address
+# would 401 every one of them.
+#
+# So the container reaches a listener on the bridge gateway, and this relay
+# makes the onward hop from loopback. The Host header daax sends is already
+# pinned to 127.0.0.1:7717 (its fetchDaemon sets it explicitly), which is what
+# internal/api/host.go's guardHost checks — the socket address is not.
+#
+# The gateway is read from Docker rather than hardcoded, because the network is
+# external (created by hand) and could be recreated on a different subnet.
+#
+# Installed per host by deploy/host/install-agentd-relay.sh (no root).
+
+set -euo pipefail
+
+NET="${DAAX_NETWORK:-daax-net}"
+PORT="${AGENTD_PORT:-7717}"
+
+GW="$(docker network inspect "$NET" \
+	--format '{{range .IPAM.Config}}{{.Gateway}}{{"\n"}}{{end}}' 2>/dev/null |
+	grep -m1 -E '^[0-9]+\.' || true)"
+
+if [ -z "$GW" ]; then
+	printf 'agentd-docker-relay: no IPv4 gateway on docker network %s (not created yet?)\n' "$NET" >&2
+	exit 1
+fi
+
+printf 'agentd-docker-relay: %s:%s -> 127.0.0.1:%s\n' "$GW" "$PORT" "$PORT" >&2
+exec socat "TCP-LISTEN:${PORT},bind=${GW},fork,reuseaddr,keepalive" "TCP:127.0.0.1:${PORT}"
