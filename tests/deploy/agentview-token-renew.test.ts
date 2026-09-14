@@ -9,7 +9,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -29,6 +31,8 @@ const TOKEN_2 = "peerTokenTwo_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
 let server: Server;
 let port = 0;
 let reply: { status: number; body: unknown } = { status: 200, body: {} };
+let nodeStatus = 200;
+let nodeAuth: string | undefined;
 let mints = 0;
 let lastRequest: { method?: string; contentType?: string; body: string };
 let home: string;
@@ -46,6 +50,12 @@ beforeAll(async () => {
         contentType: req.headers["content-type"],
         body,
       };
+      if (req.url === "/api/v1/node") {
+        nodeAuth = req.headers.authorization;
+        res.writeHead(nodeStatus, { "Content-Type": "application/json" });
+        res.end("{}");
+        return;
+      }
       if (req.url === "/api/v1/auth/session") mints++;
       res.writeHead(reply.status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(reply.body));
@@ -61,12 +71,15 @@ beforeEach(() => {
   if (home) rmSync(home, { recursive: true, force: true });
   home = mkdtempSync(join(tmpdir(), "daax-agentview-renew-"));
   mints = 0;
+  nodeStatus = 200;
+  nodeAuth = undefined;
 });
 
 // ASYNC on purpose: the stub daemon lives in this process, so a synchronous
 // spawn would block the event loop that has to answer the script's curl.
 function run(
   loopback = `http://127.0.0.1:${port}`,
+  extra: Record<string, string> = {},
 ): Promise<{ status: number | null; stdout: string; stderr: string }> {
   return new Promise((done) => {
     const child = spawn("bash", [SCRIPT], {
@@ -74,6 +87,7 @@ function run(
         PATH: process.env.PATH ?? "/usr/bin:/bin",
         HOME: home,
         AGENTD_LOOPBACK_URL: loopback,
+        ...extra,
         // A deliberately minimal environment; Next's ProcessEnv typing demands
         // NODE_ENV, which the script does not read.
       } as unknown as NodeJS.ProcessEnv,
@@ -201,5 +215,94 @@ describeIfPython("agentview-token-renew.sh", { timeout: 30_000 }, () => {
     const r = await run();
     expect(r.status).not.toBe(0);
     expect(mints).toBe(0);
+  });
+
+  const probe = () => ({
+    AGENTD_PUBLIC_ORIGIN_TEST_URL: `http://127.0.0.1:${port}`,
+  });
+  const valid = () => ({
+    status: 200,
+    body: {
+      token: TOKEN_1,
+      subject: "peer:federation",
+      expires_at: inDays(30),
+    },
+  });
+
+  it("replaces a stored token that is readable by others", async () => {
+    reply = valid();
+    expect((await run()).status).toBe(0);
+    chmodSync(join(dir(), "token"), 0o644);
+    reply = {
+      status: 200,
+      body: {
+        token: TOKEN_2,
+        subject: "peer:federation",
+        expires_at: inDays(30),
+      },
+    };
+    const r = await run();
+    expect(r.status).toBe(0);
+    expect(mints).toBe(2);
+    expect(readFileSync(join(dir(), "token"), "utf8").trim()).toBe(TOKEN_2);
+    expect(statSync(join(dir(), "token")).mode & 0o777).toBe(0o600);
+  });
+
+  it("keeps a token the public origin accepts, presenting it as a bearer", async () => {
+    reply = valid();
+    expect((await run()).status).toBe(0);
+    nodeStatus = 200;
+    expect((await run(undefined, probe())).status).toBe(0);
+    expect(mints).toBe(1);
+    expect(nodeAuth).toBe(`Bearer ${TOKEN_1}`);
+  });
+
+  it("renews a token the public origin refuses with 401", async () => {
+    reply = valid();
+    expect((await run()).status).toBe(0);
+    nodeStatus = 401;
+    expect((await run(undefined, probe())).status).toBe(0);
+    expect(mints).toBe(2);
+  });
+
+  it("does NOT mint on a 403: that is configuration, not an expired session", async () => {
+    reply = valid();
+    expect((await run()).status).toBe(0);
+    nodeStatus = 403;
+    const r = await run(undefined, probe());
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/403/);
+    expect(mints).toBe(1);
+  });
+
+  it("reads the public origin from agentd.flags and keeps the token when it cannot be reached", async () => {
+    reply = valid();
+    expect((await run()).status).toBe(0);
+    mkdirSync(join(home, ".dist-agent"), { recursive: true });
+    writeFileSync(
+      join(home, ".dist-agent", "agentd.flags"),
+      "--auth=oidc --public-origin=https://127.0.0.1:1\n",
+    );
+    const r = await run();
+    expect(r.status).toBe(0);
+    expect(r.stderr).toMatch(
+      /could not verify the stored token at https:\/\/127\.0\.0\.1:1/,
+    );
+    expect(mints).toBe(1);
+  });
+
+  it("refuses a loopback override that only looks like loopback", async () => {
+    const r = await run("http://127.0.0.1:7717@evil.example");
+    expect(r.status).toBe(2);
+    expect(mints).toBe(0);
+  });
+
+  it("writes to AGENTVIEW_TOKEN_HOST_DIR when set", async () => {
+    reply = valid();
+    const custom = join(home, "custom-token-dir");
+    const r = await run(undefined, { AGENTVIEW_TOKEN_HOST_DIR: custom });
+    expect(r.status).toBe(0);
+    expect(readFileSync(join(custom, "token"), "utf8").trim()).toBe(TOKEN_1);
+    expect(existsSync(dir())).toBe(false);
   });
 });

@@ -1069,41 +1069,50 @@ describe("deploy.sh image override (fleet roll)", () => {
     });
   });
 
-  it("AGENTVIEW_TOKEN_HOST_DIR must exist as a real directory before anything is mounted", () => {
+  it("AGENTVIEW_TOKEN_HOST_DIR must exist, belong to the container uid, and hold only a private token", () => {
+    const uid = String(process.getuid?.() ?? 1000);
+    const base = { TEST_SECRET_A: "x", DAAX_AGENTVIEW_TOKEN_UID: uid };
     const missing = join(work, "agentview-missing");
     const real = join(work, "agentview-real");
     const link = join(work, "agentview-link");
+    rmSync(real, { recursive: true, force: true });
     mkdirSync(real, { recursive: true });
     if (!existsSync(link)) symlinkSync(real, link);
+    const deploy = (env: Record<string, string>, name: string) => {
+      resetDockerLog();
+      return runDeploy("pinned", { ...base, ...env }, freshLog(name));
+    };
 
-    resetDockerLog();
-    const refused = runDeploy(
-      "pinned",
-      { TEST_SECRET_A: "x", AGENTVIEW_TOKEN_HOST_DIR: missing },
-      freshLog("agentview-dir-missing"),
-    );
-    expect(refused.status).not.toBe(0);
-    expect(refused.stderr).toMatch(
+    const noDir = deploy({ AGENTVIEW_TOKEN_HOST_DIR: missing }, "av-missing");
+    expect(noDir.status).not.toBe(0);
+    expect(noDir.stderr).toMatch(
       /AGENTVIEW_TOKEN_HOST_DIR must be an existing directory/,
     );
     expect(readFileSync(dockerLog, "utf8")).not.toMatch(/compose .*(pull|up)/);
 
-    resetDockerLog();
-    const viaLink = runDeploy(
-      "pinned",
-      { TEST_SECRET_A: "x", AGENTVIEW_TOKEN_HOST_DIR: link },
-      freshLog("agentview-dir-link"),
-    );
-    expect(viaLink.status).not.toBe(0);
+    expect(
+      deploy({ AGENTVIEW_TOKEN_HOST_DIR: link }, "av-link").status,
+    ).not.toBe(0);
 
-    resetDockerLog();
-    const ok = runDeploy(
-      "pinned",
-      { TEST_SECRET_A: "x", AGENTVIEW_TOKEN_HOST_DIR: real },
-      freshLog("agentview-dir-ok"),
+    const wrongUid = deploy(
+      { AGENTVIEW_TOKEN_HOST_DIR: real, DAAX_AGENTVIEW_TOKEN_UID: "99999" },
+      "av-uid",
     );
-    expect(ok.status).toBe(0);
-    expect(ok.stderr).toMatch(/no Agent View token/);
+    expect(wrongUid.status).not.toBe(0);
+    expect(wrongUid.stderr).toMatch(/reads it as uid 99999/);
+
+    const noToken = deploy({ AGENTVIEW_TOKEN_HOST_DIR: real }, "av-notoken");
+    expect(noToken.status).toBe(0);
+    expect(noToken.stderr).toMatch(/no Agent View token/);
+
+    writeFileSync(join(real, "token"), "t\n");
+    chmodSync(join(real, "token"), 0o644);
+    const exposed = deploy({ AGENTVIEW_TOKEN_HOST_DIR: real }, "av-exposed");
+    expect(exposed.status).not.toBe(0);
+    expect(exposed.stderr).toMatch(/mode 0600 or 0400/);
+
+    chmodSync(join(real, "token"), 0o600);
+    expect(deploy({ AGENTVIEW_TOKEN_HOST_DIR: real }, "av-ok").status).toBe(0);
   });
 
   it("REJECTS a tag override before touching docker", () => {

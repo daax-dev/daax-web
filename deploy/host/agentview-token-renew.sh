@@ -7,13 +7,16 @@
 # route (POST agents/{id}/signal) — through agentd's loopback-only mint route,
 # and stores it where the daax container reads it:
 #
-#   $AGENTVIEW_TOKEN_DIR/token          the bearer token, 0600, this user
-#   $AGENTVIEW_TOKEN_DIR/token.expires  its expiry (RFC 3339), not secret
+#   $AGENTVIEW_TOKEN_HOST_DIR/token          the bearer token, 0600, this user
+#   $AGENTVIEW_TOKEN_HOST_DIR/token.expires  its expiry (RFC 3339), not secret
 #
 # The directory is bind-mounted read-only into daax at /run/agentview. The token
 # is replaced by an atomic rename in that directory, so daax (which reads it per
 # request) picks the new one up with no restart. The file is owned by this user;
 # on the fleet that is uid 1000, the same uid as the image's `node` user.
+#
+# Overrides (tests and non-default layouts): AGENTVIEW_TOKEN_HOST_DIR,
+# AGENTD_LOOPBACK_URL (loopback only), AGENTD_PUBLIC_ORIGIN_TEST_URL (loopback only).
 #
 # A new session is minted only when the stored one expires within 10 days, is
 # missing, or is refused by the daemon's public origin — agentd keeps every
@@ -23,10 +26,12 @@
 set -euo pipefail
 umask 077
 
-DIR="${AGENTVIEW_TOKEN_DIR:-$HOME/.daax-build/agentview}"
+# The same variable deploy/env/<target>.env sets and deploy.sh checks.
+DIR="${AGENTVIEW_TOKEN_HOST_DIR:-$HOME/.daax-build/agentview}"
 # agentd's loopback listener. Overridable only to another loopback port (tests).
 DAEMON="${AGENTD_LOOPBACK_URL:-http://127.0.0.1:7717}"
-case "$DAEMON" in http://127.0.0.1:[0-9]*) ;; *) echo "agentview-token: AGENTD_LOOPBACK_URL must be http://127.0.0.1:<port>" >&2; exit 2 ;; esac
+[[ "$DAEMON" =~ ^http://127\.0\.0\.1:[0-9]{1,5}$ ]] \
+  || { echo "agentview-token: AGENTD_LOOPBACK_URL must be exactly http://127.0.0.1:<port>" >&2; exit 2; }
 RENEW_WITHIN_DAYS=10
 PY=/usr/bin/python3
 
@@ -48,9 +53,28 @@ token="$DIR/token"; expires="$DIR/token.expires"
 # The public origin agentd was told it is reached at, to prove a stored token is
 # still accepted there. Read from agentd's own flags; absent = skip that probe.
 public_origin=$(sed -n 's/.*--public-origin=\(https:\/\/[^ ]*\).*/\1/p' "$HOME/.dist-agent/agentd.flags" 2>/dev/null | head -1 || true)
+# Tests only: a loopback stand-in for that origin.
+if [ -n "${AGENTD_PUBLIC_ORIGIN_TEST_URL:-}" ]; then
+  [[ "$AGENTD_PUBLIC_ORIGIN_TEST_URL" =~ ^http://127\.0\.0\.1:[0-9]{1,5}$ ]] \
+    || { echo "agentview-token: AGENTD_PUBLIC_ORIGIN_TEST_URL must be http://127.0.0.1:<port>" >&2; exit 2; }
+  public_origin=$AGENTD_PUBLIC_ORIGIN_TEST_URL
+fi
+
+# A token file is usable only as a regular, singly-named file owned by this
+# user with no group/other access. Anything else (a restored backup at 0644, a
+# symlink) is treated as exposed: a fresh session replaces it.
+private_token() {
+  [ -f "$token" ] && [ ! -L "$token" ] && [ -O "$token" ] || return 1
+  "$PY" -c 'import os,sys,stat; st=os.lstat(sys.argv[1]); sys.exit(0 if stat.S_IMODE(st.st_mode) & 0o077 == 0 else 1)' "$token"
+}
 
 still_good() {
-  [ -f "$token" ] && [ ! -L "$token" ] && [ -f "$expires" ] || return 1
+  if [ -e "$token" ] || [ -L "$token" ]; then
+    private_token || { log "stored token is not a private file owned by $(id -un); replacing it"; return 1; }
+  else
+    return 1
+  fi
+  [ -f "$expires" ] || return 1
   "$PY" - "$expires" "$RENEW_WITHIN_DAYS" <<'PY' || return 1
 import sys, datetime
 raw = open(sys.argv[1]).read().strip().replace("Z", "+00:00")
@@ -63,7 +87,11 @@ PY
     curl -s -K - -o /dev/null -m 15 -w '%{http_code}' || true)
   case "$code" in
     200) return 0 ;;
-    401|403) log "stored token refused by $public_origin ($code)"; return 1 ;;
+    # 401 is agentd refusing the session itself: renew.
+    401) log "stored token refused by $public_origin (401)"; return 1 ;;
+    # 403 is the daemon refusing by Host or policy — a configuration fault a new
+    # session would not fix, so do not mint another one.
+    403) die "$public_origin answered 403 to the stored token: a Host/policy configuration fault, not an expired session" ;;
     *) log "could not verify the stored token at $public_origin (HTTP $code); keeping it"; return 0 ;;
   esac
 }
