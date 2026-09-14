@@ -52,7 +52,13 @@ token="$DIR/token"; expires="$DIR/token.expires"
 
 # The public origin agentd was told it is reached at, to prove a stored token is
 # still accepted there. Read from agentd's own flags; absent = skip that probe.
-public_origin=$(sed -n 's/.*--public-origin=\(https:\/\/[^ ]*\).*/\1/p' "$HOME/.dist-agent/agentd.flags" 2>/dev/null | head -1 || true)
+# The flags file holds one flag per line; agentd ignores anything that is not a
+# flag line and, like Go's flag package, the LAST occurrence wins (dist-agent
+# scripts/deploy-fleet.sh reads --addr the same way). Only a well-formed https
+# origin is used; anything else skips the probe rather than sending the token.
+public_origin=$(grep -h '^[[:space:]]*--public-origin=' "$HOME/.dist-agent/agentd.flags" 2>/dev/null |
+  tail -n 1 | sed 's/^[[:space:]]*--public-origin=//' | tr -d '[:space:]' || true)
+[[ "$public_origin" =~ ^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$ ]] || public_origin=""
 # Tests only: a loopback stand-in for that origin.
 if [ -n "${AGENTD_PUBLIC_ORIGIN_TEST_URL:-}" ]; then
   [[ "$AGENTD_PUBLIC_ORIGIN_TEST_URL" =~ ^http://127\.0\.0\.1:[0-9]{1,5}$ ]] \
@@ -60,6 +66,7 @@ if [ -n "${AGENTD_PUBLIC_ORIGIN_TEST_URL:-}" ]; then
   public_origin=$AGENTD_PUBLIC_ORIGIN_TEST_URL
 fi
 
+exposed=0
 # A token file is usable only as a regular file owned by this user with no
 # group/other access. Anything with group/other bits (a restored backup at 0644)
 # or a symlink is treated as exposed: a fresh session replaces it. An owner-only
@@ -80,7 +87,11 @@ PY
 
 still_good() {
   if [ -e "$token" ] || [ -L "$token" ]; then
-    private_token || { log "stored token is not a private file owned by $(id -un); replacing it"; return 1; }
+    if ! private_token; then
+      log "stored token is not a private file owned by $(id -un); replacing and revoking it"
+      [ -f "$token" ] && [ ! -L "$token" ] && exposed=1
+      return 1
+    fi
   else
     return 1
   fi
@@ -112,7 +123,7 @@ if still_good; then
 fi
 
 resp=$(mktemp "$DIR/.mint.XXXXXX"); new=$(mktemp "$DIR/.token.XXXXXX")
-trap 'rm -f "$resp" "$new"' EXIT
+trap 'rm -f "$resp" "$new" "$DIR"/.exposed.* "$DIR"/.revoke.*' EXIT
 # Loopback-only route; its admission check is the socket. JSON content type and
 # no Origin satisfy guardBrowserWrite. The response body (which holds the token)
 # goes to a 0600 file in this directory, never to a pipe or the terminal.
@@ -135,6 +146,30 @@ open(sys.argv[2], "w").write(token + "\n")
 open(sys.argv[3], "w").write(exp + "\n")
 PY
 chmod 0600 "$new"; chmod 0644 "$expires.new"
+old=""
+if [ "$exposed" = 1 ]; then
+  # Keep the exposed value (0600, this directory) only long enough to revoke it.
+  old=$(mktemp "$DIR/.exposed.XXXXXX")
+  if ! cat "$token" >"$old" 2>/dev/null; then
+    rm -f "$old"; old=""
+    unrevoked=1
+  fi
+fi
 mv -f "$new" "$token"
 mv -f "$expires.new" "$expires"
 log "minted a read-only peer session, valid until $(cat "$expires")"
+
+if [ -n "$old" ]; then
+  # Anyone who copied the exposed token keeps its access until it is revoked:
+  # end that session at the daemon (agentctl auth revoke's route). The token
+  # rides curl's config on stdin, never argv.
+  out=$(mktemp "$DIR/.revoke.XXXXXX")
+  code=$(printf 'header = "Authorization: Bearer %s"\nurl = "%s/auth/logout"\n' "$(tr -d '[:space:]' <"$old")" "$DAEMON" |
+    curl -s -K - -m 15 -o "$out" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{}' || true)
+  rm -f "$old"
+  ended=$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("signed_out"))' "$out" 2>/dev/null || true)
+  rm -f "$out"
+  [ "$code" = 200 ] || die "the new token is in place, but revoking the exposed one failed (HTTP ${code:-none}); revoke it with agentctl auth sessions/revoke"
+  log "revoked the exposed session (signed_out=$ended)"
+fi
+[ "${unrevoked:-0}" = 0 ] || die "the new token is in place, but the exposed one could not be read to revoke it; revoke it with agentctl auth sessions/revoke"

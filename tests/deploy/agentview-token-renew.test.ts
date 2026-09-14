@@ -12,6 +12,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -33,6 +34,8 @@ let port = 0;
 let reply: { status: number; body: unknown } = { status: 200, body: {} };
 let nodeStatus = 200;
 let nodeAuth: string | undefined;
+let logoutStatus = 200;
+let logouts: Array<{ auth?: string; contentType?: string }> = [];
 let mints = 0;
 let lastRequest: { method?: string; contentType?: string; body: string };
 let home: string;
@@ -50,6 +53,15 @@ beforeAll(async () => {
         contentType: req.headers["content-type"],
         body,
       };
+      if (req.url === "/auth/logout") {
+        logouts.push({
+          auth: req.headers.authorization,
+          contentType: req.headers["content-type"],
+        });
+        res.writeHead(logoutStatus, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ signed_out: true }));
+        return;
+      }
       if (req.url === "/api/v1/node") {
         nodeAuth = req.headers.authorization;
         res.writeHead(nodeStatus, { "Content-Type": "application/json" });
@@ -73,6 +85,8 @@ beforeEach(() => {
   mints = 0;
   nodeStatus = 200;
   nodeAuth = undefined;
+  logoutStatus = 200;
+  logouts = [];
 });
 
 // ASYNC on purpose: the stub daemon lives in this process, so a synchronous
@@ -246,6 +260,48 @@ describeIfPython("agentview-token-renew.sh", { timeout: 30_000 }, () => {
     expect(mints).toBe(2);
     expect(readFileSync(join(dir(), "token"), "utf8").trim()).toBe(TOKEN_2);
     expect(statSync(join(dir(), "token")).mode & 0o777).toBe(0o600);
+    // The exposed session is ended at the daemon, with the OLD token.
+    expect(logouts).toEqual([
+      { auth: `Bearer ${TOKEN_1}`, contentType: "application/json" },
+    ]);
+    expect(r.stdout + r.stderr).not.toContain(TOKEN_1);
+  });
+
+  it("fails loudly, new token in place, when the exposed session cannot be revoked", async () => {
+    reply = valid();
+    expect((await run()).status).toBe(0);
+    chmodSync(join(dir(), "token"), 0o644);
+    reply = {
+      status: 200,
+      body: {
+        token: TOKEN_2,
+        subject: "peer:federation",
+        expires_at: inDays(30),
+      },
+    };
+    logoutStatus = 500;
+    const r = await run();
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/revoking the exposed one failed/);
+    expect(readFileSync(join(dir(), "token"), "utf8").trim()).toBe(TOKEN_2);
+    expect(readdirSync(dir()).filter((f) => f.startsWith(".exposed"))).toEqual(
+      [],
+    );
+  });
+
+  it("does not revoke anything on an ordinary renewal", async () => {
+    reply = {
+      status: 200,
+      body: {
+        token: TOKEN_1,
+        subject: "peer:federation",
+        expires_at: inDays(5),
+      },
+    };
+    expect((await run()).status).toBe(0);
+    reply = valid();
+    expect((await run()).status).toBe(0);
+    expect(logouts).toEqual([]);
   });
 
   it("keeps a token the public origin accepts, presenting it as a bearer", async () => {
@@ -279,9 +335,17 @@ describeIfPython("agentview-token-renew.sh", { timeout: 30_000 }, () => {
     reply = valid();
     expect((await run()).status).toBe(0);
     mkdirSync(join(home, ".dist-agent"), { recursive: true });
+    // A commented flag and an earlier duplicate must not win: the last active
+    // --public-origin line is agentd's.
     writeFileSync(
       join(home, ".dist-agent", "agentd.flags"),
-      "--auth=oidc --public-origin=https://127.0.0.1:1\n",
+      [
+        "# --public-origin=https://127.0.0.1:3",
+        "--auth=oidc",
+        "--public-origin=https://127.0.0.1:2",
+        "--public-origin=https://127.0.0.1:1",
+        "",
+      ].join("\n"),
     );
     const r = await run();
     expect(r.status).toBe(0);

@@ -4,7 +4,10 @@
 #   deploy/host/install-agentview-token.sh
 #
 # No root: a script in ~/.local/bin, a systemd --user service and daily timer,
-# and one run now. After it succeeds, deploy with scripts/deploy.sh <target>;
+# and one run now. Rollout order on a host:
+#   1. this installer                      (token exists; nothing else changes)
+#   2. scripts/deploy.sh <target>          (daax now reads agentd over the tailnet)
+#   3. deploy/host/retire-agentd-relay.sh  (verifies 2, then removes the relay)
 # preflight refuses a target whose AGENTVIEW_TOKEN_HOST_DIR does not exist.
 #
 # The token file must be readable by the daax container's `node` user (uid
@@ -38,22 +41,3 @@ if [ ! -f "$dir/token" ] || [ -L "$dir/token" ] || { [ "$meta" != "1000 600" ] &
 fi
 echo "Agent View session ready in $dir (expires $(cat "$dir/token.expires")); renewed by agentview-token-renew.timer"
 
-# Retire the host relay this replaces (it ran on galway, 2026-09-10..14). It
-# forwarded daax-net's gateway to agentd's UNAUTHENTICATED loopback API, so every
-# container on that network could read agentd; nothing uses it once daax reaches
-# agentd over the tailnet. Removed only after a usable token exists; redeploy
-# daax (scripts/deploy.sh <target>) right after this so Agent View switches over.
-unit="$HOME/.config/systemd/user/agentd-docker-relay.service"
-if [ -e "$unit" ] || systemctl --user cat agentd-docker-relay.service >/dev/null 2>&1; then
-  systemctl --user disable --now agentd-docker-relay.service >/dev/null 2>&1 || true
-  rm -rf -- "$unit" "$unit.d" "$HOME/.local/bin/agentd-docker-relay"
-  systemctl --user daemon-reload
-  systemctl --user reset-failed agentd-docker-relay.service >/dev/null 2>&1 || true
-  echo "retired agentd-docker-relay.service"
-fi
-# Nothing but agentd's own loopback socket may listen on 7717.
-if ss -ltnH '( sport = :7717 )' | awk '{print $4}' | grep -qv '^127\.0\.0\.1:7717$'; then
-  echo "something other than agentd's loopback listener is on port 7717:" >&2
-  ss -ltnpH '( sport = :7717 )' >&2
-  exit 1
-fi
