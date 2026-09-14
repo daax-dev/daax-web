@@ -162,7 +162,7 @@ A custom (non-Lucide) icon is a component that accepts `className`, e.g. `compon
 
 `app/settings/page.tsx:114-125` is the map the admin editor uses. It currently holds only `Bot`, `Code`, `Terminal`, `Blocks`, `BarChart3`, `Settings`, `Library`, `Cloud`, so several existing cards (MCP, Backlog, Security, …) show no icon there. That is a pre-existing gap; add your key to this map too so your card has an icon in the editor. `app/settings/page.tsx` imports Lucide icons in two blocks (lines 15-46 and 90-105); reuse an existing import if the icon is already there.
 
-A missing key does not fail the build or any test — the card simply renders without an icon. The render test in [§5](#5-tests) catches it.
+A missing key does not fail the build or any existing test — the card simply renders without an icon. The render test in [§5](#5-tests) adds that coverage for your card.
 
 ### Step 4 — Set the boot-time order and defaults (`config.toml`)
 
