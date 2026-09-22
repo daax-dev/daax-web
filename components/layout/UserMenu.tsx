@@ -11,11 +11,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { deriveLogoutUrls } from "@/lib/auth/logout-urls";
 
-const LOGOUT_URL = process.env.NEXT_PUBLIC_LOGOUT_URL || "/portals/main/logout";
-const OIDC_END_SESSION_URL =
-  process.env.NEXT_PUBLIC_OIDC_END_SESSION_URL ||
-  "https://auth.poley.dev/api/oidc/end-session";
+// Build-time overrides (inlined by Next.js); when unset the URLs are derived
+// per host at runtime from window.location (see lib/auth/logout-urls.ts).
+const LOGOUT_ENV = {
+  logoutUrl: process.env.NEXT_PUBLIC_LOGOUT_URL,
+  endSessionUrl: process.env.NEXT_PUBLIC_OIDC_END_SESSION_URL,
+};
 
 function getInitials(name: string | null): string {
   const trimmed = name?.trim();
@@ -36,16 +39,23 @@ export function UserMenu() {
 
   const handleLogout = async (e: Event) => {
     e.preventDefault();
-    // 1. Clear the traefik-forward-auth session cookie
+    const { forwardAuthLogoutUrl, identityProviderLogoutUrl } =
+      deriveLogoutUrls(window.location, LOGOUT_ENV);
+    // 1. Clear the traefik-forward-auth session cookie. v4.14.1 only accepts
+    //    POST here and answers 303 to its portal page; the redirect is not
+    //    followed (Set-Cookie on the 303 still applies).
     try {
-      await fetch(LOGOUT_URL, { credentials: "include", redirect: "manual" });
+      await fetch(forwardAuthLogoutUrl, {
+        method: "POST",
+        credentials: "include",
+        redirect: "manual",
+      });
     } catch {
-      // redirect: manual returns opaque-redirect, cookies are still cleared
+      // Network failure: still end the IdP session below.
     }
-    // 2. Redirect to Pocket ID's OIDC end-session to kill the SSO session,
-    //    then redirect back to the app (which will show the login screen)
-    const redirectUri = window.location.origin;
-    window.location.href = `${OIDC_END_SESSION_URL}?post_logout_redirect_uri=${encodeURIComponent(redirectUri)}`;
+    // 2. Top-level navigation to the host's own Pocket ID to end the SSO
+    //    session.
+    window.location.assign(identityProviderLogoutUrl);
   };
 
   return (
