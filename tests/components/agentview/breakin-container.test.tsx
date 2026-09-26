@@ -10,9 +10,9 @@ import {
 import { BreakIn, type BreakInProps } from "@/components/agentview/BreakIn.tsx";
 import { ACTIVE_AGENT } from "./fixtures";
 
-// Container mode (HOST_WORKSPACE_PATH set): the one resumable case is a Claude
-// session a daax agent container ran at exactly /workspace, whose transcript
-// daax's own endpoint finds in the container store.
+// Container mode (HOST_WORKSPACE_PATH set): nothing records which directory a
+// daax agent container mounted at /workspace, so no container session is
+// resumable; each case names its own reason.
 vi.mock("next/dynamic", () => ({
   default:
     () =>
@@ -47,8 +47,7 @@ const props: BreakInProps = {
   terminalMode: "container",
   now: Date.parse("2026-09-08T14:00:30Z"),
 };
-const ALLOWED =
-  "Resume in a daax agent container (whole workspace mounted at /workspace)";
+const ALLOWED = "Resume in a daax agent container";
 const transcriptAnswer = (status: number, body: unknown) =>
   fetchMock.mockImplementation(() =>
     Promise.resolve(new Response(JSON.stringify(body), { status })),
@@ -64,29 +63,18 @@ afterEach(() => {
 });
 
 describe("BreakIn in container mode", () => {
-  it("resumes a /workspace Claude session in an agent container with exact params", async () => {
+  it("refuses a /workspace Claude session whose transcript exists: nothing records its project", async () => {
     render(<BreakIn {...props} />);
-    const button = await screen.findByRole("button", { name: ALLOWED });
-    expect(button).not.toBeDisabled();
+    const button = await screen.findByRole("button", {
+      name: "Resume in a daax agent container — daax does not record which project this container session mounted at /workspace, so a resume could not put it back in the same tree",
+    });
+    expect(button).toBeDisabled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toBe(
       "/api/agentview-daax/container-transcripts/4db77e81-4da9-4567-a755-ad316e8df7ba",
     );
     fireEvent.click(button);
-    const terminal = await screen.findByTestId("resume-terminal");
-    const url = new URL(terminal.getAttribute("data-url")!);
-    expect(Object.fromEntries(url.searchParams)).toEqual({
-      mode: "container",
-      cwd: "/workspace",
-      command: "claude --resume 4db77e81-4da9-4567-a755-ad316e8df7ba",
-      sessionType: "resume",
-    });
-    // No new process has been observed; the old row is no account of the resume.
-    const state = screen.getByTestId("agentview-breakin-state");
-    expect(state).toHaveTextContent(
-      "unknown, because the resume runs in a daax agent container and no new process for this session has been observed; a daemon on macOS cannot see container processes",
-    );
-    expect(state).not.toHaveTextContent(/resumed|^running/);
+    expect(screen.queryByTestId("resume-terminal")).toBeNull();
   });
 
   it("refuses with the transcript's absence, naming the path", async () => {

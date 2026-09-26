@@ -12,8 +12,6 @@ export interface LastSignal {
   pid?: number;
   reply?: SignalReply;
   reason?: string;
-  /** Opened in a daax agent container, whose processes a daemon may not see. */
-  container?: boolean;
 }
 
 /** Protojson omits false: only an explicit true is an observed live process. */
@@ -93,11 +91,6 @@ export function breakinState(
     )
       return "interrupted (observed)";
     if (action.reason) return unknown(action.reason);
-    // Never "running" on the old row's account, and never "resumed" unseen.
-    if (action.kind === "resume" && action.container)
-      return unknown(
-        "the resume runs in a daax agent container and no new process for this session has been observed; a daemon on macOS cannot see container processes",
-      );
     if (
       action.reply?.outcome === "refused" ||
       action.reply?.outcome === "failed"

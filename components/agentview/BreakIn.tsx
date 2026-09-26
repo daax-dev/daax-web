@@ -11,8 +11,8 @@ import {
   type TerminalMode,
 } from "@/lib/agentview/client";
 import {
-  containerResumeParams,
   containerResumeReason,
+  NO_PROJECT_RECORD,
   resumeCommand,
   resumeParams,
   resumeUnavailableReason,
@@ -100,13 +100,13 @@ export function BreakIn({
         ? `daax could not check its container store: ${transcript.reason}`
         : !transcript.exists
           ? `daax's container store has no transcript for this session (.daax/claude/projects/-workspace/${agent.session_id}.jsonl)`
-          : undefined;
+          : NO_PROJECT_RECORD;
   const modeReason =
     terminalMode === undefined
       ? "daax did not report whether its terminal runs in host or container mode"
       : containerReason || transcriptReason;
   const resumeLabel = container
-    ? "Resume in a daax agent container (whole workspace mounted at /workspace)"
+    ? "Resume in a daax agent container"
     : "Resume here";
   // Control governs signalling, not resuming: an ended session has no pid to
   // signal and is exactly the one to resume. A live one would be forked.
@@ -148,14 +148,8 @@ export function BreakIn({
   };
   const resume = () => {
     if (resumeReason || !command || !agent.cwd || terminalUrl) return;
-    setLastSignal({ ...snapshot("resume"), ...(container && { container }) });
-    setTerminalUrl(
-      buildTerminalWsUrl(
-        container
-          ? containerResumeParams(command)
-          : resumeParams(agent.cwd, command),
-      ),
-    );
+    setLastSignal(snapshot("resume"));
+    setTerminalUrl(buildTerminalWsUrl(resumeParams(agent.cwd, command)));
   };
   const terminalError = (reason: string) => {
     setTerminalRefusal(reason);

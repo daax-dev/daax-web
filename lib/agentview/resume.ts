@@ -32,10 +32,13 @@ export function resumeParams(cwd: string, command: string): URLSearchParams {
 }
 
 /**
- * Container mode (HOST_WORKSPACE_PATH set). daax's agent containers mount the
- * workspace at /workspace and `.daax/claude` as CLAUDE_CONFIG_DIR, so the only
- * session one of them can resume is a Claude session that ran at exactly
- * /workspace and left its transcript in that store.
+ * Container mode (HOST_WORKSPACE_PATH set). daax's agent containers mount a
+ * directory at /workspace and `.daax/claude` as CLAUDE_CONFIG_DIR. Which
+ * directory is not recorded: a project launch mounts that one project there
+ * (getProjectInfo's containerPath) and a no-project launch mounts the whole
+ * workspace, and every such session records cwd /workspace under the one
+ * transcript key `-workspace`. So no container session can be resumed yet;
+ * each case is refused with the precise reason.
  */
 export const CONTAINER_WORKSPACE = "/workspace";
 
@@ -49,7 +52,7 @@ export function isSessionUuid(sessionId: string): boolean {
 
 /**
  * The first reason a container-mode resume is refused before daax's
- * transcript check, or undefined when only that check remains.
+ * transcript check, or undefined when that check decides the reason.
  */
 export function containerResumeReason(
   agentType: string,
@@ -69,12 +72,10 @@ export function containerResumeReason(
   return undefined;
 }
 
-/** No project: the terminal server mounts the whole HOST_WORKSPACE_PATH. */
-export function containerResumeParams(command: string): URLSearchParams {
-  return new URLSearchParams({
-    mode: "container",
-    cwd: CONTAINER_WORKSPACE,
-    command,
-    sessionType: "resume",
-  });
-}
+/**
+ * Given after the transcript is found. Resuming with no project would mount
+ * the whole workspace where the session may have had one project, and every
+ * path in the conversation would land in the wrong tree.
+ */
+export const NO_PROJECT_RECORD =
+  "daax does not record which project this container session mounted at /workspace, so a resume could not put it back in the same tree";
