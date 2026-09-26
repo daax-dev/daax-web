@@ -21,7 +21,14 @@ describe("traefik-daax.yml.tpl proxy-secret trust boundary", () => {
     http: {
       middlewares: Record<
         string,
-        { headers?: { customRequestHeaders?: Record<string, string> } }
+        {
+          headers?: { customRequestHeaders?: Record<string, string> };
+          forwardAuth?: {
+            address?: string;
+            trustForwardHeader?: boolean;
+            authResponseHeaders?: string[];
+          };
+        }
       >;
       routers: Record<string, { middlewares?: string[]; rule?: string }>;
       services: Record<
@@ -71,7 +78,7 @@ describe("traefik-daax.yml.tpl proxy-secret trust boundary", () => {
     );
     expect(routers["daax-host"].middlewares).toEqual([
       "strip-forwarded-headers",
-      "pocket-id-auth",
+      "pocket-id-auth-admin",
       "inject-proxy-secret",
     ]);
     expect(routers["daax-host-ws"].rule).toBe(
@@ -79,13 +86,44 @@ describe("traefik-daax.yml.tpl proxy-secret trust boundary", () => {
     );
     expect(routers["daax-host-ws"].middlewares).toEqual([
       "strip-forwarded-headers",
-      "pocket-id-auth",
+      "pocket-id-auth-admin",
     ]);
     expect(services["daax-host"].loadBalancer?.servers).toEqual([
       { url: "http://127.0.0.1:4210" },
     ]);
     expect(services["daax-host-ws"].loadBalancer?.servers).toEqual([
       { url: "http://127.0.0.1:4211" },
+    ]);
+  });
+
+  it("gates the host shell on Pocket ID admins, and only the host shell", () => {
+    const { middlewares, routers } = config.http;
+    const identity = [
+      "X-Forwarded-User",
+      "X-Forwarded-Email",
+      "X-Forwarded-Username",
+      "X-Forwarded-Name",
+      "X-Forwarded-Groups",
+      "X-Forwarded-Admin",
+    ];
+    expect(middlewares["pocket-id-auth-admin"].forwardAuth).toEqual({
+      address:
+        "http://127.0.0.1:1411/api/forward-auth/verify?require_admin=true",
+      trustForwardHeader: true,
+      authResponseHeaders: identity,
+    });
+    // The container routes keep the any-signed-in-user check.
+    expect(middlewares["pocket-id-auth"].forwardAuth?.address).toBe(
+      "http://127.0.0.1:1411/api/forward-auth/verify",
+    );
+    expect(routers["daax"].middlewares).toEqual([
+      "strip-forwarded-headers",
+      "pocket-id-auth",
+      "inject-proxy-secret",
+    ]);
+    expect(routers["daax-ws"].middlewares).toEqual([
+      "strip-forwarded-headers",
+      "pocket-id-auth",
     ]);
   });
 

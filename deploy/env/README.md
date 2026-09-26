@@ -163,8 +163,10 @@ as the operator: `deploy/host/daax-host.sh` with the `systemd --user` unit
 `deploy/host/daax-host.service`. That is the privilege it grants — a
 browser-reachable shell as the operator — and the script's header states it.
 It is served only at `https://daax-host.<host>.poley.dev`, through the same
-`strip-forwarded-headers` → `pocket-id-auth` (→ `inject-proxy-secret` on HTTP)
-chains as `daax.<host>` (`deploy/traefik-daax.yml.tpl`, routers `daax-host` and
+`strip-forwarded-headers` → auth (→ `inject-proxy-secret` on HTTP) chains as
+`daax.<host>`, except that the auth step is `pocket-id-auth-admin` (Pocket ID's
+forward-auth with `?require_admin=true`): signed in is not enough for a host
+shell, only a Pocket ID admin passes (`deploy/traefik-daax.yml.tpl`, routers `daax-host` and
 `daax-host-ws`), and both of its listeners bind `127.0.0.1`.
 
 | Setting                      | Value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |

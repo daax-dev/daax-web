@@ -61,6 +61,22 @@ http:
           - X-Forwarded-Groups
           - X-Forwarded-Admin
 
+    # The same verify endpoint, admins only — Pocket ID answers non-admins with
+    # a refusal (the edge bundle's edge-auth-admin uses the same parameter).
+    # Only the host-mode daax routers use it: their terminal is a shell on the
+    # host as the operator, so being signed in is not enough.
+    pocket-id-auth-admin:
+      forwardAuth:
+        address: "http://127.0.0.1:1411/api/forward-auth/verify?require_admin=true"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - X-Forwarded-User
+          - X-Forwarded-Email
+          - X-Forwarded-Username
+          - X-Forwarded-Name
+          - X-Forwarded-Groups
+          - X-Forwarded-Admin
+
   routers:
     # WebSocket endpoint - higher priority to match before main route
     daax-ws:
@@ -90,8 +106,9 @@ http:
 
     # Host-mode daax (deploy/host/daax-host.sh) — Agent View's "Resume here".
     # Its terminal is a shell ON THE HOST as the operator, so these two routers
-    # carry exactly the chains of daax-ws and daax above and nothing looser:
-    # the proxy secret is injected on HTTP only, and the WS is admitted by the
+    # carry the chains of daax-ws and daax above with one change, tighter:
+    # pocket-id-auth-admin (Pocket ID admins only) in place of pocket-id-auth.
+    # The proxy secret is injected on HTTP only, and the WS is admitted by the
     # forwarded identity from a loopback peer (server/handlers/ws-auth.ts). The
     # instance declares this one origin in DAAX_EXTRA_ALLOWED_ORIGINS; Origin
     # is never rewritten here. With no daax-host service running these answer
@@ -102,7 +119,7 @@ http:
       priority: 100
       middlewares:
         - strip-forwarded-headers
-        - pocket-id-auth
+        - pocket-id-auth-admin
       tls:
         certResolver: cloudflare
       entryPoints:
@@ -113,7 +130,7 @@ http:
       service: daax-host
       middlewares:
         - strip-forwarded-headers
-        - pocket-id-auth
+        - pocket-id-auth-admin
         - inject-proxy-secret
       tls:
         certResolver: cloudflare
