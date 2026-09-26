@@ -8,8 +8,9 @@ export const WRITE_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
 
 /**
  * A real auth-guard CALL site. Recognises an AWAITED invocation of
- * `requireAuth(`, `requireAuthOrThrow(`, `requireRole(`, or `requireSuperAdmin(`
- * (F5, #101). `requireRole`/`requireSuperAdmin` are STRONGER than `requireAuth` —
+ * `requireAuth(`, `requireAuthOrThrow(`, `requireAuthIdentity(`, `requireRole(`,
+ * or `requireSuperAdmin(` (F5, #101). `requireAuthIdentity` is `requireAuth`
+ * plus the trusted subject: it returns the same 401 on the same decision. `requireRole`/`requireSuperAdmin` are STRONGER than `requireAuth` —
  * they require authentication AND a role — so a route guarded by one is guarded.
  *
  * SECURITY (defense in depth): the `\bawait\s+` prefix is load-bearing. Every
@@ -24,7 +25,7 @@ export const WRITE_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
  * safe to reuse.
  */
 export const AUTH_GUARD_CALL_RE =
-  /\bawait\s+(?:requireAuth(?:OrThrow)?|requireRole|requireSuperAdmin)\s*\(/;
+  /\bawait\s+(?:requireAuth(?:OrThrow|Identity)?|requireRole|requireSuperAdmin)\s*\(/;
 
 /**
  * An import statement that brings in an auth guard (`requireAuth*`,
