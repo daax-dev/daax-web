@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { WebSocket } from "ws";
 import {
   buildFullCommand,
+  commandTarget,
   scheduleCommand,
 } from "../../../server/handlers/command-handler";
 import type { IPty } from "../../../server/sessions/types";
@@ -26,28 +27,34 @@ describe("buildFullCommand", () => {
     const claudePath = "/home/vscode/.local/share/pnpm/claude";
 
     it("transforms bare claude command to a full-path exec (no flowspec prompt)", () => {
-      const result = buildFullCommand("claude");
+      const result = buildFullCommand("claude", "agent-container");
 
       expect(result).toBe(`exec ${claudePath}`);
       expect(result).not.toContain("flowspec");
     });
 
     it("transforms claude with arguments", () => {
-      const result = buildFullCommand("claude --model opus");
+      const result = buildFullCommand("claude --model opus", "agent-container");
 
       expect(result).toBe(`exec ${claudePath} --model opus`);
       expect(result).not.toContain("flowspec");
     });
 
     it("transforms claude with complex arguments", () => {
-      const result = buildFullCommand("claude chat --continue --verbose");
+      const result = buildFullCommand(
+        "claude chat --continue --verbose",
+        "agent-container",
+      );
 
       expect(result).toBe(`exec ${claudePath} chat --continue --verbose`);
       expect(result).not.toContain("flowspec");
     });
 
     it("preserves quoted arguments", () => {
-      const result = buildFullCommand('claude "hello world"');
+      const result = buildFullCommand(
+        'claude "hello world"',
+        "agent-container",
+      );
 
       expect(result).toBe(`exec ${claudePath} "hello world"`);
       expect(result).not.toContain("flowspec");
@@ -58,7 +65,7 @@ describe("buildFullCommand", () => {
     const claudePath = "/home/vscode/.local/share/pnpm/claude";
 
     it("starts Herdr, launches Claude as a Herdr agent, then attaches to the Herdr session", () => {
-      const result = buildFullCommand("herdr-claude");
+      const result = buildFullCommand("herdr-claude", "agent-container");
 
       expect(result).toContain("command -v herdr");
       expect(result).toContain("herdr server");
@@ -76,7 +83,7 @@ describe("buildFullCommand", () => {
       // previously broke this command end-to-end. `herdr server &` must be
       // followed by the poll loop directly, not by another `&&`-joined
       // array element.
-      const result = buildFullCommand("herdr-claude");
+      const result = buildFullCommand("herdr-claude", "agent-container");
 
       expect(result).not.toMatch(/&\s*&&/);
       expect(result).toContain(
@@ -87,6 +94,7 @@ describe("buildFullCommand", () => {
     it("matches any whitespace separator, not just a literal space (consistent with the arg-stripping regex)", () => {
       const result = buildFullCommand(
         "herdr-claude\t--dangerously-skip-permissions",
+        "agent-container",
       );
 
       expect(result).toContain(
@@ -95,12 +103,15 @@ describe("buildFullCommand", () => {
     });
 
     it("does not match herdr-claude-test (word boundary)", () => {
-      expect(buildFullCommand("herdr-claude-test")).toBe("herdr-claude-test");
+      expect(buildFullCommand("herdr-claude-test", "agent-container")).toBe(
+        "herdr-claude-test",
+      );
     });
 
     it("passes Claude arguments through to the Herdr-started Claude agent", () => {
       const result = buildFullCommand(
         "herdr-claude --dangerously-skip-permissions",
+        "agent-container",
       );
 
       expect(result).toContain(
@@ -111,7 +122,7 @@ describe("buildFullCommand", () => {
 
   describe("opencode command", () => {
     it("sets PATH with /usr/local/bin first for bare command", () => {
-      const result = buildFullCommand("opencode");
+      const result = buildFullCommand("opencode", "agent-container");
 
       expect(result).toBe(
         "export PATH=/usr/local/bin:/home/vscode/.local/share/pnpm:/home/vscode/.local/bin:$PATH && opencode",
@@ -119,7 +130,7 @@ describe("buildFullCommand", () => {
     });
 
     it("sets PATH for opencode with arguments", () => {
-      const result = buildFullCommand("opencode --help");
+      const result = buildFullCommand("opencode --help", "agent-container");
 
       expect(result).toBe(
         "export PATH=/usr/local/bin:/home/vscode/.local/share/pnpm:/home/vscode/.local/bin:$PATH && opencode --help",
@@ -127,7 +138,10 @@ describe("buildFullCommand", () => {
     });
 
     it("preserves full command with all arguments", () => {
-      const result = buildFullCommand("opencode chat --model gpt-4");
+      const result = buildFullCommand(
+        "opencode chat --model gpt-4",
+        "agent-container",
+      );
 
       expect(result).toContain("&& opencode chat --model gpt-4");
     });
@@ -138,31 +152,34 @@ describe("buildFullCommand", () => {
       "/home/vscode/.local/share/pnpm/global/5/node_modules/@github/copilot/index.js";
 
     it("transforms bare copilot command to node execution", () => {
-      const result = buildFullCommand("copilot");
+      const result = buildFullCommand("copilot", "agent-container");
 
       expect(result).toBe(`node ${copilotPath}`);
     });
 
     it("transforms copilot with arguments", () => {
-      const result = buildFullCommand("copilot --help");
+      const result = buildFullCommand("copilot --help", "agent-container");
 
       expect(result).toBe(`node ${copilotPath} --help`);
     });
 
     it("transforms copilot with complex arguments", () => {
-      const result = buildFullCommand("copilot chat --continue");
+      const result = buildFullCommand(
+        "copilot chat --continue",
+        "agent-container",
+      );
 
       expect(result).toBe(`node ${copilotPath} chat --continue`);
     });
 
     it("does not match copilot-test (word boundary)", () => {
-      const result = buildFullCommand("copilot-test");
+      const result = buildFullCommand("copilot-test", "agent-container");
 
       expect(result).toBe("copilot-test");
     });
 
     it("does not match mycopilot (word boundary)", () => {
-      const result = buildFullCommand("mycopilot");
+      const result = buildFullCommand("mycopilot", "agent-container");
 
       expect(result).toBe("mycopilot");
     });
@@ -172,31 +189,34 @@ describe("buildFullCommand", () => {
     const geminiPath = "/home/vscode/.local/share/pnpm/gemini";
 
     it("transforms bare gemini command to full path", () => {
-      const result = buildFullCommand("gemini");
+      const result = buildFullCommand("gemini", "agent-container");
 
       expect(result).toBe(geminiPath);
     });
 
     it("transforms gemini with arguments", () => {
-      const result = buildFullCommand("gemini --help");
+      const result = buildFullCommand("gemini --help", "agent-container");
 
       expect(result).toBe(`${geminiPath} --help`);
     });
 
     it("transforms gemini with complex arguments", () => {
-      const result = buildFullCommand("gemini chat --model pro");
+      const result = buildFullCommand(
+        "gemini chat --model pro",
+        "agent-container",
+      );
 
       expect(result).toBe(`${geminiPath} chat --model pro`);
     });
 
     it("does not match gemini-test (word boundary)", () => {
-      const result = buildFullCommand("gemini-test");
+      const result = buildFullCommand("gemini-test", "agent-container");
 
       expect(result).toBe("gemini-test");
     });
 
     it("does not match mygemini (word boundary)", () => {
-      const result = buildFullCommand("mygemini");
+      const result = buildFullCommand("mygemini", "agent-container");
 
       expect(result).toBe("mygemini");
     });
@@ -206,31 +226,34 @@ describe("buildFullCommand", () => {
     const codexPath = "/home/vscode/.local/share/pnpm/codex";
 
     it("transforms bare codex command to full path", () => {
-      const result = buildFullCommand("codex");
+      const result = buildFullCommand("codex", "agent-container");
 
       expect(result).toBe(codexPath);
     });
 
     it("transforms codex with arguments", () => {
-      const result = buildFullCommand("codex --help");
+      const result = buildFullCommand("codex --help", "agent-container");
 
       expect(result).toBe(`${codexPath} --help`);
     });
 
     it("transforms codex with complex arguments", () => {
-      const result = buildFullCommand("codex chat --continue");
+      const result = buildFullCommand(
+        "codex chat --continue",
+        "agent-container",
+      );
 
       expect(result).toBe(`${codexPath} chat --continue`);
     });
 
     it("does not match codex-test (word boundary)", () => {
-      const result = buildFullCommand("codex-test");
+      const result = buildFullCommand("codex-test", "agent-container");
 
       expect(result).toBe("codex-test");
     });
 
     it("does not match mycodex (word boundary)", () => {
-      const result = buildFullCommand("mycodex");
+      const result = buildFullCommand("mycodex", "agent-container");
 
       expect(result).toBe("mycodex");
     });
@@ -238,67 +261,116 @@ describe("buildFullCommand", () => {
 
   describe("passthrough commands", () => {
     it("returns ls unchanged", () => {
-      expect(buildFullCommand("ls")).toBe("ls");
+      expect(buildFullCommand("ls", "agent-container")).toBe("ls");
     });
 
     it("returns ls with arguments unchanged", () => {
-      expect(buildFullCommand("ls -la")).toBe("ls -la");
+      expect(buildFullCommand("ls -la", "agent-container")).toBe("ls -la");
     });
 
     it("returns git commands unchanged", () => {
-      expect(buildFullCommand("git status")).toBe("git status");
+      expect(buildFullCommand("git status", "agent-container")).toBe(
+        "git status",
+      );
     });
 
     it("returns npm commands unchanged", () => {
-      expect(buildFullCommand("npm install")).toBe("npm install");
+      expect(buildFullCommand("npm install", "agent-container")).toBe(
+        "npm install",
+      );
     });
 
     it("returns cd commands unchanged", () => {
-      expect(buildFullCommand("cd /home")).toBe("cd /home");
+      expect(buildFullCommand("cd /home", "agent-container")).toBe("cd /home");
     });
 
     it("returns empty string unchanged", () => {
-      expect(buildFullCommand("")).toBe("");
+      expect(buildFullCommand("", "agent-container")).toBe("");
     });
 
     it("returns whitespace-only commands unchanged", () => {
-      expect(buildFullCommand("   ")).toBe("   ");
+      expect(buildFullCommand("   ", "agent-container")).toBe("   ");
     });
 
     it("returns complex shell commands unchanged", () => {
       const cmd = "cat file.txt | grep pattern | sort";
-      expect(buildFullCommand(cmd)).toBe(cmd);
+      expect(buildFullCommand(cmd, "agent-container")).toBe(cmd);
     });
 
     it("returns commands with environment variables unchanged", () => {
       const cmd = "NODE_ENV=production npm start";
-      expect(buildFullCommand(cmd)).toBe(cmd);
+      expect(buildFullCommand(cmd, "agent-container")).toBe(cmd);
     });
   });
 
   describe("edge cases", () => {
     it("handles command with leading spaces", () => {
       // Leading spaces are preserved
-      expect(buildFullCommand("  ls")).toBe("  ls");
+      expect(buildFullCommand("  ls", "agent-container")).toBe("  ls");
     });
 
     it("handles command with trailing spaces", () => {
-      expect(buildFullCommand("ls  ")).toBe("ls  ");
+      expect(buildFullCommand("ls  ", "agent-container")).toBe("ls  ");
     });
 
     it("handles claudes (not claude)", () => {
-      expect(buildFullCommand("claudes")).toBe("claudes");
+      expect(buildFullCommand("claudes", "agent-container")).toBe("claudes");
     });
 
     it("handles opencodes (not opencode)", () => {
-      expect(buildFullCommand("opencodes")).toBe("opencodes");
+      expect(buildFullCommand("opencodes", "agent-container")).toBe(
+        "opencodes",
+      );
     });
 
     it("handles claude as substring in path", () => {
-      expect(buildFullCommand("/usr/bin/claude-wrapper")).toBe(
-        "/usr/bin/claude-wrapper",
-      );
+      expect(
+        buildFullCommand("/usr/bin/claude-wrapper", "agent-container"),
+      ).toBe("/usr/bin/claude-wrapper");
     });
+  });
+});
+
+describe("buildFullCommand for a local pty", () => {
+  // A local pty is the operator's host (or the daax-web image, which has no
+  // /home/vscode): the login shell's PATH resolves the tool.
+  it.each([
+    "claude --resume 13acf692-c5b0-443b-9a60-a7e40e83799a",
+    "claude",
+    "codex resume 01a0dbdb-0344-70c3-b9ce-b5f1a542f2d4",
+    "gemini --help",
+    "copilot chat",
+    "opencode",
+    "herdr-claude",
+  ])("types %j verbatim", (cmd) => {
+    expect(buildFullCommand(cmd, "local")).toBe(cmd);
+  });
+
+  it("the host resume that failed live is not rewritten to a container path", () => {
+    expect(
+      buildFullCommand(
+        "claude --resume 13acf692-c5b0-443b-9a60-a7e40e83799a",
+        "local",
+      ),
+    ).toBe("claude --resume 13acf692-c5b0-443b-9a60-a7e40e83799a");
+    expect(
+      buildFullCommand(
+        "claude --resume 13acf692-c5b0-443b-9a60-a7e40e83799a",
+        "agent-container",
+      ),
+    ).toBe(
+      "exec /home/vscode/.local/share/pnpm/claude --resume 13acf692-c5b0-443b-9a60-a7e40e83799a",
+    );
+  });
+});
+
+describe("commandTarget", () => {
+  it.each([
+    ["container", "agent-container"],
+    ["local", "local"],
+    ["shell-tmux", "local"],
+  ])("mode %s runs its command in %s", (mode, target) => {
+    expect(commandTarget(mode)).toBe(target);
   });
 });
 
@@ -334,14 +406,20 @@ describe("scheduleCommand", () => {
   });
 
   it("returns a timeout handle", () => {
-    const timeout = scheduleCommand("ls", "session-1", mockPty, mockWs);
+    const timeout = scheduleCommand(
+      "ls",
+      "session-1",
+      mockPty,
+      mockWs,
+      "agent-container",
+    );
 
     expect(timeout).toBeDefined();
     expect(typeof timeout[Symbol.toPrimitive]).toBe("function");
   });
 
   it("writes command to PTY after 1 second delay", () => {
-    scheduleCommand("ls", "session-1", mockPty, mockWs);
+    scheduleCommand("ls", "session-1", mockPty, mockWs, "agent-container");
 
     expect(mockPty.write).not.toHaveBeenCalled();
 
@@ -351,7 +429,7 @@ describe("scheduleCommand", () => {
   });
 
   it("transforms command before writing", () => {
-    scheduleCommand("gemini", "session-1", mockPty, mockWs);
+    scheduleCommand("gemini", "session-1", mockPty, mockWs, "agent-container");
 
     vi.advanceTimersByTime(1000);
 
@@ -361,7 +439,7 @@ describe("scheduleCommand", () => {
   });
 
   it("logs command execution", () => {
-    scheduleCommand("ls", "session-1", mockPty, mockWs);
+    scheduleCommand("ls", "session-1", mockPty, mockWs, "agent-container");
 
     vi.advanceTimersByTime(1000);
 
@@ -373,7 +451,7 @@ describe("scheduleCommand", () => {
   it("skips execution if session no longer exists", () => {
     mockHasSession.mockReturnValue(false);
 
-    scheduleCommand("ls", "session-1", mockPty, mockWs);
+    scheduleCommand("ls", "session-1", mockPty, mockWs, "agent-container");
 
     vi.advanceTimersByTime(1000);
 
@@ -386,7 +464,7 @@ describe("scheduleCommand", () => {
   it("skips execution if WebSocket is not open", () => {
     const closingWs = { readyState: WebSocket.CLOSING } as unknown as WebSocket;
 
-    scheduleCommand("ls", "session-1", mockPty, closingWs);
+    scheduleCommand("ls", "session-1", mockPty, closingWs, "agent-container");
 
     vi.advanceTimersByTime(1000);
 
@@ -399,7 +477,7 @@ describe("scheduleCommand", () => {
   it("skips execution if WebSocket is closed", () => {
     const closedWs = { readyState: WebSocket.CLOSED } as unknown as WebSocket;
 
-    scheduleCommand("ls", "session-1", mockPty, closedWs);
+    scheduleCommand("ls", "session-1", mockPty, closedWs, "agent-container");
 
     vi.advanceTimersByTime(1000);
 
@@ -407,7 +485,7 @@ describe("scheduleCommand", () => {
   });
 
   it("prevents duplicate execution on multiple timer fires", () => {
-    scheduleCommand("ls", "session-1", mockPty, mockWs);
+    scheduleCommand("ls", "session-1", mockPty, mockWs, "agent-container");
 
     vi.advanceTimersByTime(1000);
     expect(mockPty.write).toHaveBeenCalledTimes(1);
@@ -419,7 +497,13 @@ describe("scheduleCommand", () => {
   });
 
   it("can be cleared before execution", () => {
-    const timeout = scheduleCommand("ls", "session-1", mockPty, mockWs);
+    const timeout = scheduleCommand(
+      "ls",
+      "session-1",
+      mockPty,
+      mockWs,
+      "agent-container",
+    );
 
     clearTimeout(timeout);
 
@@ -429,7 +513,13 @@ describe("scheduleCommand", () => {
   });
 
   it("handles complex commands with arguments", () => {
-    scheduleCommand("claude --model opus", "session-1", mockPty, mockWs);
+    scheduleCommand(
+      "claude --model opus",
+      "session-1",
+      mockPty,
+      mockWs,
+      "agent-container",
+    );
 
     vi.advanceTimersByTime(1000);
 
@@ -441,7 +531,7 @@ describe("scheduleCommand", () => {
   });
 
   it("handles empty command", () => {
-    scheduleCommand("", "session-1", mockPty, mockWs);
+    scheduleCommand("", "session-1", mockPty, mockWs, "agent-container");
 
     vi.advanceTimersByTime(1000);
 
@@ -454,7 +544,13 @@ describe("scheduleCommand", () => {
         readyState: WebSocket.CONNECTING,
       } as unknown as WebSocket;
 
-      scheduleCommand("ls", "session-1", mockPty, connectingWs);
+      scheduleCommand(
+        "ls",
+        "session-1",
+        mockPty,
+        connectingWs,
+        "agent-container",
+      );
       vi.advanceTimersByTime(1000);
 
       expect(mockPty.write).not.toHaveBeenCalled();
@@ -462,7 +558,7 @@ describe("scheduleCommand", () => {
 
     it("executes when WebSocket is OPEN", () => {
       // mockWs is already OPEN by default from beforeEach
-      scheduleCommand("ls", "session-1", mockPty, mockWs);
+      scheduleCommand("ls", "session-1", mockPty, mockWs, "agent-container");
       vi.advanceTimersByTime(1000);
 
       expect(mockPty.write).toHaveBeenCalled();
@@ -473,7 +569,7 @@ describe("scheduleCommand", () => {
         readyState: WebSocket.CLOSING,
       } as unknown as WebSocket;
 
-      scheduleCommand("ls", "session-1", mockPty, closingWs);
+      scheduleCommand("ls", "session-1", mockPty, closingWs, "agent-container");
       vi.advanceTimersByTime(1000);
 
       expect(mockPty.write).not.toHaveBeenCalled();
@@ -482,7 +578,7 @@ describe("scheduleCommand", () => {
     it("skips when WebSocket is CLOSED", () => {
       const closedWs = { readyState: WebSocket.CLOSED } as unknown as WebSocket;
 
-      scheduleCommand("ls", "session-1", mockPty, closedWs);
+      scheduleCommand("ls", "session-1", mockPty, closedWs, "agent-container");
       vi.advanceTimersByTime(1000);
 
       expect(mockPty.write).not.toHaveBeenCalled();
@@ -491,7 +587,7 @@ describe("scheduleCommand", () => {
 
   describe("session validation", () => {
     it("checks session existence before execution", () => {
-      scheduleCommand("ls", "session-1", mockPty, mockWs);
+      scheduleCommand("ls", "session-1", mockPty, mockWs, "agent-container");
 
       expect(mockHasSession).not.toHaveBeenCalled();
 
@@ -501,7 +597,13 @@ describe("scheduleCommand", () => {
     });
 
     it("uses correct session ID for validation", () => {
-      scheduleCommand("ls", "my-unique-session-id", mockPty, mockWs);
+      scheduleCommand(
+        "ls",
+        "my-unique-session-id",
+        mockPty,
+        mockWs,
+        "agent-container",
+      );
 
       vi.advanceTimersByTime(1000);
 

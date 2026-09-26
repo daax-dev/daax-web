@@ -38,7 +38,7 @@ import {
   recordOutput,
 } from "../recording/recorder";
 import { handleMessage, MessageHandlerContext } from "./message-handler";
-import { scheduleCommand } from "./command-handler";
+import { commandTarget, scheduleCommand } from "./command-handler";
 import { resolveWorkspaceRoot, isValidPath } from "../../lib/worktree-manager";
 
 // Auth paths are initialized in terminal-server.ts and passed here
@@ -215,8 +215,9 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     cols: DEFAULT_TERMINAL_COLS,
     rows: DEFAULT_TERMINAL_ROWS,
     cwd: mode === "local" ? cwd : undefined,
-    // buildPtyEnv strips the compose-set HOST posture var so it never leaks
-    // into workbench terminals (#184 review).
+    // buildPtyEnv strips the compose-set HOST posture var and daax's own
+    // server config and credentials, so neither leaks into workbench
+    // terminals or the agents they start (#184 review).
     env: {
       ...buildPtyEnv(),
       TERM: "xterm-256color",
@@ -431,7 +432,13 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
 
   // If a command was specified, run it after shell initialization
   if (command) {
-    const commandTimeout = scheduleCommand(command, sessionId, ptyProcess, ws);
+    const commandTimeout = scheduleCommand(
+      command,
+      sessionId,
+      ptyProcess,
+      ws,
+      commandTarget(mode),
+    );
     // Store timeout on session so the main close handler can clear it
     // This avoids race conditions from having multiple close handlers
     (session as TerminalSessionWithTimeouts)._commandTimeout = commandTimeout;

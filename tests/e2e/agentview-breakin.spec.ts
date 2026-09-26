@@ -193,7 +193,75 @@ test("the unmodified recorded ACTIVE row has no observed process and cannot be i
   await expect(page.getByTestId("agentview-breakin-state")).toContainText(
     "unknown",
   );
+  // No pid and no stop event is also how the daemon shows a live process it
+  // has not linked yet, so Resume waits rather than forking it.
+  await expect(
+    page.getByRole("button", {
+      name: "Resume here — daax cannot tell whether this session is still running: the daemon has recorded no start or stop of its process; it ties a Claude process to its session only when it was started with --session-id or --resume <id>, so a plain claude, claude -c or the picker cannot be linked",
+      exact: true,
+    }),
+  ).toBeDisabled();
   expect(posts).toEqual([]);
+});
+
+test("a live WAITING session can be taken over: Interrupt ends it and Resume follows", async ({
+  page,
+}) => {
+  const waitingId =
+    "chamonix-5d63c187/claude/7a2e4c19-5b3d-4e8f-9c61-0d4b2a8e3f57";
+  await startDaemon("--ends-on-signal");
+  await page.goto("/agentview");
+  await page
+    .locator(`[data-testid="agentview-agent"][data-agent-id="${waitingId}"]`)
+    .click();
+  await expect(page.getByTestId("agentview-breakin-state")).toHaveText(
+    "running · the session is WAITING",
+  );
+  await expect(
+    page.getByRole("button", {
+      name: "Resume here — this session's process is still running (pid 424300); interrupt it first — two processes on one session would fork the conversation",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Interrupt", exact: true }).click();
+  await expect(page.getByTestId("agentview-breakin-state")).toContainText(
+    "interrupted (observed): process 424300 ended",
+    { timeout: 15000 },
+  );
+  await expect(
+    page.getByRole("button", { name: "Resume here", exact: true }),
+  ).toBeEnabled();
+});
+
+test("Codex, stale-tracker and reopened rows refuse Resume, each with its reason", async ({
+  page,
+}) => {
+  await startDaemon("--control");
+  await page.goto("/agentview");
+  for (const [id, reason] of [
+    [
+      "chamonix-5d63c187/codex/01a0dbdb-7e21-7c4a-9f3e-2b6d8c1a5e40",
+      "daax cannot tell whether this session is still running: the daemon has recorded no start or stop of its process; for codex the daemon often cannot link a session to its process at all, so Resume waits for an observed exit",
+    ],
+    [
+      "chamonix-5d63c187/claude/3d8f1b6a-2c47-4e90-a5d3-7b1e9c4f6a28",
+      "daax cannot tell whether this session is still running: the daemon has recorded no start or stop of its process; it ties a Claude process to its session only when it was started with --session-id or --resume <id>, so a plain claude, claude -c or the picker cannot be linked",
+    ],
+    [
+      "chamonix-5d63c187/claude/5c9d2e71-8a43-4f06-b2d1-6e0f3a7c9b58",
+      "daax cannot tell whether this session is still running: the session's transcript has records after its process was seen to stop; another process may be running it",
+    ],
+  ]) {
+    await page
+      .locator(`[data-testid="agentview-agent"][data-agent-id="${id}"]`)
+      .click();
+    await expect(
+      page.getByRole("button", {
+        name: `Resume here — ${reason}`,
+        exact: true,
+      }),
+    ).toBeDisabled();
+  }
 });
 
 test("wrong-node fixture refusal uses 404 and the daemon's exact sentence", async ({
@@ -232,11 +300,37 @@ test("Interrupt observes the baseline process ending and names its pid", async (
   await page
     .locator(`[data-testid="agentview-agent"][data-agent-id="${agentId}"]`)
     .click();
+  await expect(
+    page.getByRole("button", {
+      name: "Resume here — this session's process is still running (pid 424242); interrupt it first — two processes on one session would fork the conversation",
+      exact: true,
+    }),
+  ).toBeDisabled();
   await page.getByRole("button", { name: "Interrupt", exact: true }).click();
   await expect(page.getByTestId("agentview-breakin-state")).toContainText(
     "interrupted (observed): process 424242 ended",
     { timeout: 15000 },
   );
+  await expect(page.getByTestId("agentview-breakin-state")).not.toContainText(
+    "future",
+  );
+  // The ended row has no pid to signal; that must not disable Resume, here or
+  // after a reload, where no in-page baseline survives.
+  await expect(
+    page.getByRole("button", { name: "Resume here", exact: true }),
+  ).toBeEnabled();
+  await page.reload();
+  await page
+    .locator(`[data-testid="agentview-agent"][data-agent-id="${agentId}"]`)
+    .click();
+  await expect(
+    page.getByRole("button", {
+      name: "Interrupt — no process id is recorded for this agent, so there is nothing to signal",
+    }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Resume here", exact: true }),
+  ).toBeEnabled();
   const { signals } = await (await fetch(`${DAEMON}/__signals`)).json();
   expect(signals).toHaveLength(1);
   const { agents } = await (await fetch(`${DAEMON}/api/v1/agents`)).json();
@@ -250,6 +344,12 @@ test("Interrupt observes the baseline process ending and names its pid", async (
       `${DAEMON}/api/v1/events?agent_id=${encodeURIComponent(agentId)}`,
     )
   ).json();
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      event_type: "EVENT_TYPE_AGENT_STOPPED",
+      process_id: 424242,
+    }),
+  );
   expect(events).toContainEqual(
     expect.objectContaining({
       event_type: "EVENT_TYPE_PROCESS_EXITED",

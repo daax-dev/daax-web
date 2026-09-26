@@ -208,7 +208,7 @@ export function AgentViewPanel() {
               agent={agent}
               events={visibleEvents}
               localNodeId={node.data.node.node_id}
-              terminalLocal={node.data.terminalLocal === true}
+              terminalMode={node.data.terminalMode}
               now={now}
               observationFailure={
                 agentsFailure?.message || eventsFailure?.message

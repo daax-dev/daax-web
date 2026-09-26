@@ -33,13 +33,17 @@ export const PROXY_BASE = "/api/agentview";
 
 // ─── Readers ─────────────────────────────────────────────────────────────────
 
-export type AgentViewNode = NodeResponse & { terminalLocal?: boolean };
+export type TerminalMode = "host" | "container";
+export type AgentViewNode = NodeResponse & { terminalMode?: TerminalMode };
 
 export function fetchNode(): Promise<DaemonResult<AgentViewNode>> {
-  return readJson<AgentViewNode>("node", undefined, (body, response) => ({
-    ...body,
-    terminalLocal: response.headers.get("X-Agentview-Terminal-Local") === "1",
-  }));
+  return readJson<AgentViewNode>("node", undefined, (body, response) => {
+    const mode = response.headers.get("X-Agentview-Terminal-Mode");
+    return {
+      ...body,
+      terminalMode: mode === "host" || mode === "container" ? mode : undefined,
+    };
+  });
 }
 
 /** The daemon's account, preserved separately from observed session state. */
@@ -111,6 +115,7 @@ export interface FetchEventsOptions {
   limit?: number;
   descending?: boolean;
   afterSequence?: number;
+  eventTypes?: string[];
 }
 
 export function fetchEvents(
@@ -123,6 +128,7 @@ export function fetchEvents(
   if (opts.descending) q.set("descending", "true");
   if (opts.afterSequence !== undefined)
     q.set("after_sequence", String(opts.afterSequence));
+  for (const type of opts.eventTypes ?? []) q.append("event_type", type);
   return readJson<EventsResponse>("events", q);
 }
 

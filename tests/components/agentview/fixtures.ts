@@ -133,3 +133,29 @@ export const EVENTS: AgentEvent[] = [
     collector: "claude",
   },
 ];
+
+/**
+ * The agent process's own start and stop, shaped as a live agentd emits them
+ * (session 63d45aba…, 2026-09-26): AGENT_STARTED then AGENT_STOPPED carrying
+ * the root pid in process_id. Child exits share the agent id but not the pid.
+ */
+export const AGENT_STARTED_EVENT: AgentEvent = {
+  event_id: "agent-start-1",
+  node_id: "chamonix-d5d8554e",
+  timestamp: "2026-09-07T22:00:00Z",
+  sequence: "1950989",
+  event_type: "EVENT_TYPE_AGENT_STARTED",
+  agent_id: "chamonix-d5d8554e/claude/4db77e81-4da9-4567-a755-ad316e8df7ba",
+  session_id: "4db77e81-4da9-4567-a755-ad316e8df7ba",
+  process_id: 40327,
+  parent_process_id: 40326,
+  collector: "process",
+  attributes: { agent_type: "claude", role: "cli" },
+};
+export const AGENT_STOPPED_EVENT: AgentEvent = {
+  ...AGENT_STARTED_EVENT,
+  event_id: "agent-stop-1",
+  timestamp: "2026-09-07T22:25:40.647735Z",
+  sequence: "1951824",
+  event_type: "EVENT_TYPE_AGENT_STOPPED",
+};

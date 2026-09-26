@@ -654,10 +654,10 @@ describe("POST /api/agentview/[...path]", () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it("reports terminal locality from runtime HOST_WORKSPACE_PATH without changing the node body", async () => {
+  it("reports the terminal mode from runtime HOST_WORKSPACE_PATH without changing the node body", async () => {
     for (const [workspace, expected] of [
-      ["", "1"],
-      ["/host/prj", "0"],
+      ["", "host"],
+      ["/host/prj", "container"],
     ]) {
       vi.stubEnv("HOST_WORKSPACE_PATH", workspace);
       mockFetch.mockResolvedValueOnce(
@@ -667,7 +667,7 @@ describe("POST /api/agentview/[...path]", () => {
         browserRequest("http://localhost/api/agentview/node"),
         ctx("node"),
       );
-      expect(res.headers.get("X-Agentview-Terminal-Local")).toBe(expected);
+      expect(res.headers.get("X-Agentview-Terminal-Mode")).toBe(expected);
       expect(await res.json()).toEqual({ node: { node_id: "node" } });
       expect([
         ...new Headers(mockFetch.mock.calls.at(-1)![1].headers).keys(),
