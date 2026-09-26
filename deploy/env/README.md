@@ -74,13 +74,20 @@ write and terminal refused. `DAAX_EXTRA_ALLOWED_ORIGINS` is a comma-separated
 list of **exact** extra origins, read by `server/config/origin-allowlist.ts` —
 the one decision point both planes call. Each entry must be a bare `https://`
 origin (optional port; no path, trailing slash, query, wildcard or credentials);
-the host is lowercased and matching is exact string equality, so subdomains,
-suffixes, `http://` and other ports stay refused. An invalid entry throws at
-boot (Next `instrumentation.ts`, `server/terminal-server.ts`) naming the entry,
-rather than producing silent 403s. Unset or empty keeps the built-in list
-unchanged. Rewriting `Origin` at the proxy instead would defeat the check for
-every caller. The compose files do not pass this variable through yet; set it in
-the process environment of a host-mode (`bun start`) instance, or add it to the
+the host is lowercased, a default `:443` dropped, and anything else URL parsing
+would tidy (a backslash, a tab, empty userinfo, a non-punycode host) is
+refused. Matching is exact string equality, so subdomains, suffixes, `http://`
+and other ports stay refused. An invalid entry makes the process log the entry
+and exit 1 at boot (Next via `instrumentation.ts`, the terminal server via
+`server/terminal-server.ts`) rather than producing silent 403s. Unset or empty
+keeps the built-in list unchanged. Rewriting `Origin` at the proxy instead would
+defeat the check for every caller.
+
+**Both processes need it.** `bun start` is `next start` only; the terminal
+server (`start:terminal`, or the second half of `start:prod` / `bun dev`) is a
+separate process and, without the variable, refuses every terminal upgrade from
+the declared origin (close code 1008). The compose files do not pass it through
+yet: set it in the environment of both host-mode processes, or add it to the
 `daax` and `terminal` service environments.
 
 ## Agent View break-in (ADR 0026)

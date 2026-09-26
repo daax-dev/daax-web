@@ -27,9 +27,11 @@
  * query, fragment, credentials or wildcard. The host is lowercased and a default
  * :443 dropped, which is how a browser serialises the Origin header; the header
  * is then compared by exact string equality — no suffix or prefix matching.
- * Empty entries (a trailing comma) are ignored. Anything else that does not
- * parse THROWS, naming the entry: a typo must fail loudly rather than turn into
- * silent 403s.
+ * The entry must already be in that canonical form apart from case and :443 —
+ * anything URL parsing would tidy (a backslash, a tab, empty userinfo, a
+ * non-ASCII host not written as punycode) is refused. Empty entries (a
+ * trailing comma) are ignored. Anything else THROWS, naming the entry: a typo
+ * must fail loudly rather than turn into silent 403s.
  */
 export const EXTRA_ALLOWED_ORIGINS_ENV = "DAAX_EXTRA_ALLOWED_ORIGINS";
 
@@ -59,6 +61,10 @@ export function parseExtraAllowedOrigins(
       fail("an origin has no path (and no trailing slash)");
     if (url.search || entry.includes("?")) fail("an origin has no query");
     if (url.hash || entry.includes("#")) fail("an origin has no fragment");
+    // Anything URL parsing tidied away (a backslash, an embedded tab, empty
+    // userinfo) means the entry is not what the operator thinks it is.
+    if (url.origin !== entry.toLowerCase().replace(/:443$/, ""))
+      fail(`not in canonical origin form (parses as "${url.origin}")`);
     origins.add(url.origin);
   }
   return origins;
@@ -70,9 +76,9 @@ let cachedRaw: string | undefined;
 let cachedOrigins: ReadonlySet<string> = new Set();
 
 /**
- * The parsed `DAAX_EXTRA_ALLOWED_ORIGINS`. Throws on an invalid entry. Called
- * at boot by `instrumentation.ts` (Next) and `server/terminal-server.ts` so a
- * bad value stops startup, and again by `isAllowedOrigin` on every check.
+ * The parsed `DAAX_EXTRA_ALLOWED_ORIGINS`. Throws on an invalid entry. Checked
+ * at boot via `assertExtraOriginsAtBoot` (`extra-origins-boot.ts`), which exits
+ * 1, and again by `isAllowedOrigin` on every check.
  */
 export function extraAllowedOrigins(): ReadonlySet<string> {
   const raw = process.env[EXTRA_ALLOWED_ORIGINS_ENV];

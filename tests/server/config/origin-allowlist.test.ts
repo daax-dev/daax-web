@@ -100,6 +100,16 @@ describe("DAAX_EXTRA_ALLOWED_ORIGINS", () => {
       expect(() => parseExtraAllowedOrigins(entry)).toThrow(why);
     });
 
+    it.each([
+      ["https://daax-host.chamonix.poley.dev\\", "a trailing backslash"],
+      ["https://daax-\thost.chamonix.poley.dev", "an embedded tab"],
+      ["https://@daax-host.chamonix.poley.dev", "empty userinfo"],
+    ])("%s → throws (%s is not silently tidied)", (entry) => {
+      expect(() => parseExtraAllowedOrigins(entry)).toThrow(
+        `invalid entry "${entry}": not in canonical origin form (parses as "https://daax-host.chamonix.poley.dev")`,
+      );
+    });
+
     it("isAllowedOrigin throws rather than silently refusing when the env is malformed", () => {
       vi.stubEnv(ENV, "daax-host.chamonix.poley.dev");
       expect(() => isAllowedOrigin("https://daax.kinsale.poley.dev")).toThrow(

@@ -16,7 +16,7 @@ import { existsSync, accessSync, statSync, constants as fsConstants } from "fs";
 
 // Configuration
 import { PORT, HOST, HOST_WORKSPACE_PATH } from "./config/constants";
-import { extraAllowedOrigins } from "./config/origin-allowlist";
+import { assertExtraOriginsAtBoot } from "./config/extra-origins-boot";
 import { WS_TICKET_SUBPROTOCOL } from "../lib/ws-ticket-protocol";
 
 // Docker/Auth initialization
@@ -107,14 +107,9 @@ function preflightDockerSocket(): void {
 // Fail loud at boot if the socket is mounted but unreachable (wrong DOCKER_GID).
 preflightDockerSocket();
 
-// Parse DAAX_EXTRA_ALLOWED_ORIGINS now: an invalid entry throws here, naming
-// it, instead of surfacing later as refused WS upgrades.
-const extraOrigins = extraAllowedOrigins();
-if (extraOrigins.size > 0) {
-  console.log(
-    `[ws-auth] Extra allowed origins: ${[...extraOrigins].join(", ")}`,
-  );
-}
+// Parse DAAX_EXTRA_ALLOWED_ORIGINS now: an invalid entry exits 1, naming it,
+// instead of surfacing later as refused WS upgrades.
+assertExtraOriginsAtBoot("ws-auth");
 
 // Initialize Claude auth directory (exits on failure - required)
 const claudeAuth = initializeClaudeAuthDir();
