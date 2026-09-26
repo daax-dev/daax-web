@@ -13,6 +13,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -40,6 +41,24 @@ const LIB_SH = join(REPO, "scripts/deploy-lib.sh");
 let work: string;
 let binDir: string;
 let dockerLog: string;
+// A loopback port nothing listens on, so the DAAX_PG_HOST_PORT preflight never
+// depends on what the machine running the suite has on 5433.
+let freePort = "";
+
+function listenOnLoopback(port = 0): Promise<Server> {
+  return new Promise((ok, bad) => {
+    const srv = createServer();
+    srv.once("error", bad);
+    srv.listen(port, "127.0.0.1", () => ok(srv));
+  });
+}
+
+beforeAll(async () => {
+  const srv = await listenOnLoopback();
+  const addr = srv.address();
+  freePort = String(typeof addr === "object" && addr ? addr.port : 0);
+  await new Promise<void>((ok) => srv.close(() => ok()));
+});
 
 // A programmable fake `docker` (also handles `docker compose …`). It logs every
 // invocation, forces failure when the joined args match FAKE_FAIL_PATTERN, and:
@@ -60,6 +79,9 @@ if [[ -n "\${FAKE_FAIL_PATTERN:-}" ]] && grep -qE "\$FAKE_FAIL_PATTERN" <<<"$arg
 fi
 case "$1" in
   version) exit 0 ;;
+  ps)                                  # ps --filter publish=<port>: FAKE_PORT_HOLDER names the holder(s)
+    [[ "$*" == *publish=* && -n "\${FAKE_PORT_HOLDER:-}" ]] && printf '%s\n' \$FAKE_PORT_HOLDER
+    exit 0 ;;
   image)                               # image inspect <img> -> present unless named absent
     [[ -n "\${FAKE_IMAGE_ABSENT:-}" && "\${@: -1}" == "\$FAKE_IMAGE_ABSENT" ]] && exit 1
     exit 0 ;;
@@ -200,6 +222,7 @@ function runDeploy(
     DAAX_DEPLOY_NO_LOCK: "1",
     // Never the real /opt/daax of the machine running the suite.
     DAAX_BOOT_STARTER_DIR: join(work, "no-boot-starter"),
+    DAAX_PG_HOST_PORT: freePort,
     ...env,
   };
   const r = spawnSync("bash", [DEPLOY_SH, target], {
@@ -1339,6 +1362,84 @@ describe("deploy.sh happy path", () => {
   });
 });
 
+describe("deploy.sh preflight — daax-postgres's loopback port", () => {
+  let held: Server;
+  let heldPort = "";
+  beforeAll(async () => {
+    held = await listenOnLoopback();
+    const addr = held.address();
+    heldPort = String(typeof addr === "object" && addr ? addr.port : 0);
+  });
+  afterAll(() => held?.close());
+
+  const deploy = (name: string, env: Record<string, string>) => {
+    resetDockerLog();
+    return runDeploy(
+      "test",
+      { TEST_SECRET_A: "x", TEST_SECRET_B: "y", ...env },
+      freshLog(name),
+    );
+  };
+  const refusedBeforeDocker = (r: RunResult, name: string, why: RegExp) => {
+    expect(r.status, name).not.toBe(0);
+    expect(r.stderr, name).toMatch(why);
+    expect(readFileSync(dockerLog, "utf8"), name).not.toMatch(
+      /compose .*(pull|up)/,
+    );
+  };
+
+  it(
+    "refuses a port another container publishes, naming it",
+    { timeout: 120_000 },
+    () => {
+      refusedBeforeDocker(
+        deploy("pgport-ironclaw", {
+          DAAX_PG_HOST_PORT: heldPort,
+          FAKE_PORT_HOLDER: "ironclaw-pg",
+        }),
+        "ironclaw",
+        /published by container\(s\): ironclaw-pg/,
+      );
+    },
+  );
+
+  it(
+    "refuses a port held by a process docker does not know",
+    { timeout: 120_000 },
+    () => {
+      refusedBeforeDocker(
+        deploy("pgport-host", { DAAX_PG_HOST_PORT: heldPort }),
+        "host process",
+        /held by a process that is not a container/,
+      );
+    },
+  );
+
+  it(
+    "accepts the port when daax-postgres already holds it, and a free one",
+    { timeout: 120_000 },
+    () => {
+      expect(
+        deploy("pgport-ours", {
+          DAAX_PG_HOST_PORT: heldPort,
+          FAKE_PORT_HOLDER: "daax-postgres",
+        }).status,
+      ).toBe(0);
+      expect(deploy("pgport-free", {}).status).toBe(0);
+    },
+  );
+
+  it("refuses a value that is not a port", { timeout: 120_000 }, () => {
+    for (const bad of ["0", "65536", "08", "5433x"]) {
+      refusedBeforeDocker(
+        deploy(`pgport-bad-${bad}`, { DAAX_PG_HOST_PORT: bad }),
+        bad,
+        /DAAX_PG_HOST_PORT must be a port number/,
+      );
+    }
+  });
+});
+
 describe("deploy.sh boot starter (galway's /opt/daax daax.service)", () => {
   const SECRET = "s3cr3t-boot-value";
   const starter = () => join(work, "opt-daax");
@@ -1396,6 +1497,27 @@ describe("deploy.sh boot starter (galway's /opt/daax daax.service)", () => {
       expect(again.status).toBe(0);
       expect(again.stdout).toMatch(/already matches this deploy/);
       expect(readFileSync(envFile(), "utf8")).toBe(body);
+    },
+  );
+
+  it(
+    "rewrites a .env it owns in a directory it cannot write, ending private",
+    { timeout: 120_000 },
+    () => {
+      setup(join(REPO, "deploy/docker-compose.yml"));
+      chmodSync(envFile(), 0o644);
+      chmodSync(starter(), 0o555);
+      try {
+        const r = deploy("boot-inplace");
+        expect(r.status).toBe(0);
+        expect(r.stdout).toMatch(/wrote .*opt-daax\/\.env \(0600/);
+        expect(statSync(envFile()).mode & 0o777).toBe(0o600);
+        expect(readFileSync(envFile(), "utf8")).toContain(
+          "HOSTNAME='testhost'",
+        );
+      } finally {
+        chmodSync(starter(), 0o755);
+      }
     },
   );
 

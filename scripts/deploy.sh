@@ -339,6 +339,24 @@ phase_preflight() {
     python3 -c 'import sys; s=open(sys.argv[1]).read().strip(); sys.exit(0 if s and "\n" not in s and "\r" not in s else 1)' "$sec_host" \
       || fail preflight "AGENTD_PROXY_SECRET_HOST_FILE does not hold one non-empty secret line: $sec_host"
   fi
+  # daax-postgres publishes 127.0.0.1:${DAAX_PG_HOST_PORT:-5433} (for the
+  # host-mode daax). A port somebody else holds would fail `compose up` after
+  # capture — or, if the holder is another Postgres, hand host mode the wrong
+  # server — so it must be free or already daax-postgres's. On galway 5433 is
+  # ironclaw-pg's. Docker names a container holder; a listener docker does not
+  # know is a host process.
+  local pg_port="${DAAX_PG_HOST_PORT:-5433}" pg_holder
+  if [[ ! "$pg_port" =~ ^[1-9][0-9]{0,4}$ ]] || ((pg_port > 65535)); then
+    fail preflight "DAAX_PG_HOST_PORT must be a port number (got '$pg_port')"
+  fi
+  pg_holder="$("$DOCKER_BIN" ps --filter "publish=$pg_port" --format '{{.Names}}' 2>/dev/null)" \
+    || fail preflight "cannot ask docker which container publishes port $pg_port"
+  pg_holder="$(printf '%s' "$pg_holder" | paste -sd, -)"
+  if [[ -n "$pg_holder" && "$pg_holder" != daax-postgres ]]; then
+    fail preflight "127.0.0.1:$pg_port (DAAX_PG_HOST_PORT) is published by container(s): $pg_holder — not daax-postgres. Choose a free port in deploy/env/$ENV_NAME.env"
+  elif [[ -z "$pg_holder" ]] && (exec 3<>"/dev/tcp/127.0.0.1/$pg_port") 2>/dev/null; then
+    fail preflight "127.0.0.1:$pg_port (DAAX_PG_HOST_PORT) is held by a process that is not a container (find it: ss -ltnp 'sport = :$pg_port'). Choose a free port in deploy/env/$ENV_NAME.env"
+  fi
   assert_code_server_image "$BUILD_CODE_SERVER" || fail preflight "code-server image preflight failed"
   # NOTE: no managed-Postgres reachability gate here. Managed mode (DAAX_PG_MANAGED=1)
   # fails closed above, so the only path reaching this point is compose-local
@@ -606,8 +624,8 @@ phase_boot_starter() {
   fi
   if [[ -n "${tmp:-}" ]] && printf '%s' "$body" >"$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$env_out"; then
     :
-  elif [[ -f "$env_out" && -w "$env_out" && -O "$env_out" ]] && (umask 077 && printf '%s' "$body" >"$env_out") && chmod 600 "$env_out"; then
-    : # directory not writable, file ours: rewritten in place
+  elif [[ -f "$env_out" && -w "$env_out" && -O "$env_out" ]] && chmod 600 "$env_out" && (umask 077 && printf '%s' "$body" >"$env_out"); then
+    : # directory not writable, file ours: made private FIRST, then rewritten
   else
     [[ -n "${tmp:-}" ]] && rm -f "$tmp"
     err "boot starter: cannot write $env_out as $(id -un); a reboot will start daax from the old file. Fix once: sudo chown $(id -un) $dir $env_out"
