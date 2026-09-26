@@ -325,3 +325,31 @@ describe("observed break-in state", () => {
     ).toBe("running");
   });
 });
+
+describe("container resume state", () => {
+  const resume: LastSignal = {
+    ...signal,
+    kind: "resume",
+    reply: undefined,
+    container: true,
+  };
+  it("is unknown with a reason, never running, while no new process is seen", () => {
+    expect(breakinState(ACTIVE_AGENT, [], resume, now)).toBe(
+      "unknown, because the resume runs in a daax agent container and no new process for this session has been observed; a daemon on macOS cannot see container processes · 30s ago",
+    );
+  });
+  it("is resumed here (observed) when a host can see the container's process", () => {
+    expect(
+      breakinState(
+        {
+          ...ACTIVE_AGENT,
+          agent_pid: 50000,
+          agent_process_started_at: "2026-09-08T14:00:20Z",
+        },
+        [],
+        resume,
+        now,
+      ),
+    ).toBe("resumed here (observed)");
+  });
+});

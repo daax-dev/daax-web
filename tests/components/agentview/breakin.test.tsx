@@ -41,7 +41,7 @@ const props: BreakInProps = {
   agent: active,
   events: [],
   localNodeId: "chamonix-d5d8554e",
-  terminalLocal: true,
+  terminalMode: "host",
   now: Date.parse("2026-09-08T14:00:30Z"),
 };
 const reply = {
@@ -363,25 +363,32 @@ describe("BreakIn", () => {
       "unknown, because the terminal server refused: WebSocket refused: Path not allowed",
     );
   });
-  it("explains container mode, unsupported Gemini and missing cwd", () => {
-    const { rerender } = render(<BreakIn {...props} terminalLocal={false} />);
-    expect(
-      screen.getByRole("button", {
-        name: /Resume here — daax is in container mode/,
-      }),
-    ).toBeDisabled();
-    rerender(
+  it("host mode explains unsupported Gemini and missing cwd, and never asks the container store", () => {
+    const { rerender } = render(
       <BreakIn {...props} agent={{ ...active, agent_type: "gemini" }} />,
     );
     expect(
       screen.getByRole("button", {
-        name: /Resume here — Gemini --resume takes latest/,
+        name: /^Resume here — Gemini --resume takes latest/,
       }),
     ).toBeDisabled();
     rerender(<BreakIn {...props} agent={{ ...active, cwd: undefined }} />);
     expect(
       screen.getByRole("button", {
         name: "Resume here — the daemon has not reported this session's cwd",
+      }),
+    ).toBeDisabled();
+    rerender(<BreakIn {...props} agent={{ ...active, cwd: "/workspace" }} />);
+    expect(
+      screen.getByRole("button", { name: "Resume here" }),
+    ).not.toBeDisabled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("says so when daax did not report its terminal mode", () => {
+    render(<BreakIn {...props} terminalMode={undefined} />);
+    expect(
+      screen.getByRole("button", {
+        name: "Resume here — daax did not report whether its terminal runs in host or container mode",
       }),
     ).toBeDisabled();
   });

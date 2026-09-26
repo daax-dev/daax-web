@@ -1,10 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import type { AgentEvent, AgentInstance } from "@/lib/agentview/types";
-import { formatAge, signalAgent, stripEnum } from "@/lib/agentview/client";
 import {
+  checkContainerTranscript,
+  formatAge,
+  signalAgent,
+  stripEnum,
+  type TerminalMode,
+} from "@/lib/agentview/client";
+import {
+  containerResumeParams,
+  containerResumeReason,
   resumeCommand,
   resumeParams,
   resumeUnavailableReason,
@@ -22,7 +30,8 @@ export interface BreakInProps {
   agent: AgentInstance;
   events: AgentEvent[];
   localNodeId: string;
-  terminalLocal: boolean;
+  /** From daax's node header; undefined when daax did not say. */
+  terminalMode?: TerminalMode;
   now: number;
   observationFailure?: string;
 }
@@ -31,7 +40,7 @@ export function BreakIn({
   agent,
   events,
   localNodeId,
-  terminalLocal,
+  terminalMode,
   now,
   observationFailure,
 }: BreakInProps) {
@@ -40,6 +49,9 @@ export function BreakIn({
   const [signalRefusal, setSignalRefusal] = useState<string>();
   const [terminalRefusal, setTerminalRefusal] = useState<string>();
   const [terminalUrl, setTerminalUrl] = useState<string>();
+  const [transcript, setTranscript] = useState<
+    { exists: boolean } | { reason: string }
+  >();
   const control = agent.capabilities?.signals.control;
   const controlReason =
     control?.level === "CAPABILITY_LEVEL_UNAVAILABLE"
@@ -63,13 +75,43 @@ export function BreakIn({
     agent.node_id !== localNodeId
       ? `this session runs on ${agent.node_id}; daax's terminal opens a shell only on ${localNodeId}`
       : undefined;
+  const container = terminalMode === "container";
+  const containerReason = container
+    ? containerResumeReason(agent.agent_type, agent.session_id, agent.cwd)
+    : undefined;
+  // Asked only once every other container condition holds for a local session.
+  const needsTranscript = container && !remoteReason && !containerReason;
+  useEffect(() => {
+    if (!needsTranscript) return;
+    let current = true;
+    void checkContainerTranscript(agent.session_id).then((result) => {
+      if (current) setTranscript(result);
+    });
+    return () => {
+      current = false;
+    };
+  }, [needsTranscript, agent.session_id]);
+  const transcriptReason = !needsTranscript
+    ? undefined
+    : !transcript
+      ? "checking daax's container store for this session's transcript"
+      : "reason" in transcript
+        ? `daax could not check its container store: ${transcript.reason}`
+        : !transcript.exists
+          ? `daax's container store has no transcript for this session (.daax/claude/projects/-workspace/${agent.session_id}.jsonl)`
+          : undefined;
+  const modeReason =
+    terminalMode === undefined
+      ? "daax did not report whether its terminal runs in host or container mode"
+      : containerReason || transcriptReason;
+  const resumeLabel = container
+    ? "Resume in a daax agent container (whole workspace mounted at /workspace)"
+    : "Resume here";
   const resumeReason =
     observationFailure ||
     controlReason ||
     remoteReason ||
-    (!terminalLocal
-      ? "daax is in container mode; this session's cwd is a host path"
-      : undefined) ||
+    modeReason ||
     (!command ? resumeUnavailableReason(agent.agent_type) : undefined) ||
     (!agent.cwd
       ? "the daemon has not reported this session's cwd"
@@ -100,8 +142,14 @@ export function BreakIn({
   };
   const resume = () => {
     if (resumeReason || !command || !agent.cwd || terminalUrl) return;
-    setLastSignal(snapshot("resume"));
-    setTerminalUrl(buildTerminalWsUrl(resumeParams(agent.cwd, command)));
+    setLastSignal({ ...snapshot("resume"), ...(container && { container }) });
+    setTerminalUrl(
+      buildTerminalWsUrl(
+        container
+          ? containerResumeParams(command)
+          : resumeParams(agent.cwd, command),
+      ),
+    );
   };
   const terminalError = (reason: string) => {
     setTerminalRefusal(reason);
@@ -165,7 +213,8 @@ export function BreakIn({
           disabled={!!resumeReason || !!terminalUrl || pending}
           onClick={resume}
         >
-          Resume here{resumeReason ? ` — ${resumeReason}` : ""}
+          {resumeLabel}
+          {resumeReason ? ` — ${resumeReason}` : ""}
         </button>
       </div>
       {terminalUrl && (
