@@ -42,6 +42,26 @@ Because env files carry no secrets, they are safe to commit.
 | `AGENTD_PROXY_SECRET_HOST_FILE`        | optional; host path of agentd's proxy proof secret (the file agentd reads through `--trusted-proxy-secret-file`, fleet: `/home/jpoley/.dist-agent/proxy.secret`), bind-mounted read-only at `/run/secrets/agentd-proxy`. Set together with `AGENTVIEW_DAEMON_PROXY_SECRET_FILE=/run/secrets/agentd-proxy`; preflight refuses a partial pair, a missing file, a symlink, any owner other than uid 1000 or a mode other than 0600/0400, and a file that is not one non-empty line. Unset, `/dev/null` is mounted and Interrupt answers its existing 503 |
 | `DAAX_PG_HOST_PORT`                    | optional; loopback port `daax-postgres` is published on (default `5433`, bound to `127.0.0.1` only) so the host-mode daax (below) can keep its own `daax_host` database in the same server                                                                                                                                                                                                                                                                                                                                                            |
 
+## The boot starter on galway (`/opt/daax`)
+
+galway still has the pre-fleet `/etc/systemd/system/daax.service` (root,
+enabled): at boot it runs `docker compose up -d daax --no-build
+--remove-orphans` in `/opt/daax` with `EnvironmentFile=/opt/daax/.env`, and
+`/opt/daax/docker-compose.yml` is a one-line `include:` of this compose file —
+the same compose project, so it recreates the stack from whatever that `.env`
+holds. It held a hand-written subset (no `DAAX_IMAGE`, no `AGENTVIEW_*`), so
+every reboot put galway on `:latest` with Agent View broken.
+
+After a deploy passes its health check, `scripts/deploy.sh` rewrites
+`/opt/daax/.env` with every variable the compose file interpolates, as that
+deploy exported it (build-stamp variables excluded), 0600, values single-quoted
+so systemd and compose read them identically, and prints only the path and a
+count. It is written only when the pointer names **this checkout's**
+`deploy/docker-compose.yml`; any other `/opt/daax` is left untouched and said
+so, a missing `/opt/daax` is a no-op, an identical file is not rewritten, and a
+failed deploy leaves it as it was. The unit itself needs sudo to change and is
+not touched. `DAAX_BOOT_STARTER_DIR` overrides the path (tests).
+
 ## Postgres: local (default) vs managed
 
 - **Compose-local (default, zero lock-in):** `DAAX_PG_MANAGED=0`. Postgres runs as
