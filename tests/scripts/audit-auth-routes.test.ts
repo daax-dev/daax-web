@@ -123,6 +123,59 @@ describe("audit-auth-routes drift logic (F4, #96)", () => {
       expect(protectedMethods).toEqual(["POST"]);
     });
 
+    it("treats a requireAuthIdentity-guarded write method as guarded", () => {
+      const requireAuthIdentityRoute = `
+        import { requireAuthIdentity } from "@/lib/auth";
+        export async function POST() {
+          const auth = await requireAuthIdentity();
+          if (!auth.authenticated) return auth.response;
+          return new Response();
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(
+        requireAuthIdentityRoute,
+        ["POST"],
+      );
+      expect(hasAuthGuard).toBe(true);
+      expect(protectedMethods).toEqual(["POST"]);
+    });
+
+    it("still reports UNGUARDED a write route that imports requireAuthIdentity but never awaits it", () => {
+      const importedOnly = `
+        import { requireAuthIdentity } from "@/lib/auth";
+        export async function POST() {
+          const unused = requireAuthIdentity;
+          return new Response(String(unused));
+        }
+      `;
+      const { hasAuthGuard, protectedMethods } = detectRouteAuth(importedOnly, [
+        "POST",
+      ]);
+      expect(hasAuthGuard).toBe(false);
+      expect(protectedMethods).toEqual([]);
+      expect(
+        isUnprotectedWriteRoute(
+          route({
+            path: "/api/x",
+            methods: ["POST"],
+            hasAuthGuard,
+            protectedMethods,
+          }),
+        ),
+      ).toBe(true);
+    });
+
+    it("does not treat a look-alike name (requireAuthIdentityish) as a guard", () => {
+      const lookAlike = `
+        import { requireAuthIdentityish } from "@/lib/fake";
+        export async function POST() {
+          await requireAuthIdentityish();
+          return new Response();
+        }
+      `;
+      expect(detectRouteAuth(lookAlike, ["POST"]).protectedMethods).toEqual([]);
+    });
+
     it("treats a requireSuperAdmin-guarded write method as guarded (F6 #102)", () => {
       const requireSuperAdminRoute = `
         import { requireSuperAdmin } from "@/lib/db-console/super-admin";
