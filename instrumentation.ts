@@ -7,6 +7,12 @@
 export async function register() {
   // Only run on Node.js runtime (not Edge runtime)
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    // Parse DAAX_EXTRA_ALLOWED_ORIGINS at boot (not on the first mutating
+    // request): an invalid entry exits 1, naming it.
+    const { assertExtraOriginsAtBoot } =
+      await import("@/server/config/extra-origins-boot");
+    assertExtraOriginsAtBoot("Instrumentation");
+
     const { initializeBacklogStore } =
       await import("@/server/backlog-multi-store");
     const { setBacklogHealth } = await import("@/lib/backlog/health");

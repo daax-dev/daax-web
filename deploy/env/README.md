@@ -64,6 +64,32 @@ Ingress is controlled at the network layer, not by these files:
   router chain in `deploy/traefik-daax.yml.tpl` to further restrict source IPs on
   top of Pocket ID forward-auth. See the daax deployment section of `CLAUDE.md`.
 
+## Extra allowed origins (`DAAX_EXTRA_ALLOWED_ORIGINS`)
+
+The CSRF check on mutating `/api` requests and the terminal WebSocket upgrade
+both admit only localhost, `*.localhost`, Tailscale IPs and
+`https://daax.<host>.poley.dev`, so a daax served under any other name (e.g. a
+second, host-mode instance at `https://daax-host.chamonix.poley.dev`) has every
+write and terminal refused. `DAAX_EXTRA_ALLOWED_ORIGINS` is a comma-separated
+list of **exact** extra origins, read by `server/config/origin-allowlist.ts` —
+the one decision point both planes call. Each entry must be a bare `https://`
+origin (optional port; no path, trailing slash, query, wildcard or credentials);
+the host is lowercased, a default `:443` dropped, and anything else URL parsing
+would tidy (a backslash, a tab, empty userinfo, a non-punycode host) is
+refused. Matching is exact string equality, so subdomains, suffixes, `http://`
+and other ports stay refused. An invalid entry makes the process log the entry
+and exit 1 at boot (Next via `instrumentation.ts`, the terminal server via
+`server/terminal-server.ts`) rather than producing silent 403s. Unset or empty
+keeps the built-in list unchanged. Rewriting `Origin` at the proxy instead would
+defeat the check for every caller.
+
+**Both processes need it.** `bun start` is `next start` only; the terminal
+server (`start:terminal`, or the second half of `start:prod` / `bun dev`) is a
+separate process and, without the variable, refuses every terminal upgrade from
+the declared origin (close code 1008). The compose files do not pass it through
+yet: set it in the environment of both host-mode processes, or add it to the
+`daax` and `terminal` service environments.
+
 ## Agent View break-in (ADR 0026)
 
 The server reads these at request time (no `NEXT_PUBLIC_` equivalents):
