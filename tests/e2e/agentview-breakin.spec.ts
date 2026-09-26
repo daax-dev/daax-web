@@ -197,7 +197,7 @@ test("the unmodified recorded ACTIVE row has no observed process and cannot be i
   // has not linked yet, so Resume waits rather than forking it.
   await expect(
     page.getByRole("button", {
-      name: "Resume here — daax cannot tell whether this session is still running: the daemon has recorded no start or stop of its process",
+      name: "Resume here — daax cannot tell whether this session is still running: the daemon has recorded no start or stop of its process; it ties a Claude process to its session only when it was started with --session-id or --resume <id>, so a plain claude, claude -c or the picker cannot be linked",
       exact: true,
     }),
   ).toBeDisabled();
@@ -233,7 +233,7 @@ test("a live WAITING session can be taken over: Interrupt ends it and Resume fol
   ).toBeEnabled();
 });
 
-test("a Codex row and a stale-tracker row with no liveness refuse Resume", async ({
+test("Codex, stale-tracker and reopened rows refuse Resume, each with its reason", async ({
   page,
 }) => {
   await startDaemon("--control");
@@ -245,7 +245,11 @@ test("a Codex row and a stale-tracker row with no liveness refuse Resume", async
     ],
     [
       "chamonix-5d63c187/claude/3d8f1b6a-2c47-4e90-a5d3-7b1e9c4f6a28",
-      "daax cannot tell whether this session is still running: the daemon has recorded no start or stop of its process",
+      "daax cannot tell whether this session is still running: the daemon has recorded no start or stop of its process; it ties a Claude process to its session only when it was started with --session-id or --resume <id>, so a plain claude, claude -c or the picker cannot be linked",
+    ],
+    [
+      "chamonix-5d63c187/claude/5c9d2e71-8a43-4f06-b2d1-6e0f3a7c9b58",
+      "daax cannot tell whether this session is still running: the session's transcript has records after its process was seen to stop; another process may be running it",
     ],
   ]) {
     await page

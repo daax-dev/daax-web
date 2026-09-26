@@ -60,7 +60,7 @@ const props: BreakInProps = {
 };
 const CANNOT_TELL =
   "Resume here — daax cannot tell whether this session is still running: ";
-const NO_RECORD = `${CANNOT_TELL}the daemon has recorded no start or stop of its process`;
+const NO_RECORD = `${CANNOT_TELL}the daemon has recorded no start or stop of its process; it ties a Claude process to its session only when it was started with --session-id or --resume <id>, so a plain claude, claude -c or the picker cannot be linked`;
 const SAW_START = (pid: number) =>
   `${CANNOT_TELL}the daemon saw its process start (pid ${pid}) and has not seen it stop, but does not report it alive`;
 const reply = {
@@ -289,6 +289,53 @@ describe("Resume waits for an observed end", () => {
     );
     expect(
       await screen.findByRole("button", { name: NO_RECORD }),
+    ).toBeDisabled();
+  });
+
+  it("refuses when the transcript moved after the observed stop: claude -c can reopen a session unseen", async () => {
+    // The stop at 22:25:40.647 is the latest lifecycle event, but records kept
+    // arriving a minute later from a process the daemon could not link.
+    lifecycle = [AGENT_STOPPED_EVENT, AGENT_STARTED_EVENT];
+    render(
+      <BreakIn
+        {...props}
+        agent={{ ...ambiguous, last_activity: "2026-09-07T22:26:40Z" }}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", {
+        name: `${CANNOT_TELL}the session's transcript has records after its process was seen to stop; another process may be running it`,
+      }),
+    ).toBeDisabled();
+  });
+
+  it("offers when the last record is within the slack of the stop", async () => {
+    lifecycle = [AGENT_STOPPED_EVENT, AGENT_STARTED_EVENT];
+    render(
+      <BreakIn
+        {...props}
+        agent={{ ...ambiguous, last_activity: "2026-09-07T22:25:44Z" }}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: "Resume here" }),
+    ).toBeEnabled();
+  });
+
+  it("a claude --mcp-server helper's stop is not the session's process stopping", async () => {
+    lifecycle = [
+      {
+        ...AGENT_STOPPED_EVENT,
+        event_id: "helper-stop",
+        sequence: "1951900",
+        process_id: 40400,
+        attributes: { agent_type: "claude", role: "mcp-server" },
+      },
+      AGENT_STARTED_EVENT,
+    ];
+    render(<BreakIn {...props} />);
+    expect(
+      await screen.findByRole("button", { name: SAW_START(40327) }),
     ).toBeDisabled();
   });
 });

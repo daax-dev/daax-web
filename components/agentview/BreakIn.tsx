@@ -21,6 +21,7 @@ import {
   hasLiveProcess,
   endEvidence,
   LIFECYCLE_EVENT_TYPES,
+  NO_LIFECYCLE,
   type LastSignal,
 } from "./breakin";
 
@@ -132,12 +133,15 @@ export function BreakIn({
       ? [...events, ...lifecycle.events]
       : events;
   const evidence = endEvidence(agent, observed, lastSignal);
-  // The daemon links a codex session to its process only when it can read the
-  // session from codex's open rollout, so for codex this is the common case.
+  // With no start or stop at all, say why the daemon could not link one.
   const vendorNote =
-    agent.agent_type === "codex"
-      ? "; for codex the daemon often cannot link a session to its process at all, so Resume waits for an observed exit"
-      : "";
+    evidence.ended || evidence.why !== NO_LIFECYCLE
+      ? ""
+      : agent.agent_type === "codex"
+        ? "; for codex the daemon often cannot link a session to its process at all, so Resume waits for an observed exit"
+        : agent.agent_type === "claude"
+          ? "; it ties a Claude process to its session only when it was started with --session-id or --resume <id>, so a plain claude, claude -c or the picker cannot be linked"
+          : "";
   const endedReason =
     live || evidence.ended
       ? undefined

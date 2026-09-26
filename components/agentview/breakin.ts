@@ -96,29 +96,52 @@ function actionFor(
  * process's own events: the latest of its starts and stops for this session
  * is a stop, or this page saw the signalled pid end. A later start undoes it.
  */
+/**
+ * Transcript records this long after the observed stop mean something else
+ * is writing the session. The stop is stamped at the poll that found the
+ * process gone, so the session's own last records precede it.
+ */
+export const REOPENED_SLACK_MS = 5_000;
+
+export const NO_LIFECYCLE =
+  "the daemon has recorded no start or stop of its process";
+
 export function endEvidence(
   agent: AgentInstance,
   events: AgentEvent[],
   lastSignal: LastSignal | null,
 ): { ended: true } | { ended: false; why: string } {
   const action = actionFor(agent, lastSignal);
+  // role "cli" is the session's own process. `claude --mcp-server` carries the
+  // same --session-id and starts and stops on its own.
   const candidates = events.filter(
     (event) =>
       LIFECYCLE_EVENT_TYPES.includes(event.event_type) &&
+      event.attributes?.role === "cli" &&
       event.node_id === agent.node_id &&
       event.session_id === agent.session_id,
   );
   const exit = action ? signalledExit(events, action) : undefined;
   if (exit) candidates.push(exit);
-  if (candidates.length === 0)
-    return {
-      ended: false,
-      why: "the daemon has recorded no start or stop of its process",
-    };
+  if (candidates.length === 0) return { ended: false, why: NO_LIFECYCLE };
   const latest = candidates.reduce((a, b) =>
     sequenceOf(b) > sequenceOf(a) ? b : a,
   );
-  if (latest.event_type !== AGENT_STARTED) return { ended: true };
+  if (latest.event_type !== AGENT_STARTED) {
+    // The daemon links a Claude process to its session only through
+    // --session-id or --resume <id>, so `claude -c`, the picker or in-app
+    // /resume can reopen it unseen. A transcript that moved after the stop
+    // shows that; one reopened and silent at its prompt does not.
+    if (
+      Date.parse(agent.last_activity ?? "") >
+      Date.parse(latest.timestamp) + REOPENED_SLACK_MS
+    )
+      return {
+        ended: false,
+        why: "the session's transcript has records after its process was seen to stop; another process may be running it",
+      };
+    return { ended: true };
+  }
   return {
     ended: false,
     why: `the daemon saw its process start${latest.process_id !== undefined ? ` (pid ${latest.process_id})` : ""} and has not seen it stop, but does not report it alive`,

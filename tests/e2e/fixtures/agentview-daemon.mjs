@@ -86,6 +86,12 @@ const WAITING_ID =
   "chamonix-5d63c187/claude/7a2e4c19-5b3d-4e8f-9c61-0d4b2a8e3f57";
 const WAITING_PID = 424300;
 const CODEX_ID = "chamonix-5d63c187/codex/01a0dbdb-7e21-7c4a-9f3e-2b6d8c1a5e40";
+// A session daax resumed and saw stop, later reopened by `claude -c`: agentd
+// links a Claude process to its session only through --session-id or
+// --resume <id>, so the reopened process's AGENT_STARTED has no session id,
+// and the row has no pid or liveness while its transcript keeps advancing.
+const REOPENED_ID =
+  "chamonix-5d63c187/claude/5c9d2e71-8a43-4f06-b2d1-6e0f3a7c9b58";
 const STALE_ID =
   "chamonix-5d63c187/claude/3d8f1b6a-2c47-4e90-a5d3-7b1e9c4f6a28";
 
@@ -127,6 +133,54 @@ function syntheticRows(exits) {
       },
     ),
     row(STALE_ID, { state: "AGENT_STATE_ACTIVE" }, NO_PID_CONTROL),
+    row(
+      REOPENED_ID,
+      { state: "AGENT_STATE_ACTIVE", last_activity: "2026-09-07T22:20:00Z" },
+      NO_PID_CONTROL,
+    ),
+  ];
+}
+
+/** The reopened session's history: its own start and stop, then a sid-less start. */
+function reopenedEvents(control) {
+  if (!control) return [];
+  const last = Number(readFixture("events").last_sequence);
+  const [node, agentType, sessionId] = REOPENED_ID.split("/");
+  const common = {
+    node_id: node,
+    collector: "process",
+    attributes: { agent_type: agentType, role: "cli" },
+  };
+  return [
+    {
+      ...common,
+      event_id: "fixture-reopened-started",
+      sequence: String(last + 5),
+      event_type: "EVENT_TYPE_AGENT_STARTED",
+      agent_id: REOPENED_ID,
+      session_id: sessionId,
+      timestamp: "2026-09-07T22:00:00Z",
+      process_id: 424500,
+    },
+    {
+      ...common,
+      event_id: "fixture-reopened-stopped",
+      sequence: String(last + 6),
+      event_type: "EVENT_TYPE_AGENT_STOPPED",
+      agent_id: REOPENED_ID,
+      session_id: sessionId,
+      timestamp: "2026-09-07T22:10:00Z",
+      process_id: 424500,
+    },
+    {
+      ...common,
+      event_id: "fixture-reopened-unlinked",
+      sequence: String(last + 7),
+      event_type: "EVENT_TYPE_AGENT_STARTED",
+      agent_id: `${node}/claude/pid-424600`,
+      timestamp: "2026-09-07T22:12:00Z",
+      process_id: 424600,
+    },
   ];
 }
 
@@ -371,7 +425,11 @@ function handle(
 /** Filters the recorded list the way the daemon's query parameters would. */
 function events(params, exits, control) {
   const doc = readFixture("events");
-  const added = [...agentStarts(control), ...exits.values()];
+  const added = [
+    ...agentStarts(control),
+    ...reopenedEvents(control),
+    ...exits.values(),
+  ];
   let rows = [...doc.events, ...added];
   const lastSequence = String(
     Math.max(
