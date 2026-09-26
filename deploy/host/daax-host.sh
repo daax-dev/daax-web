@@ -34,9 +34,11 @@
 # Its terminal ticket secret is its OWN, never the containers'
 # DAAX_WS_TOKEN_SECRET: a ticket is a stateless HMAC and single use is tracked
 # per process, so with a shared secret a ticket minted by daax.<host> for a
-# container shell could be spent once here for a HOST shell. `build` and
-# `install` generate it once into $WS_SECRET_FILE (0600, openssl rand -hex 32);
-# `run` only reads it, and unsets any inherited DAAX_WS_TOKEN_SECRET_PREVIOUS,
+# container shell could be spent once here for a HOST shell — a
+# container-minted ticket must never open a host shell. `build`, `install` and
+# `run` each generate it if missing (0600, openssl rand -hex 32, idempotent:
+# an existing one is kept) into $WS_SECRET_FILE; `run` exports it as this
+# instance's DAAX_WS_TOKEN_SECRET and unsets any inherited DAAX_WS_TOKEN_SECRET_PREVIOUS,
 # which verification would otherwise also accept. Mint (app/api/terminal/
 # ticket) and verify (server/handlers/ws-auth.ts) both read it from the
 # environment through lib/ws-ticket.ts, and both are children of `run`.
@@ -191,6 +193,7 @@ cmd_run() {
 
   local proxy_secret ws_secret pg_pass pg_user pg_port admins
   proxy_secret="$(secret_value DAAX_PROXY_SECRET)"
+  ensure_ws_secret >&2
   ws_secret="$(read_ws_secret)"
   pg_pass="$(secret_value DAAX_PG_PASSWORD)"
   [ -n "$proxy_secret" ] || die "DAAX_PROXY_SECRET is empty in $SECRETS_FILE; without it no forwarded identity is believed"
