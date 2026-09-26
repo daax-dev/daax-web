@@ -21,6 +21,24 @@ export function hasLiveProcess(agent: AgentInstance): boolean {
   return agent.process_alive === true;
 }
 
+/**
+ * An exit this far before the signal is read as clock skew between the
+ * browser, which stamps the signal, and the daemon, which stamps the exit.
+ */
+export const SIGNAL_SKEW_MS = 500;
+
+/** How long after the signal the process ended: a delta, never a clock. */
+export function afterSignal(signalAt: string, exitAt: string): string {
+  const ms = Date.parse(exitAt) - Date.parse(signalAt);
+  if (!(ms > 0)) return "at the signal";
+  if (ms < 1000) return "under 1s after the signal";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s after the signal`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m after the signal`;
+  return `${Math.floor(m / 60)}h after the signal`;
+}
+
 export function breakinState(
   agent: AgentInstance,
   events: AgentEvent[],
@@ -49,10 +67,10 @@ export function breakinState(
           event.event_type === "EVENT_TYPE_PROCESS_EXITED" &&
           event.node_id === action.nodeId &&
           event.agent_id === action.agentId &&
-          Date.parse(event.timestamp) > after,
+          Date.parse(event.timestamp) > after - SIGNAL_SKEW_MS,
       );
       if (exit)
-        return `interrupted (observed): process ${action.pid} ended ${formatAge(exit.timestamp, now)} after the signal`;
+        return `interrupted (observed): process ${action.pid} ended ${afterSignal(action.at, exit.timestamp)} · signal ${formatAge(action.at, now)}`;
       if (
         agent.agent_id === action.agentId &&
         !hasLiveProcess(agent) &&

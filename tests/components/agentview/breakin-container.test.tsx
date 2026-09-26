@@ -21,8 +21,15 @@ vi.mock("next/dynamic", () => ({
     ),
 }));
 const fetchMock = vi.fn();
+// Ended: a live row refuses Resume before any container condition is read.
+const {
+  process_alive: _alive,
+  agent_pid: _pid,
+  ...withoutProcess
+} = ACTIVE_AGENT;
 const agent = {
-  ...ACTIVE_AGENT,
+  ...withoutProcess,
+  state: "AGENT_STATE_IDLE" as const,
   cwd: "/workspace",
   capabilities: {
     signals: {
@@ -74,7 +81,7 @@ describe("BreakIn in container mode", () => {
       command: "claude --resume 4db77e81-4da9-4567-a755-ad316e8df7ba",
       sessionType: "resume",
     });
-    // The old row is still live and ACTIVE; that is not an observation of the resume.
+    // No new process has been observed; the old row is no account of the resume.
     const state = screen.getByTestId("agentview-breakin-state");
     expect(state).toHaveTextContent(
       "unknown, because the resume runs in a daax agent container and no new process for this session has been observed; a daemon on macOS cannot see container processes",
@@ -116,6 +123,21 @@ describe("BreakIn in container mode", () => {
         name: `${ALLOWED} — daax could not check its container store: reading the container store failed: EACCES`,
       }),
     ).toBeDisabled();
+  });
+
+  it("refuses a live session before asking the store", async () => {
+    render(
+      <BreakIn
+        {...props}
+        agent={{ ...agent, process_alive: true, agent_pid: 40327 }}
+      />,
+    );
+    expect(
+      screen.getByRole("button", {
+        name: `${ALLOWED} — this session's process is still running (pid 40327); interrupt it first — two processes on one session would fork the conversation`,
+      }),
+    ).toBeDisabled();
+    await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
   });
 
   it.each([

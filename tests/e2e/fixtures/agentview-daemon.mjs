@@ -75,6 +75,14 @@ function controlAgents(name, control, refuseControl, exits) {
     if (exits.has(agent.agent_id)) {
       delete agent.process_alive;
       delete agent.agent_pid;
+      // As a live daemon answered after an interrupt (2026-09-26): with no pid
+      // there is nothing to signal, and control says so.
+      agent.capabilities.signals.control = {
+        level: "CAPABILITY_LEVEL_UNAVAILABLE",
+        detail:
+          "no process id is recorded for this agent, so there is nothing to signal",
+      };
+      continue;
     }
     agent.capabilities.signals.control = refuseControl
       ? {

@@ -37,6 +37,24 @@ const active = {
     },
   },
 };
+// The row a live click-through saw after an interrupt: IDLE, no pid, no
+// process_alive, and control UNAVAILABLE because there is nothing to signal.
+const { process_alive: _alive, agent_pid: _pid, ...withoutProcess } = active;
+const ended: AgentInstance = {
+  ...withoutProcess,
+  state: "AGENT_STATE_IDLE",
+  capabilities: {
+    signals: {
+      control: {
+        level: "CAPABILITY_LEVEL_UNAVAILABLE",
+        detail:
+          "no process id is recorded for this agent, so there is nothing to signal",
+      },
+    },
+  },
+};
+const STILL_RUNNING =
+  "this session's process is still running (pid 40327); interrupt it first — two processes on one session would fork the conversation";
 const props: BreakInProps = {
   agent: active,
   events: [],
@@ -88,7 +106,36 @@ describe("BreakIn", () => {
       "sent",
     );
   });
-  it("both buttons are disabled with the daemon's UNAVAILABLE control detail", () => {
+  it("an ended row with control UNAVAILABLE still offers Resume with the exact params", async () => {
+    render(<BreakIn {...props} agent={ended} />);
+    expect(
+      screen.getByRole("button", {
+        name: "Interrupt — no process id is recorded for this agent, so there is nothing to signal",
+      }),
+    ).toBeDisabled();
+    const resume = screen.getByRole("button", { name: "Resume here" });
+    expect(resume).toBeEnabled();
+    fireEvent.click(resume);
+    const terminal = await screen.findByTestId("resume-terminal");
+    expect(
+      Object.fromEntries(
+        new URL(terminal.getAttribute("data-url")!).searchParams,
+      ),
+    ).toEqual({
+      mode: "local",
+      cwd: "/home/dev/prj/jp/dist-agent",
+      command: "claude --resume 4db77e81-4da9-4567-a755-ad316e8df7ba",
+      sessionType: "resume",
+    });
+  });
+  it("a live row refuses Resume because its process is still running", () => {
+    render(<BreakIn {...props} />);
+    expect(
+      screen.getByRole("button", { name: `Resume here — ${STILL_RUNNING}` }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Interrupt" })).toBeEnabled();
+  });
+  it("Interrupt carries the daemon's UNAVAILABLE control detail; Resume does not", () => {
     render(
       <BreakIn
         {...props}
@@ -111,9 +158,7 @@ describe("BreakIn", () => {
       }),
     ).toBeDisabled();
     expect(
-      screen.getByRole("button", {
-        name: "Resume here — no authenticated control on this daemon",
-      }),
+      screen.getByRole("button", { name: `Resume here — ${STILL_RUNNING}` }),
     ).toBeDisabled();
   });
   it("a remote node renders the link from the 404", async () => {
@@ -139,9 +184,7 @@ describe("BreakIn", () => {
       />,
     );
     expect(
-      screen.getByRole("button", {
-        name: /Resume here — this session runs on galway/,
-      }),
+      screen.getByRole("button", { name: `Resume here — ${STILL_RUNNING}` }),
     ).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Interrupt" }));
     expect(
@@ -157,7 +200,7 @@ describe("BreakIn", () => {
     { state: "AGENT_STATE_IDLE" as const, process_alive: true },
     { state: "AGENT_STATE_ACTIVE" as const, process_alive: false },
   ])(
-    "a passive session disables Interrupt and sends no POST while Resume is enabled (%j)",
+    "a passive session disables Interrupt and sends no POST; Resume waits only on a live process (%j)",
     async (patch) => {
       render(<BreakIn {...props} agent={{ ...active, ...patch }} />);
       const interrupt = screen.getByRole("button", {
@@ -172,7 +215,16 @@ describe("BreakIn", () => {
           ? "nothing to interrupt: this session is IDLE"
           : "nothing to interrupt: no process has been observed for this session",
       );
-      expect(screen.getByRole("button", { name: "Resume here" })).toBeEnabled();
+      if (patch.process_alive)
+        expect(
+          screen.getByRole("button", {
+            name: `Resume here — ${STILL_RUNNING}`,
+          }),
+        ).toBeDisabled();
+      else
+        expect(
+          screen.getByRole("button", { name: "Resume here" }),
+        ).toBeEnabled();
     },
   );
   it("relays the local operator's 403 reason", async () => {
@@ -340,7 +392,7 @@ describe("BreakIn", () => {
   });
 
   it("opens resume with the observed cwd and relays a terminal path refusal", async () => {
-    render(<BreakIn {...props} />);
+    render(<BreakIn {...props} agent={ended} />);
     fireEvent.click(screen.getByRole("button", { name: "Resume here" }));
     const terminal = await screen.findByTestId("resume-terminal");
     const url = new URL(terminal.getAttribute("data-url")!);
@@ -351,7 +403,7 @@ describe("BreakIn", () => {
       sessionType: "resume",
     });
     expect(screen.getByTestId("agentview-breakin-state")).toHaveTextContent(
-      /^running$/,
+      "unknown, because this session is IDLE; no live active process observed",
     );
     fireEvent.click(screen.getByRole("button", { name: "Refuse path" }));
     expect(
@@ -365,27 +417,38 @@ describe("BreakIn", () => {
   });
   it("host mode explains unsupported Gemini and missing cwd, and never asks the container store", () => {
     const { rerender } = render(
-      <BreakIn {...props} agent={{ ...active, agent_type: "gemini" }} />,
+      <BreakIn {...props} agent={{ ...ended, agent_type: "gemini" }} />,
     );
     expect(
       screen.getByRole("button", {
         name: /^Resume here — Gemini --resume takes latest/,
       }),
     ).toBeDisabled();
-    rerender(<BreakIn {...props} agent={{ ...active, cwd: undefined }} />);
+    rerender(<BreakIn {...props} agent={{ ...ended, cwd: undefined }} />);
     expect(
       screen.getByRole("button", {
         name: "Resume here — the daemon has not reported this session's cwd",
       }),
     ).toBeDisabled();
-    rerender(<BreakIn {...props} agent={{ ...active, cwd: "/workspace" }} />);
+    rerender(
+      <BreakIn
+        {...props}
+        agent={{ ...ended, node_id: "galway", agent_id: "galway/claude/s" }}
+      />,
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Resume here — this session runs on galway; daax's terminal opens a shell only on chamonix-d5d8554e",
+      }),
+    ).toBeDisabled();
+    rerender(<BreakIn {...props} agent={{ ...ended, cwd: "/workspace" }} />);
     expect(
       screen.getByRole("button", { name: "Resume here" }),
     ).not.toBeDisabled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
   it("says so when daax did not report its terminal mode", () => {
-    render(<BreakIn {...props} terminalMode={undefined} />);
+    render(<BreakIn {...props} agent={ended} terminalMode={undefined} />);
     expect(
       screen.getByRole("button", {
         name: "Resume here — daax did not report whether its terminal runs in host or container mode",

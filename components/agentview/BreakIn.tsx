@@ -80,7 +80,8 @@ export function BreakIn({
     ? containerResumeReason(agent.agent_type, agent.session_id, agent.cwd)
     : undefined;
   // Asked only once every other container condition holds for a local session.
-  const needsTranscript = container && !remoteReason && !containerReason;
+  const needsTranscript =
+    container && !live && !remoteReason && !containerReason;
   useEffect(() => {
     if (!needsTranscript) return;
     let current = true;
@@ -107,9 +108,14 @@ export function BreakIn({
   const resumeLabel = container
     ? "Resume in a daax agent container (whole workspace mounted at /workspace)"
     : "Resume here";
+  // Control governs signalling, not resuming: an ended session has no pid to
+  // signal and is exactly the one to resume. A live one would be forked.
+  const stillRunning = live
+    ? `this session's process is still running${agent.agent_pid !== undefined ? ` (pid ${agent.agent_pid})` : ""}; interrupt it first — two processes on one session would fork the conversation`
+    : undefined;
   const resumeReason =
     observationFailure ||
-    controlReason ||
+    stillRunning ||
     remoteReason ||
     modeReason ||
     (!command ? resumeUnavailableReason(agent.agent_type) : undefined) ||

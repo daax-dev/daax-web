@@ -91,7 +91,7 @@ describe("observed break-in state", () => {
     );
     expect(
       screen.getByText(
-        "interrupted (observed): process 40327 ended 20s ago after the signal",
+        "interrupted (observed): process 40327 ended 10s after the signal · signal 30s ago",
         { exact: true },
       ),
     ).toBeVisible();
@@ -100,14 +100,35 @@ describe("observed break-in state", () => {
     );
     expect(
       screen.getByText(
-        "interrupted (observed): process 40327 ended 1m ago after the signal",
+        "interrupted (observed): process 40327 ended 10s after the signal · signal 1m ago",
         { exact: true },
       ),
     ).toBeVisible();
-    expect(screen.queryByText(/20s ago/)).toBeNull();
+    expect(screen.queryByText(/30s ago/)).toBeNull();
   });
-  it.each(["2026-09-08T13:59:59Z", "2026-09-08T14:00:00Z"])(
-    "a PROCESS_EXITED before or at T does not count (%s)",
+  it.each([
+    ["2026-09-08T14:00:01Z", "ended 1s after the signal"],
+    ["2026-09-08T14:00:00.400Z", "ended under 1s after the signal"],
+    ["2026-09-08T14:00:00Z", "ended at the signal"],
+    // 200ms before: clock skew between browser and daemon, not a future.
+    ["2026-09-08T13:59:59.800Z", "ended at the signal"],
+  ])(
+    "an exit at %s reads as the delta from the signal",
+    (timestamp, phrase) => {
+      const state = breakinState(
+        ACTIVE_AGENT,
+        [{ ...exited, timestamp }],
+        signal,
+        now,
+      );
+      expect(state).toBe(
+        `interrupted (observed): process 40327 ${phrase} · signal 30s ago`,
+      );
+      expect(state).not.toMatch(/future|ago after/);
+    },
+  );
+  it.each(["2026-09-08T13:59:59Z", "2026-09-08T13:59:59.500Z"])(
+    "a PROCESS_EXITED 500ms or more before T does not count (%s)",
     (timestamp) => {
       expect(
         breakinState(ACTIVE_AGENT, [{ ...exited, timestamp }], signal, now),

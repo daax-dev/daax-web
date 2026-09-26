@@ -237,6 +237,26 @@ test("Interrupt observes the baseline process ending and names its pid", async (
     "interrupted (observed): process 424242 ended",
     { timeout: 15000 },
   );
+  await expect(page.getByTestId("agentview-breakin-state")).not.toContainText(
+    "future",
+  );
+  // The ended row has no pid to signal; that must not disable Resume, here or
+  // after a reload, where no in-page baseline survives.
+  await expect(
+    page.getByRole("button", { name: "Resume here", exact: true }),
+  ).toBeEnabled();
+  await page.reload();
+  await page
+    .locator(`[data-testid="agentview-agent"][data-agent-id="${agentId}"]`)
+    .click();
+  await expect(
+    page.getByRole("button", {
+      name: "Interrupt — no process id is recorded for this agent, so there is nothing to signal",
+    }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Resume here", exact: true }),
+  ).toBeEnabled();
   const { signals } = await (await fetch(`${DAEMON}/__signals`)).json();
   expect(signals).toHaveLength(1);
   const { agents } = await (await fetch(`${DAEMON}/api/v1/agents`)).json();
