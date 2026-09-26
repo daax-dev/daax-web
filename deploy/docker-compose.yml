@@ -9,7 +9,8 @@
 
 services:
   # Postgres — daax's single data engine (brain2daax Phase 0 #92).
-  # Persistent named volume; not published externally (reached only on daax-net).
+  # Persistent named volume. Published on LOOPBACK only (below), never on the
+  # tailnet; the containers reach it by name on daax-net.
   # The password MUST be provided via env/secret — fail-closed, never committed.
   postgres:
     # Digest-pinned (#203): multi-arch index digest so a registry-side tag update
@@ -34,6 +35,16 @@ services:
       # persists. Mounting /var/lib/postgresql/data instead silently moves
       # PGDATA off-volume and the image refuses to start.
       - daax-pg-data:/var/lib/postgresql
+    ports:
+      # For the host-mode daax (deploy/host/daax-host.sh), which runs on the
+      # host rather than on daax-net and keeps its OWN database (daax_host) in
+      # this server so its origin/main migrations never touch the pinned
+      # image's schema. Loopback only: the tailnet cannot reach it, and a local
+      # process still needs DAAX_PG_PASSWORD. The alternatives were worse: the
+      # container's daax-net address changes on every recreate, and a second
+      # Postgres per host is a second volume to back up. 5433, not 5432, so a
+      # host that already runs a Postgres of its own is not a port clash.
+      - "127.0.0.1:${DAAX_PG_HOST_PORT:-5433}:5432"
     healthcheck:
       test:
         [

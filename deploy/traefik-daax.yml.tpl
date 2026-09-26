@@ -11,6 +11,8 @@
 #     targets 127.0.0.1:4201, now published by daax-terminal, so this routing
 #     is unchanged by the split.
 #   - Code-server container on port 18080
+#   - Host-mode daax (deploy/host/daax-host.sh) on 4210/4211 (optional; its
+#     routers answer 502 when it is not running)
 #   - Clawdbot gateway on port 18789 (optional)
 
 http:
@@ -86,6 +88,38 @@ http:
       entryPoints:
         - websecure
 
+    # Host-mode daax (deploy/host/daax-host.sh) — Agent View's "Resume here".
+    # Its terminal is a shell ON THE HOST as the operator, so these two routers
+    # carry exactly the chains of daax-ws and daax above and nothing looser:
+    # the proxy secret is injected on HTTP only, and the WS is admitted by the
+    # forwarded identity from a loopback peer (server/handlers/ws-auth.ts). The
+    # instance declares this one origin in DAAX_EXTRA_ALLOWED_ORIGINS; Origin
+    # is never rewritten here. With no daax-host service running these answer
+    # 502 after sign-in and expose nothing.
+    daax-host-ws:
+      rule: Host(`daax-host.HOSTNAME_PLACEHOLDER.poley.dev`) && PathPrefix(`/ws`)
+      service: daax-host-ws
+      priority: 100
+      middlewares:
+        - strip-forwarded-headers
+        - pocket-id-auth
+      tls:
+        certResolver: cloudflare
+      entryPoints:
+        - websecure
+
+    daax-host:
+      rule: Host(`daax-host.HOSTNAME_PLACEHOLDER.poley.dev`)
+      service: daax-host
+      middlewares:
+        - strip-forwarded-headers
+        - pocket-id-auth
+        - inject-proxy-secret
+      tls:
+        certResolver: cloudflare
+      entryPoints:
+        - websecure
+
     # Code-Server (VS Code in browser)
     daax-code:
       rule: Host(`daax-code.HOSTNAME_PLACEHOLDER.poley.dev`)
@@ -148,6 +182,18 @@ http:
       loadBalancer:
         servers:
           - url: "http://127.0.0.1:4201"
+
+    # Host-mode daax: not containers. Ports from daax-host.sh (4200/4201 are
+    # the containers above).
+    daax-host:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:4210"
+
+    daax-host-ws:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:4211"
 
     daax-code:
       loadBalancer:

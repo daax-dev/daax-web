@@ -23,7 +23,11 @@ describe("traefik-daax.yml.tpl proxy-secret trust boundary", () => {
         string,
         { headers?: { customRequestHeaders?: Record<string, string> } }
       >;
-      routers: Record<string, { middlewares?: string[] }>;
+      routers: Record<string, { middlewares?: string[]; rule?: string }>;
+      services: Record<
+        string,
+        { loadBalancer?: { servers?: { url: string }[] } }
+      >;
     };
   };
 
@@ -57,6 +61,32 @@ describe("traefik-daax.yml.tpl proxy-secret trust boundary", () => {
   it("does NOT inject the proxy secret on the WS route (identity-forwarded, F1b)", () => {
     const wsChain = config.http.routers["daax-ws"].middlewares ?? [];
     expect(wsChain).not.toContain("inject-proxy-secret");
+  });
+
+  it("routes the host-mode daax through exactly daax's chains, to loopback 4210/4211", () => {
+    // A host shell as the operator: nothing looser than the container's routes.
+    const { routers, services } = config.http;
+    expect(routers["daax-host"].rule).toBe(
+      "Host(`daax-host.test-host.poley.dev`)",
+    );
+    expect(routers["daax-host"].middlewares).toEqual([
+      "strip-forwarded-headers",
+      "pocket-id-auth",
+      "inject-proxy-secret",
+    ]);
+    expect(routers["daax-host-ws"].rule).toBe(
+      "Host(`daax-host.test-host.poley.dev`) && PathPrefix(`/ws`)",
+    );
+    expect(routers["daax-host-ws"].middlewares).toEqual([
+      "strip-forwarded-headers",
+      "pocket-id-auth",
+    ]);
+    expect(services["daax-host"].loadBalancer?.servers).toEqual([
+      { url: "http://127.0.0.1:4210" },
+    ]);
+    expect(services["daax-host-ws"].loadBalancer?.servers).toEqual([
+      { url: "http://127.0.0.1:4211" },
+    ]);
   });
 
   it("leaves no unrendered secret placeholder in the template output", () => {

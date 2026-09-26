@@ -40,6 +40,7 @@ Because env files carry no secrets, they are safe to commit.
 | `AGENTVIEW_DAEMON_TOKEN_FILE`          | optional; the bearer session sent to an **https** daemon on reads, read per request (mode 0600/0400). Fleet: `/run/agentview/token`, a read-only `peer` session minted by `deploy/host/agentview-token-renew.sh`                                                                                                                                                                                                                                                                                                                                      |
 | `AGENTVIEW_TOKEN_HOST_DIR`             | optional; host directory bind-mounted read-only at `/run/agentview`. Set together with an https `AGENTVIEW_DAEMON_URL` and `AGENTVIEW_DAEMON_TOKEN_FILE`; preflight refuses a partial set, a missing directory or token, and any owner other than uid 1000 (the image's `node`) or a mode other than 0600/0400. Install with `deploy/host/install-agentview-token.sh`                                                                                                                                                                                 |
 | `AGENTD_PROXY_SECRET_HOST_FILE`        | optional; host path of agentd's proxy proof secret (the file agentd reads through `--trusted-proxy-secret-file`, fleet: `/home/jpoley/.dist-agent/proxy.secret`), bind-mounted read-only at `/run/secrets/agentd-proxy`. Set together with `AGENTVIEW_DAEMON_PROXY_SECRET_FILE=/run/secrets/agentd-proxy`; preflight refuses a partial pair, a missing file, a symlink, any owner other than uid 1000 or a mode other than 0600/0400, and a file that is not one non-empty line. Unset, `/dev/null` is mounted and Interrupt answers its existing 503 |
+| `DAAX_PG_HOST_PORT`                    | optional; loopback port `daax-postgres` is published on (default `5433`, bound to `127.0.0.1` only) so the host-mode daax (below) can keep its own `daax_host` database in the same server                                                                                                                                                                                                                                                                                                                                                            |
 
 ## Postgres: local (default) vs managed
 
@@ -133,3 +134,38 @@ is an additional reading for keyboard interrupts. A new live pid for the same
 session, started after the action, takes precedence as `resumed here (observed)`.
 A still-live Codex or Gemini process retains the vendor's no-interrupt-record
 explanation. `sent` remains a separate acknowledgment beside the event id.
+
+## Host-mode daax on a fleet host (Agent View Resume)
+
+Resume is unavailable in the fleet's container daax (above). Each Linux fleet
+host can run a second, **host-mode** daax whose terminal is a shell on the host,
+as the operator: `deploy/host/daax-host.sh` with the `systemd --user` unit
+`deploy/host/daax-host.service`. That is the privilege it grants — a
+browser-reachable shell as the operator — and the script's header states it.
+It is served only at `https://daax-host.<host>.poley.dev`, through the same
+`strip-forwarded-headers` → `pocket-id-auth` (→ `inject-proxy-secret` on HTTP)
+chains as `daax.<host>` (`deploy/traefik-daax.yml.tpl`, routers `daax-host` and
+`daax-host-ws`), and both of its listeners bind `127.0.0.1`.
+
+| Setting                      | Value                                                                                                                                                                                    |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Checkout                     | `DAAX_HOST_CHECKOUT`, default `~/.daax-build/daax-host`: a detached worktree at `origin/main`, rebuilt from an empty `node_modules` by `build` (node-pty is compiled with `npm rebuild`) |
+| Ports                        | `DAAX_HOST_WEB_PORT` / `DAAX_HOST_WS_PORT`, default `4210` / `4211` (4200/4201 are the containers); the Traefik services name these two                                                  |
+| Secrets                      | `DAAX_PROXY_SECRET`, `DAAX_WS_TOKEN_SECRET`, `DAAX_PG_PASSWORD`, **parsed** from `~/.secrets` (`DAAX_SECRETS_FILE`) and never sourced; a value that needs a shell to evaluate is refused |
+| From `deploy/env/<host>.env` | `DAAX_ADMIN_USERS`, `DAAX_PG_USER`, `DAAX_PG_HOST_PORT`                                                                                                                                  |
+| Database                     | its own `daax_host` database in `daax-postgres`, created if missing and migrated on each start, reached on `127.0.0.1:${DAAX_PG_HOST_PORT:-5433}`                                        |
+| Agent View                   | `AGENTVIEW_DAEMON_URL=http://127.0.0.1:7717`, `AGENTVIEW_DAEMON_PROXY_SECRET_FILE=~/.dist-agent/proxy.secret`                                                                            |
+| Deliberately unset           | `HOST_WORKSPACE_PATH`, `DAAX_TRUST_LOCAL_OPERATOR`, `HOST`, `DAAX_AUTH_*_HEADER` (the fleet's forward-auth sends `X-Forwarded-*`, daax's default)                                        |
+
+The unit's `PATH` starts with `~/.local/bin`, so the native `claude` is the one a
+resumed session runs. Install on a host, as the operator (needs `bun`: `curl -fsSL
+https://bun.sh/install | bash`; `node` 22, `make`, `g++` and `python3`):
+
+```bash
+deploy/host/daax-host.sh build            # worktree + install + build
+deploy/host/daax-host.sh install          # ~/.local/bin/daax-host + unit, enable --now
+journalctl --user -u daax-host -f
+```
+
+`build` stops a running unit, rebuilds and starts it again. The routes arrive
+with the next `deploy-local.sh install-traefik-config` render.
