@@ -317,6 +317,28 @@ phase_preflight() {
     python3 -c 'import re,sys; sys.exit(0 if re.fullmatch(r"[A-Za-z0-9_-]{16,512}\n?", open(sys.argv[1]).read()) else 1)' "$tok_host" \
       || fail preflight "the Agent View token at $tok_host is not one session token — re-run deploy/host/agentview-token-renew.sh"
   fi
+  # Agent View's Interrupt signs with agentd's proxy proof secret: a host file
+  # (AGENTD_PROXY_SECRET_HOST_FILE) bound read-only at /run/secrets/agentd-proxy,
+  # and AGENTVIEW_DAEMON_PROXY_SECRET_FILE naming it. Checked as a pair, like the
+  # token above: the host half alone mounts a secret nothing reads, and the
+  # container half alone points at /dev/null. The file must already exist —
+  # docker would create a missing bind source as a root-owned DIRECTORY — and be
+  # what the runtime accepts (lib/agentview/server.ts readProxySecret): a regular
+  # file, owned by the uid the container reads it as, private to it, holding one
+  # non-empty line. Unset, nothing is checked and Interrupt answers its 503.
+  if [[ -n "${AGENTD_PROXY_SECRET_HOST_FILE:-}" || -n "${AGENTVIEW_DAEMON_PROXY_SECRET_FILE:-}" ]]; then
+    local sec_uid="${DAAX_AGENTVIEW_TOKEN_UID:-1000}" sec_host="${AGENTD_PROXY_SECRET_HOST_FILE:-}" sec_meta
+    [[ "${AGENTVIEW_DAEMON_PROXY_SECRET_FILE:-}" == /run/secrets/agentd-proxy ]] \
+      || fail preflight "AGENTVIEW_DAEMON_PROXY_SECRET_FILE must be /run/secrets/agentd-proxy, where AGENTD_PROXY_SECRET_HOST_FILE is mounted (got '${AGENTVIEW_DAEMON_PROXY_SECRET_FILE:-}')"
+    [[ "$sec_host" == /* && -f "$sec_host" && ! -L "$sec_host" ]] \
+      || fail preflight "AGENTD_PROXY_SECRET_HOST_FILE must be an existing regular file, not a symlink: '$sec_host' (agentd's --trusted-proxy-secret-file, e.g. /home/<user>/.dist-agent/proxy.secret)"
+    sec_meta="$(stat -c '%u %a' "$sec_host" 2>/dev/null || stat -f '%u %Lp' "$sec_host")"
+    [[ "$sec_meta" =~ ^${sec_uid}\ (600|400)$ ]] \
+      || fail preflight "AGENTD_PROXY_SECRET_HOST_FILE must be owned by uid $sec_uid (the container's node), mode 0600 or 0400 (found: $sec_meta)"
+    # The value is never printed.
+    python3 -c 'import sys; s=open(sys.argv[1]).read().strip(); sys.exit(0 if s and "\n" not in s and "\r" not in s else 1)' "$sec_host" \
+      || fail preflight "AGENTD_PROXY_SECRET_HOST_FILE does not hold one non-empty secret line: $sec_host"
+  fi
   assert_code_server_image "$BUILD_CODE_SERVER" || fail preflight "code-server image preflight failed"
   # NOTE: no managed-Postgres reachability gate here. Managed mode (DAAX_PG_MANAGED=1)
   # fails closed above, so the only path reaching this point is compose-local

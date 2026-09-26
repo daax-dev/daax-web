@@ -273,6 +273,20 @@ services:
       # nothing is mounted from the host. Read-only; the container never writes it.
       - ${AGENTVIEW_TOKEN_HOST_DIR:-daax-agentview-token}:/run/agentview:ro
 
+      # agentd's proxy proof secret, which signs Agent View's Interrupt
+      # (lib/agentview/server.ts postDaemonSignal): the same file the host's
+      # agentd reads through --trusted-proxy-secret-file. A single FILE, as on
+      # chamonix: host uid 1000 is the image's `node`, so its 0600 survives the
+      # bind. A file bind pins the inode, so a secret replaced by rename is seen
+      # after the next container recreate, not the next signal.
+      #
+      # Unset, /dev/null is mounted — the pattern DAAX_ENV_FILE uses below — so
+      # the file still validates on a host that has no secret yet. /dev/null is
+      # not a regular file, so the runtime refuses it with Interrupt's existing
+      # 503 reason, never a compose error and never a signal sent unsigned.
+      # scripts/deploy.sh preflight checks the set when either half is given.
+      - ${AGENTD_PROXY_SECRET_HOST_FILE:-/dev/null}:/run/secrets/agentd-proxy:ro
+
       # Terminal recordings (F3 #100): the recorder runs in the `terminal`
       # service and writes ~/.daax/recordings (= /home/node/.daax); this web
       # plane serves GET /api/terminal-recordings from the SAME path. Share one
@@ -425,6 +439,9 @@ services:
       # The bearer session presented to an https daemon: a file inside the
       # directory mounted at /run/agentview (volumes, below). Empty = no token.
       - AGENTVIEW_DAEMON_TOKEN_FILE=${AGENTVIEW_DAEMON_TOKEN_FILE:-}
+      # Path to the proof secret mounted above (/run/secrets/agentd-proxy on the
+      # fleet). Empty = Interrupt answers 503 "…is unset"; reads are unaffected.
+      - AGENTVIEW_DAEMON_PROXY_SECRET_FILE=${AGENTVIEW_DAEMON_PROXY_SECRET_FILE:-}
 
       # watchtower / hawkeye / provenance on daax-net (services below).
       - WATCHTOWER_API_URL=http://watchtower:4220

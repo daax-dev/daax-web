@@ -1168,6 +1168,105 @@ describe("deploy.sh image override (fleet roll)", () => {
     },
   );
 
+  it(
+    "Interrupt's proxy secret is validated as a pair before anything is mounted",
+    { timeout: 120_000 },
+    () => {
+      const uid = String(process.getuid?.() ?? 1000);
+      const secret = join(work, "proxy.secret");
+      const link = join(work, "proxy.secret.link");
+      const dir = join(work, "proxy.secret.dir");
+      writeFileSync(secret, "s3cr3t-value\n");
+      chmodSync(secret, 0o600);
+      if (!existsSync(link)) symlinkSync(secret, link);
+      mkdirSync(dir, { recursive: true });
+      const pair = {
+        TEST_SECRET_A: "x",
+        DAAX_AGENTVIEW_TOKEN_UID: uid,
+        AGENTD_PROXY_SECRET_HOST_FILE: secret,
+        AGENTVIEW_DAEMON_PROXY_SECRET_FILE: "/run/secrets/agentd-proxy",
+      };
+      const deploy = (env: Record<string, string>, name: string) => {
+        resetDockerLog();
+        return runDeploy("pinned", { ...pair, ...env }, freshLog(name));
+      };
+      const refused = (
+        env: Record<string, string>,
+        name: string,
+        why: RegExp,
+      ) => {
+        const r = deploy(env, name);
+        expect(r.status, name).not.toBe(0);
+        expect(r.stderr, name).toMatch(why);
+        // The secret's value never reaches the output.
+        expect(r.stdout + r.stderr, name).not.toMatch(/s3cr3t/);
+        expect(readFileSync(dockerLog, "utf8"), name).not.toMatch(
+          /compose .*(pull|up)/,
+        );
+      };
+
+      expect(deploy({}, "ps-ok").status).toBe(0);
+
+      // Each half alone cannot work.
+      refused(
+        { AGENTD_PROXY_SECRET_HOST_FILE: "" },
+        "ps-no-host-file",
+        /AGENTD_PROXY_SECRET_HOST_FILE must be an existing regular file/,
+      );
+      refused(
+        { AGENTVIEW_DAEMON_PROXY_SECRET_FILE: "" },
+        "ps-no-container-path",
+        /must be \/run\/secrets\/agentd-proxy/,
+      );
+      refused(
+        { AGENTVIEW_DAEMON_PROXY_SECRET_FILE: "/run/agentview/token" },
+        "ps-wrong-container-path",
+        /must be \/run\/secrets\/agentd-proxy/,
+      );
+      refused(
+        { AGENTD_PROXY_SECRET_HOST_FILE: join(work, "no-such-secret") },
+        "ps-missing",
+        /existing regular file/,
+      );
+      refused(
+        { AGENTD_PROXY_SECRET_HOST_FILE: dir },
+        "ps-directory",
+        /existing regular file/,
+      );
+      refused(
+        { AGENTD_PROXY_SECRET_HOST_FILE: link },
+        "ps-symlink",
+        /not a symlink/,
+      );
+      refused(
+        { DAAX_AGENTVIEW_TOKEN_UID: "99999" },
+        "ps-uid",
+        /owned by uid 99999/,
+      );
+
+      chmodSync(secret, 0o640);
+      refused({}, "ps-exposed", /mode 0600 or 0400/);
+      chmodSync(secret, 0o400);
+      expect(deploy({}, "ps-0400").status).toBe(0);
+      chmodSync(secret, 0o600);
+
+      writeFileSync(secret, "\n  \n");
+      refused({}, "ps-empty", /one non-empty secret line/);
+      writeFileSync(secret, "s3cr3t-one\ns3cr3t-two\n");
+      refused({}, "ps-twolines", /one non-empty secret line/);
+      writeFileSync(secret, "s3cr3t-value\n");
+
+      // Not configured at all: nothing is checked.
+      resetDockerLog();
+      const off = runDeploy(
+        "pinned",
+        { TEST_SECRET_A: "x" },
+        freshLog("ps-off"),
+      );
+      expect(off.status).toBe(0);
+    },
+  );
+
   it("REJECTS a tag override before touching docker", () => {
     resetDockerLog();
     const res = runDeploy(
