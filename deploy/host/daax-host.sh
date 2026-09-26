@@ -65,6 +65,12 @@ UNIT=daax-host.service
 
 die() { echo "daax-host: $*" >&2; exit 1; }
 
+# bun's installer puts it in ~/.bun/bin and only an interactive shell's profile
+# adds that to PATH, so over non-interactive ssh `command -v bun` fails on hosts
+# where it is installed (galway, kinsale). Look there before giving up.
+BUN_DIR="$HOME/.bun/bin"
+if ! command -v bun >/dev/null && [ -x "$BUN_DIR/bun" ]; then PATH="$BUN_DIR:$PATH"; fi
+
 [ "$(uname -s)" = Linux ] || die "Linux only; chamonix (macOS) runs prj/dx/scripts/daax-host.sh under launchd"
 [ "$(id -u)" != 0 ] || die "run as the operator, not root: the terminal is a shell as whoever runs this"
 
@@ -135,7 +141,7 @@ read_ws_secret() {
 
 cmd_build() {
   command -v bun >/dev/null ||
-    die "bun is required and is not on PATH. Install it as this user with: curl -fsSL https://bun.sh/install | bash"
+    die "bun is required and is neither on PATH nor at $BUN_DIR/bun. Install it as this user with: curl -fsSL https://bun.sh/install | bash"
   command -v node >/dev/null || die "node (22) is required; the terminal server and next run on it"
   command -v npm >/dev/null || die "npm is required to compile node-pty"
   local t
@@ -236,8 +242,7 @@ cmd_install() {
   unit_dir="$HOME/.config/systemd/user"
   dropin="$unit_dir/$UNIT.d"
   bin="$HOME/.local/bin/daax-host"
-  command -v node >/dev/null || die "node is not on PATH; the unit's PATH is taken from this shell"
-  command -v bun >/dev/null || die "bun is not on PATH; install it with: curl -fsSL https://bun.sh/install | bash"
+  command -v node >/dev/null || die "node is not on PATH; the unit's PATH takes node's directory from this shell"
   [ -f "$CHECKOUT/.next/BUILD_ID" ] || die "nothing built at $CHECKOUT; run first: $here/daax-host.sh build $host"
   # A copy, not the checkout's own file: `build` checks the checkout out anew,
   # and bash reads a script as it runs.
@@ -247,7 +252,17 @@ cmd_install() {
   # ~/.local/bin FIRST: it holds the native `claude`, and the terminal's login
   # shell inherits this PATH. On chamonix a stale npm-installed claude further
   # along PATH was resolved first and `claude --resume` returned at once.
-  path="$HOME/.local/bin:$(dirname "$(command -v node)"):$(dirname "$(command -v bun)"):/usr/local/bin:/usr/bin:/bin"
+  # ~/.bun/bin by name, not from this shell's PATH, which over ssh lacks it.
+  # openssl's directory too when it is off the system dirs (linuxbrew on the
+  # fleet): `run` generates the ticket secret if it is missing.
+  path="$HOME/.local/bin:$BUN_DIR:$(dirname "$(command -v node)")"
+  if command -v openssl >/dev/null; then path="$path:$(dirname "$(command -v openssl)")"; fi
+  path="$path:/usr/local/bin:/usr/bin:/bin"
+  # Resolve what `run` needs under the unit's PATH, not this shell's.
+  local need
+  for need in bun node docker python3 openssl; do
+    PATH="$path" command -v "$need" >/dev/null || die "$need is not on the unit's PATH ($path)"
+  done
   mkdir -p "$dropin"
   printf '[Service]\nEnvironment=PATH=%s\nEnvironment=DAAX_HOST_NAME=%s\nEnvironment=DAAX_HOST_CHECKOUT=%s\nEnvironment=DAAX_HOST_WEB_PORT=%s\nEnvironment=DAAX_HOST_WS_PORT=%s\n' \
     "$path" "$host" "$CHECKOUT" "$WEB_PORT" "$WS_PORT" >"$dropin/host.conf"

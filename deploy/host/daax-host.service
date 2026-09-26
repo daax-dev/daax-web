@@ -9,9 +9,10 @@ After=network-online.target agentd.service
 
 [Service]
 Type=simple
-# Overridden by the drop-in with the node and bun found at install time;
-# ~/.local/bin stays first so the native `claude` wins.
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# Overridden by the drop-in with node's (and openssl's) directory found at
+# install time. ~/.bun/bin is named, not discovered: over ssh it is not on
+# PATH. ~/.local/bin stays first so the native `claude` wins.
+Environment=PATH=%h/.local/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.local/bin/daax-host run
 # daax-postgres or agentd may still be starting after a boot.
 Restart=on-failure
