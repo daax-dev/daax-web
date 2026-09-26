@@ -31,6 +31,7 @@ describe("default-deny /api middleware (#181)", () => {
     vi.stubEnv("DAAX_PROXY_SECRET_PREVIOUS", undefined);
     vi.stubEnv("DAAX_API_GUARD", undefined);
     vi.stubEnv("DAAX_TRUST_LOCAL_OPERATOR", undefined);
+    vi.stubEnv("DAAX_EXTRA_ALLOWED_ORIGINS", undefined);
     // Default host-dev loopback posture (Copilot #184): under vitest
     // NODE_ENV="test", so the operator bypass now requires an explicit safe
     // posture. These non-strict cases model host-dev, which binds loopback.
@@ -160,6 +161,22 @@ describe("default-deny /api middleware (#181)", () => {
         }),
       );
       expect(isPassThrough(res)).toBe(true);
+    });
+
+    it("operator-declared DAAX_EXTRA_ALLOWED_ORIGINS origin → allowed; undeclared → 403", () => {
+      const post = () =>
+        middleware(
+          req("http://localhost/api/config", {
+            method: "POST",
+            headers: { origin: "https://daax-host.chamonix.poley.dev" },
+          }),
+        );
+      expect(post().status).toBe(403);
+      vi.stubEnv(
+        "DAAX_EXTRA_ALLOWED_ORIGINS",
+        "https://daax-host.chamonix.poley.dev",
+      );
+      expect(isPassThrough(post())).toBe(true);
     });
 
     it("mutating POST with NO Origin → not blocked by CSRF (falls to auth)", () => {

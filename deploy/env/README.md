@@ -64,6 +64,25 @@ Ingress is controlled at the network layer, not by these files:
   router chain in `deploy/traefik-daax.yml.tpl` to further restrict source IPs on
   top of Pocket ID forward-auth. See the daax deployment section of `CLAUDE.md`.
 
+## Extra allowed origins (`DAAX_EXTRA_ALLOWED_ORIGINS`)
+
+The CSRF check on mutating `/api` requests and the terminal WebSocket upgrade
+both admit only localhost, `*.localhost`, Tailscale IPs and
+`https://daax.<host>.poley.dev`, so a daax served under any other name (e.g. a
+second, host-mode instance at `https://daax-host.chamonix.poley.dev`) has every
+write and terminal refused. `DAAX_EXTRA_ALLOWED_ORIGINS` is a comma-separated
+list of **exact** extra origins, read by `server/config/origin-allowlist.ts` —
+the one decision point both planes call. Each entry must be a bare `https://`
+origin (optional port; no path, trailing slash, query, wildcard or credentials);
+the host is lowercased and matching is exact string equality, so subdomains,
+suffixes, `http://` and other ports stay refused. An invalid entry throws at
+boot (Next `instrumentation.ts`, `server/terminal-server.ts`) naming the entry,
+rather than producing silent 403s. Unset or empty keeps the built-in list
+unchanged. Rewriting `Origin` at the proxy instead would defeat the check for
+every caller. The compose files do not pass this variable through yet; set it in
+the process environment of a host-mode (`bun start`) instance, or add it to the
+`daax` and `terminal` service environments.
+
 ## Agent View break-in (ADR 0026)
 
 The server reads these at request time (no `NEXT_PUBLIC_` equivalents):
