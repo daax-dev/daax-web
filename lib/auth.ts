@@ -23,6 +23,7 @@ import {
 } from "./rbac/permissions";
 import { jitProvision, writeAudit } from "./rbac/store";
 import { isDbConfigured } from "./db/config";
+import type { ShellIdentity } from "./host-shell-access";
 
 export type { AuthUser };
 export { UNAUTHENTICATED_USER };
@@ -102,6 +103,43 @@ export async function requireAuth(): Promise<AuthResult> {
   }
 
   return { authenticated: true, user: decision.user };
+}
+
+/**
+ * Result of {@link requireAuthIdentity}: the authenticated user plus the trusted
+ * identity attributes an admin allow-list entry can match.
+ */
+export type IdentityResult =
+  | {
+      authenticated: true;
+      user: AuthUser;
+      /** The local-operator bypass: trusted, but with no subject. */
+      operator: boolean;
+      identity: ShellIdentity;
+    }
+  | { authenticated: false; response: NextResponse };
+
+/**
+ * Like {@link requireAuth}, but also returns the trusted subject, raw username
+ * and email rather than only the display-oriented `AuthUser`, so a caller can
+ * make an authorization decision keyed on the subject.
+ */
+export async function requireAuthIdentity(): Promise<IdentityResult> {
+  const h = await headers();
+  const ctx = deriveAuthContext(h);
+  const decision = evaluateAuthDecisionFromContext(ctx);
+  if (decision.decision === "deny")
+    return { authenticated: false, response: deny401() };
+  return {
+    authenticated: true,
+    user: decision.user,
+    operator: decision.decision === "allow-operator",
+    identity: {
+      subject: ctx.subject,
+      username: ctx.rawUsername,
+      email: ctx.user.email,
+    },
+  };
 }
 
 /**

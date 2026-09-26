@@ -19,7 +19,12 @@ vi.mock("next/server", () => ({
 }));
 
 // Import after mocks are set up
-import { getAuthUser, requireAuth, requireAuthOrThrow } from "@/lib/auth";
+import {
+  getAuthUser,
+  requireAuth,
+  requireAuthIdentity,
+  requireAuthOrThrow,
+} from "@/lib/auth";
 import { localOperatorBypassAllowed } from "@/lib/auth-trust";
 
 /**
@@ -1083,6 +1088,51 @@ describe("auth module with custom headers", () => {
       groups: ["group-a", "group-b"],
       authenticated: true,
       pictureUrl: "https://my-auth.test/api/users/my-user-id/avatar",
+    });
+  });
+
+  describe("requireAuthIdentity", () => {
+    it("returns the proven subject, raw username and email, not the display name", async () => {
+      process.env.DAAX_PROXY_SECRET = "proxy-proof";
+      mockHeaders.mockReturnValue(
+        createMockHeaders({
+          "x-forwarded-user": "62D9D61C-CAE1-49D0-AA94-FF34091199B7",
+          "x-forwarded-username": "jpoley",
+          "x-forwarded-name": "JP",
+          "x-forwarded-email": "jason.poley@gmail.com",
+          "x-daax-proxy-secret": "proxy-proof",
+        }),
+      );
+      const result = await requireAuthIdentity();
+      expect(result.authenticated).toBe(true);
+      if (!result.authenticated) return;
+      expect(result.operator).toBe(false);
+      expect(result.identity).toEqual({
+        subject: "62d9d61c-cae1-49d0-aa94-ff34091199b7",
+        username: "jpoley",
+        email: "jason.poley@gmail.com",
+      });
+    });
+
+    it("the local-operator bypass is marked operator and has no subject", async () => {
+      vi.stubEnv("HOST", "127.0.0.1");
+      mockHeaders.mockReturnValue(createMockHeaders({}));
+      const result = await requireAuthIdentity();
+      expect(result.authenticated).toBe(true);
+      if (!result.authenticated) return;
+      expect(result.operator).toBe(true);
+      expect(result.identity.subject).toBeNull();
+    });
+
+    it("a forwarded identity without the proxy proof is refused", async () => {
+      process.env.DAAX_PROXY_SECRET = "proxy-proof";
+      mockHeaders.mockReturnValue(
+        createMockHeaders({
+          "x-forwarded-user": "62d9d61c-cae1-49d0-aa94-ff34091199b7",
+        }),
+      );
+      const result = await requireAuthIdentity();
+      expect(result.authenticated).toBe(false);
     });
   });
 });

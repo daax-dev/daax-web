@@ -14,6 +14,14 @@
  * trusted LOCAL_OPERATOR (host-dev). Strict mode (`DAAX_REQUIRE_AUTH=1`) refuses
  * uncredentialed upgrades; with `DAAX_WS_TOKEN_SECRET` unset it additionally
  * logs a ship-blocking warning (mirrors the HTTP plane's fail-closed posture).
+ *
+ * Authentication is not authorization. Each accepted decision also carries
+ * `hostShell`: whether this caller may open a shell on the host, which the
+ * connection handler enforces when daax runs in host mode
+ * (`lib/host-shell-access.ts`). The loopback bypass is the local operator and
+ * may; a forwarded identity may if it is in `DAAX_ADMIN_USERS`; a ticket may
+ * only if it was minted with the `hostShell` claim AND its identity still
+ * passes that check here.
  */
 import type { IncomingMessage } from "http";
 
@@ -21,10 +29,23 @@ import { isLoopbackAddress } from "../../lib/net/loopback";
 import { verifyTicket, getWsTokenSecret } from "../../lib/ws-ticket";
 import { WS_TICKET_SUBPROTOCOL } from "../../lib/ws-ticket-protocol";
 import { isAllowedOrigin } from "../config/constants";
+import {
+  decideHostShell,
+  type HostShellDecision,
+} from "../../lib/host-shell-access";
 
 export type AuthDecision =
-  | { ok: true; user: string; method: "forwarded" | "ticket" | "bypass" }
+  | {
+      ok: true;
+      user: string;
+      method: "forwarded" | "ticket" | "bypass";
+      hostShell: HostShellDecision;
+    }
   | { ok: false; code: number; reason: string };
+
+function headerValue(v: string | string[] | undefined): string | null {
+  return (Array.isArray(v) ? v[0] : v || "").toString().trim() || null;
+}
 
 // Single-use ticket tracking: jti -> expiry (epoch ms). In-memory only — the
 // short TTL makes survival across a terminal-server restart unnecessary (spec
@@ -118,7 +139,12 @@ export function authenticateConnection(req: IncomingMessage): AuthDecision {
     .toString()
     .trim();
   if (xUser && loopback) {
-    return { ok: true, user: xUser, method: "forwarded" };
+    const hostShell = decideHostShell({
+      subject: xUser,
+      username: headerValue(req.headers["x-forwarded-username"]),
+      email: headerValue(req.headers["x-forwarded-email"]),
+    });
+    return { ok: true, user: xUser, method: "forwarded", hostShell };
   }
 
   // Ticket path: single-use bearer token via subprotocol.
@@ -135,13 +161,35 @@ export function authenticateConnection(req: IncomingMessage): AuthDecision {
     if (!consumeJti(result.payload.jti, result.payload.exp)) {
       return { ok: false, code: 1008, reason: "ticket reused" };
     }
-    return { ok: true, user: result.payload.sub, method: "ticket" };
+    const { payload } = result;
+    let hostShell: HostShellDecision;
+    if (payload.hostShell !== true) {
+      hostShell = {
+        ok: false,
+        reason: "host shell refused: ticket was not minted for an admin",
+      };
+    } else if (payload.operator === true) {
+      hostShell = { ok: true };
+    } else {
+      hostShell = decideHostShell({
+        subject: payload.sub,
+        username:
+          typeof payload.username === "string" ? payload.username : null,
+        email: typeof payload.email === "string" ? payload.email : null,
+      });
+    }
+    return { ok: true, user: payload.sub, method: "ticket", hostShell };
   }
 
   // No credentials.
   if (strictMode() && !getWsTokenSecret()) warnWsSecretMissingOnce();
   if (!strictMode() && loopback) {
-    return { ok: true, user: "local", method: "bypass" };
+    return {
+      ok: true,
+      user: "local",
+      method: "bypass",
+      hostShell: { ok: true },
+    };
   }
   return { ok: false, code: 1008, reason: "authentication required" };
 }

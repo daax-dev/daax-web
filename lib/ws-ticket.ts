@@ -30,7 +30,24 @@ export interface TicketPayload {
   iat: number;
   /** Expiry (epoch ms). */
   exp: number;
+  /**
+   * Set only when the minting app judged the caller an admin (or the trusted
+   * local operator) allowed a HOST shell. Absent means no host shell; the
+   * terminal server re-checks the identity below before honouring it.
+   */
+  hostShell?: true;
+  /** The caller was the local-operator bypass, which has no subject. */
+  operator?: true;
+  /** Forwarded username and email, for admin allow-list attribute entries. */
+  username?: string;
+  email?: string;
 }
+
+/** Optional claims beyond the subject. */
+export type TicketClaims = Pick<
+  TicketPayload,
+  "hostShell" | "operator" | "username" | "email"
+>;
 
 export type VerifyResult =
   | { valid: true; payload: TicketPayload }
@@ -80,12 +97,14 @@ function signatureMatches(provided: string, expected: string): boolean {
 export function mintTicket(
   sub: string,
   now: number = Date.now(),
+  claims: TicketClaims = {},
 ): { token: string; exp: number } {
   const secret = getWsTokenSecret();
   if (!secret) {
     throw new Error("DAAX_WS_TOKEN_SECRET is not set; cannot mint WS ticket");
   }
   const payload: TicketPayload = {
+    ...claims,
     jti: randomUUID(),
     sub,
     iat: now,
