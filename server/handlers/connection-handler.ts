@@ -17,6 +17,7 @@ import {
 } from "../config/constants";
 import { tildeToHostWorkspace } from "../../lib/path-utils";
 import { authenticateConnection } from "./ws-auth";
+import { isHostMode } from "../../lib/host-shell-access";
 import {
   resolveContainerImage,
   DEFAULT_CONTAINER_IMAGE,
@@ -86,6 +87,19 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
   // Parse query params
   const url = new URL(req.url || "/", `http://localhost:${PORT}`);
   const mode = url.searchParams.get("mode") || "container"; // "local" | "container"
+
+  // In host mode every terminal is host-privileged — a shell as the operator,
+  // or docker run/exec against the host's socket — so authentication is not
+  // enough: only an admin may open one (lib/host-shell-access.ts). Refused
+  // before any mount resolution or spawn, with a reason the terminal UI shows
+  // for a 1008 close.
+  if (isHostMode() && !auth.hostShell.ok) {
+    console.log(
+      `Refused host-mode terminal (mode=${mode}) for ${auth.method} identity ${auth.user}: ${auth.hostShell.reason}`,
+    );
+    ws.close(1008, auth.hostShell.reason);
+    return;
+  }
   const command = url.searchParams.get("command") || "";
   const cwd = url.searchParams.get("cwd") || process.cwd();
   const requestedImage =

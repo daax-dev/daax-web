@@ -105,6 +105,40 @@ export async function requireAuth(): Promise<AuthResult> {
 }
 
 /**
+ * Result of {@link requireAuthIdentity}: the authenticated user plus the trusted
+ * subject, the only attribute an authorization decision may key on.
+ */
+export type IdentityResult =
+  | {
+      authenticated: true;
+      user: AuthUser;
+      /** The local-operator bypass: trusted, but with no subject. */
+      operator: boolean;
+      /** The trusted Pocket ID subject; null for the local operator. */
+      subject: string | null;
+    }
+  | { authenticated: false; response: NextResponse };
+
+/**
+ * Like {@link requireAuth}, but also returns the trusted subject rather than only
+ * the display-oriented `AuthUser`, so a caller can make an authorization
+ * decision keyed on the subject.
+ */
+export async function requireAuthIdentity(): Promise<IdentityResult> {
+  const h = await headers();
+  const ctx = deriveAuthContext(h);
+  const decision = evaluateAuthDecisionFromContext(ctx);
+  if (decision.decision === "deny")
+    return { authenticated: false, response: deny401() };
+  return {
+    authenticated: true,
+    user: decision.user,
+    operator: decision.decision === "allow-operator",
+    subject: ctx.subject,
+  };
+}
+
+/**
  * Simple authentication check that throws if not authenticated.
  * Use this when you want to fail fast without handling the response yourself.
  *

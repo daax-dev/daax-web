@@ -26,7 +26,12 @@ const { spawn, pty } = vi.hoisted(() => {
 });
 
 vi.mock("@/server/handlers/ws-auth", () => ({
-  authenticateConnection: () => ({ ok: true }),
+  authenticateConnection: () => ({
+    ok: true,
+    user: "local",
+    method: "bypass",
+    hostShell: { ok: true },
+  }),
 }));
 vi.mock("@/server/sessions/pty-loader", () => ({ getPty: () => ({ spawn }) }));
 vi.mock("@/server/sessions/session-manager", () => ({
