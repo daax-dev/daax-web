@@ -13,6 +13,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -40,6 +41,24 @@ const LIB_SH = join(REPO, "scripts/deploy-lib.sh");
 let work: string;
 let binDir: string;
 let dockerLog: string;
+// A loopback port nothing listens on, so the DAAX_PG_HOST_PORT preflight never
+// depends on what the machine running the suite has on 5433.
+let freePort = "";
+
+function listenOnLoopback(port = 0): Promise<Server> {
+  return new Promise((ok, bad) => {
+    const srv = createServer();
+    srv.once("error", bad);
+    srv.listen(port, "127.0.0.1", () => ok(srv));
+  });
+}
+
+beforeAll(async () => {
+  const srv = await listenOnLoopback();
+  const addr = srv.address();
+  freePort = String(typeof addr === "object" && addr ? addr.port : 0);
+  await new Promise<void>((ok) => srv.close(() => ok()));
+});
 
 // A programmable fake `docker` (also handles `docker compose …`). It logs every
 // invocation, forces failure when the joined args match FAKE_FAIL_PATTERN, and:
@@ -60,6 +79,9 @@ if [[ -n "\${FAKE_FAIL_PATTERN:-}" ]] && grep -qE "\$FAKE_FAIL_PATTERN" <<<"$arg
 fi
 case "$1" in
   version) exit 0 ;;
+  ps)                                  # ps --filter publish=<port>: FAKE_PORT_HOLDER names the holder(s)
+    [[ "$*" == *publish=* && -n "\${FAKE_PORT_HOLDER:-}" ]] && printf '%s\n' \$FAKE_PORT_HOLDER
+    exit 0 ;;
   image)                               # image inspect <img> -> present unless named absent
     [[ -n "\${FAKE_IMAGE_ABSENT:-}" && "\${@: -1}" == "\$FAKE_IMAGE_ABSENT" ]] && exit 1
     exit 0 ;;
@@ -198,6 +220,9 @@ function runDeploy(
     DAAX_HEALTH_RETRIES: "1",
     DAAX_HEALTH_NAP: "0",
     DAAX_DEPLOY_NO_LOCK: "1",
+    // Never the real /opt/daax of the machine running the suite.
+    DAAX_BOOT_STARTER_DIR: join(work, "no-boot-starter"),
+    DAAX_PG_HOST_PORT: freePort,
     ...env,
   };
   const r = spawnSync("bash", [DEPLOY_SH, target], {
@@ -1168,6 +1193,105 @@ describe("deploy.sh image override (fleet roll)", () => {
     },
   );
 
+  it(
+    "Interrupt's proxy secret is validated as a pair before anything is mounted",
+    { timeout: 120_000 },
+    () => {
+      const uid = String(process.getuid?.() ?? 1000);
+      const secret = join(work, "proxy.secret");
+      const link = join(work, "proxy.secret.link");
+      const dir = join(work, "proxy.secret.dir");
+      writeFileSync(secret, "s3cr3t-value\n");
+      chmodSync(secret, 0o600);
+      if (!existsSync(link)) symlinkSync(secret, link);
+      mkdirSync(dir, { recursive: true });
+      const pair = {
+        TEST_SECRET_A: "x",
+        DAAX_AGENTVIEW_TOKEN_UID: uid,
+        AGENTD_PROXY_SECRET_HOST_FILE: secret,
+        AGENTVIEW_DAEMON_PROXY_SECRET_FILE: "/run/secrets/agentd-proxy",
+      };
+      const deploy = (env: Record<string, string>, name: string) => {
+        resetDockerLog();
+        return runDeploy("pinned", { ...pair, ...env }, freshLog(name));
+      };
+      const refused = (
+        env: Record<string, string>,
+        name: string,
+        why: RegExp,
+      ) => {
+        const r = deploy(env, name);
+        expect(r.status, name).not.toBe(0);
+        expect(r.stderr, name).toMatch(why);
+        // The secret's value never reaches the output.
+        expect(r.stdout + r.stderr, name).not.toMatch(/s3cr3t/);
+        expect(readFileSync(dockerLog, "utf8"), name).not.toMatch(
+          /compose .*(pull|up)/,
+        );
+      };
+
+      expect(deploy({}, "ps-ok").status).toBe(0);
+
+      // Each half alone cannot work.
+      refused(
+        { AGENTD_PROXY_SECRET_HOST_FILE: "" },
+        "ps-no-host-file",
+        /AGENTD_PROXY_SECRET_HOST_FILE must be an existing regular file/,
+      );
+      refused(
+        { AGENTVIEW_DAEMON_PROXY_SECRET_FILE: "" },
+        "ps-no-container-path",
+        /must be \/run\/secrets\/agentd-proxy/,
+      );
+      refused(
+        { AGENTVIEW_DAEMON_PROXY_SECRET_FILE: "/run/agentview/token" },
+        "ps-wrong-container-path",
+        /must be \/run\/secrets\/agentd-proxy/,
+      );
+      refused(
+        { AGENTD_PROXY_SECRET_HOST_FILE: join(work, "no-such-secret") },
+        "ps-missing",
+        /existing regular file/,
+      );
+      refused(
+        { AGENTD_PROXY_SECRET_HOST_FILE: dir },
+        "ps-directory",
+        /existing regular file/,
+      );
+      refused(
+        { AGENTD_PROXY_SECRET_HOST_FILE: link },
+        "ps-symlink",
+        /not a symlink/,
+      );
+      refused(
+        { DAAX_AGENTVIEW_TOKEN_UID: "99999" },
+        "ps-uid",
+        /owned by uid 99999/,
+      );
+
+      chmodSync(secret, 0o640);
+      refused({}, "ps-exposed", /mode 0600 or 0400/);
+      chmodSync(secret, 0o400);
+      expect(deploy({}, "ps-0400").status).toBe(0);
+      chmodSync(secret, 0o600);
+
+      writeFileSync(secret, "\n  \n");
+      refused({}, "ps-empty", /one non-empty secret line/);
+      writeFileSync(secret, "s3cr3t-one\ns3cr3t-two\n");
+      refused({}, "ps-twolines", /one non-empty secret line/);
+      writeFileSync(secret, "s3cr3t-value\n");
+
+      // Not configured at all: nothing is checked.
+      resetDockerLog();
+      const off = runDeploy(
+        "pinned",
+        { TEST_SECRET_A: "x" },
+        freshLog("ps-off"),
+      );
+      expect(off.status).toBe(0);
+    },
+  );
+
   it("REJECTS a tag override before touching docker", () => {
     resetDockerLog();
     const res = runDeploy(
@@ -1236,6 +1360,213 @@ describe("deploy.sh happy path", () => {
     expect(statSync(join(backupDir, snaps[0])).mode & 0o777).toBe(0o600);
     expect(readFileSync(log, "utf8")).toMatch(/"status":"snapshot"/);
   });
+});
+
+describe("deploy.sh preflight — daax-postgres's loopback port", () => {
+  let held: Server;
+  let heldPort = "";
+  beforeAll(async () => {
+    held = await listenOnLoopback();
+    const addr = held.address();
+    heldPort = String(typeof addr === "object" && addr ? addr.port : 0);
+  });
+  afterAll(() => held?.close());
+
+  const deploy = (name: string, env: Record<string, string>) => {
+    resetDockerLog();
+    return runDeploy(
+      "test",
+      { TEST_SECRET_A: "x", TEST_SECRET_B: "y", ...env },
+      freshLog(name),
+    );
+  };
+  const refusedBeforeDocker = (r: RunResult, name: string, why: RegExp) => {
+    expect(r.status, name).not.toBe(0);
+    expect(r.stderr, name).toMatch(why);
+    expect(readFileSync(dockerLog, "utf8"), name).not.toMatch(
+      /compose .*(pull|up)/,
+    );
+  };
+
+  it(
+    "refuses a port another container publishes, naming it",
+    { timeout: 120_000 },
+    () => {
+      refusedBeforeDocker(
+        deploy("pgport-ironclaw", {
+          DAAX_PG_HOST_PORT: heldPort,
+          FAKE_PORT_HOLDER: "ironclaw-pg",
+        }),
+        "ironclaw",
+        /published by container\(s\): ironclaw-pg/,
+      );
+    },
+  );
+
+  it(
+    "refuses a port held by a process docker does not know",
+    { timeout: 120_000 },
+    () => {
+      refusedBeforeDocker(
+        deploy("pgport-host", { DAAX_PG_HOST_PORT: heldPort }),
+        "host process",
+        /held by a process that is not a container/,
+      );
+    },
+  );
+
+  it(
+    "accepts the port when daax-postgres already holds it, and a free one",
+    { timeout: 120_000 },
+    () => {
+      expect(
+        deploy("pgport-ours", {
+          DAAX_PG_HOST_PORT: heldPort,
+          FAKE_PORT_HOLDER: "daax-postgres",
+        }).status,
+      ).toBe(0);
+      expect(deploy("pgport-free", {}).status).toBe(0);
+    },
+  );
+
+  it("refuses a value that is not a port", { timeout: 120_000 }, () => {
+    for (const bad of ["0", "65536", "08", "5433x"]) {
+      refusedBeforeDocker(
+        deploy(`pgport-bad-${bad}`, { DAAX_PG_HOST_PORT: bad }),
+        bad,
+        /DAAX_PG_HOST_PORT must be a port number/,
+      );
+    }
+  });
+});
+
+describe("deploy.sh boot starter (galway's /opt/daax daax.service)", () => {
+  const SECRET = "s3cr3t-boot-value";
+  const starter = () => join(work, "opt-daax");
+  const setup = (pointerTo: string) => {
+    rmSync(starter(), { recursive: true, force: true });
+    mkdirSync(starter(), { recursive: true });
+    writeFileSync(
+      join(starter(), "docker-compose.yml"),
+      `# pointer\ninclude:\n  - ${pointerTo}\n`,
+    );
+    writeFileSync(
+      join(starter(), ".env"),
+      "HOSTNAME=stale\nDAAX_WS_TOKEN_SECRET=old\n",
+    );
+  };
+  const deploy = (name: string, env: Record<string, string> = {}) => {
+    resetDockerLog();
+    return runDeploy(
+      "test",
+      {
+        TEST_SECRET_A: SECRET,
+        TEST_SECRET_B: "b",
+        DAAX_WS_TOKEN_SECRET: SECRET,
+        DAAX_IMAGE: `ghcr.io/daax-dev/daax-web@sha256:${"e".repeat(64)}`,
+        DAAX_BOOT_STARTER_DIR: starter(),
+        ...env,
+      },
+      freshLog(name),
+    );
+  };
+  const envFile = () => join(starter(), ".env");
+
+  it(
+    "writes the deployed environment to /opt/daax/.env, 0600, without printing it",
+    { timeout: 120_000 },
+    () => {
+      setup(join(REPO, "deploy/docker-compose.yml"));
+      const r = deploy("boot-write");
+      expect(r.status).toBe(0);
+      const body = readFileSync(envFile(), "utf8");
+      expect(statSync(envFile()).mode & 0o777).toBe(0o600);
+      // What the boot run was missing: the pin, and the env file's own values.
+      expect(body).toContain(
+        `DAAX_IMAGE='ghcr.io/daax-dev/daax-web@sha256:${"e".repeat(64)}'\n`,
+      );
+      expect(body).toContain("HOSTNAME='testhost'\n");
+      expect(body).toContain(`DAAX_WS_TOKEN_SECRET='${SECRET}'\n`);
+      expect(body).not.toContain("stale");
+      // Only what the compose file interpolates: TEST_SECRET_B is not one.
+      expect(body).not.toContain("TEST_SECRET_B");
+      expect(r.stdout + r.stderr).not.toContain(SECRET);
+      expect(r.stdout).toMatch(/wrote .*opt-daax\/\.env \(0600/);
+
+      const again = deploy("boot-again");
+      expect(again.status).toBe(0);
+      expect(again.stdout).toMatch(/already matches this deploy/);
+      expect(readFileSync(envFile(), "utf8")).toBe(body);
+    },
+  );
+
+  it(
+    "rewrites a .env it owns in a directory it cannot write, ending private",
+    { timeout: 120_000 },
+    () => {
+      setup(join(REPO, "deploy/docker-compose.yml"));
+      chmodSync(envFile(), 0o644);
+      chmodSync(starter(), 0o555);
+      try {
+        const r = deploy("boot-inplace");
+        expect(r.status).toBe(0);
+        expect(r.stdout).toMatch(/wrote .*opt-daax\/\.env \(0600/);
+        expect(statSync(envFile()).mode & 0o777).toBe(0o600);
+        expect(readFileSync(envFile(), "utf8")).toContain(
+          "HOSTNAME='testhost'",
+        );
+      } finally {
+        chmodSync(starter(), 0o755);
+      }
+    },
+  );
+
+  it(
+    "leaves a pointer to another checkout, or any other compose file, alone",
+    { timeout: 120_000 },
+    () => {
+      setup("/somewhere/else/deploy/docker-compose.yml");
+      const r = deploy("boot-other");
+      expect(r.status).toBe(0);
+      expect(r.stderr).toMatch(/includes .*, not this checkout/);
+      expect(readFileSync(envFile(), "utf8")).toContain("HOSTNAME=stale");
+
+      setup(join(REPO, "deploy/docker-compose.yml"));
+      writeFileSync(join(starter(), "docker-compose.yml"), "services: {}\n");
+      const s = deploy("boot-notpointer");
+      expect(s.status).toBe(0);
+      expect(s.stderr).toMatch(/not a one-line include pointer/);
+      expect(readFileSync(envFile(), "utf8")).toContain("HOSTNAME=stale");
+    },
+  );
+
+  it(
+    "refuses a value the two parsers would read differently, and never prints it",
+    { timeout: 120_000 },
+    () => {
+      setup(join(REPO, "deploy/docker-compose.yml"));
+      const r = deploy("boot-quote", { DAAX_WS_TOKEN_SECRET: "s3cr3t'x" });
+      expect(r.status).toBe(0);
+      expect(r.stderr).toMatch(/DAAX_WS_TOKEN_SECRET holds a character/);
+      expect(r.stdout + r.stderr).not.toContain("s3cr3t");
+      expect(readFileSync(envFile(), "utf8")).toContain("HOSTNAME=stale");
+    },
+  );
+
+  it(
+    "does nothing when there is no /opt/daax, and nothing after a failed deploy",
+    { timeout: 120_000 },
+    () => {
+      rmSync(starter(), { recursive: true, force: true });
+      expect(deploy("boot-absent").status).toBe(0);
+      expect(existsSync(starter())).toBe(false);
+
+      setup(join(REPO, "deploy/docker-compose.yml"));
+      const f = deploy("boot-failed", { FAKE_HTTP_CODE: "503" });
+      expect(f.status).not.toBe(0);
+      expect(readFileSync(envFile(), "utf8")).toContain("HOSTNAME=stale");
+    },
+  );
 });
 
 describe("deploy.sh rollback — mid-flight failure", () => {

@@ -1,0 +1,22 @@
+# daax-web in host mode, for Agent View's "Resume here" — a browser-reachable
+# shell as this user, behind Pocket ID at https://daax-host.<host>.poley.dev.
+# Installed by deploy/host/daax-host.sh install, which also writes
+# daax-host.service.d/host.conf (PATH, host name, checkout, ports). Read the
+# header of daax-host.sh before enabling this anywhere.
+[Unit]
+Description=daax-web in host mode (Agent View Resume)
+After=network-online.target agentd.service
+
+[Service]
+Type=simple
+# Overridden by the drop-in with node's (and openssl's) directory found at
+# install time. ~/.bun/bin is named, not discovered: over ssh it is not on
+# PATH. ~/.local/bin stays first so the native `claude` wins.
+Environment=PATH=%h/.local/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/daax-host run
+# daax-postgres or agentd may still be starting after a boot.
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
