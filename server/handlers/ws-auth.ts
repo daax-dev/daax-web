@@ -16,8 +16,8 @@
  * logs a ship-blocking warning (mirrors the HTTP plane's fail-closed posture).
  *
  * Authentication is not authorization. Each accepted decision also carries
- * `hostShell`: whether this caller may open a shell on the host, which the
- * connection handler enforces when daax runs in host mode
+ * `hostShell`: whether this caller may open a host-privileged terminal, which
+ * the connection handler enforces for every terminal when daax runs in host mode
  * (`lib/host-shell-access.ts`). The loopback bypass is the local operator and
  * may; a forwarded identity may if it is in `DAAX_ADMIN_USERS`; a ticket may
  * only if it was minted with the `hostShell` claim AND its identity still
@@ -166,7 +166,7 @@ export function authenticateConnection(req: IncomingMessage): AuthDecision {
     if (payload.hostShell !== true) {
       hostShell = {
         ok: false,
-        reason: "host shell refused: ticket was not minted for an admin",
+        reason: "host terminal refused: ticket was not minted for an admin",
       };
     } else if (payload.operator === true) {
       hostShell = { ok: true };

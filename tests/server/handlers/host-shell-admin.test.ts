@@ -1,9 +1,10 @@
 /**
- * Only an admin may open a HOST shell.
+ * Only an admin may open a terminal on a HOST-mode daax.
  *
- * In host mode (HOST_WORKSPACE_PATH unset) a non-container terminal — Agent
- * View "Resume here" among them — is a real shell as the operator. Before this,
- * any identity the forward-auth proxy admitted got one. This drives the real
+ * In host mode (HOST_WORKSPACE_PATH unset) every terminal is host-privileged: a
+ * non-container one — Agent View "Resume here" among them — is a real shell as
+ * the operator, and a container one is docker run/exec against the host's
+ * socket. Before this, any identity the forward-auth proxy admitted got one. This drives the real
  * upgrade authentication and the real handler (pty, sessions and path
  * confinement stood in) with literal subjects, and reads whether a pty was
  * spawned and what the socket was closed with.
@@ -56,6 +57,7 @@ const ORIGIN = "https://daax.galway.poley.dev";
 
 function connect(opts: {
   mode: string;
+  containerName?: string;
   headers?: Record<string, string>;
   remoteAddress?: string;
   ticket?: string;
@@ -65,7 +67,11 @@ function connect(opts: {
   if (opts.ticket)
     headers["sec-websocket-protocol"] = `daax-ws-ticket, ${opts.ticket}`;
   const req = {
-    url: `/?${new URLSearchParams({ mode: opts.mode, cwd: "/home/dev/prj/repo" })}`,
+    url: `/?${new URLSearchParams({
+      mode: opts.mode,
+      cwd: "/home/dev/prj/repo",
+      ...(opts.containerName ? { containerName: opts.containerName } : {}),
+    })}`,
     socket: { remoteAddress: opts.remoteAddress ?? "127.0.0.1" },
     headers,
   } as unknown as IncomingMessage;
@@ -120,7 +126,7 @@ describe("host shell over the forwarded-identity path", () => {
     });
     expect(ws.close).toHaveBeenCalledWith(
       1008,
-      "host shell refused: not in DAAX_ADMIN_USERS",
+      "host terminal refused: not in DAAX_ADMIN_USERS",
     );
     expect(spawn).not.toHaveBeenCalled();
   });
@@ -131,7 +137,7 @@ describe("host shell over the forwarded-identity path", () => {
       const ws = connect({ mode, headers: { "x-forwarded-user": OTHER } });
       expect(ws.close).toHaveBeenCalledWith(
         1008,
-        "host shell refused: not in DAAX_ADMIN_USERS",
+        "host terminal refused: not in DAAX_ADMIN_USERS",
       );
       expect(spawn).not.toHaveBeenCalled();
     },
@@ -145,18 +151,63 @@ describe("host shell over the forwarded-identity path", () => {
     });
     expect(ws.close).toHaveBeenCalledWith(
       1008,
-      "host shell refused: DAAX_ADMIN_USERS is empty, so no one is an admin",
+      "host terminal refused: DAAX_ADMIN_USERS is empty, so no one is an admin",
     );
     expect(spawn).not.toHaveBeenCalled();
   });
+});
 
-  it("a container terminal is not a host shell and stays open to a non-admin", () => {
+describe("container terminals on a host-mode daax", () => {
+  it("a non-admin's new container (docker run on the host socket) is refused", () => {
     const ws = connect({
       mode: "container",
       headers: { "x-forwarded-user": OTHER },
     });
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "host terminal refused: not in DAAX_ADMIN_USERS",
+    );
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("a non-admin's docker exec into a named container is refused", () => {
+    const ws = connect({
+      mode: "container",
+      containerName: "daax-postgres",
+      headers: { "x-forwarded-user": OTHER },
+    });
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "host terminal refused: not in DAAX_ADMIN_USERS",
+    );
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("an admin gets a new container", () => {
+    const ws = connect({
+      mode: "container",
+      headers: { "x-forwarded-user": ADMIN },
+    });
     expect(ws.close).not.toHaveBeenCalled();
     expect(spawn.mock.calls[0][0]).toBe("docker");
+    expect(spawn.mock.calls[0][1]).toContain("run");
+  });
+
+  it("an admin gets docker exec into a named container", () => {
+    const ws = connect({
+      mode: "container",
+      containerName: "daax-postgres",
+      headers: { "x-forwarded-user": ADMIN },
+    });
+    expect(ws.close).not.toHaveBeenCalled();
+    expect(spawn.mock.calls[0][0]).toBe("docker");
+    expect(spawn.mock.calls[0][1]).toEqual([
+      "exec",
+      "-it",
+      "daax-postgres",
+      "/bin/bash",
+      "-l",
+    ]);
   });
 });
 
@@ -181,7 +232,7 @@ describe("host shell over the ticket path", () => {
     });
     expect(ws.close).toHaveBeenCalledWith(
       1008,
-      "host shell refused: ticket was not minted for an admin",
+      "host terminal refused: ticket was not minted for an admin",
     );
     expect(spawn).not.toHaveBeenCalled();
   });
@@ -200,7 +251,7 @@ describe("host shell over the ticket path", () => {
     });
     expect(ws.close).toHaveBeenCalledWith(
       1008,
-      "host shell refused: not in DAAX_ADMIN_USERS",
+      "host terminal refused: not in DAAX_ADMIN_USERS",
     );
     expect(spawn).not.toHaveBeenCalled();
   });
@@ -220,15 +271,31 @@ describe("host shell over the ticket path", () => {
     expect(spawn.mock.calls[0][0]).toBe("/bin/zsh");
   });
 
-  it("a non-admin ticket still opens a container terminal", () => {
+  it("a non-admin ticket is refused a docker exec into a named container", () => {
     const { token } = mintTicket(OTHER);
     const ws = connect({
       mode: "container",
+      containerName: "daax-postgres",
+      remoteAddress: "100.64.0.5",
+      ticket: token,
+    });
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "host terminal refused: ticket was not minted for an admin",
+    );
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("an admin ticket gets a docker exec into a named container", () => {
+    const { token } = mintTicket(ADMIN, undefined, { hostShell: true });
+    const ws = connect({
+      mode: "container",
+      containerName: "daax-postgres",
       remoteAddress: "100.64.0.5",
       ticket: token,
     });
     expect(ws.close).not.toHaveBeenCalled();
-    expect(spawn.mock.calls[0][0]).toBe("docker");
+    expect(spawn.mock.calls[0][1]).toContain("exec");
   });
 });
 
@@ -249,4 +316,18 @@ describe("unchanged postures", () => {
     expect(ws.close).not.toHaveBeenCalled();
     expect(spawn.mock.calls[0][0]).toBe("/bin/zsh");
   });
+
+  it.each([undefined, "daax-postgres"])(
+    "in container mode a non-admin's container terminal (containerName=%s) runs as before",
+    (containerName) => {
+      vi.stubEnv("HOST_WORKSPACE_PATH", "/home/dev/prj");
+      const ws = connect({
+        mode: "container",
+        containerName,
+        headers: { "x-forwarded-user": OTHER },
+      });
+      expect(ws.close).not.toHaveBeenCalled();
+      expect(spawn.mock.calls[0][0]).toBe("docker");
+    },
+  );
 });

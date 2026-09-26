@@ -32,7 +32,7 @@ export interface TicketPayload {
   exp: number;
   /**
    * Set only when the minting app judged the caller an admin (or the trusted
-   * local operator) allowed a HOST shell. Absent means no host shell; the
+   * local operator) allowed a host-mode terminal. Absent means none; the
    * terminal server re-checks the identity below before honouring it.
    */
   hostShell?: true;
