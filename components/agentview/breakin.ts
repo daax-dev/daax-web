@@ -132,8 +132,12 @@ export function breakinState(
   now: number,
 ): string {
   const action = actionFor(agent, lastSignal);
+  // `now` is the page's tick, which can predate a signal sent a moment ago;
+  // an action newer than the tick is "just now", never "in the future".
+  const age = (at: string | undefined) =>
+    at && Date.parse(at) > now ? "just now" : formatAge(at, now);
   const unknown = (reason: string) =>
-    `unknown, because ${reason} · ${formatAge(action?.at ?? agent.last_activity, now)}`;
+    `unknown, because ${reason} · ${age(action?.at ?? agent.last_activity)}`;
   if (action) {
     const after = Date.parse(action.at);
     if (
@@ -146,7 +150,7 @@ export function breakinState(
     if (action.kind === "signal" && action.pid !== undefined) {
       const exit = signalledExit(events, action);
       if (exit)
-        return `interrupted (observed): process ${action.pid} ended ${afterSignal(action.at, exit.timestamp)} · signal ${formatAge(action.at, now)}`;
+        return `interrupted (observed): process ${action.pid} ended ${afterSignal(action.at, exit.timestamp)} · signal ${age(action.at)}`;
     }
     if (
       events.some(

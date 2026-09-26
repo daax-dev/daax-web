@@ -238,6 +238,17 @@ describe("observed break-in state", () => {
       ),
     ).toBe("unknown, because nothing has been observed yet · 30s ago");
   });
+  it("a signal newer than the page's tick is just now, never in the future", () => {
+    // The live page read "signal in the future": its tick predated the click.
+    const stale = Date.parse("2026-09-08T13:59:50Z");
+    const exit = { ...exited, timestamp: "2026-09-08T14:00:02Z" };
+    expect(breakinState(ACTIVE_AGENT, [exit], signal, stale)).toBe(
+      "interrupted (observed): process 40327 ended 2s after the signal · signal just now",
+    );
+    expect(breakinState(ACTIVE_AGENT, [], signal, stale)).toBe(
+      "unknown, because nothing has been observed yet · just now",
+    );
+  });
   it("a live WAITING row reads as running, naming the state", () => {
     expect(
       breakinState(

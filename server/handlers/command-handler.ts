@@ -10,9 +10,27 @@ import { IPty } from "../sessions/types";
 import { hasSession } from "../sessions/session-manager";
 
 /**
+ * Where the pty's shell runs. The /home/vscode/.local/share/pnpm paths below
+ * exist only in daax's agent image (user vscode). A `local` or `shell-tmux`
+ * pty runs where the terminal server runs — the operator's host, or the
+ * daax-web/terminal image, which runs as `node` and has no /home/vscode — so
+ * there the command is typed verbatim and the login shell's PATH resolves it.
+ */
+export type CommandTarget = "agent-container" | "local";
+
+/** mode=container is `docker run` or `docker exec` into a daax agent container. */
+export function commandTarget(mode: string): CommandTarget {
+  return mode === "container" ? "agent-container" : "local";
+}
+
+/**
  * Build the full command string, handling special cases for AI tools.
  */
-export function buildFullCommand(command: string): string {
+export function buildFullCommand(
+  command: string,
+  target: CommandTarget,
+): string {
+  if (target === "local") return command;
   if (/^herdr-claude(?:\s|$)/.test(command)) {
     const claudePath = "/home/vscode/.local/share/pnpm/claude";
     const claudeArgs = command.replace(/^herdr-claude\s*/, "");
@@ -97,6 +115,7 @@ export function scheduleCommand(
   sessionId: string,
   ptyProcess: IPty,
   ws: WebSocket,
+  target: CommandTarget,
 ): NodeJS.Timeout {
   // Track command execution to prevent duplicates (e.g., from React Strict Mode double-mount).
   // The commandSent guard protects against a specific edge case: if we later add reconnection
@@ -129,7 +148,7 @@ export function scheduleCommand(
     commandSent = true;
     console.log(`[terminal] Session ${sessionId}: Running command: ${command}`);
 
-    const fullCommand = buildFullCommand(command);
+    const fullCommand = buildFullCommand(command, target);
     ptyProcess.write(fullCommand + "\r");
   }, 1000); // Increased delay for shell initialization
 
