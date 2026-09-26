@@ -293,6 +293,17 @@ cmd_run() {
   export CLAUDE_PROJECTS_DIR="$HOME/.claude/projects"
   export TERMINAL_HOST=127.0.0.1
   export TERMINAL_PORT="$WS_PORT"
+  # The agent CLIs a resume types, as absolute paths resolved from THIS
+  # service's PATH (~/.local/bin first, the native Claude Code). The terminal
+  # server types these instead of a bare `claude`/`codex`, which the operator's
+  # login shell would resolve through its own rc files — on kinsale that was a
+  # pnpm Claude Code 2.0.50 that hides its argv from agentd.
+  local tool_bin
+  tool_bin="$(command -v claude || true)"
+  [ -n "$tool_bin" ] && export DAAX_HOST_CLAUDE_BIN="$tool_bin"
+  tool_bin="$(command -v codex || true)"
+  [ -n "$tool_bin" ] && export DAAX_HOST_CODEX_BIN="$tool_bin"
+  echo "daax-host: resume uses claude=${DAAX_HOST_CLAUDE_BIN:-<login shell>} codex=${DAAX_HOST_CODEX_BIN:-<login shell>}"
   exec node_modules/.bin/concurrently --kill-others -n next,terminal \
     "node_modules/.bin/next start -p $WEB_PORT -H 127.0.0.1" \
     "node_modules/.bin/tsx server/terminal-server.ts"

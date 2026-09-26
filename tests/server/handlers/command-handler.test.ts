@@ -10,6 +10,7 @@ import { WebSocket } from "ws";
 import {
   buildFullCommand,
   commandTarget,
+  hostBinaryFor,
   scheduleCommand,
 } from "../../../server/handlers/command-handler";
 import type { IPty } from "../../../server/sessions/types";
@@ -343,7 +344,7 @@ describe("buildFullCommand for a local pty", () => {
     "opencode",
     "herdr-claude",
   ])("types %j verbatim", (cmd) => {
-    expect(buildFullCommand(cmd, "local")).toBe(cmd);
+    expect(buildFullCommand(cmd, "local", {})).toBe(cmd);
   });
 
   it("the host resume that failed live is not rewritten to a container path", () => {
@@ -351,6 +352,7 @@ describe("buildFullCommand for a local pty", () => {
       buildFullCommand(
         "claude --resume 13acf692-c5b0-443b-9a60-a7e40e83799a",
         "local",
+        {},
       ),
     ).toBe("claude --resume 13acf692-c5b0-443b-9a60-a7e40e83799a");
     expect(
@@ -361,6 +363,79 @@ describe("buildFullCommand for a local pty", () => {
     ).toBe(
       "exec /home/vscode/.local/share/pnpm/claude --resume 13acf692-c5b0-443b-9a60-a7e40e83799a",
     );
+  });
+});
+
+describe("a local pty types the launcher's absolute claude and codex", () => {
+  // kinsale 2026-09-26: the login shell resolved `claude` to a pnpm global
+  // Claude Code 2.0.50 that hides its argv, so the resume ran stale and agentd
+  // could not see it. The launcher names the binary its own PATH resolves.
+  const env = {
+    DAAX_HOST_CLAUDE_BIN: "/home/jpoley/.local/bin/claude",
+    DAAX_HOST_CODEX_BIN: "/home/linuxbrew/.linuxbrew/bin/codex",
+  };
+
+  it("pins claude --resume to the named binary", () => {
+    expect(
+      buildFullCommand(
+        "claude --resume efe55701-a82c-4308-a0fd-f2138f87d69d",
+        "local",
+        env,
+      ),
+    ).toBe(
+      "/home/jpoley/.local/bin/claude --resume efe55701-a82c-4308-a0fd-f2138f87d69d",
+    );
+  });
+
+  it("pins codex resume to the named binary", () => {
+    expect(
+      buildFullCommand(
+        "codex resume 01a0dbdb-0344-70c3-b9ce-b5f1a542f2d4",
+        "local",
+        env,
+      ),
+    ).toBe(
+      "/home/linuxbrew/.linuxbrew/bin/codex resume 01a0dbdb-0344-70c3-b9ce-b5f1a542f2d4",
+    );
+  });
+
+  it("leaves a look-alike command alone", () => {
+    expect(buildFullCommand("claudex --help", "local", env)).toBe(
+      "claudex --help",
+    );
+    expect(buildFullCommand("gemini --help", "local", env)).toBe(
+      "gemini --help",
+    );
+  });
+
+  it("does not change a container pty", () => {
+    expect(
+      buildFullCommand(
+        "claude --resume efe55701-a82c-4308-a0fd-f2138f87d69d",
+        "agent-container",
+        env,
+      ),
+    ).toBe(
+      "exec /home/vscode/.local/share/pnpm/claude --resume efe55701-a82c-4308-a0fd-f2138f87d69d",
+    );
+  });
+
+  it.each([
+    "claude",
+    "relative/claude",
+    "/home/j poley/claude",
+    "/bin/claude;rm -rf ~",
+    "/bin/$(id)",
+    "",
+  ])("ignores %j rather than interpolating it", (value) => {
+    expect(hostBinaryFor("claude", { DAAX_HOST_CLAUDE_BIN: value })).toBe(
+      undefined,
+    );
+    expect(
+      buildFullCommand("claude --resume x", "local", {
+        DAAX_HOST_CLAUDE_BIN: value,
+      }),
+    ).toBe("claude --resume x");
   });
 });
 
