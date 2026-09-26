@@ -215,8 +215,9 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     cols: DEFAULT_TERMINAL_COLS,
     rows: DEFAULT_TERMINAL_ROWS,
     cwd: mode === "local" ? cwd : undefined,
-    // buildPtyEnv strips the compose-set HOST posture var so it never leaks
-    // into workbench terminals (#184 review).
+    // buildPtyEnv strips the compose-set HOST posture var and daax's own
+    // server config and credentials, so neither leaks into workbench
+    // terminals or the agents they start (#184 review).
     env: {
       ...buildPtyEnv(),
       TERM: "xterm-256color",
