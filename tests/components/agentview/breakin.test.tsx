@@ -10,7 +10,12 @@ import {
 import { BreakIn, type BreakInProps } from "@/components/agentview/BreakIn.tsx";
 import recordedAgents from "../../e2e/fixtures/agentview/agents.json";
 import type { AgentInstance } from "@/lib/agentview/types";
-import { ACTIVE_AGENT } from "./fixtures";
+import type { AgentEvent } from "@/lib/agentview/types";
+import {
+  ACTIVE_AGENT,
+  AGENT_STARTED_EVENT,
+  AGENT_STOPPED_EVENT,
+} from "./fixtures";
 
 // The existing Terminal owns xterm and ticketing. Its public onError contract is
 // exercised here; terminal-resume.test.ts verifies the actual ticketed connector.
@@ -70,10 +75,25 @@ const reply = {
   note: "effect learned on next poll",
   event_id: "signal-1",
 };
+// What GET /api/agentview/events answers for the lifecycle query; an ended
+// session by default, as the daemon reports one.
+let lifecycle: AgentEvent[] = [];
+const posts = () =>
+  fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
 beforeEach(() => {
+  lifecycle = [AGENT_STARTED_EVENT, AGENT_STOPPED_EVENT].reverse();
   fetchMock.mockReset();
-  fetchMock.mockImplementation(() =>
-    Promise.resolve(new Response(JSON.stringify(reply), { status: 200 })),
+  fetchMock.mockImplementation((url: string) =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify(
+          String(url).startsWith("/api/agentview/events")
+            ? { events: lifecycle }
+            : reply,
+        ),
+        { status: 200 },
+      ),
+    ),
   );
   vi.stubGlobal("fetch", fetchMock);
 });
@@ -109,11 +129,11 @@ describe("BreakIn", () => {
   it("an ended row with control UNAVAILABLE still offers Resume with the exact params", async () => {
     render(<BreakIn {...props} agent={ended} />);
     expect(
-      screen.getByRole("button", {
+      await screen.findByRole("button", {
         name: "Interrupt — no process id is recorded for this agent, so there is nothing to signal",
       }),
     ).toBeDisabled();
-    const resume = screen.getByRole("button", { name: "Resume here" });
+    const resume = await screen.findByRole("button", { name: "Resume here" });
     expect(resume).toBeEnabled();
     fireEvent.click(resume);
     const terminal = await screen.findByTestId("resume-terminal");
@@ -208,7 +228,7 @@ describe("BreakIn", () => {
       });
       fireEvent.click(interrupt);
       await Promise.resolve();
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(posts()).toHaveLength(0);
       expect(interrupt).toBeDisabled();
       expect(interrupt).toHaveTextContent(
         patch.state === "AGENT_STATE_IDLE"
@@ -275,7 +295,7 @@ describe("BreakIn", () => {
         }),
       ).toHaveAttribute("href", "http://100.112.65.66:7717");
       expect(screen.getByRole("button", { name: /^Interrupt/ })).toBeDisabled();
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(posts()).toHaveLength(0);
     },
   );
 
@@ -305,7 +325,7 @@ describe("BreakIn", () => {
     });
     expect(interrupt).toBeDisabled();
     fireEvent.click(interrupt);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(posts()).toHaveLength(0);
     expect(
       screen.getByRole("link", {
         name: "Open control surface on the owning node",
@@ -322,7 +342,7 @@ describe("BreakIn", () => {
     render(<BreakIn {...props} agent={agent} />);
     const interrupt = screen.getByRole("button", { name: /^Interrupt/ });
     fireEvent.click(interrupt);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(posts()).toHaveLength(0);
     expect(interrupt).toBeDisabled();
     expect(interrupt).toHaveTextContent(
       "this daemon's authenticator admits everybody: no --auth was given, so this daemon authenticates nobody. Every control action is recorded with the principal that asked for it, and the honest value of that here is nobody, so control is unavailable for every agent on this daemon (ADR 0017 §2)",
@@ -349,7 +369,7 @@ describe("BreakIn", () => {
         );
       } else {
         fireEvent.click(interrupt);
-        expect(fetchMock).not.toHaveBeenCalled();
+        expect(posts()).toHaveLength(0);
         expect(interrupt).toBeDisabled();
         expect(interrupt).toHaveTextContent(
           "no process has been observed for this session",
@@ -393,7 +413,7 @@ describe("BreakIn", () => {
 
   it("opens resume with the observed cwd and relays a terminal path refusal", async () => {
     render(<BreakIn {...props} agent={ended} />);
-    fireEvent.click(screen.getByRole("button", { name: "Resume here" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Resume here" }));
     const terminal = await screen.findByTestId("resume-terminal");
     const url = new URL(terminal.getAttribute("data-url")!);
     expect(Object.fromEntries(url.searchParams)).toEqual({
@@ -405,9 +425,9 @@ describe("BreakIn", () => {
     expect(screen.getByTestId("agentview-breakin-state")).toHaveTextContent(
       "unknown, because this session is IDLE; no live active process observed",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Refuse path" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Refuse path" }));
     expect(
-      screen.getByRole("button", {
+      await screen.findByRole("button", {
         name: "Resume here — WebSocket refused: Path not allowed",
       }),
     ).toBeDisabled();
@@ -415,18 +435,18 @@ describe("BreakIn", () => {
       "unknown, because the terminal server refused: WebSocket refused: Path not allowed",
     );
   });
-  it("host mode explains unsupported Gemini and missing cwd, and never asks the container store", () => {
+  it("host mode explains unsupported Gemini and missing cwd, and never asks the container store", async () => {
     const { rerender } = render(
       <BreakIn {...props} agent={{ ...ended, agent_type: "gemini" }} />,
     );
     expect(
-      screen.getByRole("button", {
+      await screen.findByRole("button", {
         name: /^Resume here — Gemini --resume takes latest/,
       }),
     ).toBeDisabled();
     rerender(<BreakIn {...props} agent={{ ...ended, cwd: undefined }} />);
     expect(
-      screen.getByRole("button", {
+      await screen.findByRole("button", {
         name: "Resume here — the daemon has not reported this session's cwd",
       }),
     ).toBeDisabled();
@@ -437,20 +457,20 @@ describe("BreakIn", () => {
       />,
     );
     expect(
-      screen.getByRole("button", {
+      await screen.findByRole("button", {
         name: "Resume here — this session runs on galway; daax's terminal opens a shell only on chamonix-d5d8554e",
       }),
     ).toBeDisabled();
     rerender(<BreakIn {...props} agent={{ ...ended, cwd: "/workspace" }} />);
     expect(
-      screen.getByRole("button", { name: "Resume here" }),
+      await screen.findByRole("button", { name: "Resume here" }),
     ).not.toBeDisabled();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(posts()).toHaveLength(0);
   });
-  it("says so when daax did not report its terminal mode", () => {
+  it("says so when daax did not report its terminal mode", async () => {
     render(<BreakIn {...props} agent={ended} terminalMode={undefined} />);
     expect(
-      screen.getByRole("button", {
+      await screen.findByRole("button", {
         name: "Resume here — daax did not report whether its terminal runs in host or container mode",
       }),
     ).toBeDisabled();

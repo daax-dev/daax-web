@@ -64,13 +64,35 @@ const AGENT_ROUTE = /^\/api\/v1\/agents\/([^/]+)$/;
 // Control mode supplies the process/control fields absent from the recorded
 // transcript-only daemon. It models a live Claude process; it never signals an
 // operating-system process. --ends-on-signal explicitly models process exit.
+const FIXTURE_PID = 424242;
+
+/** The agent process's own start, which agentd records for a live row. */
+function agentStarts(control) {
+  if (!control) return [];
+  const last = Number(readFixture("events").last_sequence);
+  return readFixture("agents")
+    .agents.filter((agent) => agent.state === "AGENT_STATE_ACTIVE")
+    .map((agent, i) => ({
+      event_id: `fixture-agent-started-${i}`,
+      sequence: String(last + 1 + i),
+      event_type: "EVENT_TYPE_AGENT_STARTED",
+      agent_id: agent.agent_id,
+      node_id: agent.node_id,
+      session_id: agent.session_id,
+      timestamp: "2026-09-07T22:00:00Z",
+      process_id: FIXTURE_PID,
+      collector: "process",
+      attributes: { agent_type: agent.agent_type, role: "cli" },
+    }));
+}
+
 function controlAgents(name, control, refuseControl, exits) {
   const doc = readFixture(name);
   if (!control) return doc;
   for (const agent of doc.agents) {
     if (agent.state !== "AGENT_STATE_ACTIVE") continue;
     agent.process_alive = true;
-    agent.agent_pid = 424242;
+    agent.agent_pid = FIXTURE_PID;
     agent.agent_process_started_at = "2026-09-07T22:00:00Z";
     if (exits.has(agent.agent_id)) {
       delete agent.process_alive;
@@ -160,16 +182,46 @@ function handle(
         });
       signals.push({ agent_id: id, body: parsed, headers: req.headers });
       if (endsOnSignal && !refuseControl) {
-        exits.set(id, {
-          event_id: `fixture-exit-${signals.length}`,
-          sequence: String(
-            Number(readFixture("events").last_sequence) + signals.length,
-          ),
-          event_type: "EVENT_TYPE_PROCESS_EXITED",
+        // As a live agentd reports an exit (2026-09-26): children of the
+        // agent's subtree exit under its id with their own pid, then the root
+        // exits and the agent process stops, both carrying the root pid.
+        const base =
+          Number(readFixture("events").last_sequence) + 10 * signals.length;
+        const at = new Date().toISOString();
+        const common = {
           agent_id: id,
           node_id: target.node_id,
           session_id: target.session_id,
-          timestamp: new Date().toISOString(),
+          timestamp: at,
+          collector: "process",
+        };
+        exits.set(`${id}#child`, {
+          ...common,
+          event_id: `fixture-exit-child-${signals.length}`,
+          sequence: String(base),
+          event_type: "EVENT_TYPE_PROCESS_EXITED",
+          process_id: FIXTURE_PID + 8,
+          parent_process_id: FIXTURE_PID,
+          attributes: {
+            agent_root_pid: String(FIXTURE_PID),
+            process_name: "npm",
+          },
+        });
+        exits.set(`${id}#root`, {
+          ...common,
+          event_id: `fixture-exit-${signals.length}`,
+          sequence: String(base + 1),
+          event_type: "EVENT_TYPE_PROCESS_EXITED",
+          process_id: FIXTURE_PID,
+          attributes: { process_name: "claude" },
+        });
+        exits.set(id, {
+          ...common,
+          event_id: `fixture-agent-stopped-${signals.length}`,
+          sequence: String(base + 2),
+          event_type: "EVENT_TYPE_AGENT_STOPPED",
+          process_id: FIXTURE_PID,
+          attributes: { agent_type: "claude", role: "cli" },
         });
       }
       return json(res, refuseControl ? 409 : 200, {
@@ -247,7 +299,7 @@ function handle(
   }
 
   if (p === "/api/v1/events")
-    return json(res, 200, events(url.searchParams, exits));
+    return json(res, 200, events(url.searchParams, exits, control));
 
   if (p === "/api/v1/stream") return stream(req, res, url.searchParams);
 
@@ -255,13 +307,14 @@ function handle(
 }
 
 /** Filters the recorded list the way the daemon's query parameters would. */
-function events(params, exits) {
+function events(params, exits, control) {
   const doc = readFixture("events");
-  let rows = [...doc.events, ...exits.values()];
+  const added = [...agentStarts(control), ...exits.values()];
+  let rows = [...doc.events, ...added];
   const lastSequence = String(
     Math.max(
       Number(doc.last_sequence),
-      ...Array.from(exits.values(), (event) => Number(event.sequence)),
+      ...added.map((event) => Number(event.sequence)),
     ),
   );
 

@@ -193,6 +193,14 @@ test("the unmodified recorded ACTIVE row has no observed process and cannot be i
   await expect(page.getByTestId("agentview-breakin-state")).toContainText(
     "unknown",
   );
+  // No pid and no stop event is also how the daemon shows a live process it
+  // has not linked yet, so Resume waits rather than forking it.
+  await expect(
+    page.getByRole("button", {
+      name: "Resume here — the daemon has not observed this session's process ending; Resume waits until it has — two processes on one session would fork the conversation",
+      exact: true,
+    }),
+  ).toBeDisabled();
   expect(posts).toEqual([]);
 });
 
@@ -232,6 +240,12 @@ test("Interrupt observes the baseline process ending and names its pid", async (
   await page
     .locator(`[data-testid="agentview-agent"][data-agent-id="${agentId}"]`)
     .click();
+  await expect(
+    page.getByRole("button", {
+      name: "Resume here — this session's process is still running (pid 424242); interrupt it first — two processes on one session would fork the conversation",
+      exact: true,
+    }),
+  ).toBeDisabled();
   await page.getByRole("button", { name: "Interrupt", exact: true }).click();
   await expect(page.getByTestId("agentview-breakin-state")).toContainText(
     "interrupted (observed): process 424242 ended",
@@ -270,6 +284,12 @@ test("Interrupt observes the baseline process ending and names its pid", async (
       `${DAEMON}/api/v1/events?agent_id=${encodeURIComponent(agentId)}`,
     )
   ).json();
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      event_type: "EVENT_TYPE_AGENT_STOPPED",
+      process_id: 424242,
+    }),
+  );
   expect(events).toContainEqual(
     expect.objectContaining({
       event_type: "EVENT_TYPE_PROCESS_EXITED",

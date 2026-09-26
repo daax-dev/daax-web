@@ -141,6 +141,7 @@ export interface FetchEventsOptions {
   limit?: number;
   descending?: boolean;
   afterSequence?: number;
+  eventTypes?: string[];
 }
 
 export function fetchEvents(
@@ -153,6 +154,7 @@ export function fetchEvents(
   if (opts.descending) q.set("descending", "true");
   if (opts.afterSequence !== undefined)
     q.set("after_sequence", String(opts.afterSequence));
+  for (const type of opts.eventTypes ?? []) q.append("event_type", type);
   return readJson<EventsResponse>("events", q);
 }
 

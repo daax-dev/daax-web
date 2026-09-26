@@ -32,12 +32,14 @@ const interrupted: AgentEvent = {
   timestamp: "2026-09-08T14:00:10Z",
   attributes: { turn_interrupted: "true" },
 };
+// The root's own exit: process_id is the signalled pid (live agentd, 2026-09-26).
 const exited: AgentEvent = {
   event_id: "process-exit-1",
   sequence: "43",
   event_type: "EVENT_TYPE_PROCESS_EXITED",
   agent_id: "chamonix-d5d8554e/claude/4db77e81-4da9-4567-a755-ad316e8df7ba",
   node_id: "chamonix-d5d8554e",
+  process_id: 40327,
   timestamp: "2026-09-08T14:00:10Z",
 };
 afterEach(cleanup);
@@ -58,8 +60,42 @@ describe("observed break-in state", () => {
       ),
     ).toBe("resumed here (observed)");
   });
-  it.each([40327, undefined])(
-    "interrupted (observed) comes from the process ending after the signal (%s)",
+  it("a row that has lost its pid proves nothing: no pid is also a live, unlinked process", () => {
+    const { process_alive: _alive, ...ended } = ACTIVE_AGENT;
+    expect(
+      breakinState({ ...ended, agent_pid: undefined }, [], signal, now),
+    ).toBe("unknown, because nothing has been observed yet · 30s ago");
+  });
+  it("a child's exit under the agent's id is not the signalled process ending", () => {
+    expect(
+      breakinState(
+        ACTIVE_AGENT,
+        [
+          {
+            ...exited,
+            process_id: 40390,
+            attributes: { agent_root_pid: "40327" },
+          },
+        ],
+        signal,
+        now,
+      ),
+    ).toBe("unknown, because nothing has been observed yet · 30s ago");
+  });
+  it("interrupted (observed) also comes from the agent process's own AGENT_STOPPED", () => {
+    expect(
+      breakinState(
+        ACTIVE_AGENT,
+        [{ ...exited, event_type: "EVENT_TYPE_AGENT_STOPPED" }],
+        signal,
+        now,
+      ),
+    ).toBe(
+      "interrupted (observed): process 40327 ended 10s after the signal · signal 30s ago",
+    );
+  });
+  it.each([40327])(
+    "interrupted (observed) comes from the row still recording the signalled pid, not alive (%s)",
     (pid) => {
       const { process_alive: _alive, ...ended } = ACTIVE_AGENT;
       const { rerender } = render(

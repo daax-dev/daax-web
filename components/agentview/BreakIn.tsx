@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import type { AgentEvent, AgentInstance } from "@/lib/agentview/types";
 import {
   checkContainerTranscript,
+  fetchEvents,
   formatAge,
   signalAgent,
   stripEnum,
@@ -18,7 +19,17 @@ import {
   resumeUnavailableReason,
 } from "@/lib/agentview/resume";
 import { buildTerminalWsUrl } from "@/lib/websocket-utils";
-import { breakinState, hasLiveProcess, type LastSignal } from "./breakin";
+import {
+  breakinState,
+  hasLiveProcess,
+  LIFECYCLE_EVENT_TYPES,
+  processKnownEnded,
+  type LastSignal,
+} from "./breakin";
+
+/** No pid and no process_alive is also how a live, not-yet-linked process looks. */
+export const NOT_SEEN_ENDING =
+  "the daemon has not observed this session's process ending; Resume waits until it has — two processes on one session would fork the conversation";
 
 // This existing terminal owns the ticketed WebSocket, xterm, input and cleanup.
 const Terminal = dynamic(
@@ -75,13 +86,59 @@ export function BreakIn({
     agent.node_id !== localNodeId
       ? `this session runs on ${agent.node_id}; daax's terminal opens a shell only on ${localNodeId}`
       : undefined;
+  // The agent process's own start/stop events, which the timeline's window may
+  // not reach. Re-read whenever the row's view of the process changes.
+  const [lifecycle, setLifecycle] = useState<
+    { events: AgentEvent[] } | { reason: string }
+  >();
+  const needsLifecycle = !live && !remoteReason;
+  useEffect(() => {
+    if (!needsLifecycle) return;
+    let current = true;
+    void fetchEvents({
+      sessionId: agent.session_id,
+      eventTypes: LIFECYCLE_EVENT_TYPES,
+      descending: true,
+      limit: 20,
+    }).then((result) => {
+      if (current)
+        setLifecycle(
+          result.ok
+            ? { events: result.data.events ?? [] }
+            : { reason: result.message },
+        );
+    });
+    return () => {
+      current = false;
+    };
+  }, [
+    needsLifecycle,
+    agent.session_id,
+    agent.state,
+    agent.agent_pid,
+    agent.process_alive,
+    lastSignal,
+  ]);
+  const observed =
+    lifecycle && "events" in lifecycle
+      ? [...events, ...lifecycle.events]
+      : events;
+  const ended = processKnownEnded(agent, observed, lastSignal);
+  const endedReason =
+    live || ended
+      ? undefined
+      : !lifecycle
+        ? "checking the daemon for whether this session's process has ended"
+        : "reason" in lifecycle
+          ? `the daemon's record of this session's process could not be read: ${lifecycle.reason}`
+          : NOT_SEEN_ENDING;
   const container = terminalMode === "container";
   const containerReason = container
     ? containerResumeReason(agent.agent_type, agent.session_id, agent.cwd)
     : undefined;
   // Asked only once every other container condition holds for a local session.
   const needsTranscript =
-    container && !live && !remoteReason && !containerReason;
+    container && ended && !remoteReason && !containerReason;
   useEffect(() => {
     if (!needsTranscript) return;
     let current = true;
@@ -104,7 +161,7 @@ export function BreakIn({
   const modeReason =
     terminalMode === undefined
       ? "daax did not report whether its terminal runs in host or container mode"
-      : containerReason || transcriptReason;
+      : containerReason;
   const resumeLabel = container
     ? "Resume in a daax agent container"
     : "Resume here";
@@ -122,6 +179,9 @@ export function BreakIn({
     (!agent.cwd
       ? "the daemon has not reported this session's cwd"
       : undefined) ||
+    // Fixed facts first; then what has to be observed, which can change.
+    endedReason ||
+    transcriptReason ||
     terminalRefusal;
   const snapshot = (kind: LastSignal["kind"]): LastSignal => ({
     kind,
@@ -176,7 +236,7 @@ export function BreakIn({
       <p role="status" data-testid="agentview-breakin-state">
         {observationFailure
           ? `unknown, because ${observationFailure} · ${formatAge(agent.last_activity, now)}`
-          : breakinState(agent, events, lastSignal, now)}
+          : breakinState(agent, observed, lastSignal, now)}
       </p>
       {signalRefusal && (
         <p data-testid="agentview-signal-refusal">{signalRefusal}</p>

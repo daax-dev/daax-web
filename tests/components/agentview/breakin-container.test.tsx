@@ -8,7 +8,11 @@ import {
 } from "@testing-library/react";
 // @ts-expect-error TS5097: explicit .tsx disambiguates BreakIn.tsx from breakin.ts on case-insensitive filesystems; both bundlers accept it.
 import { BreakIn, type BreakInProps } from "@/components/agentview/BreakIn.tsx";
-import { ACTIVE_AGENT } from "./fixtures";
+import {
+  ACTIVE_AGENT,
+  AGENT_STARTED_EVENT,
+  AGENT_STOPPED_EVENT,
+} from "./fixtures";
 
 // Container mode (HOST_WORKSPACE_PATH set): nothing records which directory a
 // daax agent container mounted at /workspace, so no container session is
@@ -48,10 +52,21 @@ const props: BreakInProps = {
   now: Date.parse("2026-09-08T14:00:30Z"),
 };
 const ALLOWED = "Resume in a daax agent container";
+// Lifecycle queries answer as for an ended session; everything else is the
+// container store's answer.
+const isLifecycle = (url: unknown) =>
+  String(url).startsWith("/api/agentview/events");
+const ENDED = { events: [AGENT_STOPPED_EVENT, AGENT_STARTED_EVENT] };
 const transcriptAnswer = (status: number, body: unknown) =>
-  fetchMock.mockImplementation(() =>
-    Promise.resolve(new Response(JSON.stringify(body), { status })),
+  fetchMock.mockImplementation((url: string) =>
+    Promise.resolve(
+      isLifecycle(url)
+        ? new Response(JSON.stringify(ENDED), { status: 200 })
+        : new Response(JSON.stringify(body), { status }),
+    ),
   );
+const storeQueries = () =>
+  fetchMock.mock.calls.filter(([url]) => !isLifecycle(url));
 beforeEach(() => {
   fetchMock.mockReset();
   transcriptAnswer(200, { exists: true });
@@ -69,8 +84,8 @@ describe("BreakIn in container mode", () => {
       name: "Resume in a daax agent container — daax does not record which project this container session mounted at /workspace, so a resume could not put it back in the same tree",
     });
     expect(button).toBeDisabled();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe(
+    expect(storeQueries()).toHaveLength(1);
+    expect(storeQueries()[0][0]).toBe(
       "/api/agentview-daax/container-transcripts/4db77e81-4da9-4567-a755-ad316e8df7ba",
     );
     fireEvent.click(button);
@@ -89,12 +104,14 @@ describe("BreakIn in container mode", () => {
 
   it("says it is checking until the store answers, and relays a failed check", async () => {
     let answer!: (res: Response) => void;
-    fetchMock.mockImplementation(
-      () => new Promise<Response>((resolve) => (answer = resolve)),
+    fetchMock.mockImplementation((url: string) =>
+      isLifecycle(url)
+        ? Promise.resolve(new Response(JSON.stringify(ENDED), { status: 200 }))
+        : new Promise<Response>((resolve) => (answer = resolve)),
     );
     render(<BreakIn {...props} />);
     expect(
-      screen.getByRole("button", {
+      await screen.findByRole("button", {
         name: `${ALLOWED} — checking daax's container store for this session's transcript`,
       }),
     ).toBeDisabled();
@@ -125,7 +142,7 @@ describe("BreakIn in container mode", () => {
         name: `${ALLOWED} — this session's process is still running (pid 40327); interrupt it first — two processes on one session would fork the conversation`,
       }),
     ).toBeDisabled();
-    await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
+    await waitFor(() => expect(storeQueries()).toHaveLength(0));
   });
 
   it.each([
@@ -181,7 +198,7 @@ describe("BreakIn in container mode", () => {
       expect(
         screen.getByRole("button", { name: `${ALLOWED} — ${reason}` }),
       ).toBeDisabled();
-      await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
+      await waitFor(() => expect(storeQueries()).toHaveLength(0));
     },
   );
 });
