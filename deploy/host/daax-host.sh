@@ -31,9 +31,19 @@
 # is daax's default; chamonix's oauth2-proxy is why its script sets them).
 # All three are unset in `run` so an inherited environment cannot set them.
 #
-# Secrets come from ~/.secrets (DAAX_SECRETS_FILE overrides), the file
-# scripts/deploy.sh expects the operator to `source`. It is PARSED for three
-# keys, never sourced: sourcing would export every secret in it into this
+# Its terminal ticket secret is its OWN, never the containers'
+# DAAX_WS_TOKEN_SECRET: a ticket is a stateless HMAC and single use is tracked
+# per process, so with a shared secret a ticket minted by daax.<host> for a
+# container shell could be spent once here for a HOST shell. `build` and
+# `install` generate it once into $WS_SECRET_FILE (0600, openssl rand -hex 32);
+# `run` only reads it, and unsets any inherited DAAX_WS_TOKEN_SECRET_PREVIOUS,
+# which verification would otherwise also accept. Mint (app/api/terminal/
+# ticket) and verify (server/handlers/ws-auth.ts) both read it from the
+# environment through lib/ws-ticket.ts, and both are children of `run`.
+#
+# The other secrets come from ~/.secrets (DAAX_SECRETS_FILE overrides), the file
+# scripts/deploy.sh expects the operator to `source`. It is PARSED for two
+# keys (DAAX_PROXY_SECRET, DAAX_PG_PASSWORD), never sourced: sourcing would export every secret in it into this
 # process and from here into every pty. Values go into the environment, never
 # argv — argv is readable by every local user and dist-agent records command
 # lines.
@@ -48,6 +58,7 @@ CHECKOUT="${DAAX_HOST_CHECKOUT:-$HOME/.daax-build/daax-host}"
 WEB_PORT="${DAAX_HOST_WEB_PORT:-4210}"
 WS_PORT="${DAAX_HOST_WS_PORT:-4211}"
 SECRETS_FILE="${DAAX_SECRETS_FILE:-$HOME/.secrets}"
+WS_SECRET_FILE="${DAAX_HOST_WS_SECRET_FILE:-$HOME/.daax-build/daax-host.ws-token-secret}"
 UNIT=daax-host.service
 
 die() { echo "daax-host: $*" >&2; exit 1; }
@@ -93,6 +104,33 @@ env_file_value() {
   (set +u; . "$f"; printf '%s' "${!1:-}")
 }
 
+# Generate this instance's ticket secret if there is none. Never replaced here:
+# rotating it is deleting the file and running `build` or `install` again.
+ensure_ws_secret() {
+  [ -e "$WS_SECRET_FILE" ] && return 0
+  command -v openssl >/dev/null || die "openssl is required to generate $WS_SECRET_FILE"
+  (
+    umask 077
+    mkdir -p "$(dirname "$WS_SECRET_FILE")"
+    tmp="$(mktemp "$WS_SECRET_FILE.XXXXXX")"
+    openssl rand -hex 32 >"$tmp" && mv -f "$tmp" "$WS_SECRET_FILE"
+  ) || die "could not write $WS_SECRET_FILE"
+  echo "daax-host: generated this instance's own terminal ticket secret in $WS_SECRET_FILE"
+}
+
+# Read it, refusing anything but this user's private one-line hex secret.
+read_ws_secret() {
+  local meta v
+  [ -f "$WS_SECRET_FILE" ] && [ ! -L "$WS_SECRET_FILE" ] ||
+    die "no $WS_SECRET_FILE; run: $0 install $host (it generates one)"
+  meta="$(stat -c '%u %a' "$WS_SECRET_FILE")"
+  [[ "$meta" =~ ^$(id -u)\ (600|400)$ ]] ||
+    die "$WS_SECRET_FILE must be owned by $(id -un), mode 0600 or 0400 (found: $meta)"
+  v="$(tr -d '\n' <"$WS_SECRET_FILE")"
+  [[ "$v" =~ ^[0-9a-f]{64}$ ]] || die "$WS_SECRET_FILE is not one 64-hex-digit secret; delete it and run: $0 install $host"
+  printf '%s' "$v"
+}
+
 cmd_build() {
   command -v bun >/dev/null ||
     die "bun is required and is not on PATH. Install it as this user with: curl -fsSL https://bun.sh/install | bash"
@@ -102,6 +140,8 @@ cmd_build() {
   for t in make g++ python3; do
     command -v "$t" >/dev/null || die "$t is required to compile node-pty; install build-essential and python3"
   done
+
+  ensure_ws_secret
 
   if [ ! -e "$CHECKOUT/.git" ]; then
     local src
@@ -151,10 +191,9 @@ cmd_run() {
 
   local proxy_secret ws_secret pg_pass pg_user pg_port admins
   proxy_secret="$(secret_value DAAX_PROXY_SECRET)"
-  ws_secret="$(secret_value DAAX_WS_TOKEN_SECRET)"
+  ws_secret="$(read_ws_secret)"
   pg_pass="$(secret_value DAAX_PG_PASSWORD)"
   [ -n "$proxy_secret" ] || die "DAAX_PROXY_SECRET is empty in $SECRETS_FILE; without it no forwarded identity is believed"
-  [ -n "$ws_secret" ] || die "DAAX_WS_TOKEN_SECRET is empty in $SECRETS_FILE; strict mode refuses ticketed upgrades without it"
   [ -n "$pg_pass" ] || die "DAAX_PG_PASSWORD is empty in $SECRETS_FILE; daax-postgres requires it"
   pg_user="$(env_file_value DAAX_PG_USER)"; pg_user="${pg_user:-daax}"
   pg_port="$(env_file_value DAAX_PG_HOST_PORT)"; pg_port="${pg_port:-5433}"
@@ -168,7 +207,7 @@ cmd_run() {
   local pg_pass_url
   pg_pass_url="$(printf '%s' "$pg_pass" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read(), safe=""))')"
 
-  unset HOST HOST_WORKSPACE_PATH DAAX_TRUST_LOCAL_OPERATOR \
+  unset HOST HOST_WORKSPACE_PATH DAAX_TRUST_LOCAL_OPERATOR DAAX_WS_TOKEN_SECRET_PREVIOUS \
     DAAX_AUTH_USER_HEADER DAAX_AUTH_USERNAME_HEADER DAAX_AUTH_EMAIL_HEADER
   export DATABASE_URL="postgres://${pg_user}:${pg_pass_url}@127.0.0.1:${pg_port}/daax_host"
   bun run db:migrate >/dev/null
@@ -199,6 +238,7 @@ cmd_install() {
   [ -f "$CHECKOUT/.next/BUILD_ID" ] || die "nothing built at $CHECKOUT; run first: $here/daax-host.sh build $host"
   # A copy, not the checkout's own file: `build` checks the checkout out anew,
   # and bash reads a script as it runs.
+  ensure_ws_secret
   install -D -m 0755 "$here/daax-host.sh" "$bin"
   install -D -m 0644 "$here/daax-host.service" "$unit_dir/$UNIT"
   # ~/.local/bin FIRST: it holds the native `claude`, and the terminal's login
