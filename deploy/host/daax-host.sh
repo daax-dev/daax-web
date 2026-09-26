@@ -216,11 +216,16 @@ cmd_build() {
   # running service, and every later exec of it was SIGKILLed. Fresh inodes.
   rm -rf node_modules
   bun install --frozen-lockfile
-  # bun runs no lifecycle scripts for dependencies absent from
-  # trustedDependencies, and node-pty ships no Linux prebuild, so its
-  # `node-gyp rebuild` never ran and there is no pty.node. The image does the
-  # same compile (Dockerfile, "node-pty is optional … but REQUIRED").
-  npm rebuild node-pty >/dev/null
+  # node-pty is an OPTIONAL dependency with no Linux prebuild, so bun skips it
+  # outright — there is no node_modules/node-pty to `npm rebuild` (measured on
+  # kinsale 2026-09-26: "Cannot find module 'node-pty'"). Install and compile
+  # the version bun.lock pins, exactly as the Dockerfile's deps stage does.
+  # --build-from-source needs npm 10 (npm 12 removed the flag).
+  local pty_version
+  pty_version="$(grep '"node-pty":' bun.lock | grep -oE 'node-pty@[0-9]+\.[0-9]+\.[0-9]+' | head -1 | cut -d@ -f2)"
+  [ -n "$pty_version" ] || die "node-pty's version is not in bun.lock"
+  npm install "node-pty@$pty_version" --build-from-source --no-save --no-package-lock ||
+    die "npm could not compile node-pty@$pty_version (needs npm 10, build-essential, python3)"
   node -e "require('node-pty')" || die "node-pty did not build; the terminal cannot start"
   bun run build
 
