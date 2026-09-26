@@ -25,17 +25,13 @@ function authed(
     authenticated: true,
     operator: opts.operator ?? false,
     user: {
-      username: "Alice Display",
+      username: opts.username ?? "Alice Display",
       email: opts.email ?? null,
       groups: [],
       authenticated: true,
       pictureUrl: null,
     },
-    identity: {
-      subject,
-      username: opts.username ?? null,
-      email: opts.email ?? null,
-    },
+    subject,
   };
 }
 
@@ -95,13 +91,19 @@ describe("POST /api/terminal/ticket", () => {
     expect(payload.operator).toBeUndefined();
   });
 
-  it("an admin by email carries it too, with the email the terminal re-checks", async () => {
+  it("an email or username in the list is not enough: only the subject counts", async () => {
     mockRequireAuthIdentity.mockResolvedValue(
-      authed(OTHER, { email: "jason.poley@gmail.com" }),
+      authed(OTHER, { username: "jpoley", email: "jason.poley@gmail.com" }),
     );
     const payload = await mintedPayload();
-    expect(payload.hostShell).toBe(true);
-    expect(payload.email).toBe("jason.poley@gmail.com");
+    expect(payload.hostShell).toBeUndefined();
+  });
+
+  it("a list naming no subject UUID mints no claim", async () => {
+    vi.stubEnv("DAAX_ADMIN_USERS", "jason.poley@gmail.com jpoley");
+    mockRequireAuthIdentity.mockResolvedValue(authed(ADMIN));
+    const payload = await mintedPayload();
+    expect(payload.hostShell).toBeUndefined();
   });
 
   it("a non-admin's ticket does not carry the host-shell claim", async () => {

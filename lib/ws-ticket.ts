@@ -38,16 +38,10 @@ export interface TicketPayload {
   hostShell?: true;
   /** The caller was the local-operator bypass, which has no subject. */
   operator?: true;
-  /** Forwarded username and email, for admin allow-list attribute entries. */
-  username?: string;
-  email?: string;
 }
 
 /** Optional claims beyond the subject. */
-export type TicketClaims = Pick<
-  TicketPayload,
-  "hostShell" | "operator" | "username" | "email"
->;
+export type TicketClaims = Pick<TicketPayload, "hostShell" | "operator">;
 
 export type VerifyResult =
   | { valid: true; payload: TicketPayload }

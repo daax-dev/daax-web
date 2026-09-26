@@ -1092,7 +1092,7 @@ describe("auth module with custom headers", () => {
   });
 
   describe("requireAuthIdentity", () => {
-    it("returns the proven subject, raw username and email, not the display name", async () => {
+    it("returns the proven subject, canonicalised, not the display name", async () => {
       process.env.DAAX_PROXY_SECRET = "proxy-proof";
       mockHeaders.mockReturnValue(
         createMockHeaders({
@@ -1107,11 +1107,7 @@ describe("auth module with custom headers", () => {
       expect(result.authenticated).toBe(true);
       if (!result.authenticated) return;
       expect(result.operator).toBe(false);
-      expect(result.identity).toEqual({
-        subject: "62d9d61c-cae1-49d0-aa94-ff34091199b7",
-        username: "jpoley",
-        email: "jason.poley@gmail.com",
-      });
+      expect(result.subject).toBe("62d9d61c-cae1-49d0-aa94-ff34091199b7");
     });
 
     it("the local-operator bypass is marked operator and has no subject", async () => {
@@ -1121,7 +1117,7 @@ describe("auth module with custom headers", () => {
       expect(result.authenticated).toBe(true);
       if (!result.authenticated) return;
       expect(result.operator).toBe(true);
-      expect(result.identity.subject).toBeNull();
+      expect(result.subject).toBeNull();
     });
 
     it("a forwarded identity without the proxy proof is refused", async () => {

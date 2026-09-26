@@ -23,7 +23,6 @@ import {
 } from "./rbac/permissions";
 import { jitProvision, writeAudit } from "./rbac/store";
 import { isDbConfigured } from "./db/config";
-import type { ShellIdentity } from "./host-shell-access";
 
 export type { AuthUser };
 export { UNAUTHENTICATED_USER };
@@ -107,7 +106,7 @@ export async function requireAuth(): Promise<AuthResult> {
 
 /**
  * Result of {@link requireAuthIdentity}: the authenticated user plus the trusted
- * identity attributes an admin allow-list entry can match.
+ * subject, the only attribute an authorization decision may key on.
  */
 export type IdentityResult =
   | {
@@ -115,14 +114,15 @@ export type IdentityResult =
       user: AuthUser;
       /** The local-operator bypass: trusted, but with no subject. */
       operator: boolean;
-      identity: ShellIdentity;
+      /** The trusted Pocket ID subject; null for the local operator. */
+      subject: string | null;
     }
   | { authenticated: false; response: NextResponse };
 
 /**
- * Like {@link requireAuth}, but also returns the trusted subject, raw username
- * and email rather than only the display-oriented `AuthUser`, so a caller can
- * make an authorization decision keyed on the subject.
+ * Like {@link requireAuth}, but also returns the trusted subject rather than only
+ * the display-oriented `AuthUser`, so a caller can make an authorization
+ * decision keyed on the subject.
  */
 export async function requireAuthIdentity(): Promise<IdentityResult> {
   const h = await headers();
@@ -134,11 +134,7 @@ export async function requireAuthIdentity(): Promise<IdentityResult> {
     authenticated: true,
     user: decision.user,
     operator: decision.decision === "allow-operator",
-    identity: {
-      subject: ctx.subject,
-      username: ctx.rawUsername,
-      email: ctx.user.email,
-    },
+    subject: ctx.subject,
   };
 }
 

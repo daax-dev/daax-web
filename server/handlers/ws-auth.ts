@@ -19,9 +19,14 @@
  * `hostShell`: whether this caller may open a host-privileged terminal, which
  * the connection handler enforces for every terminal when daax runs in host mode
  * (`lib/host-shell-access.ts`). The loopback bypass is the local operator and
- * may; a forwarded identity may if it is in `DAAX_ADMIN_USERS`; a ticket may
- * only if it was minted with the `hostShell` claim AND its identity still
- * passes that check here.
+ * may; a forwarded identity may if its subject is in `DAAX_ADMIN_USERS`; a
+ * ticket may only if it was minted with the `hostShell` claim AND its subject
+ * still passes that check here. A ticket minted for the local operator is
+ * honoured only where this server would itself grant the bypass (non-strict).
+ *
+ * The bypass is refused when the upgrade carries `X-Forwarded-For`: it came
+ * through a proxy, and a proxied upgrade with no identity is one whose auth
+ * header went missing, not the operator at the machine.
  */
 import type { IncomingMessage } from "http";
 
@@ -42,10 +47,6 @@ export type AuthDecision =
       hostShell: HostShellDecision;
     }
   | { ok: false; code: number; reason: string };
-
-function headerValue(v: string | string[] | undefined): string | null {
-  return (Array.isArray(v) ? v[0] : v || "").toString().trim() || null;
-}
 
 // Single-use ticket tracking: jti -> expiry (epoch ms). In-memory only — the
 // short TTL makes survival across a terminal-server restart unnecessary (spec
@@ -139,11 +140,7 @@ export function authenticateConnection(req: IncomingMessage): AuthDecision {
     .toString()
     .trim();
   if (xUser && loopback) {
-    const hostShell = decideHostShell({
-      subject: xUser,
-      username: headerValue(req.headers["x-forwarded-username"]),
-      email: headerValue(req.headers["x-forwarded-email"]),
-    });
+    const hostShell = decideHostShell(xUser);
     return { ok: true, user: xUser, method: "forwarded", hostShell };
   }
 
@@ -169,21 +166,22 @@ export function authenticateConnection(req: IncomingMessage): AuthDecision {
         reason: "host terminal refused: ticket was not minted for an admin",
       };
     } else if (payload.operator === true) {
-      hostShell = { ok: true };
+      hostShell = strictMode()
+        ? {
+            ok: false,
+            reason:
+              "host terminal refused: operator tickets are not honoured under DAAX_REQUIRE_AUTH=1",
+          }
+        : { ok: true };
     } else {
-      hostShell = decideHostShell({
-        subject: payload.sub,
-        username:
-          typeof payload.username === "string" ? payload.username : null,
-        email: typeof payload.email === "string" ? payload.email : null,
-      });
+      hostShell = decideHostShell(payload.sub);
     }
     return { ok: true, user: payload.sub, method: "ticket", hostShell };
   }
 
   // No credentials.
   if (strictMode() && !getWsTokenSecret()) warnWsSecretMissingOnce();
-  if (!strictMode() && loopback) {
+  if (!strictMode() && loopback && !req.headers["x-forwarded-for"]) {
     return {
       ok: true,
       user: "local",

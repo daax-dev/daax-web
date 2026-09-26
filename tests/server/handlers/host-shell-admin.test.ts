@@ -1,10 +1,11 @@
 /**
  * Only an admin may open a terminal on a HOST-mode daax.
  *
- * In host mode (HOST_WORKSPACE_PATH unset) every terminal is host-privileged: a
- * non-container one — Agent View "Resume here" among them — is a real shell as
- * the operator, and a container one is docker run/exec against the host's
- * socket. Before this, any identity the forward-auth proxy admitted got one. This drives the real
+ * In host mode — anything but a Docker container (/.dockerenv) with
+ * HOST_WORKSPACE_PATH set — every terminal is host-privileged: a non-container
+ * one (Agent View "Resume here" among them) is a real shell as the operator,
+ * and a container one is docker run/exec against the host's socket. Before
+ * this, any identity the forward-auth proxy admitted got one. This drives the real
  * upgrade authentication and the real handler (pty, sessions and path
  * confinement stood in) with literal subjects, and reads whether a pty was
  * spawned and what the socket was closed with.
@@ -13,6 +14,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { IncomingMessage } from "http";
 import type { WebSocket } from "ws";
+
+// Whether /.dockerenv exists, as the code under test sees it. Every other path
+// goes to the real filesystem.
+const { docker } = vi.hoisted(() => ({ docker: { present: false } }));
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  const existsSync = (path: import("node:fs").PathLike) =>
+    path === "/.dockerenv" ? docker.present : actual.existsSync(path);
+  return { ...actual, existsSync, default: { ...actual, existsSync } };
+});
 
 const { spawn } = vi.hoisted(() => {
   const pty = {
@@ -86,6 +97,7 @@ beforeEach(() => {
   _resetSeenJti();
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.stubEnv("HOST_WORKSPACE_PATH", "");
+  docker.present = false;
   vi.stubEnv("DAAX_ADMIN_USERS", `${ADMIN} jason.poley@gmail.com jpoley`);
   vi.stubEnv("DAAX_WS_TOKEN_SECRET", "ws-token-secret-value");
   vi.stubEnv("DAAX_REQUIRE_AUTH", "");
@@ -106,10 +118,28 @@ describe("host shell over the forwarded-identity path", () => {
     expect(spawn.mock.calls[0][0]).toBe("/bin/zsh");
   });
 
-  it("an admin named only by username gets a host shell", () => {
+  it("a username or email in DAAX_ADMIN_USERS is not enough: only the subject counts", () => {
+    // Username and email are attributes a user may be able to set, so a
+    // non-admin claiming the operator's is refused.
     const ws = connect({
       mode: "local",
-      headers: { "x-forwarded-user": OTHER, "x-forwarded-username": "jpoley" },
+      headers: {
+        "x-forwarded-user": OTHER,
+        "x-forwarded-username": "jpoley",
+        "x-forwarded-email": "jason.poley@gmail.com",
+      },
+    });
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "host terminal refused: not in DAAX_ADMIN_USERS",
+    );
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("a subject entry matches case-insensitively", () => {
+    const ws = connect({
+      mode: "local",
+      headers: { "x-forwarded-user": ADMIN.toUpperCase() },
     });
     expect(ws.close).not.toHaveBeenCalled();
     expect(spawn).toHaveBeenCalledTimes(1);
@@ -143,18 +173,25 @@ describe("host shell over the forwarded-identity path", () => {
     },
   );
 
-  it("an empty DAAX_ADMIN_USERS refuses even the operator's own subject", () => {
-    vi.stubEnv("DAAX_ADMIN_USERS", "");
-    const ws = connect({
-      mode: "local",
-      headers: { "x-forwarded-user": ADMIN },
-    });
-    expect(ws.close).toHaveBeenCalledWith(
-      1008,
-      "host terminal refused: DAAX_ADMIN_USERS is empty, so no one is an admin",
-    );
-    expect(spawn).not.toHaveBeenCalled();
-  });
+  it.each(["", "jason.poley@gmail.com jpoley"])(
+    "DAAX_ADMIN_USERS=%j names no subject and refuses even the operator's own",
+    (list) => {
+      vi.stubEnv("DAAX_ADMIN_USERS", list);
+      const ws = connect({
+        mode: "local",
+        headers: {
+          "x-forwarded-user": ADMIN,
+          "x-forwarded-username": "jpoley",
+          "x-forwarded-email": "jason.poley@gmail.com",
+        },
+      });
+      expect(ws.close).toHaveBeenCalledWith(
+        1008,
+        "host terminal refused: DAAX_ADMIN_USERS names no subject UUID, so no one is an admin",
+      );
+      expect(spawn).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("container terminals on a host-mode daax", () => {
@@ -240,10 +277,7 @@ describe("host shell over the ticket path", () => {
   it("the claim is re-checked at connect: a non-admin carrying it is refused", () => {
     // The app minted it while OTHER was an admin; DAAX_ADMIN_USERS no longer
     // names OTHER, and the terminal server's list is the one that counts.
-    const { token } = mintTicket(OTHER, undefined, {
-      hostShell: true,
-      username: "mallory",
-    });
+    const { token } = mintTicket(OTHER, undefined, { hostShell: true });
     const ws = connect({
       mode: "local",
       remoteAddress: "100.64.0.5",
@@ -269,6 +303,24 @@ describe("host shell over the ticket path", () => {
     });
     expect(ws.close).not.toHaveBeenCalled();
     expect(spawn.mock.calls[0][0]).toBe("/bin/zsh");
+  });
+
+  it("under DAAX_REQUIRE_AUTH=1 a local-operator ticket is refused", () => {
+    vi.stubEnv("DAAX_REQUIRE_AUTH", "1");
+    const { token } = mintTicket("local", undefined, {
+      hostShell: true,
+      operator: true,
+    });
+    const ws = connect({
+      mode: "local",
+      remoteAddress: "100.64.0.5",
+      ticket: token,
+    });
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "host terminal refused: operator tickets are not honoured under DAAX_REQUIRE_AUTH=1",
+    );
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it("a non-admin ticket is refused a docker exec into a named container", () => {
@@ -307,8 +359,47 @@ describe("unchanged postures", () => {
     expect(spawn.mock.calls[0][0]).toBe("/bin/zsh");
   });
 
+  it("a loopback upgrade carrying X-Forwarded-For is not the local operator", () => {
+    // It came through a proxy whose identity header is missing.
+    vi.stubEnv("DAAX_ADMIN_USERS", "");
+    const ws = connect({
+      mode: "local",
+      headers: { "x-forwarded-for": "203.0.113.7" },
+    });
+    expect(ws.close).toHaveBeenCalledWith(1008, "unauthorized");
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("HOST_WORKSPACE_PATH on a process outside Docker does not make it container mode", () => {
+    vi.stubEnv("HOST_WORKSPACE_PATH", "/home/dev/prj");
+    docker.present = false;
+    const ws = connect({
+      mode: "local",
+      headers: { "x-forwarded-user": OTHER },
+    });
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "host terminal refused: not in DAAX_ADMIN_USERS",
+    );
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("inside Docker without HOST_WORKSPACE_PATH it is still host mode", () => {
+    docker.present = true;
+    const ws = connect({
+      mode: "container",
+      headers: { "x-forwarded-user": OTHER },
+    });
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "host terminal refused: not in DAAX_ADMIN_USERS",
+    );
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it("in container mode a non-admin's local shell runs as before", () => {
     vi.stubEnv("HOST_WORKSPACE_PATH", "/home/dev/prj");
+    docker.present = true;
     const ws = connect({
       mode: "local",
       headers: { "x-forwarded-user": OTHER },
@@ -321,6 +412,7 @@ describe("unchanged postures", () => {
     "in container mode a non-admin's container terminal (containerName=%s) runs as before",
     (containerName) => {
       vi.stubEnv("HOST_WORKSPACE_PATH", "/home/dev/prj");
+      docker.present = true;
       const ws = connect({
         mode: "container",
         containerName,

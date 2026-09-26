@@ -9,7 +9,7 @@
  * The ticket's subject is the trusted forwarded subject (the RBAC identity key),
  * not the display name. It carries the `hostShell` claim only for an admin
  * (`decideHostShell`) or the local operator; a host-mode terminal server
- * refuses every terminal without it and re-checks the identity at connect.
+ * refuses every terminal without it and re-checks the subject at connect.
  */
 import { NextResponse } from "next/server";
 
@@ -36,15 +36,13 @@ export async function POST() {
     );
   }
 
-  const { identity, operator } = auth;
+  const { subject, operator } = auth;
   const claims: TicketClaims = {};
-  if (identity.username) claims.username = identity.username;
-  if (identity.email) claims.email = identity.email;
   if (operator) claims.operator = true;
   // Minted whatever this plane's mode: the terminal server is the one that
   // knows whether it runs in host mode, and it re-checks.
-  if (operator || decideHostShell(identity).ok) claims.hostShell = true;
-  const sub = identity.subject ?? (operator ? "local" : "user");
+  if (operator || decideHostShell(subject).ok) claims.hostShell = true;
+  const sub = subject ?? (operator ? "local" : "user");
   const { token, exp } = mintTicket(sub, undefined, claims);
   return NextResponse.json({ token, exp });
 }
