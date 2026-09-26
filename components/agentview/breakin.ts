@@ -53,6 +53,11 @@ function sequenceOf(event: AgentEvent): bigint {
  * The signalled process's own end. PROCESS_EXITED also reports every child in
  * the agent's subtree under the agent's id (its MCP servers, npm, gh), so only
  * an event carrying the signalled pid is the agent's process ending.
+ *
+ * An exit stamped up to SIGNAL_SKEW_MS before the signal is read as clock skew
+ * only when the daemon answered "sent": a process that ended on its own just
+ * before the click is refused on the daemon's pid re-check, and that refusal
+ * is the reading, not an interrupt.
  */
 export function signalledExit(
   events: AgentEvent[],
@@ -60,6 +65,8 @@ export function signalledExit(
 ): AgentEvent | undefined {
   if (action.kind !== "signal" || action.pid === undefined) return undefined;
   const after = Date.parse(action.at);
+  const earliest =
+    action.reply?.outcome === "sent" ? after - SIGNAL_SKEW_MS : after;
   return events.find(
     (event) =>
       (event.event_type === "EVENT_TYPE_PROCESS_EXITED" ||
@@ -67,25 +74,7 @@ export function signalledExit(
       event.node_id === action.nodeId &&
       event.agent_id === action.agentId &&
       event.process_id === action.pid &&
-      Date.parse(event.timestamp) > after - SIGNAL_SKEW_MS,
-  );
-}
-
-/**
- * The row still records the signalled pid and no longer reports it alive. A
- * row with no pid proves nothing: the daemon also shows that for a live
- * process it has not linked yet.
- */
-function rowShowsSignalledEnd(
-  agent: AgentInstance,
-  action: LastSignal,
-): boolean {
-  return (
-    action.kind === "signal" &&
-    action.pid !== undefined &&
-    agent.agent_id === action.agentId &&
-    agent.agent_pid === action.pid &&
-    !hasLiveProcess(agent)
+      Date.parse(event.timestamp) > earliest,
   );
 }
 
@@ -100,18 +89,18 @@ function actionFor(
 }
 
 /**
- * Resume's precondition: this session's process is known to have ended. The
- * latest of the agent process's own start and stop events decides it, so a
- * later start (resumed elsewhere) undoes an earlier stop; failing any such
- * event, only this page's own signalled-exit reading counts.
+ * Resume's precondition: positive evidence that this session's process ended.
+ * process_alive is a proto3 bool, so false and "cannot tell" are the same
+ * absence on the wire, and neither a missing pid nor a STOPPED state (the
+ * sweeper's word for long silence) is an exit. The evidence is the agent
+ * process's own events: the latest of its starts and stops for this session
+ * is a stop, or this page saw the signalled pid end. A later start undoes it.
  */
-export function processKnownEnded(
+export function endEvidence(
   agent: AgentInstance,
   events: AgentEvent[],
   lastSignal: LastSignal | null,
-): boolean {
-  if (hasLiveProcess(agent)) return false;
-  if (agent.process_alive === false) return true;
+): { ended: true } | { ended: false; why: string } {
   const action = actionFor(agent, lastSignal);
   const candidates = events.filter(
     (event) =>
@@ -122,11 +111,18 @@ export function processKnownEnded(
   const exit = action ? signalledExit(events, action) : undefined;
   if (exit) candidates.push(exit);
   if (candidates.length === 0)
-    return !!action && rowShowsSignalledEnd(agent, action);
+    return {
+      ended: false,
+      why: "the daemon has recorded no start or stop of its process",
+    };
   const latest = candidates.reduce((a, b) =>
     sequenceOf(b) > sequenceOf(a) ? b : a,
   );
-  return latest.event_type !== AGENT_STARTED;
+  if (latest.event_type !== AGENT_STARTED) return { ended: true };
+  return {
+    ended: false,
+    why: `the daemon saw its process start${latest.process_id !== undefined ? ` (pid ${latest.process_id})` : ""} and has not seen it stop, but does not report it alive`,
+  };
 }
 
 export function breakinState(
@@ -151,11 +147,6 @@ export function breakinState(
       const exit = signalledExit(events, action);
       if (exit)
         return `interrupted (observed): process ${action.pid} ended ${afterSignal(action.at, exit.timestamp)} · signal ${formatAge(action.at, now)}`;
-      if (rowShowsSignalledEnd(agent, action)) {
-        // The row proves an end, but has no exit timestamp: label the signal's
-        // age rather than assigning that timestamp to the process exit.
-        return `interrupted (observed): process ${action.pid} ended after the signal · signal ${formatAge(action.at, now)}`;
-      }
     }
     if (
       events.some(
@@ -185,8 +176,10 @@ export function breakinState(
     if (action.kind === "signal")
       return unknown("nothing has been observed yet");
   }
-  if (hasLiveProcess(agent) && agent.state === "AGENT_STATE_ACTIVE")
-    return "running";
+  if (hasLiveProcess(agent))
+    return agent.state === "AGENT_STATE_ACTIVE"
+      ? "running"
+      : `running · the session is ${stripEnum(agent.state)}`;
   return unknown(
     `this session is ${stripEnum(agent.state)}; no live active process observed`,
   );

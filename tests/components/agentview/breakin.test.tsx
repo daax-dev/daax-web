@@ -217,36 +217,39 @@ describe("BreakIn", () => {
     );
   });
   it.each([
-    { state: "AGENT_STATE_IDLE" as const, process_alive: true },
-    { state: "AGENT_STATE_ACTIVE" as const, process_alive: false },
-  ])(
-    "a passive session disables Interrupt and sends no POST; Resume waits only on a live process (%j)",
-    async (patch) => {
-      render(<BreakIn {...props} agent={{ ...active, ...patch }} />);
-      const interrupt = screen.getByRole("button", {
-        name: /^Interrupt/,
-      });
-      fireEvent.click(interrupt);
-      await Promise.resolve();
-      expect(posts()).toHaveLength(0);
-      expect(interrupt).toBeDisabled();
-      expect(interrupt).toHaveTextContent(
-        patch.state === "AGENT_STATE_IDLE"
-          ? "nothing to interrupt: this session is IDLE"
-          : "nothing to interrupt: no process has been observed for this session",
+    ["AGENT_STATE_WAITING", "running · the session is WAITING"],
+    ["AGENT_STATE_IDLE", "running · the session is IDLE"],
+    ["AGENT_STATE_ACTIVE", "running"],
+  ] as const)(
+    "a live process can be interrupted whatever the transcript state (%s)",
+    async (state, reading) => {
+      // As agentd showed pid 14921 at its prompt: WAITING, process_alive true.
+      render(<BreakIn {...props} agent={{ ...active, state }} />);
+      expect(screen.getByTestId("agentview-breakin-state")).toHaveTextContent(
+        new RegExp(`^${reading}$`),
       );
-      if (patch.process_alive)
-        expect(
-          screen.getByRole("button", {
-            name: `Resume here — ${STILL_RUNNING}`,
-          }),
-        ).toBeDisabled();
-      else
-        expect(
-          screen.getByRole("button", { name: "Resume here" }),
-        ).toBeEnabled();
+      fireEvent.click(screen.getByRole("button", { name: "Interrupt" }));
+      await waitFor(() => expect(posts()).toHaveLength(1));
+      expect(
+        screen.getByRole("button", { name: `Resume here — ${STILL_RUNNING}` }),
+      ).toBeDisabled();
     },
   );
+  it("a row with no live process cannot be interrupted, and says why", async () => {
+    render(
+      <BreakIn
+        {...props}
+        agent={{ ...active, state: "AGENT_STATE_ACTIVE", process_alive: false }}
+      />,
+    );
+    const interrupt = screen.getByRole("button", {
+      name: "Interrupt — nothing to interrupt: no live process has been observed for this session",
+    });
+    fireEvent.click(interrupt);
+    await Promise.resolve();
+    expect(posts()).toHaveLength(0);
+    expect(interrupt).toBeDisabled();
+  });
   it("relays the local operator's 403 reason", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(
@@ -372,7 +375,7 @@ describe("BreakIn", () => {
         expect(posts()).toHaveLength(0);
         expect(interrupt).toBeDisabled();
         expect(interrupt).toHaveTextContent(
-          "no process has been observed for this session",
+          "nothing to interrupt: no live process has been observed for this session",
         );
         expect(screen.getByTestId("agentview-breakin-state")).toHaveTextContent(
           "unknown",

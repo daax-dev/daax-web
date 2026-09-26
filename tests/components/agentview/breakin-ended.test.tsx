@@ -58,8 +58,11 @@ const props: BreakInProps = {
   terminalMode: "host",
   now: Date.parse("2026-09-08T14:00:30Z"),
 };
-const NOT_SEEN =
-  "Resume here — the daemon has not observed this session's process ending; Resume waits until it has — two processes on one session would fork the conversation";
+const CANNOT_TELL =
+  "Resume here — daax cannot tell whether this session is still running: ";
+const NO_RECORD = `${CANNOT_TELL}the daemon has recorded no start or stop of its process`;
+const SAW_START = (pid: number) =>
+  `${CANNOT_TELL}the daemon saw its process start (pid ${pid}) and has not seen it stop, but does not report it alive`;
 const reply = {
   agent_id: "chamonix-d5d8554e/claude/4db77e81-4da9-4567-a755-ad316e8df7ba",
   signal: "interrupt",
@@ -105,7 +108,7 @@ describe("Resume waits for an observed end", () => {
       }),
     ).toBeDisabled();
     expect(
-      await screen.findByRole("button", { name: NOT_SEEN }),
+      await screen.findByRole("button", { name: SAW_START(40327) }),
     ).toBeDisabled();
     expect(lifecycleQueries()).toHaveLength(1);
     expect(lifecycleQueries()[0][0]).toBe(
@@ -116,7 +119,7 @@ describe("Resume waits for an observed end", () => {
   it("refuses when the daemon has no lifecycle event at all", async () => {
     render(<BreakIn {...props} />);
     expect(
-      await screen.findByRole("button", { name: NOT_SEEN }),
+      await screen.findByRole("button", { name: NO_RECORD }),
     ).toBeDisabled();
   });
 
@@ -152,7 +155,7 @@ describe("Resume waits for an observed end", () => {
     ];
     render(<BreakIn {...props} />);
     expect(
-      await screen.findByRole("button", { name: NOT_SEEN }),
+      await screen.findByRole("button", { name: SAW_START(50000) }),
     ).toBeDisabled();
   });
 
@@ -229,7 +232,63 @@ describe("Resume waits for an observed end", () => {
       "interrupted",
     );
     expect(
-      await screen.findByRole("button", { name: NOT_SEEN }),
+      await screen.findByRole("button", { name: NO_RECORD }),
+    ).toBeDisabled();
+  });
+
+  it("refuses a running Codex row the daemon cannot link to a process, and says why for codex", async () => {
+    // As agentd sends a codex row: no pid, no process_alive, and control
+    // UNAVAILABLE because codex hides its session id from the process table.
+    const codex: AgentInstance = {
+      ...ambiguous,
+      agent_type: "codex",
+      capabilities: {
+        signals: {
+          control: {
+            level: "CAPABILITY_LEVEL_UNAVAILABLE",
+            detail: "codex does not expose its session id to the process table",
+          },
+        },
+      },
+    };
+    render(<BreakIn {...props} agent={codex} />);
+    expect(
+      await screen.findByRole("button", {
+        name: `${CANNOT_TELL}the daemon has recorded no start or stop of its process; for codex the daemon often cannot link a session to its process at all, so Resume waits for an observed exit`,
+      }),
+    ).toBeDisabled();
+  });
+
+  it("offers a Codex session whose own stop was observed, with codex's resume command", async () => {
+    lifecycle = [AGENT_STOPPED_EVENT, AGENT_STARTED_EVENT];
+    render(
+      <BreakIn {...props} agent={{ ...ambiguous, agent_type: "codex" }} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Resume here" }));
+    const terminal = await screen.findByTestId("resume-terminal");
+    expect(
+      new URL(terminal.getAttribute("data-url")!).searchParams.get("command"),
+    ).toBe("codex resume 4db77e81-4da9-4567-a755-ad316e8df7ba");
+  });
+
+  it("process_alive false is not evidence: on the wire it is the same absence as cannot-tell", async () => {
+    render(
+      <BreakIn {...props} agent={{ ...ambiguous, process_alive: false }} />,
+    );
+    expect(
+      await screen.findByRole("button", { name: NO_RECORD }),
+    ).toBeDisabled();
+  });
+
+  it("a STOPPED state is silence, not an exit", async () => {
+    render(
+      <BreakIn
+        {...props}
+        agent={{ ...ambiguous, state: "AGENT_STATE_STOPPED" }}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: NO_RECORD }),
     ).toBeDisabled();
   });
 });

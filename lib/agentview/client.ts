@@ -46,32 +46,6 @@ export function fetchNode(): Promise<DaemonResult<AgentViewNode>> {
   });
 }
 
-/** daax's own container store, beside the proxy (see its route). */
-export async function checkContainerTranscript(
-  sessionId: string,
-): Promise<{ exists: boolean } | { reason: string }> {
-  try {
-    const res = await fetch(
-      `/api/agentview-daax/container-transcripts/${encodeURIComponent(sessionId)}`,
-      { headers: { Accept: "application/json" }, cache: "no-store" },
-    );
-    const body = (await res.json().catch(() => ({}))) as {
-      exists?: unknown;
-      reason?: unknown;
-    };
-    if (res.ok && typeof body.exists === "boolean")
-      return { exists: body.exists };
-    return {
-      reason:
-        typeof body.reason === "string" && body.reason
-          ? body.reason
-          : `HTTP ${res.status}`,
-    };
-  } catch (err) {
-    return { reason: err instanceof Error ? err.message : String(err) };
-  }
-}
-
 /** The daemon's account, preserved separately from observed session state. */
 export interface SignalReply {
   agent_id: string;

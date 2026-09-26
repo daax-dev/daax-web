@@ -66,24 +66,92 @@ const AGENT_ROUTE = /^\/api\/v1\/agents\/([^/]+)$/;
 // operating-system process. --ends-on-signal explicitly models process exit.
 const FIXTURE_PID = 424242;
 
+const LIMITED_CONTROL = {
+  level: "CAPABILITY_LEVEL_LIMITED",
+  detail: "process signal; effect learned on the next poll",
+};
+const NO_PID_CONTROL = {
+  level: "CAPABILITY_LEVEL_UNAVAILABLE",
+  detail:
+    "no process id is recorded for this agent, so there is nothing to signal",
+};
+
+// Three rows control mode adds beside the recorded one, each shaped as agentd
+// sent it on 2026-09-26: a Claude session at its prompt (WAITING, alive, pid
+// set); a running Codex session agentd cannot link to a process (no pid, no
+// process_alive, control UNAVAILABLE in codex's words); and a Claude session
+// whose liveness tracker is stale, which ApplyLiveness leaves with no pid and
+// no process_alive — indistinguishable on the wire from an ended one.
+const WAITING_ID =
+  "chamonix-5d63c187/claude/7a2e4c19-5b3d-4e8f-9c61-0d4b2a8e3f57";
+const WAITING_PID = 424300;
+const CODEX_ID = "chamonix-5d63c187/codex/01a0dbdb-7e21-7c4a-9f3e-2b6d8c1a5e40";
+const STALE_ID =
+  "chamonix-5d63c187/claude/3d8f1b6a-2c47-4e90-a5d3-7b1e9c4f6a28";
+
+function syntheticRows(exits) {
+  const base = readFixture("agents").agents.find(
+    (agent) => agent.state === "AGENT_STATE_ACTIVE",
+  );
+  const row = (agentId, fields, control) => {
+    const [, agentType, sessionId] = agentId.split("/");
+    const out = structuredClone(base);
+    Object.assign(out, fields, {
+      agent_id: agentId,
+      agent_type: agentType,
+      session_id: sessionId,
+    });
+    out.capabilities.signals.control = control;
+    return out;
+  };
+  const waiting = exits.has(WAITING_ID)
+    ? row(WAITING_ID, { state: "AGENT_STATE_WAITING" }, NO_PID_CONTROL)
+    : row(
+        WAITING_ID,
+        {
+          state: "AGENT_STATE_WAITING",
+          process_alive: true,
+          agent_pid: WAITING_PID,
+          agent_process_started_at: "2026-09-07T22:05:00Z",
+        },
+        LIMITED_CONTROL,
+      );
+  return [
+    waiting,
+    row(
+      CODEX_ID,
+      { state: "AGENT_STATE_ACTIVE" },
+      {
+        level: "CAPABILITY_LEVEL_UNAVAILABLE",
+        detail: "codex does not expose its session id to the process table",
+      },
+    ),
+    row(STALE_ID, { state: "AGENT_STATE_ACTIVE" }, NO_PID_CONTROL),
+  ];
+}
+
 /** The agent process's own start, which agentd records for a live row. */
 function agentStarts(control) {
   if (!control) return [];
   const last = Number(readFixture("events").last_sequence);
-  return readFixture("agents")
-    .agents.filter((agent) => agent.state === "AGENT_STATE_ACTIVE")
-    .map((agent, i) => ({
-      event_id: `fixture-agent-started-${i}`,
-      sequence: String(last + 1 + i),
-      event_type: "EVENT_TYPE_AGENT_STARTED",
-      agent_id: agent.agent_id,
-      node_id: agent.node_id,
-      session_id: agent.session_id,
-      timestamp: "2026-09-07T22:00:00Z",
-      process_id: FIXTURE_PID,
-      collector: "process",
-      attributes: { agent_type: agent.agent_type, role: "cli" },
-    }));
+  const live = [
+    ...readFixture("agents")
+      .agents.filter((agent) => agent.state === "AGENT_STATE_ACTIVE")
+      .map((agent) => ({ ...agent, agent_pid: FIXTURE_PID })),
+    ...syntheticRows(new Map()).filter((agent) => agent.process_alive),
+  ];
+  return live.map((agent, i) => ({
+    event_id: `fixture-agent-started-${i}`,
+    sequence: String(last + 1 + i),
+    event_type: "EVENT_TYPE_AGENT_STARTED",
+    agent_id: agent.agent_id,
+    node_id: agent.node_id,
+    session_id: agent.session_id,
+    timestamp: "2026-09-07T22:00:00Z",
+    process_id: agent.agent_pid,
+    collector: "process",
+    attributes: { agent_type: agent.agent_type, role: "cli" },
+  }));
 }
 
 function controlAgents(name, control, refuseControl, exits) {
@@ -99,11 +167,7 @@ function controlAgents(name, control, refuseControl, exits) {
       delete agent.agent_pid;
       // As a live daemon answered after an interrupt (2026-09-26): with no pid
       // there is nothing to signal, and control says so.
-      agent.capabilities.signals.control = {
-        level: "CAPABILITY_LEVEL_UNAVAILABLE",
-        detail:
-          "no process id is recorded for this agent, so there is nothing to signal",
-      };
+      agent.capabilities.signals.control = NO_PID_CONTROL;
       continue;
     }
     agent.capabilities.signals.control = refuseControl
@@ -112,11 +176,9 @@ function controlAgents(name, control, refuseControl, exits) {
           detail:
             "fixture control is unavailable: no authenticated signal target",
         }
-      : {
-          level: "CAPABILITY_LEVEL_LIMITED",
-          detail: "process signal; effect learned on the next poll",
-        };
+      : LIMITED_CONTROL;
   }
+  doc.agents.push(...syntheticRows(exits));
   return doc;
 }
 
@@ -200,10 +262,10 @@ function handle(
           event_id: `fixture-exit-child-${signals.length}`,
           sequence: String(base),
           event_type: "EVENT_TYPE_PROCESS_EXITED",
-          process_id: FIXTURE_PID + 8,
-          parent_process_id: FIXTURE_PID,
+          process_id: target.agent_pid + 8,
+          parent_process_id: target.agent_pid,
           attributes: {
-            agent_root_pid: String(FIXTURE_PID),
+            agent_root_pid: String(target.agent_pid),
             process_name: "npm",
           },
         });
@@ -212,7 +274,7 @@ function handle(
           event_id: `fixture-exit-${signals.length}`,
           sequence: String(base + 1),
           event_type: "EVENT_TYPE_PROCESS_EXITED",
-          process_id: FIXTURE_PID,
+          process_id: target.agent_pid,
           attributes: { process_name: "claude" },
         });
         exits.set(id, {
@@ -220,7 +282,7 @@ function handle(
           event_id: `fixture-agent-stopped-${signals.length}`,
           sequence: String(base + 2),
           event_type: "EVENT_TYPE_AGENT_STOPPED",
-          process_id: FIXTURE_PID,
+          process_id: target.agent_pid,
           attributes: { agent_type: "claude", role: "cli" },
         });
       }
