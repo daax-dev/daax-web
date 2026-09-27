@@ -98,6 +98,29 @@ assert_required_secrets() {
   return 0
 }
 
+# assert_idp_config — with DAAX_REQUIRE_AUTH=1 the app sits behind this host's
+# Pocket ID, and it has no default for which one that is: without
+# DAAX_AUTH_PROVIDER_URL every avatar is initials, and without
+# DAAX_AUTH_LOGOUT_URL "Log out" leaves the IdP session signed in. Both must be
+# this host's own https IdP (every host runs its own), in the shapes the app
+# accepts: a bare origin, and an https URL. Not required without strict auth.
+assert_idp_config() {
+  [[ "${DAAX_REQUIRE_AUTH:-}" == "1" ]] || return 0
+  local origin='https://[A-Za-z0-9.-]+(:[0-9]+)?'
+  local bad=()
+  [[ "${DAAX_AUTH_PROVIDER_URL:-}" =~ ^${origin}/?$ ]] ||
+    bad+=("DAAX_AUTH_PROVIDER_URL='${DAAX_AUTH_PROVIDER_URL:-}' (want this host's Pocket ID origin, e.g. https://auth.<host>.poley.dev)")
+  [[ "${DAAX_AUTH_LOGOUT_URL:-}" =~ ^${origin}(/[^[:space:]]*)?$ ]] ||
+    bad+=("DAAX_AUTH_LOGOUT_URL='${DAAX_AUTH_LOGOUT_URL:-}' (want its logout page, e.g. https://auth.<host>.poley.dev/logout)")
+  if ((${#bad[@]} > 0)); then
+    echo "DAAX_REQUIRE_AUTH=1 but this host's IdP is not configured:" >&2
+    printf '  %s\n' "${bad[@]}" >&2
+    echo "  set them in deploy/env/${ENV_NAME:-<target>}.env (or the environment)." >&2
+    return 1
+  fi
+  return 0
+}
+
 # assert_code_server_image — reuse rebuild.sh's code-server preflight intent:
 # the /code-server proxy needs a local daax-code-server:latest image. If absent,
 # build it via scripts/build-code-server.sh (idempotent, layer-cached); if the

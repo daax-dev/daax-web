@@ -283,6 +283,7 @@ phase_preflight() {
   fi
 
   assert_required_secrets || fail preflight "required secret(s) missing/empty for target '$ENV_NAME'"
+  assert_idp_config || fail preflight "DAAX_REQUIRE_AUTH=1 needs DAAX_AUTH_PROVIDER_URL and DAAX_AUTH_LOGOUT_URL (this host's own Pocket ID) for target '$ENV_NAME'"
   # Agent View over the tailnet is ONE configuration of three settings, checked
   # as a set: an https AGENTVIEW_DAEMON_URL, AGENTVIEW_DAEMON_TOKEN_FILE inside
   # the /run/agentview mount, and AGENTVIEW_TOKEN_HOST_DIR as that mount's host
