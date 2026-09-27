@@ -7,7 +7,9 @@
  * Requires:
  *   DAAX_AUTH_BASE_URL     - Base URL of daax behind Traefik (e.g., https://daax.galway.poley.dev)
  *   POCKET_ID_OAT_COMMAND  - Shell command that outputs a one-time-access-token URL
- *                            (e.g., "ssh galway 'cd ~/jarvis/ps/auth.poley.dev && docker compose exec pocket-id /app/pocket-id one-time-access-token jpoley'")
+ *                            from THIS host's Pocket ID (each host runs its own), e.g.
+ *                            "ssh <host> 'cd <pocket-id compose dir> && docker compose exec pocket-id /app/pocket-id one-time-access-token <user>'"
+ *                            (scripts/agent-auth.sh does the same for curl)
  */
 
 import { test as setup, expect } from "@playwright/test";

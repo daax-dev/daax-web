@@ -22,7 +22,10 @@ const PAGES = [
 
 test.describe("Authenticated Page Navigation", () => {
   for (const { path, name } of PAGES) {
-    test(`${name} (${path}) loads without errors`, async ({ page }) => {
+    test(`${name} (${path}) loads without errors`, async ({
+      page,
+      baseURL,
+    }) => {
       // Collect console errors
       const consoleErrors: string[] = [];
       page.on("console", (msg) => {
@@ -47,9 +50,9 @@ test.describe("Authenticated Page Navigation", () => {
       // Page should load (200, not redirect to login)
       expect(response?.status()).toBe(200);
 
-      // Should not have been redirected to the auth provider
-      expect(page.url()).not.toContain("auth.galway.poley.dev");
-      expect(page.url()).not.toContain("auth.poley.dev/authorize");
+      // Still on daax: any redirect to an IdP — whichever host's — leaves
+      // this origin, so no provider name needs to be written here.
+      expect(new URL(page.url()).origin).toBe(new URL(baseURL!).origin);
 
       // No 401 errors in network requests
       const auth401s = failedRequests.filter((r) => r.status === 401);
