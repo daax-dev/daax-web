@@ -16,7 +16,9 @@
 #
 # Environment Variables:
 #   SPIFFE_ENDPOINT_SOCKET    Path to SPIRE agent socket (default: unix:///run/spire/sockets/agent.sock)
-#   SPIFFE_TOKEN_EXCHANGE_URL Token exchange endpoint (default: https://auth.poley.dev/api/oidc/token)
+#   SPIFFE_TOKEN_EXCHANGE_URL Token exchange endpoint, e.g. https://auth.<host>.poley.dev/api/oidc/token
+#                             (REQUIRED: every host runs its own Pocket ID, so there is no default)
+#   SPIFFE_JWT_AUDIENCE       Audience of the JWT-SVID (default: the exchange URL's origin)
 #   SPIFFE_TRUST_DOMAIN       Trust domain (default: poley.dev)
 #
 # Exit Codes:
@@ -46,7 +48,10 @@ readonly VERSION="1.0.0"
 
 # Defaults (can be overridden by environment variables)
 SPIFFE_ENDPOINT_SOCKET="${SPIFFE_ENDPOINT_SOCKET:-unix:///run/spire/sockets/agent.sock}"
-SPIFFE_TOKEN_EXCHANGE_URL="${SPIFFE_TOKEN_EXCHANGE_URL:-https://auth.poley.dev/api/oidc/token}"
+# No default: every host runs its own Pocket ID, and a fallback would send this
+# workload's SVID to an IdP that is not its own. Checked in main().
+SPIFFE_TOKEN_EXCHANGE_URL="${SPIFFE_TOKEN_EXCHANGE_URL:-}"
+SPIFFE_JWT_AUDIENCE="${SPIFFE_JWT_AUDIENCE:-}"
 SPIFFE_TRUST_DOMAIN="${SPIFFE_TRUST_DOMAIN:-poley.dev}"
 
 # Request defaults
@@ -80,7 +85,8 @@ Options:
 
 Environment Variables:
   SPIFFE_ENDPOINT_SOCKET    SPIRE agent socket path
-  SPIFFE_TOKEN_EXCHANGE_URL Token exchange endpoint URL
+  SPIFFE_TOKEN_EXCHANGE_URL Token exchange endpoint URL (required)
+  SPIFFE_JWT_AUDIENCE       JWT-SVID audience (default: the exchange URL's origin)
   SPIFFE_TRUST_DOMAIN       SPIFFE trust domain
 
 Example:
@@ -205,14 +211,14 @@ fetch_jwt_svid() {
     local socket_path
     socket_path=$(get_socket_path)
 
-    log "Fetching JWT-SVID for audience: https://auth.${SPIFFE_TRUST_DOMAIN}"
+    log "Fetching JWT-SVID for audience: ${SPIFFE_JWT_AUDIENCE}"
 
     # Method 1: Try spire-agent CLI (preferred)
     if command -v spire-agent &> /dev/null; then
         log "Using spire-agent CLI to fetch JWT-SVID"
         local svid
         svid=$(spire-agent api fetch jwt \
-            -audience "https://auth.${SPIFFE_TRUST_DOMAIN}" \
+            -audience "${SPIFFE_JWT_AUDIENCE}" \
             -socketPath "$socket_path" \
             -output json 2>/dev/null | jq -r '.svids[0].svid' 2>/dev/null)
 
@@ -227,7 +233,7 @@ fetch_jwt_svid() {
         log "Using go-spiffe to fetch JWT-SVID"
         local svid
         svid=$(go-spiffe fetchjwt \
-            -audience "https://auth.${SPIFFE_TRUST_DOMAIN}" \
+            -audience "${SPIFFE_JWT_AUDIENCE}" \
             -socketPath "$socket_path" 2>/dev/null)
 
         if [[ -n "$svid" ]]; then
@@ -245,7 +251,7 @@ fetch_jwt_svid() {
         -H "Content-Type: application/json" \
         -X POST \
         "http://localhost/v1/workload/jwt-svid" \
-        -d "{\"audience\": [\"https://auth.${SPIFFE_TRUST_DOMAIN}\"]}" 2>/dev/null || true)
+        -d "{\"audience\": [\"${SPIFFE_JWT_AUDIENCE}\"]}" 2>/dev/null || true)
 
     if [[ -n "$response" ]]; then
         local svid
@@ -385,10 +391,23 @@ main() {
         esac
     done
 
+    # This host's IdP, stated by the caller. https only: the SVID is a bearer
+    # credential. The SVID's audience defaults to the IdP that consumes it.
+    if [[ -z "$SPIFFE_TOKEN_EXCHANGE_URL" ]]; then
+        error "SPIFFE_TOKEN_EXCHANGE_URL is not set; set it to this host's token endpoint, e.g. https://auth.<host>.poley.dev/api/oidc/token"
+        exit 4
+    fi
+    if [[ ! "$SPIFFE_TOKEN_EXCHANGE_URL" =~ ^(https://[^/?#@]+)(/[^?#]*)?$ ]]; then
+        error "SPIFFE_TOKEN_EXCHANGE_URL must be an https URL (got: $SPIFFE_TOKEN_EXCHANGE_URL)"
+        exit 4
+    fi
+    SPIFFE_JWT_AUDIENCE="${SPIFFE_JWT_AUDIENCE:-${BASH_REMATCH[1]}}"
+
     log "Starting SPIFFE credential helper v${VERSION}"
     log "Configuration:"
     log "  SPIFFE_ENDPOINT_SOCKET: $SPIFFE_ENDPOINT_SOCKET"
     log "  SPIFFE_TOKEN_EXCHANGE_URL: $SPIFFE_TOKEN_EXCHANGE_URL"
+    log "  SPIFFE_JWT_AUDIENCE: $SPIFFE_JWT_AUDIENCE"
     log "  SPIFFE_TRUST_DOMAIN: $SPIFFE_TRUST_DOMAIN"
 
     # Validate environment
