@@ -63,9 +63,16 @@ beforeEach(async () => {
     `printf '%s\\n' "$@" > "$REC/spire-agent.args"
 echo '{"svids":[{"svid":"SVID-TOKEN"}]}'`,
   );
+  // The Workload API call (over the socket) and the exchange are recorded
+  // apart, so a test can read either.
   shim(
     "curl",
-    `printf '%s\\n' "$@" > "$REC/curl.args"
+    `if [[ " $* " == *" --unix-socket "* ]]; then
+  printf '%s\\n' "$@" > "$REC/curl-socket.args"
+  echo '{"svids":[{"svid":"SOCKET-SVID"}]}'
+  exit 0
+fi
+printf '%s\\n' "$@" > "$REC/curl.args"
 printf '{"access_token":"ACCESS-TOKEN"}\\n200'`,
   );
 });
@@ -85,14 +92,50 @@ describe("spiffe-credential-helper.sh", () => {
     expect(recorded("curl.args")).toBe("");
   });
 
-  it("refuses a non-https exchange URL", () => {
-    const r = helper({
-      SPIFFE_TOKEN_EXCHANGE_URL: "http://auth.galway.poley.dev/api/oidc/token",
-    });
+  it.each([
+    ["http", "http://auth.galway.poley.dev/api/oidc/token"],
+    ["a quote in the host", 'https://auth.galway.poley.dev"x/api/oidc/token'],
+    ["userinfo", "https://u@auth.galway.poley.dev/api/oidc/token"],
+    ["a non-numeric port", "https://auth.galway.poley.dev:x/api/oidc/token"],
+    ["whitespace in the path", "https://auth.galway.poley.dev/api oidc"],
+  ])("refuses an exchange URL with %s", (_why, url) => {
+    const r = helper({ SPIFFE_TOKEN_EXCHANGE_URL: url });
 
     expect(r.status).toBe(4);
     expect(r.stderr).toContain("must be an https URL");
     expect(recorded("curl.args")).toBe("");
+  });
+
+  it("keeps a port in the derived audience", () => {
+    const r = helper({
+      SPIFFE_TOKEN_EXCHANGE_URL:
+        "https://auth.galway.poley.dev:8443/api/oidc/token",
+    });
+
+    expect(r.status).toBe(0);
+    const spire = recorded("spire-agent.args").split("\n");
+    expect(spire[spire.indexOf("-audience") + 1]).toBe(
+      "https://auth.galway.poley.dev:8443",
+    );
+  });
+
+  it("JSON-encodes the audience it sends over the Workload API socket", () => {
+    // No spire-agent: the helper falls through to the direct socket call.
+    rmSync(join(bin, "spire-agent"));
+    const audience = 'aud"ience\\with]"quotes';
+
+    const r = helper({
+      SPIFFE_TOKEN_EXCHANGE_URL: "https://auth.galway.poley.dev/api/oidc/token",
+      SPIFFE_JWT_AUDIENCE: audience,
+    });
+
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+    const args = recorded("curl-socket.args").split("\n");
+    expect(JSON.parse(args[args.indexOf("-d") + 1])).toEqual({
+      audience: [audience],
+    });
+    expect(recorded("curl.args")).toContain("subject_token=SOCKET-SVID");
   });
 
   it("exchanges at the given URL, with the SVID aimed at that IdP", () => {

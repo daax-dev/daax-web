@@ -246,12 +246,14 @@ fetch_jwt_svid() {
     # This requires the agent to expose the Workload API endpoint
     log "Attempting direct socket communication via curl"
 
-    local response
+    # Built by jq, not by string interpolation: the audience is caller input.
+    local body response
+    body=$(jq -cn --arg aud "$SPIFFE_JWT_AUDIENCE" '{audience: [$aud]}')
     response=$(curl --silent --unix-socket "$socket_path" \
         -H "Content-Type: application/json" \
         -X POST \
         "http://localhost/v1/workload/jwt-svid" \
-        -d "{\"audience\": [\"${SPIFFE_JWT_AUDIENCE}\"]}" 2>/dev/null || true)
+        -d "$body" 2>/dev/null || true)
 
     if [[ -n "$response" ]]; then
         local svid
@@ -397,7 +399,7 @@ main() {
         error "SPIFFE_TOKEN_EXCHANGE_URL is not set; set it to this host's token endpoint, e.g. https://auth.<host>.poley.dev/api/oidc/token"
         exit 4
     fi
-    if [[ ! "$SPIFFE_TOKEN_EXCHANGE_URL" =~ ^(https://[^/?#@]+)(/[^?#]*)?$ ]]; then
+    if [[ ! "$SPIFFE_TOKEN_EXCHANGE_URL" =~ ^(https://[A-Za-z0-9.-]+(:[0-9]+)?)(/[^?#[:space:]]*)?$ ]]; then
         error "SPIFFE_TOKEN_EXCHANGE_URL must be an https URL (got: $SPIFFE_TOKEN_EXCHANGE_URL)"
         exit 4
     fi
