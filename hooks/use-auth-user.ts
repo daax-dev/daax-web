@@ -1,17 +1,17 @@
 import { useState, useEffect } from "react";
 import { UNAUTHENTICATED_USER } from "@/lib/auth-types";
-import type { AuthUser } from "@/lib/auth-types";
+import type { AuthUserPayload } from "@/lib/auth-types";
 
 interface UseAuthUserResult {
-  user: AuthUser | null;
+  user: AuthUserPayload | null;
   loading: boolean;
 }
 
-let cachedUser: AuthUser | null = null;
-let fetchPromise: Promise<AuthUser> | null = null;
+let cachedUser: AuthUserPayload | null = null;
+let fetchPromise: Promise<AuthUserPayload> | null = null;
 
 export function useAuthUser(): UseAuthUserResult {
-  const [user, setUser] = useState<AuthUser | null>(cachedUser);
+  const [user, setUser] = useState<AuthUserPayload | null>(cachedUser);
   const [loading, setLoading] = useState(!cachedUser);
 
   useEffect(() => {
@@ -27,14 +27,14 @@ export function useAuthUser(): UseAuthUserResult {
           }
           return res.json();
         })
-        .then((data: AuthUser) => {
+        .then((data: AuthUserPayload) => {
           cachedUser = data;
           return data;
         })
         .catch((error) => {
           console.error("Error fetching auth user:", error);
           fetchPromise = null; // Reset so transient failures can be retried
-          return UNAUTHENTICATED_USER;
+          return { ...UNAUTHENTICATED_USER, logoutUrl: null };
         });
     }
 

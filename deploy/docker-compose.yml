@@ -372,6 +372,13 @@ services:
       - DAAX_PROXY_SECRET=${DAAX_PROXY_SECRET:?required in the deploy path (Traefik + Pocket ID); must match the value deploy-local.sh injects as X-Daax-Proxy-Secret. Generate with openssl rand -hex 32; never commit it}
       - DAAX_PROXY_SECRET_PREVIOUS=${DAAX_PROXY_SECRET_PREVIOUS:-}
 
+      # This host's own Pocket ID (deploy/env/<host>.env). No default on purpose:
+      # every host has its own IdP, so a fallback would name somebody else's.
+      # Read at request time. Unset → initials instead of the avatar, and
+      # "Log out" signs out of daax only.
+      - DAAX_AUTH_PROVIDER_URL=${DAAX_AUTH_PROVIDER_URL:-}
+      - DAAX_AUTH_LOGOUT_URL=${DAAX_AUTH_LOGOUT_URL:-}
+
       # Postgres connection (brain2daax Phase 0 #92). Reaches the postgres
       # service over daax-net; password sourced from env/secret, never committed.
       - DATABASE_URL=postgres://${DAAX_PG_USER:-daax}:${DAAX_PG_PASSWORD:?DAAX_PG_PASSWORD env var required}@postgres:5432/${DAAX_PG_DB:-daax}
@@ -558,6 +565,10 @@ services:
       # WS ticket verification — MUST match the web plane's value (see daax above).
       - DAAX_REQUIRE_AUTH=${DAAX_REQUIRE_AUTH:-}
       - "DAAX_WS_TOKEN_SECRET=${DAAX_WS_TOKEN_SECRET:?required for terminal WS auth; generate with openssl rand -hex 32}"
+
+      # Same per-host IdP as the web plane (see daax above); no default.
+      - DAAX_AUTH_PROVIDER_URL=${DAAX_AUTH_PROVIDER_URL:-}
+      - DAAX_AUTH_LOGOUT_URL=${DAAX_AUTH_LOGOUT_URL:-}
 
       # Spawn machinery (terminal-only).
       - DOCKER_NETWORK=${DAAX_NETWORK:-daax-net}

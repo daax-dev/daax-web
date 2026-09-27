@@ -119,7 +119,8 @@ describe("auth module", () => {
         email: "john@example.com",
         groups: ["admin", "developers", "testers"],
         authenticated: true,
-        pictureUrl: "https://auth.poley.dev/api/users/user-123-uuid/avatar",
+        // No DAAX_AUTH_PROVIDER_URL → no picture: there is no default IdP.
+        pictureUrl: null,
       });
     });
 
@@ -266,6 +267,10 @@ describe("auth module", () => {
     });
 
     describe("pictureUrl generation", () => {
+      beforeEach(() => {
+        process.env.DAAX_AUTH_PROVIDER_URL = "https://auth.galway.poley.dev";
+      });
+
       it("should generate picture URL with encoded user ID", async () => {
         mockHeaders.mockResolvedValue(
           createMockHeaders({
@@ -276,7 +281,7 @@ describe("auth module", () => {
         const user = await getAuthUser();
 
         expect(user.pictureUrl).toBe(
-          "https://auth.poley.dev/api/users/user%2Fwith%2Fslashes/avatar",
+          "https://auth.galway.poley.dev/api/users/user%2Fwith%2Fslashes/avatar",
         );
       });
 
@@ -290,8 +295,41 @@ describe("auth module", () => {
         const user = await getAuthUser();
 
         expect(user.pictureUrl).toBe(
-          "https://auth.poley.dev/api/users/user%40domain.com/avatar",
+          "https://auth.galway.poley.dev/api/users/user%40domain.com/avatar",
         );
+      });
+
+      it("has no picture when DAAX_AUTH_PROVIDER_URL is unset", async () => {
+        delete process.env.DAAX_AUTH_PROVIDER_URL;
+        mockHeaders.mockResolvedValue(
+          createMockHeaders({ "x-forwarded-user": "user-123-uuid" }),
+        );
+
+        const user = await getAuthUser();
+
+        expect(user.authenticated).toBe(true);
+        expect(user.pictureUrl).toBeNull();
+      });
+
+      it.each([
+        ["http, not https", "http://auth.galway.poley.dev"],
+        ["not a URL", "auth.galway.poley.dev"],
+        ["a path, not a bare origin", "https://auth.galway.poley.dev/api"],
+      ])("ignores a provider URL that is %s", async (_why, value) => {
+        process.env.DAAX_AUTH_PROVIDER_URL = value;
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        mockHeaders.mockResolvedValue(
+          createMockHeaders({ "x-forwarded-user": "user-123-uuid" }),
+        );
+
+        const user = await getAuthUser();
+
+        expect(user.authenticated).toBe(true);
+        expect(user.pictureUrl).toBeNull();
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining("DAAX_AUTH_PROVIDER_URL ignored"),
+        );
+        warn.mockRestore();
       });
 
       it("should return null pictureUrl when not authenticated", async () => {
