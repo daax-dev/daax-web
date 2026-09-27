@@ -18,6 +18,7 @@ import type { AuthUser } from "./auth-types";
 import { UNAUTHENTICATED_USER } from "./auth-types";
 import { canonicalizeSubject } from "./rbac/allowlist";
 import { isLoopbackAddress } from "./net/loopback";
+import { idpOrigin } from "./idp-urls";
 
 /**
  * Minimal headers-like reader satisfied by both the Web `Headers` object
@@ -42,8 +43,6 @@ const DISPLAYNAME_HEADER =
 const EMAIL_HEADER = process.env.DAAX_AUTH_EMAIL_HEADER || "x-forwarded-email";
 const GROUPS_HEADER =
   process.env.DAAX_AUTH_GROUPS_HEADER || "x-forwarded-groups";
-const OIDC_PROVIDER_URL =
-  process.env.DAAX_AUTH_PROVIDER_URL || "https://auth.poley.dev";
 
 // Proxy-secret trust boundary (F1a, issue #94).
 //
@@ -388,6 +387,9 @@ export function deriveAuthContext(h: HeaderReader): AuthContext {
   // UUID pattern: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx or similar
   const isUuid = userId && /^[0-9a-f-]{8,}$/i.test(userId);
   const displayUsername = displayName || username || (isUuid ? "User" : userId);
+  // No provider configured (DAAX_AUTH_PROVIDER_URL) → no picture, and the UI
+  // falls back to initials. There is deliberately no default provider.
+  const provider = authenticated ? idpOrigin() : null;
 
   return {
     rawUserHeader,
@@ -405,8 +407,8 @@ export function deriveAuthContext(h: HeaderReader): AuthContext {
       email,
       groups,
       authenticated,
-      pictureUrl: authenticated
-        ? `${OIDC_PROVIDER_URL}/api/users/${encodeURIComponent(userId!)}/avatar`
+      pictureUrl: provider
+        ? `${provider}/api/users/${encodeURIComponent(userId!)}/avatar`
         : null,
     },
   };

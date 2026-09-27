@@ -23,6 +23,7 @@ import {
 } from "./rbac/permissions";
 import { jitProvision, writeAudit } from "./rbac/store";
 import { isDbConfigured } from "./db/config";
+import { idpOrigin } from "./idp-urls";
 
 export type { AuthUser };
 export { UNAUTHENTICATED_USER };
@@ -192,7 +193,9 @@ function auditNet(h: Awaited<ReturnType<typeof headers>>): {
   return { ip, ua: h.get("user-agent") };
 }
 
-const IDP = process.env.DAAX_AUTH_PROVIDER_URL || "pocket-id";
+// Label recorded on the users row (not a key, not sent to the browser): the
+// validated provider origin when one is configured, else a generic name.
+const idpLabel = (): string => idpOrigin() ?? "pocket-id";
 
 function deny403(message: string): NextResponse {
   return NextResponse.json({ error: "Forbidden", message }, { status: 403 });
@@ -320,7 +323,7 @@ export async function requireRole(
       username: ctx.rawUsername,
       email: ctx.user.email,
       name: ctx.displayName,
-      idp: IDP,
+      idp: idpLabel(),
       groups: ctx.user.groups,
     });
     roles = jit.roles;
@@ -429,7 +432,7 @@ export async function resolveAccess(): Promise<AccessSummary> {
       username: ctx.rawUsername,
       email: ctx.user.email,
       name: ctx.displayName,
-      idp: IDP,
+      idp: idpLabel(),
       groups: ctx.user.groups,
     });
     return {

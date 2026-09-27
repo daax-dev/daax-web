@@ -13,9 +13,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 const LOGOUT_URL = process.env.NEXT_PUBLIC_LOGOUT_URL || "/portals/main/logout";
-const OIDC_END_SESSION_URL =
-  process.env.NEXT_PUBLIC_OIDC_END_SESSION_URL ||
-  "https://auth.poley.dev/api/oidc/end-session";
 
 function getInitials(name: string | null): string {
   const trimmed = name?.trim();
@@ -42,10 +39,15 @@ export function UserMenu() {
     } catch {
       // redirect: manual returns opaque-redirect, cookies are still cleared
     }
-    // 2. Redirect to Pocket ID's OIDC end-session to kill the SSO session,
-    //    then redirect back to the app (which will show the login screen)
-    const redirectUri = window.location.origin;
-    window.location.href = `${OIDC_END_SESSION_URL}?post_logout_redirect_uri=${encodeURIComponent(redirectUri)}`;
+    // 2. End the IdP session at this host's own provider, which the server
+    //    names at runtime (DAAX_AUTH_LOGOUT_URL). Pocket ID's <idp>/logout asks
+    //    for confirmation and takes no redirect parameter, so it is visited
+    //    as given. With none configured, only the local part runs.
+    if (user.logoutUrl) {
+      window.location.assign(user.logoutUrl);
+    } else {
+      window.location.reload();
+    }
   };
 
   return (

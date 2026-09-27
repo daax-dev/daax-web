@@ -12,8 +12,9 @@
 #
 # PINNED. `build` builds exactly DAAX_HOST_REF (a full commit sha in the env
 # file; unset refuses), verifies the checkout is at it, and records the sha in
-# $BUILT_FILE. It snapshots DAAX_ADMIN_USERS and DAAX_PG_USER from the same env
-# file into $CONF_FILE, so `run` never reads the checkout's copy of an env file
+# $BUILT_FILE. It snapshots DAAX_ADMIN_USERS, DAAX_PG_USER and this host's IdP
+# (DAAX_AUTH_PROVIDER_URL, DAAX_AUTH_LOGOUT_URL) from the same env file into
+# $CONF_FILE, so `run` never reads the checkout's copy of an env file
 # at some other commit. `run` refuses unless the checkout is still at the
 # recorded sha, and logs it. A failed build removes the record, leaves the unit
 # stopped, and says how to recover.
@@ -174,14 +175,18 @@ cmd_build() {
     command -v "$t" >/dev/null || die "$t is required to compile node-pty; install build-essential and python3"
   done
 
-  local env_src ref admins pg_user src
+  local env_src ref admins pg_user idp logout src
   env_src="$(source_env_file build)"
   ref="$(env_value "$env_src" DAAX_HOST_REF)"
   [[ "$ref" =~ ^[0-9a-f]{40}$ ]] ||
     die "DAAX_HOST_REF in $env_src must be a full 40-hex commit sha (got '${ref:-unset}'); a host shell is built from a pinned commit, never a branch"
   admins="$(env_value "$env_src" DAAX_ADMIN_USERS)"
   pg_user="$(env_value "$env_src" DAAX_PG_USER)"
-  case "$admins$pg_user" in *"'"* | *$'\n'*) die "DAAX_ADMIN_USERS/DAAX_PG_USER in $env_src cannot be recorded literally" ;; esac
+  # This host's own Pocket ID; no default (an unset one means initials and a
+  # daax-only log out, never somebody else's IdP).
+  idp="$(env_value "$env_src" DAAX_AUTH_PROVIDER_URL)"
+  logout="$(env_value "$env_src" DAAX_AUTH_LOGOUT_URL)"
+  case "$admins$pg_user$idp$logout" in *"'"* | *$'\n'*) die "DAAX_ADMIN_USERS/DAAX_PG_USER/DAAX_AUTH_PROVIDER_URL/DAAX_AUTH_LOGOUT_URL in $env_src cannot be recorded literally" ;; esac
 
   ensure_ws_secret
 
@@ -233,8 +238,8 @@ cmd_build() {
 
   (
     umask 077
-    printf "# Written by daax-host.sh build from %s. Do not edit.\nDAAX_ADMIN_USERS='%s'\nDAAX_PG_USER='%s'\n" \
-      "$env_src" "$admins" "${pg_user:-daax}" >"$CONF_FILE"
+    printf "# Written by daax-host.sh build from %s. Do not edit.\nDAAX_ADMIN_USERS='%s'\nDAAX_PG_USER='%s'\nDAAX_AUTH_PROVIDER_URL='%s'\nDAAX_AUTH_LOGOUT_URL='%s'\n" \
+      "$env_src" "$admins" "${pg_user:-daax}" "$idp" "$logout" >"$CONF_FILE"
     printf '%s\n' "$ref" >"$BUILT_FILE"
   )
   trap - EXIT
@@ -258,7 +263,7 @@ cmd_run() {
   [ -f "$HOME/.dist-agent/proxy.secret" ] ||
     echo "daax-host: no $HOME/.dist-agent/proxy.secret — Interrupt will answer 503 until agentd has one" >&2
 
-  local proxy_secret ws_secret pg_pass pg_user pg_port admins
+  local proxy_secret ws_secret pg_pass pg_user pg_port admins idp logout
   proxy_secret="$(secret_value DAAX_PROXY_SECRET)"
   ensure_ws_secret >&2
   ws_secret="$(read_ws_secret)"
@@ -267,6 +272,9 @@ cmd_run() {
   [ -n "$pg_pass" ] || die "DAAX_PG_PASSWORD is empty in $SECRETS_FILE; daax-postgres requires it"
   pg_user="$(file_value "$CONF_FILE" DAAX_PG_USER)"; pg_user="${pg_user:-daax}"
   admins="$(file_value "$CONF_FILE" DAAX_ADMIN_USERS)"
+  # Absent from a conf written before these were recorded: read as unset.
+  idp="$(file_value "$CONF_FILE" DAAX_AUTH_PROVIDER_URL)"
+  logout="$(file_value "$CONF_FILE" DAAX_AUTH_LOGOUT_URL)"
   # The port daax-postgres actually publishes on loopback, not a configured one
   # that may name somebody else's server.
   pg_port="$(docker port daax-postgres 5432/tcp 2>/dev/null | sed -n 's/^127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p' | head -n1)"
@@ -294,6 +302,8 @@ cmd_run() {
   export DAAX_PROXY_SECRET="$proxy_secret"
   export DAAX_WS_TOKEN_SECRET="$ws_secret"
   export DAAX_ADMIN_USERS="$admins"
+  [ -z "$idp" ] || export DAAX_AUTH_PROVIDER_URL="$idp"
+  [ -z "$logout" ] || export DAAX_AUTH_LOGOUT_URL="$logout"
   export DAAX_EXTRA_ALLOWED_ORIGINS="$PUBLIC_ORIGIN"
   export AGENTVIEW_DAEMON_URL=http://127.0.0.1:7717
   export AGENTVIEW_DAEMON_PROXY_SECRET_FILE="$HOME/.dist-agent/proxy.secret"
