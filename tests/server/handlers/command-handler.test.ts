@@ -399,6 +399,23 @@ describe("a local pty types the launcher's absolute claude and codex", () => {
     );
   });
 
+  it("pins a bare claude", () => {
+    expect(buildFullCommand("claude", "local", env)).toBe(
+      "/home/jpoley/.local/bin/claude",
+    );
+  });
+
+  it("does not pin claude followed by a shell operator", () => {
+    expect(buildFullCommand("claude;id", "local", env)).toBe("claude;id");
+    expect(buildFullCommand("claude|x", "local", env)).toBe("claude|x");
+  });
+
+  it("keeps the whitespace after claude byte for byte", () => {
+    expect(buildFullCommand("claude\t--resume x", "local", env)).toBe(
+      "/home/jpoley/.local/bin/claude\t--resume x",
+    );
+  });
+
   it("leaves a look-alike command alone", () => {
     expect(buildFullCommand("claudex --help", "local", env)).toBe(
       "claudex --help",
