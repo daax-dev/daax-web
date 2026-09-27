@@ -4,9 +4,11 @@
  * Verifies pages redirect to Pocket ID login when accessed without auth.
  * The redirect URL should point back to daax after login.
  *
- * Requires: DAAX_AUTH_BASE_URL. Optional: DAAX_AUTH_PROVIDER_URL, this host's
- * Pocket ID origin (the same variable daax reads); when set, the redirect must
- * land there and nowhere else.
+ * Requires: DAAX_AUTH_BASE_URL, and DAAX_AUTH_PROVIDER_URL — this host's Pocket
+ * ID origin, the same variable daax reads — whenever the deployment redirects
+ * rather than answering 401. A redirect must land on exactly that origin:
+ * "somewhere other than daax" would also accept a chrome-error:// page, whose
+ * origin is "null".
  */
 
 import { test, expect } from "@playwright/test";
@@ -52,8 +54,12 @@ test.describe("Unauthenticated Page Navigation", () => {
         `Expected redirect to auth or 401, got ${response?.status()} at ${finalUrl}`,
       ).toBe(true);
 
-      // If redirected, it is to this host's own IdP when that is declared
-      if (isRedirectedToAuth && IDP_ORIGIN) {
+      // If redirected, it is to this host's own IdP, which must be declared
+      if (isRedirectedToAuth) {
+        expect(
+          IDP_ORIGIN,
+          `redirected to ${finalUrl}; set DAAX_AUTH_PROVIDER_URL to this host's Pocket ID origin to check it`,
+        ).not.toBeNull();
         expect(new URL(finalUrl).origin).toBe(IDP_ORIGIN);
       }
 
