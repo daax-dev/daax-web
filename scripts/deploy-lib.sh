@@ -112,6 +112,21 @@ assert_idp_config() {
     bad+=("DAAX_AUTH_PROVIDER_URL='${DAAX_AUTH_PROVIDER_URL:-}' (want this host's Pocket ID origin, e.g. https://auth.<host>.poley.dev)")
   [[ "${DAAX_AUTH_LOGOUT_URL:-}" =~ ^${origin}(/[^[:space:]]*)?$ ]] ||
     bad+=("DAAX_AUTH_LOGOUT_URL='${DAAX_AUTH_LOGOUT_URL:-}' (want its logout page, e.g. https://auth.<host>.poley.dev/logout)")
+  # The one host no deployment may name, whatever the case or a trailing dot:
+  # every host runs its own Pocket ID, so the shared name is never this one's.
+  # cloud.env takes both from the environment, where the repo scan cannot look.
+  local banned=auth.poley.dev
+  local name value host
+  for name in DAAX_AUTH_PROVIDER_URL DAAX_AUTH_LOGOUT_URL; do
+    value="${!name:-}"
+    host="${value#https://}"
+    host="${host%%/*}"
+    host="${host%%:*}"
+    host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+    while [[ "$host" == *. ]]; do host="${host%.}"; done
+    [[ "$host" != "$banned" ]] ||
+      bad+=("$name='$value' (never $banned: every host runs its own Pocket ID; use this host's, e.g. https://auth.<host>.poley.dev)")
+  done
   if ((${#bad[@]} > 0)); then
     echo "DAAX_REQUIRE_AUTH=1 but this host's IdP is not configured:" >&2
     printf '  %s\n' "${bad[@]}" >&2

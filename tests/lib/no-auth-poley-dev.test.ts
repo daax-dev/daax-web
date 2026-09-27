@@ -34,6 +34,8 @@ const ALLOWED: Record<string, string> = {
   // A directory on galway: the checkout of the Pocket ID fork's repository,
   // which is named after it. A path to ssh into, not an address.
   "scripts/agent-auth.sh": "~/jarvis/ps/auth.poley.dev",
+  // The deploy preflight's refusal of exactly this host, which has to name it.
+  "scripts/deploy-lib.sh": "local banned=auth.poley.dev",
 };
 
 // An auth.<x> host assembled at runtime: shell or JS interpolation, printf, or

@@ -113,6 +113,41 @@ describe("assert_idp_config", () => {
     expect(r.stderr).toContain("deploy/env/testhost.env");
   });
 
+  it.each([
+    ["DAAX_AUTH_PROVIDER_URL", "https://auth.poley.dev"],
+    ["DAAX_AUTH_PROVIDER_URL", "https://AUTH.Poley.DEV/"],
+    ["DAAX_AUTH_PROVIDER_URL", "https://auth.poley.dev."],
+    ["DAAX_AUTH_PROVIDER_URL", "https://auth.poley.dev:443"],
+    ["DAAX_AUTH_LOGOUT_URL", "https://auth.poley.dev/logout"],
+    ["DAAX_AUTH_LOGOUT_URL", "https://Auth.Poley.Dev/api/oidc/end-session"],
+  ])("refuses the shared host as %s=%s, naming the rule", (name, value) => {
+    const r = check({
+      DAAX_REQUIRE_AUTH: "1",
+      DAAX_AUTH_PROVIDER_URL: PROVIDER,
+      DAAX_AUTH_LOGOUT_URL: LOGOUT,
+      [name]: value,
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(`${name}='${value}'`);
+    expect(r.stderr).toContain(
+      "never auth.poley.dev: every host runs its own Pocket ID",
+    );
+  });
+
+  it.each([
+    "https://auth.galway.poley.dev",
+    "https://xauth.poley.dev",
+    "https://auth.poley.dev.example.test",
+  ])("does not mistake %s for the shared host", (provider) => {
+    const r = check({
+      DAAX_REQUIRE_AUTH: "1",
+      DAAX_AUTH_PROVIDER_URL: provider,
+      DAAX_AUTH_LOGOUT_URL: `${provider}/logout`,
+    });
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+  });
+
   it.each(["galway", "kinsale", "muckross"])(
     "the fleet target %s configures both",
     (host) => {
