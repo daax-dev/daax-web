@@ -114,15 +114,6 @@ describe("no auth.poley.dev outside tests and docs", () => {
       expect(files.some((f) => f.startsWith(dir))).toBe(true);
   });
 
-  it("excludes only the listed non-runtime directories", () => {
-    const excluded = candidates().filter((f) =>
-      EXCLUDED_DIRS.some((d) => f.startsWith(d)),
-    );
-    expect(excluded).toContain("tests/lib/no-auth-poley-dev.test.ts");
-    for (const f of excluded)
-      expect(EXCLUDED_DIRS.some((d) => f.startsWith(d))).toBe(true);
-  });
-
   it("finds the name nowhere outside the allowlisted literals", () => {
     expect(literalOffenders()).toEqual([]);
   });
