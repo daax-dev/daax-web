@@ -300,6 +300,20 @@ cmd_run() {
   export CLAUDE_PROJECTS_DIR="$HOME/.claude/projects"
   export TERMINAL_HOST=127.0.0.1
   export TERMINAL_PORT="$WS_PORT"
+  # The agent CLIs a resume types, as absolute paths resolved from THIS
+  # service's PATH (~/.local/bin first, the native Claude Code). The terminal
+  # server types these instead of a bare `claude`/`codex`, which the operator's
+  # login shell would resolve through its own rc files — on kinsale that was a
+  # pnpm Claude Code 2.0.50 that hides its argv from agentd.
+  # Exported only when it passes the same test the terminal server applies
+  # (command-handler.ts SAFE_ABSOLUTE_PATH), so the log below never names a pin
+  # the server would then silently ignore.
+  local tool_bin
+  tool_bin="$(command -v claude || true)"
+  [[ "$tool_bin" =~ ^/[A-Za-z0-9._/-]+$ ]] && export DAAX_HOST_CLAUDE_BIN="$tool_bin"
+  tool_bin="$(command -v codex || true)"
+  [[ "$tool_bin" =~ ^/[A-Za-z0-9._/-]+$ ]] && export DAAX_HOST_CODEX_BIN="$tool_bin"
+  echo "daax-host: resume uses claude=${DAAX_HOST_CLAUDE_BIN:-<login shell>} codex=${DAAX_HOST_CODEX_BIN:-<login shell>}"
   exec node_modules/.bin/concurrently --kill-others -n next,terminal \
     "node_modules/.bin/next start -p $WEB_PORT -H 127.0.0.1" \
     "node_modules/.bin/tsx server/terminal-server.ts"
