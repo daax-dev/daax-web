@@ -222,7 +222,9 @@ cmd_build() {
   # the version bun.lock pins, exactly as the Dockerfile's deps stage does.
   # --build-from-source needs npm 10 (npm 12 removed the flag).
   local pty_version
-  pty_version="$(grep '"node-pty":' bun.lock | grep -oE 'node-pty@[0-9]+\.[0-9]+\.[0-9]+' | head -1 | cut -d@ -f2)"
+  # `|| true`: under pipefail a grep with no match would abort the build at this
+  # assignment, before the die below could say why.
+  pty_version="$(grep '"node-pty":' bun.lock | grep -oE 'node-pty@[0-9]+\.[0-9]+\.[0-9]+' | head -1 | cut -d@ -f2 || true)"
   [ -n "$pty_version" ] || die "node-pty's version is not in bun.lock"
   npm install "node-pty@$pty_version" --build-from-source --no-save --no-package-lock ||
     die "npm could not compile node-pty@$pty_version (needs npm 10, build-essential, python3)"
