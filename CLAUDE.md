@@ -164,11 +164,21 @@ bun run test:e2e:ci-local # The CI e2e job's environment locally: production mod
                           # Must be green before a PR carries the `e2e` label
 bun run test:all     # Vitest + Playwright + agent quick-verify
 
+# Digital workers CLI (talks to the REST API; DAAX_URL, default http://127.0.0.1:4200)
+bun run workers ls | show <w> | run <w> [--wait] | ask <w> "question" | pause|resume <w> | runs <w> | logs <run> [--follow] | goals <w>
+
 # Components
 bunx shadcn@latest add <component-name>   # installs to components/ui/
 ```
 
-## Tech Stack
+## Digital Workers
+
+Top-level module `/workers` (design: `docs/plans/digital-workers.md`; decisions: `.logs/decisions/digital-workers.jsonl`). A worker has instructions, goals (optionally linked to a Backlog.md project), MCP servers, an autonomy level (`observe`/`propose`/`act`), an engine (`claude-cli` default, `codex-cli`, or `agent-sdk` which needs `ANTHROPIC_API_KEY`) and a run mode (`schedule` cron in UTC, `adhoc`, `continuous` with cooldown and daily cap). The first template is the Technical Project Manager (`lib/workers/templates.ts`, created disabled with `propose`).
+
+- **Engine placement:** the scheduler/runner runs in the web process (started from `instrumentation.ts` when Postgres is configured; one leader via a Postgres advisory lock; `WORKERS_SCHEDULER=off` disables it). API routes only queue runs.
+- **Both modes:** host dev runs the CLIs on the host with the operator's own logins; container mode (`HOST_WORKSPACE_PATH` set) runs them in the agent image (`daax-w-<hex>` containers) with the shared Claude login dir; codex needs `<workspace>/.daax/codex/auth.json` there.
+- **Write limits are enforced, not prompted:** each run lists every MCP server's tools and passes the engine an exact allow-list for the autonomy level; merge/push/deploy/delete are denied at every level.
+- **Interaction:** web UI (list, detail tabs, ask bar), CLI (`bun run workers`), voice (browser speech recognition in the ask bar + optional spoken answers).
 
 | Category        | Technology                                                                                                                               |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
@@ -198,6 +208,7 @@ See `.claude/architecture.md` for the full repository layout, plugin/maturity mo
 | `/ai-coding`   | AI coding agents            |
 | `/code-server` | VS Code in browser          |
 | `/mcp`         | MCP catalog and management  |
+| `/workers`     | Digital workers (TPM, …)    |
 | `/analytics`   | System stats and analytics  |
 | `/settings`    | App settings                |
 

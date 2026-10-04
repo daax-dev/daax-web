@@ -37,6 +37,7 @@ import {
   Boxes,
   FlaskConical,
   Radar,
+  UserCog,
 } from "lucide-react";
 import { McpIcon } from "@/components/icons/McpIcon";
 import { cn } from "@/lib/utils";
@@ -283,6 +284,7 @@ const pluginIcons: Record<
   containers: Boxes,
   testcontainers: Container,
   bot: MessageSquare,
+  workers: UserCog,
 };
 
 // Route mapping for plugins
@@ -303,6 +305,7 @@ const pluginRoutes: Record<string, string> = {
   containers: "/containers",
   testcontainers: "/testcontainers",
   bot: "/bot",
+  workers: "/workers",
 };
 
 // Badge colors for maturity levels

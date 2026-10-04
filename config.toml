@@ -34,6 +34,7 @@ aiCodingLayout = "tree"
 [plugins.maturity]
 home = "ga"
 ai-coding = "ga"
+workers = "beta"
 backlog = "ga"
 containers = "beta"
 provenance = "disabled"
@@ -53,6 +54,7 @@ settings = "ga"
 order = [
   "home",
   "ai-coding",
+  "workers",
   "containers",
   "analytics",
   "backlog",
@@ -133,6 +135,7 @@ order = ["running", "devcontainers", "testcontainers"]
 cardOrder = [
   "overview",
   "ai-coding",
+  "workers",
   "code-server",
   "shell",
   "mcp",
@@ -152,6 +155,10 @@ enabled = true
 color = "blue"
 
 [homepage.cards.ai-coding]
+enabled = true
+color = "blue"
+
+[homepage.cards.workers]
 enabled = true
 color = "blue"
 

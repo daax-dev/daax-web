@@ -62,6 +62,23 @@ export async function register() {
       );
     }
 
+    // Digital workers scheduler (docs/plans/digital-workers.md §4.1): one
+    // leader across instances via a Postgres advisory lock. Needs Postgres;
+    // WORKERS_SCHEDULER=off disables it (e.g. a read-only replica).
+    try {
+      const { isDbConfigured } = await import("@/lib/db/config");
+      if (isDbConfigured() && process.env.WORKERS_SCHEDULER !== "off") {
+        const { getScheduler } = await import("@/lib/workers/scheduler");
+        getScheduler().start();
+        console.log("[Instrumentation] Digital workers scheduler started.");
+      }
+    } catch (error) {
+      console.error(
+        "[Instrumentation] Workers scheduler failed to start (non-fatal):",
+        error instanceof Error ? error.message : error,
+      );
+    }
+
     try {
       await initializeBacklogStore(workspacePath);
       setBacklogHealth(true);
