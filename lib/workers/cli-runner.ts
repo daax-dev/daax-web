@@ -824,8 +824,12 @@ export async function runCliEngine(input: CliRunInput): Promise<CliRunResult> {
     } else {
       final = codexAcc.final();
       const last = prepared.lastMessagePath;
-      if (last && existsSync(last)) {
-        const text = readFileSync(last, "utf8").trim();
+      // `last` is a runtime temp file, not a bundled asset: keep Turbopack from tracing the project.
+      if (last && existsSync(/*turbopackIgnore: true*/ last)) {
+        const text = readFileSync(
+          /*turbopackIgnore: true*/ last,
+          "utf8",
+        ).trim();
         if (text) final = { ...final, summary: text };
       }
       if (exitCode !== 0 || !final.ok) {
