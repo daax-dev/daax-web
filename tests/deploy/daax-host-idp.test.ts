@@ -100,7 +100,10 @@ beforeEach(() => {
     "git",
     `case "$*" in
   *--show-toplevel*) echo "$FAKE_CLONE" ;;
-  *"worktree add"*) mkdir -p "\${@: -2:1}/.git" ;;
+  *"worktree add"*)
+    mkdir -p "\${@: -2:1}/.git"
+    # build pins node-pty from the checkout's lockfile.
+    echo '    "node-pty": ["node-pty@1.2.3", "", {}],' > "\${@: -2:1}/bun.lock" ;;
   *"rev-parse HEAD"*) echo "$FAKE_REF" ;;
   *) : ;;
 esac`,

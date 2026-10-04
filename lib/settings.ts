@@ -70,6 +70,16 @@ export const DEFAULT_HOMEPAGE_CARDS: HomepageCardConfig[] = [
     enabled: true,
   },
   {
+    id: "workers",
+    title: "Digital Workers",
+    description:
+      "AI workers with goals and tools — scheduled, ad hoc or continuous",
+    href: "/workers",
+    icon: "UserCog",
+    color: "blue",
+    enabled: true,
+  },
+  {
     id: "code-server",
     title: "Code Editor",
     description: "VS Code in the browser via code-server",
@@ -400,6 +410,12 @@ export const DEFAULT_PLUGINS: PluginConfig[] = [
         maturity: "alpha",
       },
     ],
+  },
+  {
+    id: "workers",
+    name: "Workers",
+    description: "Digital workers: goals, tools, schedules",
+    maturity: "beta",
   },
   {
     id: "settings",
