@@ -1,16 +1,35 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import type { AgentEvent, AgentInstance } from "@/lib/agentview/types";
-import { formatAge, signalAgent, stripEnum } from "@/lib/agentview/client";
 import {
+  fetchEvents,
+  formatAge,
+  signalAgent,
+  type TerminalMode,
+} from "@/lib/agentview/client";
+import {
+  containerResumeReason,
   resumeCommand,
   resumeParams,
   resumeUnavailableReason,
 } from "@/lib/agentview/resume";
 import { buildTerminalWsUrl } from "@/lib/websocket-utils";
-import { breakinState, hasLiveProcess, type LastSignal } from "./breakin";
+import {
+  breakinState,
+  hasLiveProcess,
+  endEvidence,
+  LIFECYCLE_EVENT_TYPES,
+  NO_LIFECYCLE,
+  type LastSignal,
+} from "./breakin";
+
+/**
+ * Resume needs positive evidence the session's process ended; without it a
+ * resume could run beside the live process and fork the conversation.
+ */
+const CANNOT_TELL = "daax cannot tell whether this session is still running";
 
 // This existing terminal owns the ticketed WebSocket, xterm, input and cleanup.
 const Terminal = dynamic(
@@ -22,7 +41,8 @@ export interface BreakInProps {
   agent: AgentInstance;
   events: AgentEvent[];
   localNodeId: string;
-  terminalLocal: boolean;
+  /** From daax's node header; undefined when daax did not say. */
+  terminalMode?: TerminalMode;
   now: number;
   observationFailure?: string;
 }
@@ -31,7 +51,7 @@ export function BreakIn({
   agent,
   events,
   localNodeId,
-  terminalLocal,
+  terminalMode,
   now,
   observationFailure,
 }: BreakInProps) {
@@ -49,31 +69,97 @@ export function BreakIn({
         ? "the daemon has not reported whether control is available"
         : undefined;
   const live = hasLiveProcess(agent);
-  const passive = agent.state !== "AGENT_STATE_ACTIVE" || !live;
+  // In a take-over Interrupt ends the process so it can be resumed; the daemon's
+  // SIGINT ends Claude Code at its prompt as well as mid-turn. So a live process
+  // is enough, whatever the transcript says the session is doing.
   const interruptReason =
     observationFailure ||
     controlReason ||
-    (passive
-      ? agent.state !== "AGENT_STATE_ACTIVE"
-        ? `nothing to interrupt: this session is ${stripEnum(agent.state)}`
-        : "nothing to interrupt: no process has been observed for this session"
+    (!live
+      ? "nothing to interrupt: no live process has been observed for this session"
       : undefined);
   const command = resumeCommand(agent.agent_type, agent.session_id);
   const remoteReason =
     agent.node_id !== localNodeId
       ? `this session runs on ${agent.node_id}; daax's terminal opens a shell only on ${localNodeId}`
       : undefined;
+  const modeReason =
+    terminalMode === undefined
+      ? "daax did not report whether its terminal runs in host or container mode"
+      : terminalMode === "container"
+        ? containerResumeReason(agent.agent_type, agent.cwd)
+        : undefined;
+  // Fixed facts: nothing observed later can change them.
+  const fixedReason =
+    remoteReason ||
+    modeReason ||
+    (!command ? resumeUnavailableReason(agent.agent_type) : undefined) ||
+    (!agent.cwd ? "the daemon has not reported this session's cwd" : undefined);
+  // The agent process's own start/stop events, which the timeline's window may
+  // not reach. Re-read whenever the row's view of the process changes.
+  const [lifecycle, setLifecycle] = useState<
+    { events: AgentEvent[] } | { reason: string }
+  >();
+  const needsLifecycle = !live && !fixedReason;
+  useEffect(() => {
+    if (!needsLifecycle) return;
+    let current = true;
+    void fetchEvents({
+      sessionId: agent.session_id,
+      eventTypes: LIFECYCLE_EVENT_TYPES,
+      descending: true,
+      limit: 20,
+    }).then((result) => {
+      if (current)
+        setLifecycle(
+          result.ok
+            ? { events: result.data.events ?? [] }
+            : { reason: result.message },
+        );
+    });
+    return () => {
+      current = false;
+    };
+  }, [
+    needsLifecycle,
+    agent.session_id,
+    agent.state,
+    agent.agent_pid,
+    agent.process_alive,
+    lastSignal,
+  ]);
+  const observed =
+    lifecycle && "events" in lifecycle
+      ? [...events, ...lifecycle.events]
+      : events;
+  const evidence = endEvidence(agent, observed, lastSignal);
+  // With no start or stop at all, say why the daemon could not link one.
+  const vendorNote =
+    evidence.ended || evidence.why !== NO_LIFECYCLE
+      ? ""
+      : agent.agent_type === "codex"
+        ? "; for codex the daemon often cannot link a session to its process at all, so Resume waits for an observed exit"
+        : agent.agent_type === "claude"
+          ? "; it ties a Claude process to its session only when it was started with --session-id or --resume <id>, so a plain claude, claude -c or the picker cannot be linked"
+          : "";
+  const endedReason =
+    live || evidence.ended
+      ? undefined
+      : !lifecycle
+        ? "checking the daemon for whether this session's process has ended"
+        : "reason" in lifecycle
+          ? `${CANNOT_TELL}: the daemon's record of its process could not be read: ${lifecycle.reason}`
+          : `${CANNOT_TELL}: ${evidence.why}${vendorNote}`;
+  // Control governs signalling, not resuming: an ended session has no pid to
+  // signal and is exactly the one to resume. A live one would be forked.
+  const stillRunning = live
+    ? `this session's process is still running${agent.agent_pid !== undefined ? ` (pid ${agent.agent_pid})` : ""}; interrupt it first — two processes on one session would fork the conversation`
+    : undefined;
   const resumeReason =
     observationFailure ||
-    controlReason ||
-    remoteReason ||
-    (!terminalLocal
-      ? "daax is in container mode; this session's cwd is a host path"
-      : undefined) ||
-    (!command ? resumeUnavailableReason(agent.agent_type) : undefined) ||
-    (!agent.cwd
-      ? "the daemon has not reported this session's cwd"
-      : undefined) ||
+    stillRunning ||
+    fixedReason ||
+    endedReason ||
     terminalRefusal;
   const snapshot = (kind: LastSignal["kind"]): LastSignal => ({
     kind,
@@ -128,7 +214,7 @@ export function BreakIn({
       <p role="status" data-testid="agentview-breakin-state">
         {observationFailure
           ? `unknown, because ${observationFailure} · ${formatAge(agent.last_activity, now)}`
-          : breakinState(agent, events, lastSignal, now)}
+          : breakinState(agent, observed, lastSignal, now)}
       </p>
       {signalRefusal && (
         <p data-testid="agentview-signal-refusal">{signalRefusal}</p>

@@ -1,0 +1,341 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  cleanup,
+} from "@testing-library/react";
+// @ts-expect-error TS5097: explicit .tsx disambiguates BreakIn.tsx from breakin.ts on case-insensitive filesystems; both bundlers accept it.
+import { BreakIn, type BreakInProps } from "@/components/agentview/BreakIn.tsx";
+import type { AgentEvent, AgentInstance } from "@/lib/agentview/types";
+import {
+  ACTIVE_AGENT,
+  AGENT_STARTED_EVENT,
+  AGENT_STOPPED_EVENT,
+} from "./fixtures";
+
+// Resume is offered only once the session's process is known to have ended.
+// A row with no pid and no process_alive is also how the daemon shows a live
+// process it has not linked yet, so that row alone refuses.
+vi.mock("next/dynamic", () => ({
+  default:
+    () =>
+    ({ wsUrl }: { wsUrl: string }) => (
+      <div data-testid="resume-terminal" data-url={wsUrl} />
+    ),
+}));
+const fetchMock = vi.fn();
+const { process_alive: _alive, agent_pid: _pid, ...unlinked } = ACTIVE_AGENT;
+// As the daemon showed pid 14921 for its first minute: ACTIVE, nothing linked.
+const ambiguous: AgentInstance = {
+  ...unlinked,
+  capabilities: {
+    signals: {
+      control: {
+        level: "CAPABILITY_LEVEL_UNAVAILABLE",
+        detail:
+          "no process id is recorded for this agent, so there is nothing to signal",
+      },
+    },
+  },
+};
+const live: AgentInstance = {
+  ...ACTIVE_AGENT,
+  capabilities: {
+    signals: {
+      control: {
+        level: "CAPABILITY_LEVEL_LIMITED",
+        detail: "process signal; observed next poll",
+      },
+    },
+  },
+};
+const props: BreakInProps = {
+  agent: ambiguous,
+  events: [],
+  localNodeId: "chamonix-d5d8554e",
+  terminalMode: "host",
+  now: Date.parse("2026-09-08T14:00:30Z"),
+};
+const CANNOT_TELL =
+  "Resume here — daax cannot tell whether this session is still running: ";
+const NO_RECORD = `${CANNOT_TELL}the daemon has recorded no start or stop of its process; it ties a Claude process to its session only when it was started with --session-id or --resume <id>, so a plain claude, claude -c or the picker cannot be linked`;
+const SAW_START = (pid: number) =>
+  `${CANNOT_TELL}the daemon saw its process start (pid ${pid}) and has not seen it stop, but does not report it alive`;
+const reply = {
+  agent_id: "chamonix-d5d8554e/claude/4db77e81-4da9-4567-a755-ad316e8df7ba",
+  signal: "interrupt",
+  outcome: "sent",
+  recorded: true,
+  note: "effect learned on next poll",
+  event_id: "signal-1",
+};
+let lifecycle: AgentEvent[] = [];
+const lifecycleQueries = () =>
+  fetchMock.mock.calls.filter(([url]) =>
+    String(url).startsWith("/api/agentview/events"),
+  );
+beforeEach(() => {
+  lifecycle = [];
+  fetchMock.mockReset();
+  fetchMock.mockImplementation((url: string) =>
+    Promise.resolve(
+      new Response(
+        JSON.stringify(
+          String(url).startsWith("/api/agentview/events")
+            ? { events: lifecycle }
+            : reply,
+        ),
+        { status: 200 },
+      ),
+    ),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+describe("Resume waits for an observed end", () => {
+  it("refuses an ACTIVE row with no pid and no stop event, after asking the daemon", async () => {
+    lifecycle = [AGENT_STARTED_EVENT];
+    render(<BreakIn {...props} />);
+    expect(
+      screen.getByRole("button", {
+        name: "Resume here — checking the daemon for whether this session's process has ended",
+      }),
+    ).toBeDisabled();
+    expect(
+      await screen.findByRole("button", { name: SAW_START(40327) }),
+    ).toBeDisabled();
+    expect(lifecycleQueries()).toHaveLength(1);
+    expect(lifecycleQueries()[0][0]).toBe(
+      "/api/agentview/events?session_id=4db77e81-4da9-4567-a755-ad316e8df7ba&limit=20&descending=true&event_type=EVENT_TYPE_AGENT_STARTED&event_type=EVENT_TYPE_AGENT_STOPPED",
+    );
+  });
+
+  it("refuses when the daemon has no lifecycle event at all", async () => {
+    render(<BreakIn {...props} />);
+    expect(
+      await screen.findByRole("button", { name: NO_RECORD }),
+    ).toBeDisabled();
+  });
+
+  it("offers Resume with the exact params once the agent process's stop is the latest event", async () => {
+    lifecycle = [AGENT_STOPPED_EVENT, AGENT_STARTED_EVENT];
+    render(<BreakIn {...props} />);
+    const resume = await screen.findByRole("button", { name: "Resume here" });
+    expect(resume).toBeEnabled();
+    fireEvent.click(resume);
+    const terminal = await screen.findByTestId("resume-terminal");
+    expect(
+      Object.fromEntries(
+        new URL(terminal.getAttribute("data-url")!).searchParams,
+      ),
+    ).toEqual({
+      mode: "local",
+      cwd: "/home/dev/prj/jp/dist-agent",
+      command: "claude --resume 4db77e81-4da9-4567-a755-ad316e8df7ba",
+      sessionType: "resume",
+    });
+  });
+
+  it("refuses when a later start follows the stop", async () => {
+    lifecycle = [
+      {
+        ...AGENT_STARTED_EVENT,
+        event_id: "agent-start-2",
+        sequence: "1952000",
+        process_id: 50000,
+      },
+      AGENT_STOPPED_EVENT,
+      AGENT_STARTED_EVENT,
+    ];
+    render(<BreakIn {...props} />);
+    expect(
+      await screen.findByRole("button", { name: SAW_START(50000) }),
+    ).toBeDisabled();
+  });
+
+  it("refuses a live row with the still-running reason and never asks", async () => {
+    render(<BreakIn {...props} agent={live} />);
+    expect(
+      screen.getByRole("button", {
+        name: "Resume here — this session's process is still running (pid 40327); interrupt it first — two processes on one session would fork the conversation",
+      }),
+    ).toBeDisabled();
+    await waitFor(() => expect(lifecycleQueries()).toHaveLength(0));
+  });
+
+  it("offers Resume on this page after interrupted (observed), even while the row has lost its pid", async () => {
+    const { rerender } = render(<BreakIn {...props} agent={live} />);
+    fireEvent.click(screen.getByRole("button", { name: "Interrupt" }));
+    await screen.findByTestId("agentview-signal-reply");
+    const at = Date.now();
+    // The daemon's row goes pid-less straight after the exit; the exit event
+    // carries the signalled pid.
+    rerender(
+      <BreakIn
+        {...props}
+        now={at + 2000}
+        events={[
+          {
+            event_id: "process-exit-root",
+            sequence: "1951823",
+            event_type: "EVENT_TYPE_PROCESS_EXITED",
+            agent_id:
+              "chamonix-d5d8554e/claude/4db77e81-4da9-4567-a755-ad316e8df7ba",
+            session_id: "4db77e81-4da9-4567-a755-ad316e8df7ba",
+            node_id: "chamonix-d5d8554e",
+            process_id: 40327,
+            timestamp: new Date(at + 1000).toISOString(),
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByTestId("agentview-breakin-state")).toHaveTextContent(
+      /^interrupted \(observed\): process 40327 ended/,
+    );
+    expect(
+      await screen.findByRole("button", { name: "Resume here" }),
+    ).toBeEnabled();
+  });
+
+  it("a child's exit after the signal is neither an interrupt nor an end", async () => {
+    const { rerender } = render(<BreakIn {...props} agent={live} />);
+    fireEvent.click(screen.getByRole("button", { name: "Interrupt" }));
+    await screen.findByTestId("agentview-signal-reply");
+    const at = Date.now();
+    rerender(
+      <BreakIn
+        {...props}
+        now={at + 2000}
+        events={[
+          {
+            event_id: "process-exit-child",
+            sequence: "1951622",
+            event_type: "EVENT_TYPE_PROCESS_EXITED",
+            agent_id:
+              "chamonix-d5d8554e/claude/4db77e81-4da9-4567-a755-ad316e8df7ba",
+            session_id: "4db77e81-4da9-4567-a755-ad316e8df7ba",
+            node_id: "chamonix-d5d8554e",
+            process_id: 40390,
+            attributes: { agent_root_pid: "40327", process_name: "npm" },
+            timestamp: new Date(at + 1000).toISOString(),
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByTestId("agentview-breakin-state")).not.toHaveTextContent(
+      "interrupted",
+    );
+    expect(
+      await screen.findByRole("button", { name: NO_RECORD }),
+    ).toBeDisabled();
+  });
+
+  it("refuses a running Codex row the daemon cannot link to a process, and says why for codex", async () => {
+    // As agentd sends a codex row: no pid, no process_alive, and control
+    // UNAVAILABLE because codex hides its session id from the process table.
+    const codex: AgentInstance = {
+      ...ambiguous,
+      agent_type: "codex",
+      capabilities: {
+        signals: {
+          control: {
+            level: "CAPABILITY_LEVEL_UNAVAILABLE",
+            detail: "codex does not expose its session id to the process table",
+          },
+        },
+      },
+    };
+    render(<BreakIn {...props} agent={codex} />);
+    expect(
+      await screen.findByRole("button", {
+        name: `${CANNOT_TELL}the daemon has recorded no start or stop of its process; for codex the daemon often cannot link a session to its process at all, so Resume waits for an observed exit`,
+      }),
+    ).toBeDisabled();
+  });
+
+  it("offers a Codex session whose own stop was observed, with codex's resume command", async () => {
+    lifecycle = [AGENT_STOPPED_EVENT, AGENT_STARTED_EVENT];
+    render(
+      <BreakIn {...props} agent={{ ...ambiguous, agent_type: "codex" }} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Resume here" }));
+    const terminal = await screen.findByTestId("resume-terminal");
+    expect(
+      new URL(terminal.getAttribute("data-url")!).searchParams.get("command"),
+    ).toBe("codex resume 4db77e81-4da9-4567-a755-ad316e8df7ba");
+  });
+
+  it("process_alive false is not evidence: on the wire it is the same absence as cannot-tell", async () => {
+    render(
+      <BreakIn {...props} agent={{ ...ambiguous, process_alive: false }} />,
+    );
+    expect(
+      await screen.findByRole("button", { name: NO_RECORD }),
+    ).toBeDisabled();
+  });
+
+  it("a STOPPED state is silence, not an exit", async () => {
+    render(
+      <BreakIn
+        {...props}
+        agent={{ ...ambiguous, state: "AGENT_STATE_STOPPED" }}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: NO_RECORD }),
+    ).toBeDisabled();
+  });
+
+  it("refuses when the transcript moved after the observed stop: claude -c can reopen a session unseen", async () => {
+    // The stop at 22:25:40.647 is the latest lifecycle event, but records kept
+    // arriving a minute later from a process the daemon could not link.
+    lifecycle = [AGENT_STOPPED_EVENT, AGENT_STARTED_EVENT];
+    render(
+      <BreakIn
+        {...props}
+        agent={{ ...ambiguous, last_activity: "2026-09-07T22:26:40Z" }}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", {
+        name: `${CANNOT_TELL}the session's transcript has records after its process was seen to stop; another process may be running it`,
+      }),
+    ).toBeDisabled();
+  });
+
+  it("offers when the last record is within the slack of the stop", async () => {
+    lifecycle = [AGENT_STOPPED_EVENT, AGENT_STARTED_EVENT];
+    render(
+      <BreakIn
+        {...props}
+        agent={{ ...ambiguous, last_activity: "2026-09-07T22:25:44Z" }}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", { name: "Resume here" }),
+    ).toBeEnabled();
+  });
+
+  it("a claude --mcp-server helper's stop is not the session's process stopping", async () => {
+    lifecycle = [
+      {
+        ...AGENT_STOPPED_EVENT,
+        event_id: "helper-stop",
+        sequence: "1951900",
+        process_id: 40400,
+        attributes: { agent_type: "claude", role: "mcp-server" },
+      },
+      AGENT_STARTED_EVENT,
+    ];
+    render(<BreakIn {...props} />);
+    expect(
+      await screen.findByRole("button", { name: SAW_START(40327) }),
+    ).toBeDisabled();
+  });
+});

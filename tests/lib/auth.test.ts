@@ -19,7 +19,12 @@ vi.mock("next/server", () => ({
 }));
 
 // Import after mocks are set up
-import { getAuthUser, requireAuth, requireAuthOrThrow } from "@/lib/auth";
+import {
+  getAuthUser,
+  requireAuth,
+  requireAuthIdentity,
+  requireAuthOrThrow,
+} from "@/lib/auth";
 import { localOperatorBypassAllowed } from "@/lib/auth-trust";
 
 /**
@@ -114,7 +119,8 @@ describe("auth module", () => {
         email: "john@example.com",
         groups: ["admin", "developers", "testers"],
         authenticated: true,
-        pictureUrl: "https://auth.poley.dev/api/users/user-123-uuid/avatar",
+        // No DAAX_AUTH_PROVIDER_URL → no picture: there is no default IdP.
+        pictureUrl: null,
       });
     });
 
@@ -261,6 +267,10 @@ describe("auth module", () => {
     });
 
     describe("pictureUrl generation", () => {
+      beforeEach(() => {
+        process.env.DAAX_AUTH_PROVIDER_URL = "https://auth.galway.poley.dev";
+      });
+
       it("should generate picture URL with encoded user ID", async () => {
         mockHeaders.mockResolvedValue(
           createMockHeaders({
@@ -271,7 +281,7 @@ describe("auth module", () => {
         const user = await getAuthUser();
 
         expect(user.pictureUrl).toBe(
-          "https://auth.poley.dev/api/users/user%2Fwith%2Fslashes/avatar",
+          "https://auth.galway.poley.dev/api/users/user%2Fwith%2Fslashes/avatar",
         );
       });
 
@@ -285,8 +295,41 @@ describe("auth module", () => {
         const user = await getAuthUser();
 
         expect(user.pictureUrl).toBe(
-          "https://auth.poley.dev/api/users/user%40domain.com/avatar",
+          "https://auth.galway.poley.dev/api/users/user%40domain.com/avatar",
         );
+      });
+
+      it("has no picture when DAAX_AUTH_PROVIDER_URL is unset", async () => {
+        delete process.env.DAAX_AUTH_PROVIDER_URL;
+        mockHeaders.mockResolvedValue(
+          createMockHeaders({ "x-forwarded-user": "user-123-uuid" }),
+        );
+
+        const user = await getAuthUser();
+
+        expect(user.authenticated).toBe(true);
+        expect(user.pictureUrl).toBeNull();
+      });
+
+      it.each([
+        ["http, not https", "http://auth.galway.poley.dev"],
+        ["not a URL", "auth.galway.poley.dev"],
+        ["a path, not a bare origin", "https://auth.galway.poley.dev/api"],
+      ])("ignores a provider URL that is %s", async (_why, value) => {
+        process.env.DAAX_AUTH_PROVIDER_URL = value;
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        mockHeaders.mockResolvedValue(
+          createMockHeaders({ "x-forwarded-user": "user-123-uuid" }),
+        );
+
+        const user = await getAuthUser();
+
+        expect(user.authenticated).toBe(true);
+        expect(user.pictureUrl).toBeNull();
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining("DAAX_AUTH_PROVIDER_URL ignored"),
+        );
+        warn.mockRestore();
       });
 
       it("should return null pictureUrl when not authenticated", async () => {
@@ -1083,6 +1126,47 @@ describe("auth module with custom headers", () => {
       groups: ["group-a", "group-b"],
       authenticated: true,
       pictureUrl: "https://my-auth.test/api/users/my-user-id/avatar",
+    });
+  });
+
+  describe("requireAuthIdentity", () => {
+    it("returns the proven subject, canonicalised, not the display name", async () => {
+      process.env.DAAX_PROXY_SECRET = "proxy-proof";
+      mockHeaders.mockReturnValue(
+        createMockHeaders({
+          "x-forwarded-user": "62D9D61C-CAE1-49D0-AA94-FF34091199B7",
+          "x-forwarded-username": "jpoley",
+          "x-forwarded-name": "JP",
+          "x-forwarded-email": "jason.poley@gmail.com",
+          "x-daax-proxy-secret": "proxy-proof",
+        }),
+      );
+      const result = await requireAuthIdentity();
+      expect(result.authenticated).toBe(true);
+      if (!result.authenticated) return;
+      expect(result.operator).toBe(false);
+      expect(result.subject).toBe("62d9d61c-cae1-49d0-aa94-ff34091199b7");
+    });
+
+    it("the local-operator bypass is marked operator and has no subject", async () => {
+      vi.stubEnv("HOST", "127.0.0.1");
+      mockHeaders.mockReturnValue(createMockHeaders({}));
+      const result = await requireAuthIdentity();
+      expect(result.authenticated).toBe(true);
+      if (!result.authenticated) return;
+      expect(result.operator).toBe(true);
+      expect(result.subject).toBeNull();
+    });
+
+    it("a forwarded identity without the proxy proof is refused", async () => {
+      process.env.DAAX_PROXY_SECRET = "proxy-proof";
+      mockHeaders.mockReturnValue(
+        createMockHeaders({
+          "x-forwarded-user": "62d9d61c-cae1-49d0-aa94-ff34091199b7",
+        }),
+      );
+      const result = await requireAuthIdentity();
+      expect(result.authenticated).toBe(false);
     });
   });
 });

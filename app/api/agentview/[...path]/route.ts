@@ -122,9 +122,10 @@ export async function GET(
       ...NO_STORE_HEADERS,
       ...(path === "node"
         ? {
-            "X-Agentview-Terminal-Local": process.env.HOST_WORKSPACE_PATH
-              ? "0"
-              : "1",
+            // daax's own fact, carried beside the daemon's body.
+            "X-Agentview-Terminal-Mode": process.env.HOST_WORKSPACE_PATH
+              ? "container"
+              : "host",
           }
         : {}),
     },

@@ -64,17 +64,165 @@ const AGENT_ROUTE = /^\/api\/v1\/agents\/([^/]+)$/;
 // Control mode supplies the process/control fields absent from the recorded
 // transcript-only daemon. It models a live Claude process; it never signals an
 // operating-system process. --ends-on-signal explicitly models process exit.
+const FIXTURE_PID = 424242;
+
+const LIMITED_CONTROL = {
+  level: "CAPABILITY_LEVEL_LIMITED",
+  detail: "process signal; effect learned on the next poll",
+};
+const NO_PID_CONTROL = {
+  level: "CAPABILITY_LEVEL_UNAVAILABLE",
+  detail:
+    "no process id is recorded for this agent, so there is nothing to signal",
+};
+
+// Three rows control mode adds beside the recorded one, each shaped as agentd
+// sent it on 2026-09-26: a Claude session at its prompt (WAITING, alive, pid
+// set); a running Codex session agentd cannot link to a process (no pid, no
+// process_alive, control UNAVAILABLE in codex's words); and a Claude session
+// whose liveness tracker is stale, which ApplyLiveness leaves with no pid and
+// no process_alive — indistinguishable on the wire from an ended one.
+const WAITING_ID =
+  "chamonix-5d63c187/claude/7a2e4c19-5b3d-4e8f-9c61-0d4b2a8e3f57";
+const WAITING_PID = 424300;
+const CODEX_ID = "chamonix-5d63c187/codex/01a0dbdb-7e21-7c4a-9f3e-2b6d8c1a5e40";
+// A session daax resumed and saw stop, later reopened by `claude -c`: agentd
+// links a Claude process to its session only through --session-id or
+// --resume <id>, so the reopened process's AGENT_STARTED has no session id,
+// and the row has no pid or liveness while its transcript keeps advancing.
+const REOPENED_ID =
+  "chamonix-5d63c187/claude/5c9d2e71-8a43-4f06-b2d1-6e0f3a7c9b58";
+const STALE_ID =
+  "chamonix-5d63c187/claude/3d8f1b6a-2c47-4e90-a5d3-7b1e9c4f6a28";
+
+function syntheticRows(exits) {
+  const base = readFixture("agents").agents.find(
+    (agent) => agent.state === "AGENT_STATE_ACTIVE",
+  );
+  const row = (agentId, fields, control) => {
+    const [, agentType, sessionId] = agentId.split("/");
+    const out = structuredClone(base);
+    Object.assign(out, fields, {
+      agent_id: agentId,
+      agent_type: agentType,
+      session_id: sessionId,
+    });
+    out.capabilities.signals.control = control;
+    return out;
+  };
+  const waiting = exits.has(WAITING_ID)
+    ? row(WAITING_ID, { state: "AGENT_STATE_WAITING" }, NO_PID_CONTROL)
+    : row(
+        WAITING_ID,
+        {
+          state: "AGENT_STATE_WAITING",
+          process_alive: true,
+          agent_pid: WAITING_PID,
+          agent_process_started_at: "2026-09-07T22:05:00Z",
+        },
+        LIMITED_CONTROL,
+      );
+  return [
+    waiting,
+    row(
+      CODEX_ID,
+      { state: "AGENT_STATE_ACTIVE" },
+      {
+        level: "CAPABILITY_LEVEL_UNAVAILABLE",
+        detail: "codex does not expose its session id to the process table",
+      },
+    ),
+    row(STALE_ID, { state: "AGENT_STATE_ACTIVE" }, NO_PID_CONTROL),
+    row(
+      REOPENED_ID,
+      { state: "AGENT_STATE_ACTIVE", last_activity: "2026-09-07T22:20:00Z" },
+      NO_PID_CONTROL,
+    ),
+  ];
+}
+
+/** The reopened session's history: its own start and stop, then a sid-less start. */
+function reopenedEvents(control) {
+  if (!control) return [];
+  const last = Number(readFixture("events").last_sequence);
+  const [node, agentType, sessionId] = REOPENED_ID.split("/");
+  const common = {
+    node_id: node,
+    collector: "process",
+    attributes: { agent_type: agentType, role: "cli" },
+  };
+  return [
+    {
+      ...common,
+      event_id: "fixture-reopened-started",
+      sequence: String(last + 5),
+      event_type: "EVENT_TYPE_AGENT_STARTED",
+      agent_id: REOPENED_ID,
+      session_id: sessionId,
+      timestamp: "2026-09-07T22:00:00Z",
+      process_id: 424500,
+    },
+    {
+      ...common,
+      event_id: "fixture-reopened-stopped",
+      sequence: String(last + 6),
+      event_type: "EVENT_TYPE_AGENT_STOPPED",
+      agent_id: REOPENED_ID,
+      session_id: sessionId,
+      timestamp: "2026-09-07T22:10:00Z",
+      process_id: 424500,
+    },
+    {
+      ...common,
+      event_id: "fixture-reopened-unlinked",
+      sequence: String(last + 7),
+      event_type: "EVENT_TYPE_AGENT_STARTED",
+      agent_id: `${node}/claude/pid-424600`,
+      timestamp: "2026-09-07T22:12:00Z",
+      process_id: 424600,
+    },
+  ];
+}
+
+/** The agent process's own start, which agentd records for a live row. */
+function agentStarts(control) {
+  if (!control) return [];
+  const last = Number(readFixture("events").last_sequence);
+  const live = [
+    ...readFixture("agents")
+      .agents.filter((agent) => agent.state === "AGENT_STATE_ACTIVE")
+      .map((agent) => ({ ...agent, agent_pid: FIXTURE_PID })),
+    ...syntheticRows(new Map()).filter((agent) => agent.process_alive),
+  ];
+  return live.map((agent, i) => ({
+    event_id: `fixture-agent-started-${i}`,
+    sequence: String(last + 1 + i),
+    event_type: "EVENT_TYPE_AGENT_STARTED",
+    agent_id: agent.agent_id,
+    node_id: agent.node_id,
+    session_id: agent.session_id,
+    timestamp: "2026-09-07T22:00:00Z",
+    process_id: agent.agent_pid,
+    collector: "process",
+    attributes: { agent_type: agent.agent_type, role: "cli" },
+  }));
+}
+
 function controlAgents(name, control, refuseControl, exits) {
   const doc = readFixture(name);
   if (!control) return doc;
   for (const agent of doc.agents) {
     if (agent.state !== "AGENT_STATE_ACTIVE") continue;
     agent.process_alive = true;
-    agent.agent_pid = 424242;
+    agent.agent_pid = FIXTURE_PID;
     agent.agent_process_started_at = "2026-09-07T22:00:00Z";
     if (exits.has(agent.agent_id)) {
       delete agent.process_alive;
       delete agent.agent_pid;
+      // As a live daemon answered after an interrupt (2026-09-26): with no pid
+      // there is nothing to signal, and control says so.
+      agent.capabilities.signals.control = NO_PID_CONTROL;
+      continue;
     }
     agent.capabilities.signals.control = refuseControl
       ? {
@@ -82,11 +230,9 @@ function controlAgents(name, control, refuseControl, exits) {
           detail:
             "fixture control is unavailable: no authenticated signal target",
         }
-      : {
-          level: "CAPABILITY_LEVEL_LIMITED",
-          detail: "process signal; effect learned on the next poll",
-        };
+      : LIMITED_CONTROL;
   }
+  doc.agents.push(...syntheticRows(exits));
   return doc;
 }
 
@@ -152,16 +298,46 @@ function handle(
         });
       signals.push({ agent_id: id, body: parsed, headers: req.headers });
       if (endsOnSignal && !refuseControl) {
-        exits.set(id, {
-          event_id: `fixture-exit-${signals.length}`,
-          sequence: String(
-            Number(readFixture("events").last_sequence) + signals.length,
-          ),
-          event_type: "EVENT_TYPE_PROCESS_EXITED",
+        // As a live agentd reports an exit (2026-09-26): children of the
+        // agent's subtree exit under its id with their own pid, then the root
+        // exits and the agent process stops, both carrying the root pid.
+        const base =
+          Number(readFixture("events").last_sequence) + 10 * signals.length;
+        const at = new Date().toISOString();
+        const common = {
           agent_id: id,
           node_id: target.node_id,
           session_id: target.session_id,
-          timestamp: new Date().toISOString(),
+          timestamp: at,
+          collector: "process",
+        };
+        exits.set(`${id}#child`, {
+          ...common,
+          event_id: `fixture-exit-child-${signals.length}`,
+          sequence: String(base),
+          event_type: "EVENT_TYPE_PROCESS_EXITED",
+          process_id: target.agent_pid + 8,
+          parent_process_id: target.agent_pid,
+          attributes: {
+            agent_root_pid: String(target.agent_pid),
+            process_name: "npm",
+          },
+        });
+        exits.set(`${id}#root`, {
+          ...common,
+          event_id: `fixture-exit-${signals.length}`,
+          sequence: String(base + 1),
+          event_type: "EVENT_TYPE_PROCESS_EXITED",
+          process_id: target.agent_pid,
+          attributes: { process_name: "claude" },
+        });
+        exits.set(id, {
+          ...common,
+          event_id: `fixture-agent-stopped-${signals.length}`,
+          sequence: String(base + 2),
+          event_type: "EVENT_TYPE_AGENT_STOPPED",
+          process_id: target.agent_pid,
+          attributes: { agent_type: "claude", role: "cli" },
         });
       }
       return json(res, refuseControl ? 409 : 200, {
@@ -239,7 +415,7 @@ function handle(
   }
 
   if (p === "/api/v1/events")
-    return json(res, 200, events(url.searchParams, exits));
+    return json(res, 200, events(url.searchParams, exits, control));
 
   if (p === "/api/v1/stream") return stream(req, res, url.searchParams);
 
@@ -247,13 +423,18 @@ function handle(
 }
 
 /** Filters the recorded list the way the daemon's query parameters would. */
-function events(params, exits) {
+function events(params, exits, control) {
   const doc = readFixture("events");
-  let rows = [...doc.events, ...exits.values()];
+  const added = [
+    ...agentStarts(control),
+    ...reopenedEvents(control),
+    ...exits.values(),
+  ];
+  let rows = [...doc.events, ...added];
   const lastSequence = String(
     Math.max(
       Number(doc.last_sequence),
-      ...Array.from(exits.values(), (event) => Number(event.sequence)),
+      ...added.map((event) => Number(event.sequence)),
     ),
   );
 

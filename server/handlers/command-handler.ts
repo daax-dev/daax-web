@@ -10,9 +10,67 @@ import { IPty } from "../sessions/types";
 import { hasSession } from "../sessions/session-manager";
 
 /**
+ * Where the pty's shell runs. The /home/vscode/.local/share/pnpm paths below
+ * exist only in daax's agent image (user vscode). A `local` or `shell-tmux`
+ * pty runs where the terminal server runs — the operator's host, or the
+ * daax-web/terminal image, which runs as `node` and has no /home/vscode — so
+ * there the command is typed verbatim and the login shell's PATH resolves it.
+ */
+export type CommandTarget = "agent-container" | "local";
+
+/** mode=container is `docker run` or `docker exec` into a daax agent container. */
+export function commandTarget(mode: string): CommandTarget {
+  return mode === "container" ? "agent-container" : "local";
+}
+
+/**
  * Build the full command string, handling special cases for AI tools.
  */
-export function buildFullCommand(command: string): string {
+/**
+ * The absolute binaries a `local` pty types in place of a bare `claude` or
+ * `codex`, when the operator's launcher names them (deploy/host/daax-host.sh
+ * exports them resolved from the service's own PATH).
+ *
+ * A bare name is resolved by the operator's login shell, whose rc files reorder
+ * PATH per host: on kinsale 2026-09-26 `claude --resume` resolved to a pnpm
+ * global Claude Code 2.0.50 instead of the native 2.1.283, which ran the
+ * session on a stale build and — because it overwrites its own argv — hid
+ * `--resume <id>` from agentd, so the resumed session could never be observed.
+ *
+ * Read from this process's environment (the pty's is stripped of DAAX_*), and
+ * honoured only as an absolute path of plain characters: anything else is
+ * ignored rather than interpolated into a shell line.
+ */
+const HOST_BINARY_ENV: Record<string, string> = {
+  claude: "DAAX_HOST_CLAUDE_BIN",
+  codex: "DAAX_HOST_CODEX_BIN",
+};
+const SAFE_ABSOLUTE_PATH = /^\/[A-Za-z0-9._\/-]+$/;
+
+type Env = Readonly<Record<string, string | undefined>>;
+
+export function hostBinaryFor(
+  tool: string,
+  env: Env = process.env,
+): string | undefined {
+  const name = HOST_BINARY_ENV[tool];
+  const value = name ? env[name] : undefined;
+  return value && SAFE_ABSOLUTE_PATH.test(value) ? value : undefined;
+}
+
+function pinLocalBinary(command: string, env: Env): string {
+  const match = /^(claude|codex)(?=\s|$)/.exec(command);
+  if (!match) return command;
+  const bin = hostBinaryFor(match[1], env);
+  return bin ? bin + command.slice(match[1].length) : command;
+}
+
+export function buildFullCommand(
+  command: string,
+  target: CommandTarget,
+  env: Env = process.env,
+): string {
+  if (target === "local") return pinLocalBinary(command, env);
   if (/^herdr-claude(?:\s|$)/.test(command)) {
     const claudePath = "/home/vscode/.local/share/pnpm/claude";
     const claudeArgs = command.replace(/^herdr-claude\s*/, "");
@@ -97,6 +155,7 @@ export function scheduleCommand(
   sessionId: string,
   ptyProcess: IPty,
   ws: WebSocket,
+  target: CommandTarget,
 ): NodeJS.Timeout {
   // Track command execution to prevent duplicates (e.g., from React Strict Mode double-mount).
   // The commandSent guard protects against a specific edge case: if we later add reconnection
@@ -129,7 +188,7 @@ export function scheduleCommand(
     commandSent = true;
     console.log(`[terminal] Session ${sessionId}: Running command: ${command}`);
 
-    const fullCommand = buildFullCommand(command);
+    const fullCommand = buildFullCommand(command, target);
     ptyProcess.write(fullCommand + "\r");
   }, 1000); // Increased delay for shell initialization
 

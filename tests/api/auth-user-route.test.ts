@@ -19,7 +19,7 @@ describe("/api/auth/user", () => {
     email: "j@poley.dev",
     groups: ["admin"],
     authenticated: true,
-    pictureUrl: "https://auth.poley.dev/api/users/abc-123/avatar",
+    pictureUrl: "https://auth.galway.poley.dev/api/users/abc-123/avatar",
   };
 
   const unauthenticatedUser: AuthUser = {
@@ -65,6 +65,45 @@ describe("/api/auth/user", () => {
       expect(data.authenticated).toBe(false);
       expect(data.username).toBeNull();
       expect(data.email).toBeNull();
+    });
+  });
+
+  describe("logoutUrl", () => {
+    afterEach(() => {
+      delete process.env.DAAX_AUTH_LOGOUT_URL;
+    });
+
+    it("carries this host's logout URL from DAAX_AUTH_LOGOUT_URL", async () => {
+      process.env.DAAX_AUTH_LOGOUT_URL =
+        "https://auth.kinsale.poley.dev/logout";
+      vi.mocked(authModule.getAuthUser).mockResolvedValue(authenticatedUser);
+
+      const data = await (await GET()).json();
+
+      expect(data.logoutUrl).toBe("https://auth.kinsale.poley.dev/logout");
+      expect(data.username).toBe("jpoley");
+    });
+
+    it("is null when DAAX_AUTH_LOGOUT_URL is unset", async () => {
+      delete process.env.DAAX_AUTH_LOGOUT_URL;
+      vi.mocked(authModule.getAuthUser).mockResolvedValue(authenticatedUser);
+
+      const data = await (await GET()).json();
+
+      expect(data).toHaveProperty("logoutUrl", null);
+    });
+
+    it("is null when DAAX_AUTH_LOGOUT_URL is not https", async () => {
+      process.env.DAAX_AUTH_LOGOUT_URL = "http://auth.kinsale.poley.dev/logout";
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.mocked(authModule.getAuthUser).mockResolvedValue(authenticatedUser);
+
+      const data = await (await GET()).json();
+
+      expect(data).toHaveProperty("logoutUrl", null);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("DAAX_AUTH_LOGOUT_URL ignored"),
+      );
     });
   });
 

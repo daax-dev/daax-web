@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { IncomingMessage } from "http";
 
 import {
@@ -66,6 +66,31 @@ describe("authenticateConnection (F1b, #95)", () => {
     if (d.ok) {
       expect(d.user).toBe("alice");
       expect(d.method).toBe("forwarded");
+    }
+  });
+
+  it("admits an operator-declared DAAX_EXTRA_ALLOWED_ORIGINS origin, and only when declared", () => {
+    const upgrade = () =>
+      authenticateConnection(
+        makeReq({
+          origin: "https://daax-host.chamonix.poley.dev",
+          remoteAddress: LOOPBACK,
+          forwardedUser: "alice",
+        }),
+      );
+    try {
+      vi.stubEnv("DAAX_EXTRA_ALLOWED_ORIGINS", undefined);
+      expect(upgrade()).toMatchObject({
+        ok: false,
+        reason: "origin not allowed",
+      });
+      vi.stubEnv(
+        "DAAX_EXTRA_ALLOWED_ORIGINS",
+        "https://daax-host.chamonix.poley.dev",
+      );
+      expect(upgrade()).toMatchObject({ ok: true, user: "alice" });
+    } finally {
+      vi.unstubAllEnvs();
     }
   });
 

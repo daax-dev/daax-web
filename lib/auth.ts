@@ -23,6 +23,7 @@ import {
 } from "./rbac/permissions";
 import { jitProvision, writeAudit } from "./rbac/store";
 import { isDbConfigured } from "./db/config";
+import { idpOrigin } from "./idp-urls";
 
 export type { AuthUser };
 export { UNAUTHENTICATED_USER };
@@ -105,6 +106,40 @@ export async function requireAuth(): Promise<AuthResult> {
 }
 
 /**
+ * Result of {@link requireAuthIdentity}: the authenticated user plus the trusted
+ * subject, the only attribute an authorization decision may key on.
+ */
+export type IdentityResult =
+  | {
+      authenticated: true;
+      user: AuthUser;
+      /** The local-operator bypass: trusted, but with no subject. */
+      operator: boolean;
+      /** The trusted Pocket ID subject; null for the local operator. */
+      subject: string | null;
+    }
+  | { authenticated: false; response: NextResponse };
+
+/**
+ * Like {@link requireAuth}, but also returns the trusted subject rather than only
+ * the display-oriented `AuthUser`, so a caller can make an authorization
+ * decision keyed on the subject.
+ */
+export async function requireAuthIdentity(): Promise<IdentityResult> {
+  const h = await headers();
+  const ctx = deriveAuthContext(h);
+  const decision = evaluateAuthDecisionFromContext(ctx);
+  if (decision.decision === "deny")
+    return { authenticated: false, response: deny401() };
+  return {
+    authenticated: true,
+    user: decision.user,
+    operator: decision.decision === "allow-operator",
+    subject: ctx.subject,
+  };
+}
+
+/**
  * Simple authentication check that throws if not authenticated.
  * Use this when you want to fail fast without handling the response yourself.
  *
@@ -158,7 +193,9 @@ function auditNet(h: Awaited<ReturnType<typeof headers>>): {
   return { ip, ua: h.get("user-agent") };
 }
 
-const IDP = process.env.DAAX_AUTH_PROVIDER_URL || "pocket-id";
+// Label recorded on the users row (not a key, not sent to the browser): the
+// validated provider origin when one is configured, else a generic name.
+const idpLabel = (): string => idpOrigin() ?? "pocket-id";
 
 function deny403(message: string): NextResponse {
   return NextResponse.json({ error: "Forbidden", message }, { status: 403 });
@@ -286,7 +323,7 @@ export async function requireRole(
       username: ctx.rawUsername,
       email: ctx.user.email,
       name: ctx.displayName,
-      idp: IDP,
+      idp: idpLabel(),
       groups: ctx.user.groups,
     });
     roles = jit.roles;
@@ -395,7 +432,7 @@ export async function resolveAccess(): Promise<AccessSummary> {
       username: ctx.rawUsername,
       email: ctx.user.email,
       name: ctx.displayName,
-      idp: IDP,
+      idp: idpLabel(),
       groups: ctx.user.groups,
     });
     return {

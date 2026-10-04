@@ -283,6 +283,7 @@ phase_preflight() {
   fi
 
   assert_required_secrets || fail preflight "required secret(s) missing/empty for target '$ENV_NAME'"
+  assert_idp_config || fail preflight "DAAX_REQUIRE_AUTH=1 needs DAAX_AUTH_PROVIDER_URL and DAAX_AUTH_LOGOUT_URL (this host's own Pocket ID) for target '$ENV_NAME'"
   # Agent View over the tailnet is ONE configuration of three settings, checked
   # as a set: an https AGENTVIEW_DAEMON_URL, AGENTVIEW_DAEMON_TOKEN_FILE inside
   # the /run/agentview mount, and AGENTVIEW_TOKEN_HOST_DIR as that mount's host
@@ -316,6 +317,46 @@ phase_preflight() {
     # final newline is refused like any other second line.
     python3 -c 'import re,sys; sys.exit(0 if re.fullmatch(r"[A-Za-z0-9_-]{16,512}\n?", open(sys.argv[1]).read()) else 1)' "$tok_host" \
       || fail preflight "the Agent View token at $tok_host is not one session token — re-run deploy/host/agentview-token-renew.sh"
+  fi
+  # Agent View's Interrupt signs with agentd's proxy proof secret: a host file
+  # (AGENTD_PROXY_SECRET_HOST_FILE) bound read-only at /run/secrets/agentd-proxy,
+  # and AGENTVIEW_DAEMON_PROXY_SECRET_FILE naming it. Checked as a pair, like the
+  # token above: the host half alone mounts a secret nothing reads, and the
+  # container half alone points at /dev/null. The file must already exist —
+  # docker would create a missing bind source as a root-owned DIRECTORY — and be
+  # what the runtime accepts (lib/agentview/server.ts readProxySecret): a regular
+  # file, owned by the uid the container reads it as, private to it, holding one
+  # non-empty line. Unset, nothing is checked and Interrupt answers its 503.
+  if [[ -n "${AGENTD_PROXY_SECRET_HOST_FILE:-}" || -n "${AGENTVIEW_DAEMON_PROXY_SECRET_FILE:-}" ]]; then
+    local sec_uid="${DAAX_AGENTVIEW_TOKEN_UID:-1000}" sec_host="${AGENTD_PROXY_SECRET_HOST_FILE:-}" sec_meta
+    [[ "${AGENTVIEW_DAEMON_PROXY_SECRET_FILE:-}" == /run/secrets/agentd-proxy ]] \
+      || fail preflight "AGENTVIEW_DAEMON_PROXY_SECRET_FILE must be /run/secrets/agentd-proxy, where AGENTD_PROXY_SECRET_HOST_FILE is mounted (got '${AGENTVIEW_DAEMON_PROXY_SECRET_FILE:-}')"
+    [[ "$sec_host" == /* && -f "$sec_host" && ! -L "$sec_host" ]] \
+      || fail preflight "AGENTD_PROXY_SECRET_HOST_FILE must be an existing regular file, not a symlink: '$sec_host' (agentd's --trusted-proxy-secret-file, e.g. /home/<user>/.dist-agent/proxy.secret)"
+    sec_meta="$(stat -c '%u %a' "$sec_host" 2>/dev/null || stat -f '%u %Lp' "$sec_host")"
+    [[ "$sec_meta" =~ ^${sec_uid}\ (600|400)$ ]] \
+      || fail preflight "AGENTD_PROXY_SECRET_HOST_FILE must be owned by uid $sec_uid (the container's node), mode 0600 or 0400 (found: $sec_meta)"
+    # The value is never printed.
+    python3 -c 'import sys; s=open(sys.argv[1]).read().strip(); sys.exit(0 if s and "\n" not in s and "\r" not in s else 1)' "$sec_host" \
+      || fail preflight "AGENTD_PROXY_SECRET_HOST_FILE does not hold one non-empty secret line: $sec_host"
+  fi
+  # daax-postgres publishes 127.0.0.1:${DAAX_PG_HOST_PORT:-5433} (for the
+  # host-mode daax). A port somebody else holds would fail `compose up` after
+  # capture — or, if the holder is another Postgres, hand host mode the wrong
+  # server — so it must be free or already daax-postgres's. On galway 5433 is
+  # ironclaw-pg's. Docker names a container holder; a listener docker does not
+  # know is a host process.
+  local pg_port="${DAAX_PG_HOST_PORT:-5433}" pg_holder
+  if [[ ! "$pg_port" =~ ^[1-9][0-9]{0,4}$ ]] || ((pg_port > 65535)); then
+    fail preflight "DAAX_PG_HOST_PORT must be a port number (got '$pg_port')"
+  fi
+  pg_holder="$("$DOCKER_BIN" ps --filter "publish=$pg_port" --format '{{.Names}}' 2>/dev/null)" \
+    || fail preflight "cannot ask docker which container publishes port $pg_port"
+  pg_holder="$(printf '%s' "$pg_holder" | paste -sd, -)"
+  if [[ -n "$pg_holder" && "$pg_holder" != daax-postgres ]]; then
+    fail preflight "127.0.0.1:$pg_port (DAAX_PG_HOST_PORT) is published by container(s): $pg_holder — not daax-postgres. Choose a free port in deploy/env/$ENV_NAME.env"
+  elif [[ -z "$pg_holder" ]] && (exec 3<>"/dev/tcp/127.0.0.1/$pg_port") 2>/dev/null; then
+    fail preflight "127.0.0.1:$pg_port (DAAX_PG_HOST_PORT) is held by a process that is not a container (find it: ss -ltnp 'sport = :$pg_port'). Choose a free port in deploy/env/$ENV_NAME.env"
   fi
   assert_code_server_image "$BUILD_CODE_SERVER" || fail preflight "code-server image preflight failed"
   # NOTE: no managed-Postgres reachability gate here. Managed mode (DAAX_PG_MANAGED=1)
@@ -500,6 +541,102 @@ phase_health() {
   ok "health check passed"
 }
 
+# --- boot starter ----------------------------------------------------------------
+# galway (only) still has the pre-fleet /etc/systemd/system/daax.service: root,
+# enabled, `docker compose up -d daax --no-build --remove-orphans` in /opt/daax
+# with EnvironmentFile=/opt/daax/.env, where /opt/daax/docker-compose.yml is a
+# one-line `include:` of THIS compose file. Same compose project ("daax"), so at
+# every boot it recreated the stack from /opt/daax/.env instead of the env file
+# and secrets this script deploys with: no DAAX_IMAGE (so :latest), no
+# AGENTVIEW_* (Agent View broken; 2026-09-24).
+#
+# The unit cannot be changed without sudo; its inputs can. /opt/daax/.env is
+# rewritten, after a successful deploy, with exactly the variables this compose
+# file interpolates as this deploy exported them. It is the one input that
+# reaches both halves of the boot run: systemd loads it into compose's process
+# environment AND compose reads it as the project .env. An `include:` with its
+# own env_file would lose — process environment beats env_file in compose
+# interpolation, so the stale unit-loaded keys would still win.
+#
+# Values are written single-quoted, which systemd's EnvironmentFile and
+# compose's dotenv both take literally (no $, no escapes). A value either
+# parser could read differently (', \, newline) is refused and the file left
+# alone. Values are never printed. Idempotent: an identical file is not
+# rewritten. Written only after health passes, so a rolled-back deploy leaves
+# the starter pointing at what is still running.
+BOOT_STARTER_DIR="${DAAX_BOOT_STARTER_DIR:-/opt/daax}"
+
+phy_path() { (cd -- "$(dirname -- "$1")" 2>/dev/null && printf '%s/%s\n' "$(pwd -P)" "$(basename -- "$1")"); }
+
+phase_boot_starter() {
+  local dir="$BOOT_STARTER_DIR" pointer env_out target want lines
+  pointer="$dir/docker-compose.yml"
+  env_out="$dir/.env"
+  if [[ ! -e "$dir" ]]; then
+    deploy_log "$LOGFILE" "$ENV_NAME" "boot-starter" "ok" "no $dir; nothing to align"
+    return 0
+  fi
+  # Only the exact shape: `include:` and one `- <path>` naming this compose file.
+  lines="$(grep -vE '^[[:space:]]*(#|$)' "$pointer" 2>/dev/null || true)"
+  if [[ ! "$lines" =~ ^include:[[:space:]]*$'\n'[[:space:]]*-[[:space:]]+([^[:space:]]+)[[:space:]]*$ ]]; then
+    err "boot starter: $pointer is not a one-line include pointer; left untouched — a reboot may start a stack this deploy did not configure"
+    deploy_log "$LOGFILE" "$ENV_NAME" "boot-starter" "skipped" "$pointer is not an include pointer; untouched"
+    return 0
+  fi
+  target="$(phy_path "${BASH_REMATCH[1]}")"
+  want="$(phy_path "$COMPOSE_FILE")"
+  if [[ "$target" != "$want" ]]; then
+    err "boot starter: $pointer includes $target, not this checkout's $want; left untouched"
+    deploy_log "$LOGFILE" "$ENV_NAME" "boot-starter" "skipped" "pointer names another checkout ($target); untouched"
+    return 0
+  fi
+
+  # Every variable the compose file interpolates (not $${…}, the container
+  # shell's), written only if this deploy has it set: unset stays unset.
+  local names name body="" n=0
+  names="$(grep -oE '(^|[^$])\$\{[A-Za-z_][A-Za-z0-9_]*' "$COMPOSE_FILE" | sed -E 's/.*\$\{//' | sort -u || true)"
+  body="# Written by scripts/deploy.sh ($ENV_NAME) after a successful deploy: the
+# environment it deployed with, for /etc/systemd/system/daax.service at boot.
+# Contains secrets. Regenerated on every deploy; do not edit.
+"
+  for name in $names; do
+    # Build args only, and BUILD_TIME differs on every run: the boot run is
+    # --no-build, and writing them would make every deploy a rewrite.
+    case "$name" in VERSION | GIT_SHA | BUILD_TIME) continue ;; esac
+    [[ -n "${!name+x}" ]] || continue
+    case "${!name}" in
+      *"'"* | *\\* | *$'\n'* | *$'\r'*)
+        err "boot starter: $name holds a character systemd and compose would parse differently; $env_out left untouched"
+        deploy_log "$LOGFILE" "$ENV_NAME" "boot-starter" "fail" "$name not representable; $env_out untouched"
+        return 0 ;;
+    esac
+    body+="$name='${!name}'"$'\n'
+    n=$((n + 1))
+  done
+
+  if [[ -f "$env_out" ]] && [[ "$(cat "$env_out" 2>/dev/null)"$'\n' == "$body" ]]; then
+    ok "boot starter: $env_out already matches this deploy ($n variables)"
+    deploy_log "$LOGFILE" "$ENV_NAME" "boot-starter" "ok" "$env_out unchanged ($n variables)"
+    return 0
+  fi
+  local tmp
+  if [[ -w "$dir" ]]; then
+    tmp="$(umask 077 && mktemp "$dir/.env.XXXXXX")" || tmp=""
+  fi
+  if [[ -n "${tmp:-}" ]] && printf '%s' "$body" >"$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$env_out"; then
+    :
+  elif [[ -f "$env_out" && -w "$env_out" && -O "$env_out" ]] && chmod 600 "$env_out" && (umask 077 && printf '%s' "$body" >"$env_out"); then
+    : # directory not writable, file ours: made private FIRST, then rewritten
+  else
+    [[ -n "${tmp:-}" ]] && rm -f "$tmp"
+    err "boot starter: cannot write $env_out as $(id -un); a reboot will start daax from the old file. Fix once: sudo chown $(id -un) $dir $env_out"
+    deploy_log "$LOGFILE" "$ENV_NAME" "boot-starter" "fail" "cannot write $env_out"
+    return 0
+  fi
+  ok "boot starter: wrote $env_out (0600, $n variables, values not shown) — daax.service now boots what this deploy ran"
+  deploy_log "$LOGFILE" "$ENV_NAME" "boot-starter" "ok" "wrote $env_out ($n variables)"
+}
+
 run_deploy() {
   deploy_log "$LOGFILE" "$ENV_NAME" "start" "ok" "deploy started (workspace=$DAAX_WORKSPACE, pg_managed=${DAAX_PG_MANAGED:-0})"
   phase_preflight
@@ -509,6 +646,9 @@ run_deploy() {
   phase_migrate
   phase_up
   phase_health
+  # After health, and never able to fail the deploy: it has succeeded, and an
+  # error here (inside `||`, so no ERR trap) must not roll back a healthy stack.
+  phase_boot_starter || err "boot starter: unexpected error; $BOOT_STARTER_DIR/.env not verified"
   deploy_log "$LOGFILE" "$ENV_NAME" "done" "ok" "deploy succeeded"
   # Successful deploy: the rollback baseline is spent — clean up a self-created
   # (mktemp) statefile; an operator-provided DAAX_ROLLBACK_STATE is left alone.
