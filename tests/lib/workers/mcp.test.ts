@@ -1,4 +1,12 @@
-import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterAll,
+  afterEach,
+} from "vitest";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -330,5 +338,50 @@ rl.on("line", (l) => {
         env: {},
       }),
     ).rejects.toThrow(/failed to start|exited/);
+  });
+});
+
+describe("listServerTools (http)", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("completes the handshake (notifications/initialized) before tools/list", async () => {
+    const methods: string[] = [];
+    let initialized = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: { body: string }) => {
+        const msg = JSON.parse(init.body);
+        methods.push(msg.method);
+        const headers = { "mcp-session-id": "s1" };
+        if (msg.method === "notifications/initialized") {
+          initialized = true;
+          return new Response(null, { status: 202, headers });
+        }
+        if (msg.method === "tools/list" && !initialized) {
+          return Response.json(
+            { jsonrpc: "2.0", id: msg.id, error: { code: -32002 } },
+            { headers },
+          );
+        }
+        const result =
+          msg.method === "tools/list" ? { tools: [{ name: "task_list" }] } : {};
+        return Response.json(
+          { jsonrpc: "2.0", id: msg.id, result },
+          { headers },
+        );
+      }),
+    );
+    const tools = await listServerTools({
+      id: "remote",
+      type: "http",
+      url: "https://r.example/mcp",
+      env: {},
+    });
+    expect(methods).toEqual([
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+    ]);
+    expect(tools).toEqual([{ name: "task_list", readOnly: true }]);
   });
 });

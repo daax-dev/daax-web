@@ -350,6 +350,11 @@ async function listViaHttp(
       clientInfo: { name: "daax-workers", version: "1" },
     },
   });
+  // Servers that enforce the handshake reject tools/list until this is sent.
+  await post(
+    { jsonrpc: "2.0", method: "notifications/initialized" },
+    init.sessionId,
+  );
   const list = await post(
     { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
     init.sessionId,

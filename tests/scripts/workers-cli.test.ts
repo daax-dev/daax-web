@@ -349,6 +349,24 @@ describe("logs --follow", () => {
     expect(h.deps.sleep).not.toHaveBeenCalled();
   });
 
+  it("logs without --follow drains every page (hasMore)", async () => {
+    const pages = [
+      {
+        run: run("succeeded"),
+        events: [event(0, "a"), event(1, "b")],
+        hasMore: true,
+      },
+      { run: run("succeeded"), events: [event(2, "c")], hasMore: false },
+    ];
+    let i = 0;
+    const h = harness(() => ({ body: pages[i++] }));
+    expect(await runCli(["logs", RUN_ID], h.deps)).toBe(0);
+    const afters = h.calls.map((c) => new URL(c.url).searchParams.get("after"));
+    expect(afters).toEqual(["-1", "1"]);
+    expect(h.out.join("\n")).toContain("c");
+    expect(h.out.join("\n").split("\n")).toHaveLength(3);
+  });
+
   it("followRun returns the terminal run and exits 1 for cancelled", async () => {
     const h = harness(() => ({ body: { run: run("cancelled"), events: [] } }));
     const client = new Client(DEFAULT_URL, null, h.deps.fetch);

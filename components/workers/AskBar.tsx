@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Send, Volume2, VolumeX } from "lucide-react";
+import { Send, Square, Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { VoiceInput } from "@/components/ui/voice-input";
@@ -159,6 +159,15 @@ export function AskBar({
         >
           <Send className="h-4 w-4" />
         </Button>
+        {active && (
+          <Button
+            variant="outline"
+            onClick={() => void submit("stop", "adhoc")}
+            aria-label="Stop the run"
+          >
+            <Square className="h-4 w-4" />
+          </Button>
+        )}
         <Button
           variant="outline"
           onClick={toggleSpeak}

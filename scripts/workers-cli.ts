@@ -395,9 +395,22 @@ async function execute(p: ParsedArgs, c: Client, d: Deps): Promise<number> {
     case "logs": {
       need(args, 1, "logs <run-id> [--follow]");
       if (flags.follow !== true) {
-        return show<RunEvents>(runPath(args[0]), (r) =>
-          r.events.map(formatEvent).join("\n"),
-        );
+        // Drain every page: a single response is capped (hasMore).
+        const events: RunEvents["events"] = [];
+        let after = -1;
+        for (;;) {
+          const page = await c.request<RunEvents>(
+            "GET",
+            `${runPath(args[0])}?after=${after}`,
+          );
+          events.push(...page.events);
+          if (!page.hasMore || page.events.length === 0) {
+            return emit({ ...page, events }, (r) =>
+              r.events.map(formatEvent).join("\n"),
+            );
+          }
+          after = page.events[page.events.length - 1].seq;
+        }
       }
       const final = await followRun(c, args[0], {
         sleep: d.sleep,

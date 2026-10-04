@@ -116,4 +116,17 @@ describe("AskBar", () => {
     expect(await screen.findByText(/All on track/)).toBeInTheDocument();
     expect(api.startRun).not.toHaveBeenCalled();
   });
+
+  it("keeps a Stop button reachable while a run is active", async () => {
+    api.startRun.mockResolvedValue({ run: { ...run, status: "running" } });
+    api.run.mockResolvedValue({
+      run: { ...run, status: "running" },
+      events: [],
+    });
+    api.cancelRun.mockResolvedValue({ cancelled: true });
+    render(<AskBar {...props} />);
+    fireEvent.click(screen.getByText("say question"));
+    fireEvent.click(await screen.findByLabelText("Stop the run"));
+    await waitFor(() => expect(api.cancelRun).toHaveBeenCalledWith(run.id));
+  });
 });
