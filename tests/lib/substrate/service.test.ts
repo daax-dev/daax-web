@@ -169,6 +169,35 @@ describe("createSession", () => {
     expect((await store.get(res.body.id))?.state).toBe("ended");
   });
 
+  it("an End racing the create's final read is not deferred to a finished create (Codex r7)", async () => {
+    const { deps, backend, store, settle } = makeDeps();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    backend.spawn.mockImplementationOnce(async (spec) => {
+      await spec.onActorCreated?.();
+      throw new Error("egress policy rejected");
+    });
+    // Pause provisioning's final read after it captured `error`, and run
+    // End before the snapshot is returned.
+    const realGet = store.get.bind(store);
+    let gets = 0;
+    let endDone!: Promise<unknown>;
+    vi.spyOn(store, "get").mockImplementation(async (id: string) => {
+      const snap = await realGet(id);
+      if (snap?.state === "error" && gets++ === 0) {
+        endDone = endSession(deps, ALICE, id);
+        await endDone;
+      }
+      return snap;
+    });
+    const res = await createSession(deps, ALICE, { agent: "claude" });
+    if (!res.ok) throw new Error("expected ok");
+    await settle();
+    const end = (await endDone) as { ok: boolean; body?: { state: string } };
+    expect(end.ok && end.body?.state).toBe("ended");
+    expect((await realGet(res.body.id))?.state).toBe("ended");
+    expect(backend.stop).toHaveBeenLastCalledWith(res.body.actorName);
+  });
+
   it("End during a create that collides never deletes the taken actor", async () => {
     let reject!: (e: Error) => void;
     const { deps, backend, settle } = makeDeps();

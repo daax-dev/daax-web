@@ -257,8 +257,12 @@ export async function createSession(
         }
       }
     } finally {
-      // Settle an End that deferred to this create (202 `ending`) on any
-      // path that did not finalize it, e.g. one that arrived during a
+      // Stop deferring first: any End from here on does its own cleanup
+      // (Codex r7: an End landing during the final read below would
+      // otherwise be deferred to a create that is already done).
+      inFlight.delete(session.id);
+      // Then settle an End that deferred to this create (202 `ending`) on
+      // any path that did not finalize it, e.g. one that arrived during a
       // failed create's cleanup. Deletes only an owned actor (idempotent).
       try {
         const row = await deps.store.get(session.id);
@@ -271,8 +275,6 @@ export async function createSession(
         }
       } catch (err) {
         logFailure("settle end", session.id, err);
-      } finally {
-        inFlight.delete(session.id);
       }
     }
   })();
