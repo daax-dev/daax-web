@@ -135,3 +135,40 @@ describe("resolveTemplate", () => {
     ).toBeNull();
   });
 });
+
+describe("gateway Secret config (dx#123 provider keys)", () => {
+  it("is absent unless DAAX_SUBSTRATE_GATEWAY_NAMESPACE is set", () => {
+    const r = resolveSubstrateConfig(base);
+    expect(r.enabled && "config" in r && r.config.gateway).toBeUndefined();
+  });
+
+  it("defaults the Secret, Deployment and kubectl names", () => {
+    const r = resolveSubstrateConfig({
+      ...base,
+      DAAX_SUBSTRATE_GATEWAY_NAMESPACE: "kinsale-harness",
+    });
+    expect(r.enabled && "config" in r && r.config.gateway).toEqual({
+      namespace: "kinsale-harness",
+      secret: "llm-upstream",
+      deployment: "llm",
+      kubectlBin: "kubectl",
+    });
+  });
+
+  it("rejects invalid Kubernetes names", () => {
+    for (const [k, v] of [
+      ["DAAX_SUBSTRATE_GATEWAY_NAMESPACE", "Bad_NS"],
+      ["DAAX_SUBSTRATE_GATEWAY_SECRET", "a/b"],
+      ["DAAX_SUBSTRATE_GATEWAY_DEPLOYMENT", "-x"],
+    ]) {
+      const r = resolveSubstrateConfig({
+        ...base,
+        DAAX_SUBSTRATE_GATEWAY_NAMESPACE: "ns",
+        [k]: v,
+      });
+      expect(r.enabled && "error" in r && r.error).toMatch(
+        /valid Kubernetes names/,
+      );
+    }
+  });
+});

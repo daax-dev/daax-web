@@ -11,6 +11,7 @@ import { NextRequest } from "next/server";
 import { requireAuthIdentity } from "@/lib/auth";
 import { endSession, getSession } from "@/lib/substrate/service";
 import {
+  audited,
   callerFrom,
   respond,
   serverError,
@@ -41,7 +42,16 @@ export async function DELETE(_req: NextRequest, { params }: Ctx) {
   const who = await callerFrom(auth);
   if (!who.ok) return who.response;
   try {
-    return respond(await endSession(ctx.deps, who.caller, (await params).id));
+    const id = (await params).id;
+    return respond(
+      await audited(
+        who.caller,
+        "substrate.end",
+        "/api/substrate/sessions/:id",
+        await endSession(ctx.deps, who.caller, id),
+        id,
+      ),
+    );
   } catch (err) {
     return serverError(err);
   }

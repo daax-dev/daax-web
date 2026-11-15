@@ -77,6 +77,17 @@ export class MemoryStore {
     const r = this.rows.get(id);
     if (r && r.actorName === actorName) r.actorOwned = true;
   }
+  async updateEgress(
+    id: string,
+    states: readonly SessionState[],
+    presets: string[],
+    hosts: string[],
+  ) {
+    const r = this.rows.get(id);
+    if (!r || r.endedAt || !states.includes(r.state)) return null;
+    Object.assign(r, { egressPresets: presets, egressHosts: hosts });
+    return { ...r };
+  }
   async markEnded(id: string) {
     const r = this.rows.get(id);
     if (r && !r.endedAt) Object.assign(r, { state: "ended", endedAt: "now" });
@@ -102,6 +113,7 @@ export function fakeBackend() {
         }>,
     ),
     state: vi.fn(async () => ({ name: "x", template: "t", state: "RUNNING" })),
+    setEgress: vi.fn(async (_actor: string, _hosts: string[]) => {}),
   };
 }
 
