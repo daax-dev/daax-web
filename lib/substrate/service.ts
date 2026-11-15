@@ -446,7 +446,8 @@ export async function endSession(
   // A create still running in this process finishes the End itself (it
   // knows what it made). Answer 202 `ending`; the record closes once the
   // actor is gone, or shows `error` if the delete fails.
-  if (s.state === "creating" && inFlight.has(id)) {
+  // Any End (first or repeated) defers while this process's create runs.
+  if (inFlight.has(id)) {
     return ok({ id, state: "ending" as const }, 202);
   }
   // Re-read after taking the session to `ending`: no rename can happen any

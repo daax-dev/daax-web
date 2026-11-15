@@ -121,6 +121,11 @@ describe("createSession", () => {
     const res = await createSession(deps, ALICE, { agent: "claude" });
     if (!res.ok) throw new Error("expected ok");
     await endSession(deps, ALICE, res.body.id);
+    // A repeated End while the create still runs also defers (Codex r5):
+    // it must not close the record ahead of the create's cleanup.
+    const again = await endSession(deps, ALICE, res.body.id);
+    expect(again.ok && again.body.state).toBe("ending");
+    expect((await store.get(res.body.id))?.endedAt).toBeNull();
     backend.stop.mockRejectedValueOnce(new Error("unavailable"));
     finishSpawn();
     await settle();
