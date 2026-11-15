@@ -168,7 +168,7 @@ describe("no route to the retired fork's forward-auth endpoint", () => {
     // ARCHIVED record of galway's pre-convergence topology; marked do-not-apply.
     "deploy/galway/traefik-daax.yml": "# ARCHIVED 2026-09-13",
     // The installer's preflight, which refuses an edge.yml that uses it.
-    "deploy/host/check-edge-gate.sh": "grep -q '/api/forward-auth/verify'",
+    "deploy/host/check-edge-gate.sh": 'if "/api/forward-auth/verify" in raw:',
   };
 
   it("appears only in the exempt files", () => {

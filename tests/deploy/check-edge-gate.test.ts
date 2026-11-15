@@ -20,22 +20,35 @@ function run(edgeYml: string | null) {
 }
 
 // The shape the dx edge bundle renders today (dx edge/traefik/dynamic/edge.yml.tmpl).
-const HOST_LOCAL = `http:
+const RESET = `    edge-identity-reset:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-User: ""
+          X-Forwarded-Email: ""
+          X-Forwarded-Username: ""
+          X-Forwarded-Displayname: ""
+          X-Forwarded-Name: ""
+          X-Forwarded-Groups: ""
+          X-Forwarded-Admin: ""
+`;
+const CHECK = (
+  address = "http://127.0.0.1:4182/portals/main",
+) => `    edge-forward-auth-check:
+      forwardAuth:
+        address: "${address}"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - X-Forwarded-User
+          - X-Forwarded-Email
+`;
+const edge = (chain: string[], extra = "", address?: string) => `http:
   middlewares:
     edge-auth-required:
       chain:
         middlewares:
-          - edge-identity-reset
-          - edge-forward-auth-check
-    edge-identity-reset:
-      headers:
-        customRequestHeaders:
-          X-Forwarded-User: ""
-    edge-forward-auth-check:
-      forwardAuth:
-        address: "http://127.0.0.1:4182/portals/main"
-        trustForwardHeader: true
-`;
+${chain.map((m) => `          - ${m}`).join("\n")}
+${RESET}${CHECK(address)}${extra}`;
+const HOST_LOCAL = edge(["edge-identity-reset", "edge-forward-auth-check"]);
 
 // The older render still installed on kinsale on 2026-11-15: ForwardAuth to an
 // endpoint upstream Pocket ID does not serve.
@@ -50,24 +63,76 @@ const FORK_VERIFY = `http:
 describe("check-edge-gate.sh", () => {
   it("accepts the host-local chain: identity reset, then traefik-forward-auth", () => {
     const r = run(HOST_LOCAL);
+    expect(r.stderr).toBe("");
     expect(r.status).toBe(0);
     expect(r.stdout).toContain("127.0.0.1:4182");
+  });
+
+  it("accepts @file-qualified chain members", () => {
+    const r = run(
+      edge(["edge-identity-reset@file", "edge-forward-auth-check@file"]),
+    );
+    expect(r.status).toBe(0);
   });
 
   it("refuses the /api/forward-auth/verify shape and names why", () => {
     const r = run(FORK_VERIFY);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain("does not serve (404)");
-    expect(r.stderr).toContain("no edge-identity-reset");
-    expect(r.stderr).toContain("127.0.0.1:4182/portals/");
+    expect(r.stderr).toContain("is not a chain");
   });
 
-  it("refuses a chain that drops the identity reset", () => {
-    const r = run(
-      HOST_LOCAL.replace(/    edge-identity-reset:\n(.*\n){3}/, ""),
-    );
+  it.each([
+    [
+      "the chain no longer references the reset (definition still present)",
+      edge(["edge-forward-auth-check"]),
+      "not blanked before the ForwardAuth: X-Forwarded-User",
+    ],
+    [
+      "the reset runs AFTER the ForwardAuth",
+      edge(["edge-forward-auth-check", "edge-identity-reset"]),
+      "AFTER the ForwardAuth",
+    ],
+    [
+      "the ForwardAuth is defined but not in the chain",
+      edge(["edge-identity-reset"]),
+      "chain has no ForwardAuth",
+    ],
+    [
+      "the chain names a middleware this file does not define",
+      edge(["edge-identity-reset", "edge-forward-auth-check", "other@docker"]),
+      "'other@docker' is not defined in this file",
+    ],
+    [
+      "the ForwardAuth is not traefik-forward-auth on loopback 4182",
+      edge(
+        ["edge-identity-reset", "edge-forward-auth-check"],
+        "",
+        "http://10.0.0.5:4182/portals/main",
+      ),
+      "is not traefik-forward-auth",
+    ],
+    [
+      "a later middleware sets identity after auth",
+      edge(
+        ["edge-identity-reset", "edge-forward-auth-check", "late"],
+        `    late:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-User: "admin"
+`,
+      ),
+      "'late' sets identity headers AFTER the ForwardAuth: X-Forwarded-User",
+    ],
+    [
+      "the reset misses a header daax reads",
+      HOST_LOCAL.replace('          X-Forwarded-Groups: ""\n', ""),
+      "not blanked before the ForwardAuth: X-Forwarded-Groups",
+    ],
+  ])("refuses when %s", (_label, yml, why) => {
+    const r = run(yml);
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain("no edge-identity-reset");
+    expect(r.stderr).toContain(why);
   });
 
   it("refuses a missing edge.yml", () => {
