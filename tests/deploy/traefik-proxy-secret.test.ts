@@ -58,10 +58,10 @@ describe("traefik-daax.yml.tpl proxy-secret trust boundary", () => {
     // Order matters: strip -> auth -> inject, so the real secret is added last
     // and any client-supplied value was already stripped.
     expect(chain.indexOf("inject-proxy-secret")).toBeGreaterThan(
-      chain.indexOf("pocket-id-auth"),
+      chain.indexOf("edge-auth-required"),
     );
     expect(chain.indexOf("strip-forwarded-headers")).toBeLessThan(
-      chain.indexOf("pocket-id-auth"),
+      chain.indexOf("edge-auth-required"),
     );
   });
 
@@ -70,61 +70,46 @@ describe("traefik-daax.yml.tpl proxy-secret trust boundary", () => {
     expect(wsChain).not.toContain("inject-proxy-secret");
   });
 
-  it("routes the host-mode daax through exactly daax's chains, to loopback 4210/4211", () => {
-    // A host shell as the operator: nothing looser than the container's routes.
-    const { routers, services } = config.http;
-    expect(routers["daax-host"].rule).toBe(
-      "Host(`daax-host.test-host.poley.dev`)",
-    );
-    expect(routers["daax-host"].middlewares).toEqual([
-      "strip-forwarded-headers",
-      "pocket-id-auth-admin",
-      "inject-proxy-secret",
-    ]);
-    expect(routers["daax-host-ws"].rule).toBe(
-      "Host(`daax-host.test-host.poley.dev`) && PathPrefix(`/ws`)",
-    );
-    expect(routers["daax-host-ws"].middlewares).toEqual([
-      "strip-forwarded-headers",
-      "pocket-id-auth-admin",
-    ]);
-    expect(services["daax-host"].loadBalancer?.servers).toEqual([
-      { url: "http://127.0.0.1:4210" },
-    ]);
-    expect(services["daax-host-ws"].loadBalancer?.servers).toEqual([
-      { url: "http://127.0.0.1:4211" },
-    ]);
-  });
-
-  it("gates the host shell on Pocket ID admins, and only the host shell", () => {
+  it("defines no ForwardAuth of its own: logins go through this host's edge gate (dx#120)", () => {
     const { middlewares, routers } = config.http;
-    const identity = [
-      "X-Forwarded-User",
-      "X-Forwarded-Email",
-      "X-Forwarded-Username",
-      "X-Forwarded-Name",
-      "X-Forwarded-Groups",
-      "X-Forwarded-Admin",
-    ];
-    expect(middlewares["pocket-id-auth-admin"].forwardAuth).toEqual({
-      address:
-        "http://127.0.0.1:1411/api/forward-auth/verify?require_admin=true",
-      trustForwardHeader: true,
-      authResponseHeaders: identity,
-    });
-    // The container routes keep the any-signed-in-user check.
-    expect(middlewares["pocket-id-auth"].forwardAuth?.address).toBe(
-      "http://127.0.0.1:1411/api/forward-auth/verify",
-    );
+    // The gate is edge-auth-required from the host's edge.yml (traefik-forward-auth
+    // -> this host's Pocket ID). Nothing here may name another IdP's address.
+    for (const [name, m] of Object.entries(middlewares))
+      expect(m.forwardAuth, name).toBeUndefined();
     expect(routers["daax"].middlewares).toEqual([
       "strip-forwarded-headers",
-      "pocket-id-auth",
+      "edge-auth-required",
       "inject-proxy-secret",
     ]);
     expect(routers["daax-ws"].middlewares).toEqual([
       "strip-forwarded-headers",
-      "pocket-id-auth",
+      "edge-auth-required",
     ]);
+    expect(routers["daax-code"].middlewares).toEqual([
+      "strip-forwarded-headers",
+      "edge-auth-required",
+    ]);
+  });
+
+  it("strips the display-name header traefik-forward-auth injects", () => {
+    const strip =
+      config.http.middlewares["strip-forwarded-headers"].headers
+        ?.customRequestHeaders ?? {};
+    expect(strip["X-Forwarded-Displayname"]).toBe("");
+    expect(strip["X-Forwarded-User"]).toBe("");
+  });
+
+  it("renders no host-mode daax route until an admins-only gate exists (fail closed)", () => {
+    const { routers, services } = config.http;
+    // Its terminal is a shell on the host as the operator. The admins-only
+    // check it had lived in the retired fork's verify endpoint; the host-local
+    // gate has none yet, and "signed in" is not enough (idp-per-host-002).
+    expect(
+      Object.keys(routers).filter((r) => r.startsWith("daax-host")),
+    ).toEqual([]);
+    expect(
+      Object.keys(services).filter((s) => s.startsWith("daax-host")),
+    ).toEqual([]);
   });
 
   it("leaves no unrendered secret placeholder in the template output", () => {

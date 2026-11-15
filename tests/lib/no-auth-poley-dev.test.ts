@@ -155,3 +155,35 @@ describe("the constructed-URL pattern", () => {
     expect(CONSTRUCTED.test(line)).toBe(false);
   });
 });
+
+/**
+ * The address shape of the retired shared IdP, which a grep for its name cannot
+ * see: its fork served ForwardAuth at /api/forward-auth/verify on
+ * 127.0.0.1:1411. Upstream Pocket ID has no such endpoint (404), so a route
+ * aimed at it either reaches the fork or fails every request (dx#120).
+ */
+describe("no route to the retired fork's forward-auth endpoint", () => {
+  const FORK_ADDRESS = /\/api\/forward-auth\/verify|127\.0\.0\.1:1411\b/;
+  const EXEMPT: Record<string, string> = {
+    // ARCHIVED record of galway's pre-convergence topology; marked do-not-apply.
+    "deploy/galway/traefik-daax.yml": "# ARCHIVED 2026-09-13",
+    // The installer's preflight, which refuses an edge.yml that uses it.
+    "deploy/host/check-edge-gate.sh": 'if "/api/forward-auth/verify" in raw:',
+  };
+
+  it("appears only in the exempt files", () => {
+    const offenders = scanned().filter((rel) => {
+      if (rel in EXEMPT) return false;
+      const text = read(rel);
+      return text !== null && FORK_ADDRESS.test(text);
+    });
+    expect(offenders).toEqual([]);
+  });
+
+  it.each(Object.entries(EXEMPT))(
+    "the exemption for %s still describes the file",
+    (file, marker) => {
+      expect(read(file)).toContain(marker);
+    },
+  );
+});
