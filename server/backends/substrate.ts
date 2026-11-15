@@ -23,6 +23,7 @@ import {
 } from "../../lib/substrate/ate-cli";
 import { ACTOR_NAME_RE } from "../../lib/substrate/sessions-store";
 import {
+  egressRules,
   renderEgressPolicy,
   type EgressGateways,
 } from "../../lib/substrate/egress";
@@ -55,6 +56,8 @@ type Cli = Pick<
   AteCli,
   | "createActor"
   | "createEgress"
+  | "getEgress"
+  | "updateEgress"
   | "deleteEgress"
   | "deleteActor"
   | "resumeActor"
@@ -195,6 +198,26 @@ export class SubstrateBackend implements ExecutionBackend<
   async resume(actorName: string): Promise<void> {
     assertActorName(actorName);
     await this.deps.cli.resumeActor(actorName);
+  }
+
+  /**
+   * Replace a live session's egress rules (dx#123), keeping the policy's
+   * metadata (the substrate-harness `ReplaceEgressRules` order). Only an
+   * existing policy is updated, never created: a session being ended has its
+   * policy deleted first, and an update must not bring it back.
+   */
+  async setEgress(actorName: string, egressHosts: string[]): Promise<void> {
+    assertActorName(actorName);
+    const { cli } = this.deps;
+    const current = await cli.getEgress(actorName);
+    if (!current || typeof current.metadata !== "object") {
+      throw new Error(`actor ${actorName} has no egress policy`);
+    }
+    const next = {
+      ...current,
+      rules: egressRules(this.deps.gateways, egressHosts),
+    };
+    await cli.updateEgress(actorName, JSON.stringify(next, null, 2));
   }
 
   async state(actorName: string): Promise<ActorInfo | null> {

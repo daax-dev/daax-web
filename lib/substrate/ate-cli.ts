@@ -299,6 +299,27 @@ export class AteCli {
     });
   }
 
+  /**
+   * The actor's current egress policy as protojson, or null when it has none
+   * (the CLI then exits 0 with empty stdout).
+   */
+  async getEgress(actor: string): Promise<Record<string, unknown> | null> {
+    const out = await this.run(
+      ["get", "egress-policy", actor, ...this.a(), "-o", "json"],
+      { timeoutMs: 30_000 },
+    );
+    if (!out.trim()) return null;
+    return JSON.parse(out) as Record<string, unknown>;
+  }
+
+  /** Replace an existing egress policy (dx#123 egress editor). */
+  async updateEgress(actor: string, manifest: string): Promise<void> {
+    await this.run(["update", "egress-policy", actor, ...this.a(), "-f", "-"], {
+      timeoutMs: 60_000,
+      stdin: manifest,
+    });
+  }
+
   async deleteEgress(actor: string): Promise<void> {
     await this.run(["delete", "egress-policy", actor, ...this.a()], {
       timeoutMs: 60_000,

@@ -14,7 +14,7 @@
  *
  * Detaching a viewer is not a lifecycle event at all (terminal plane).
  */
-import type { SubstrateConfig } from "./config";
+import type { SandboxClass, SubstrateAgent, SubstrateConfig } from "./config";
 import {
   isSandboxClass,
   isSubstrateAgent,
@@ -27,6 +27,7 @@ import {
   EGRESS_PRESETS,
   EgressValidationError,
   isEgressPreset,
+  normalizeHost,
   resolveEgressHosts,
   type EgressPreset,
   type Resolver,
@@ -56,7 +57,7 @@ export interface ServiceDeps {
   store: SessionsStore;
   backend: Pick<
     SubstrateBackend,
-    "spawn" | "stop" | "suspend" | "resume" | "list" | "state"
+    "spawn" | "stop" | "suspend" | "resume" | "list" | "state" | "setEgress"
   >;
   resolver?: Resolver;
   /** Template lookup (defaults to templates.env + env overrides). */
@@ -89,17 +90,134 @@ export interface SessionView extends SubstrateSession {
 }
 
 /** What the UI needs to render a create form (dx#123). */
-export function describeConfig(cfg: SubstrateConfig) {
+export function describeConfig(
+  cfg: SubstrateConfig,
+  template: (agent: SubstrateAgent, cls: SandboxClass) => string | null = (
+    agent,
+    cls,
+  ) => resolveTemplate(cfg, agent, cls),
+) {
+  // agent -> class -> deployed ActorTemplate name, or null (not deployed).
+  const templates = Object.fromEntries(
+    SUBSTRATE_AGENTS.map((agent) => [
+      agent,
+      Object.fromEntries(
+        SANDBOX_CLASSES.map((cls) => [cls, template(agent, cls)]),
+      ) as Record<SandboxClass, string | null>,
+    ]),
+  ) as Record<SubstrateAgent, Record<SandboxClass, string | null>>;
   return {
-    enabled: true,
+    enabled: true as const,
     atespace: cfg.atespace,
     transport: cfg.transport,
     agents: SUBSTRATE_AGENTS,
     sandboxClasses: SANDBOX_CLASSES,
     defaultClass: cfg.defaultClass,
+    templates,
     egressPresets: EGRESS_PRESETS,
     watchtowerHook: Boolean(cfg.watchtowerHook),
+    /** The admin provider-key editor has a gateway Secret to write to. */
+    providerKeys: Boolean(cfg.gateway),
   };
+}
+
+export type SubstrateUiConfig = ReturnType<typeof describeConfig>;
+
+/** Validate presets + extra hosts exactly as create does. */
+async function validateEgressInput(
+  deps: ServiceDeps,
+  presetsRaw: unknown,
+  hostsRaw: unknown,
+): Promise<
+  | { ok: true; presets: EgressPreset[]; hosts: string[] }
+  | { ok: false; result: ServiceResult<never> }
+> {
+  const p = presetsRaw ?? [];
+  if (!Array.isArray(p) || !p.every(isEgressPreset)) {
+    return {
+      ok: false,
+      result: fail(
+        400,
+        "invalid-presets",
+        `egressPresets must be a subset of: ${Object.keys(EGRESS_PRESETS).join(", ")}`,
+      ),
+    };
+  }
+  const h = hostsRaw ?? [];
+  if (
+    !Array.isArray(h) ||
+    h.length > 50 ||
+    !h.every((x) => typeof x === "string")
+  ) {
+    return {
+      ok: false,
+      result: fail(
+        400,
+        "invalid-hosts",
+        "egressHosts must be up to 50 strings",
+      ),
+    };
+  }
+  const presets = [...new Set(p as EgressPreset[])].sort();
+  try {
+    const gatewayHosts = [deps.config.llmHost];
+    if (deps.config.watchtowerHook)
+      gatewayHosts.push(deps.config.watchtowerHook.host);
+    const hosts = resolveEgressHosts(presets, h as string[], gatewayHosts);
+    await checkResolution(hosts, deps.resolver);
+    return { ok: true, presets, hosts };
+  } catch (err) {
+    if (err instanceof EgressValidationError) {
+      return { ok: false, result: fail(400, "invalid-egress", err.message) };
+    }
+    throw err;
+  }
+}
+
+export interface EgressCheck {
+  /** One entry per submitted extra host, in order: null = valid. */
+  hostErrors: Array<string | null>;
+  /** Error that is not about one host (count limit, resolution, presets). */
+  error: string | null;
+  /** The full validated allowlist (presets + extras) when everything is valid. */
+  hosts: string[] | null;
+}
+
+/**
+ * Inline validation for the launcher and the egress editor (dx#123): the same
+ * checks create and the egress update run, reported per host.
+ */
+export async function checkEgress(
+  deps: ServiceDeps,
+  input: { egressPresets?: unknown; egressHosts?: unknown },
+): Promise<ServiceResult<EgressCheck>> {
+  const raw = input.egressHosts ?? [];
+  if (
+    !Array.isArray(raw) ||
+    raw.length > 50 ||
+    !raw.every((x) => typeof x === "string")
+  ) {
+    return fail(400, "invalid-hosts", "egressHosts must be up to 50 strings");
+  }
+  const hostErrors = (raw as string[]).map((h) => {
+    try {
+      normalizeHost(h);
+      return null;
+    } catch (err) {
+      if (err instanceof EgressValidationError) return err.message;
+      throw err;
+    }
+  });
+  if (hostErrors.some((e) => e !== null)) {
+    return ok({ hostErrors, error: null, hosts: null });
+  }
+  const v = await validateEgressInput(deps, input.egressPresets, raw);
+  if (!v.ok) {
+    if (v.result.ok) throw new Error("unreachable");
+    if (v.result.error !== "invalid-egress") return v.result;
+    return ok({ hostErrors, error: v.result.message, hosts: null });
+  }
+  return ok({ hostErrors, error: null, hosts: v.hosts });
 }
 
 export interface CreateInput {
@@ -126,36 +244,13 @@ export async function createSession(
   if (!isSandboxClass(cls)) {
     return fail(400, "invalid-class", "sandboxClass must be gvisor or microvm");
   }
-  const presetsRaw = input.egressPresets ?? [];
-  if (!Array.isArray(presetsRaw) || !presetsRaw.every(isEgressPreset)) {
-    return fail(
-      400,
-      "invalid-presets",
-      `egressPresets must be a subset of: ${Object.keys(EGRESS_PRESETS).join(", ")}`,
-    );
-  }
-  const presets = [...new Set(presetsRaw as EgressPreset[])].sort();
-  const hostsRaw = input.egressHosts ?? [];
-  if (
-    !Array.isArray(hostsRaw) ||
-    hostsRaw.length > 50 ||
-    !hostsRaw.every((h) => typeof h === "string")
-  ) {
-    return fail(400, "invalid-hosts", "egressHosts must be up to 50 strings");
-  }
-
-  let hosts: string[];
-  try {
-    const gatewayHosts = [config.llmHost];
-    if (config.watchtowerHook) gatewayHosts.push(config.watchtowerHook.host);
-    hosts = resolveEgressHosts(presets, hostsRaw as string[], gatewayHosts);
-    await checkResolution(hosts, deps.resolver);
-  } catch (err) {
-    if (err instanceof EgressValidationError) {
-      return fail(400, "invalid-egress", err.message);
-    }
-    throw err;
-  }
+  const egress = await validateEgressInput(
+    deps,
+    input.egressPresets,
+    input.egressHosts,
+  );
+  if (!egress.ok) return egress.result;
+  const { presets, hosts } = egress;
 
   const template = (
     deps.template ??
@@ -486,6 +581,79 @@ export async function endSession(
   }
   await deps.store.markEnded(id);
   return ok({ id, state: "ended" as const });
+}
+
+/** Serializes egress updates per session within this process. */
+const egressLocks = new Map<string, Promise<unknown>>();
+
+/**
+ * Replace a live session's egress allowlist (dx#123 egress editor, #118).
+ * Running or suspended sessions only; validated exactly like create. The
+ * policy is replaced first, then the record. If the record write loses a race
+ * with End, End has already deleted the policy, so nothing is left behind.
+ */
+export async function updateEgress(
+  deps: ServiceDeps,
+  caller: Caller,
+  id: string,
+  input: { egressPresets?: unknown; egressHosts?: unknown },
+): Promise<ServiceResult<SessionView>> {
+  const prev = egressLocks.get(id) ?? Promise.resolve();
+  const run = prev
+    .catch(() => {})
+    .then(() => doUpdateEgress(deps, caller, id, input));
+  egressLocks.set(id, run);
+  try {
+    return await run;
+  } finally {
+    if (egressLocks.get(id) === run) egressLocks.delete(id);
+  }
+}
+
+const EGRESS_EDITABLE: readonly SubstrateSession["state"][] = [
+  "running",
+  "suspended",
+];
+
+async function doUpdateEgress(
+  deps: ServiceDeps,
+  caller: Caller,
+  id: string,
+  input: { egressPresets?: unknown; egressHosts?: unknown },
+): Promise<ServiceResult<SessionView>> {
+  const s = await deps.store.getVisible(caller, id);
+  if (!s) return notFound();
+  if (!EGRESS_EDITABLE.includes(s.state) || !s.actorOwned) {
+    return fail(
+      409,
+      "invalid-state",
+      `cannot change egress of a ${s.state} session`,
+    );
+  }
+  const v = await validateEgressInput(
+    deps,
+    input.egressPresets,
+    input.egressHosts,
+  );
+  if (!v.ok) return v.result;
+  try {
+    await deps.backend.setEgress(s.actorName, v.hosts);
+  } catch (err) {
+    logFailure("egress update", id, err);
+    return fail(502, "substrate-error", publicReason(err));
+  }
+  const updated = await deps.store.updateEgress(
+    id,
+    EGRESS_EDITABLE,
+    v.presets,
+    v.hosts,
+  );
+  if (!updated) {
+    // Ended (or moved to a transitional state) while the policy was being
+    // replaced. End deletes the policy itself; nothing to undo here.
+    return fail(409, "invalid-state", "the session changed during the update");
+  }
+  return ok({ ...updated });
 }
 
 export interface AttachGrant {

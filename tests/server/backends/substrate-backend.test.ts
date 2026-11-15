@@ -15,6 +15,13 @@ function cli() {
     createActor: vi.fn(async () => {}),
     createEgress: vi.fn(async (_actor: string, _manifest: string) => {}),
     deleteEgress: vi.fn(async () => {}),
+    getEgress: vi.fn(
+      async (_actor: string): Promise<Record<string, unknown> | null> => ({
+        metadata: { atespace: "kinsale", name: "default", version: "3" },
+        rules: [],
+      }),
+    ),
+    updateEgress: vi.fn(async (_actor: string, _manifest: string) => {}),
     deleteActor: vi.fn(async () => {}),
     resumeActor: vi.fn(async () => {}),
     suspendActor: vi.fn(async () => {}),
@@ -29,6 +36,46 @@ function cli() {
     ]),
   };
 }
+
+describe("SubstrateBackend.setEgress (dx#123)", () => {
+  it("replaces only the rules and keeps the policy metadata", async () => {
+    const c = cli();
+    const b = new SubstrateBackend({ cli: c, gateways });
+    await b.setEgress(ACTOR, ["pypi.org"]);
+    expect(c.createEgress).not.toHaveBeenCalled();
+    const sent = JSON.parse(c.updateEgress.mock.calls[0][1]);
+    expect(sent.metadata).toEqual({
+      atespace: "kinsale",
+      name: "default",
+      version: "3",
+    });
+    expect(sent.rules).toEqual([
+      {
+        http: {
+          hostnames: ["llm.ns.svc.cluster.local"],
+          ports: { numbers: [4000] },
+        },
+      },
+      {
+        tlsPassthrough: { hostnames: ["pypi.org"], ports: { numbers: [443] } },
+      },
+    ]);
+  });
+
+  it("never creates a missing policy (End may have deleted it)", async () => {
+    const c = cli();
+    c.getEgress.mockResolvedValueOnce(null);
+    const b = new SubstrateBackend({ cli: c, gateways });
+    await expect(b.setEgress(ACTOR, [])).rejects.toThrow(/no egress policy/);
+    expect(c.createEgress).not.toHaveBeenCalled();
+    expect(c.updateEgress).not.toHaveBeenCalled();
+  });
+
+  it("refuses a non-daax actor name", async () => {
+    const b = new SubstrateBackend({ cli: cli(), gateways });
+    await expect(b.setEgress("jimmy", [])).rejects.toThrow(/not a daax/);
+  });
+});
 
 describe("SubstrateBackend", () => {
   it("spawn: actor, then default-deny egress policy, then resume", async () => {

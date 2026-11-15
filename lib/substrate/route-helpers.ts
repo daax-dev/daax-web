@@ -11,6 +11,12 @@ import { query } from "@/lib/db/pg";
 import { getSubstrateRuntime } from "@/server/backends/substrate-runtime";
 import { SessionsStore, type Caller, type QueryFn } from "./sessions-store";
 import type { ServiceDeps, ServiceResult } from "./service";
+import {
+  listSubstrateAudit,
+  writeSubstrateAudit,
+  type SubstrateAuditEvent,
+} from "./audit";
+import { GatewayKeys } from "./provider-keys";
 
 let store: SessionsStore | null = null;
 
@@ -129,4 +135,61 @@ export function serverError(err: unknown): NextResponse {
     { error: "internal", message: "Substrate request failed" },
     { status: 500 },
   );
+}
+
+/**
+ * Append the audit row for a substrate action (dx#123) and pass the result
+ * through. Never throws; never records a secret.
+ */
+export async function audited<T>(
+  caller: Caller,
+  event: SubstrateAuditEvent,
+  route: string,
+  result: ServiceResult<T>,
+  session?: string | null,
+  detail?: Record<string, unknown>,
+): Promise<ServiceResult<T>> {
+  await writeSubstrateAudit(query as unknown as QueryFn, {
+    event,
+    subject: caller.subject,
+    route,
+    status: result.status,
+    session: session ?? null,
+    detail: result.ok ? detail : { ...detail, error: result.error },
+  });
+  return result;
+}
+
+export function readSubstrateAudit(limit?: number) {
+  return listSubstrateAudit(query as unknown as QueryFn, limit);
+}
+
+/** Admin-only surfaces answer 404 to everyone else (never 403). */
+export function adminOnly(caller: Caller): NextResponse | null {
+  if (caller.isAdmin) return null;
+  return NextResponse.json(
+    { error: "not-found", message: "Not found" },
+    { status: 404 },
+  );
+}
+
+/** The provider-key writer, or the 503 answer when no gateway is configured. */
+export function gatewayKeys(
+  deps: ServiceDeps,
+): { ok: true; keys: GatewayKeys } | { ok: false; response: NextResponse } {
+  const gw = deps.config.gateway;
+  if (!gw) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "gateway-unconfigured",
+          message:
+            "Provider keys are not configured: set DAAX_SUBSTRATE_GATEWAY_NAMESPACE (see deploy/env/README.md)",
+        },
+        { status: 503 },
+      ),
+    };
+  }
+  return { ok: true, keys: new GatewayKeys(gw, deps.config) };
 }
