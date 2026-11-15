@@ -25,6 +25,12 @@
 # Exit codes: 0 ok; 1 misconfig / dump failure.
 set -euo pipefail
 
+# Owner-only by default (R3): a pg_dump can contain every row in the database, so
+# neither the backup directory nor the dump files should be group/world-readable.
+# umask 077 covers the mkdir + pg_dump-created files; the dump is also chmod'd
+# 600 explicitly below in case a restrictive-then-loosened umask is inherited.
+umask 077
+
 BACKUP_DIR="${DAAX_BACKUP_DIR:-./backups}"
 RETENTION_DAYS="${DAAX_BACKUP_RETENTION_DAYS:-14}"
 
@@ -143,6 +149,7 @@ if ! pg_dump -Fc --no-owner --no-privileges -f "$tmpfile" "${conn_args[@]}"; the
   exit 1
 fi
 mv "$tmpfile" "$outfile"
+chmod 600 "$outfile"
 
 size="$(wc -c <"$outfile" | tr -d ' ')"
 echo "[pg-backup] wrote ${outfile} (${size} bytes)" >&2
