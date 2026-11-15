@@ -38,10 +38,27 @@ export interface TicketPayload {
   hostShell?: true;
   /** The caller was the local-operator bypass, which has no subject. */
   operator?: true;
+  /**
+   * Substrate attach grant (dx#113/#114), minted only by
+   * `POST /api/substrate/sessions/:id/attach` after it checked that `sub` owns
+   * the session (or is admin). The terminal server attaches only to this
+   * actor, so it needs no session store of its own.
+   */
+  substrate?: SubstrateAttachClaim;
+}
+
+export interface SubstrateAttachClaim {
+  /** daax session id (substrate_sessions.id). */
+  session: string;
+  /** Actor name in the configured atespace. */
+  actor: string;
 }
 
 /** Optional claims beyond the subject. */
-export type TicketClaims = Pick<TicketPayload, "hostShell" | "operator">;
+export type TicketClaims = Pick<
+  TicketPayload,
+  "hostShell" | "operator" | "substrate"
+>;
 
 export type VerifyResult =
   | { valid: true; payload: TicketPayload }
