@@ -583,6 +583,11 @@ services:
       # override the pin on the real deploy path, so keep the fallback empty.
       # Lives in the spawn lane (terminal service), same as before.
       - CLAUDE_CONTAINER_IMAGE=${CLAUDE_CONTAINER_IMAGE:-}
+      # Operator override (server/config/constants.ts, agentImageOverride): when
+      # set, every NEW agent container runs this image whatever the browser
+      # asked for. CLAUDE_CONTAINER_IMAGE above is only the no-image default and
+      # AI sessions always send one. Empty (the default) = no override.
+      - DAAX_AGENT_IMAGE_OVERRIDE=${DAAX_AGENT_IMAGE_OVERRIDE:-}
       # GitHub token (optional, used by spawned agent containers).
       - GITHUB_DAAX=${GITHUB_DAAX:-}
 
