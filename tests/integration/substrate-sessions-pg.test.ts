@@ -4,6 +4,7 @@
  * Run via `bun run test:integration`.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readdirSync } from "node:fs";
 import path from "node:path";
 import { Client } from "pg";
 import { runner } from "node-pg-migrate";
@@ -147,7 +148,13 @@ describe.skipIf(!configured)("substrate_sessions (Postgres)", () => {
   });
 
   it("migration round-trips", async () => {
-    await migrate("down", 1);
+    // Roll back this migration and every later one (e.g. dx#119's
+    // 1781568000500_tenant-settings), however many land after it.
+    const SUBSTRATE = "1781568000400_substrate-sessions.js";
+    const later = readdirSync(path.resolve(process.cwd(), "migrations")).filter(
+      (f) => f.endsWith(".js") && f >= SUBSTRATE,
+    ).length;
+    await migrate("down", later);
     const gone = await query("SELECT to_regclass('substrate_sessions') AS t");
     expect(gone.rows[0].t).toBeNull();
     await migrate("up");
