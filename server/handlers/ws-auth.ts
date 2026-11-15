@@ -24,6 +24,14 @@
  * still passes that check here. A ticket minted for the local operator is
  * honoured only where this server would itself grant the bypass (non-strict).
  *
+ * Multi-tenancy (dx#119): each accepted decision also carries a `principal`
+ * (subject, admin, permissions) and, for a ticket, the server-resolved
+ * settings `policy`. This plane has no Postgres, so a ticket's signed claims are
+ * the source of truth; a bare forwarded identity is an admin only when it is a
+ * `DAAX_ADMIN_USERS` subject and otherwise has no permissions. When Traefik
+ * forwards an identity AND a ticket is offered, the ticket is verified and must
+ * name the same subject.
+ *
  * The bypass is refused when the upgrade carries `X-Forwarded-For`: it came
  * through a proxy, and a proxied upgrade with no identity is one whose auth
  * header went missing, not the operator at the machine.
@@ -38,6 +46,22 @@ import {
   decideHostShell,
   type HostShellDecision,
 } from "../../lib/host-shell-access";
+import { canonicalizeSubject } from "../../lib/rbac/allowlist";
+import { permissionsForRoles } from "../../lib/rbac/permissions";
+import type { Principal } from "../../lib/tenancy/ownership";
+import type {
+  SecuritySettingKey,
+  SecuritySettings,
+} from "../../lib/tenancy/settings-policy";
+
+/**
+ * Server-resolved settings carried by a ticket (dx#119). Absent for the
+ * operator bypass and for a forwarded admin, who keep the URL parameters.
+ */
+export interface WsPolicy {
+  settings: SecuritySettings;
+  locked: SecuritySettingKey[];
+}
 
 export type AuthDecision =
   | {
@@ -45,8 +69,24 @@ export type AuthDecision =
       user: string;
       method: "forwarded" | "ticket" | "bypass";
       hostShell: HostShellDecision;
+      /**
+       * Multi-tenancy (dx#119): who this connection acts as, for the
+       * permission and ownership checks the connection handler makes.
+       */
+      principal: Principal;
+      policy?: WsPolicy;
     }
   | { ok: false; code: number; reason: string };
+
+const ADMIN_PERMISSIONS = permissionsForRoles(["admin"]);
+
+/** The operator bypass: trusted root of the machine, admin on both planes. */
+const OPERATOR_PRINCIPAL: Principal = Object.freeze({
+  subject: null,
+  operator: true,
+  admin: true,
+  permissions: ADMIN_PERMISSIONS,
+}) as Principal;
 
 // Single-use ticket tracking: jti -> expiry (epoch ms). In-memory only — the
 // short TTL makes survival across a terminal-server restart unnecessary (spec
@@ -139,13 +179,27 @@ export function authenticateConnection(req: IncomingMessage): AuthDecision {
   const xUser = (Array.isArray(forwarded) ? forwarded[0] : forwarded || "")
     .toString()
     .trim();
-  if (xUser && loopback) {
+  const ticket = extractTicket(req.headers["sec-websocket-protocol"]);
+  if (xUser && loopback && !ticket) {
+    // No Postgres on this plane, so roles cannot be resolved for a bare
+    // forwarded identity. Only a DAAX_ADMIN_USERS subject is known to be an
+    // admin; anyone else gets no permissions and must present a ticket, which
+    // carries the RBAC the app resolved (dx#119, fail closed).
     const hostShell = decideHostShell(xUser);
-    return { ok: true, user: xUser, method: "forwarded", hostShell };
+    const subject = canonicalizeSubject(xUser);
+    const principal: Principal = hostShell.ok
+      ? {
+          subject,
+          operator: false,
+          admin: true,
+          permissions: ADMIN_PERMISSIONS,
+        }
+      : { subject, operator: false, admin: false, permissions: [] };
+    return { ok: true, user: xUser, method: "forwarded", hostShell, principal };
   }
 
-  // Ticket path: single-use bearer token via subprotocol.
-  const ticket = extractTicket(req.headers["sec-websocket-protocol"]);
+  // Ticket path: single-use bearer token via subprotocol. When Traefik also
+  // forwarded an identity (loopback), the ticket must name the same subject.
   if (ticket) {
     if (!getWsTokenSecret()) {
       if (strictMode()) warnWsSecretMissingOnce();
@@ -159,6 +213,13 @@ export function authenticateConnection(req: IncomingMessage): AuthDecision {
       return { ok: false, code: 1008, reason: "ticket reused" };
     }
     const { payload } = result;
+    if (
+      xUser &&
+      loopback &&
+      canonicalizeSubject(xUser) !== canonicalizeSubject(payload.sub)
+    ) {
+      return { ok: false, code: 1008, reason: "ticket subject mismatch" };
+    }
     let hostShell: HostShellDecision;
     if (payload.hostShell !== true) {
       hostShell = {
@@ -176,7 +237,28 @@ export function authenticateConnection(req: IncomingMessage): AuthDecision {
     } else {
       hostShell = decideHostShell(payload.sub);
     }
-    return { ok: true, user: payload.sub, method: "ticket", hostShell };
+    // Operator tickets are honoured only where this server would itself grant
+    // the bypass (non-strict), exactly like the host-shell claim above.
+    const operatorHonoured = payload.operator === true && !strictMode();
+    const principal: Principal = operatorHonoured
+      ? OPERATOR_PRINCIPAL
+      : {
+          subject: payload.operator ? null : canonicalizeSubject(payload.sub),
+          operator: false,
+          admin: payload.operator ? false : payload.admin === true,
+          permissions: payload.operator ? [] : (payload.perms ?? []),
+        };
+    const policy: WsPolicy | undefined = payload.settings
+      ? { settings: payload.settings, locked: payload.locked ?? [] }
+      : undefined;
+    return {
+      ok: true,
+      user: payload.sub,
+      method: "ticket",
+      hostShell,
+      principal,
+      policy,
+    };
   }
 
   // No credentials.
@@ -187,6 +269,7 @@ export function authenticateConnection(req: IncomingMessage): AuthDecision {
       user: "local",
       method: "bypass",
       hostShell: { ok: true },
+      principal: OPERATOR_PRINCIPAL,
     };
   }
   return { ok: false, code: 1008, reason: "authentication required" };

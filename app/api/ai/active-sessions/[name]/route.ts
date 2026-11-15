@@ -11,11 +11,14 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
+import { notFound } from "@/lib/tenancy/http";
+import { requireOwnerOrAdmin } from "@/lib/tenancy/ownership";
 import { isAiSessionName } from "@/lib/ai-session-name";
 import {
   defaultDockerExec,
   dockerUnavailableJson,
+  inspectContainerOwner,
   isDockerUnavailableError,
   type DockerExec,
 } from "@/lib/docker-exec";
@@ -36,8 +39,9 @@ export async function DELETE(
   _req: NextRequest,
   context: { params: Promise<{ name: string }> },
 ) {
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  // dx#119: only the session's owner (label daax.owner) or an admin.
+  const auth = await requirePrincipal("containers:write");
+  if (!auth.authorized) return auth.response;
 
   const { name } = await context.params;
 
@@ -49,6 +53,11 @@ export async function DELETE(
   }
 
   try {
+    if (!auth.principal.admin) {
+      const owned = await inspectContainerOwner(name, defaultDockerExec);
+      if (!requireOwnerOrAdmin(auth.principal, owned).ok)
+        return notFound("Session");
+    }
     await removeSession(name);
     return NextResponse.json({ success: true, removed: name });
   } catch (error) {

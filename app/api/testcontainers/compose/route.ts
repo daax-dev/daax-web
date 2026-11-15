@@ -14,9 +14,13 @@ import {
   checkDockerStatus,
 } from "@/plugins/testcontainers/api";
 import type { ComposeCreateRequest } from "@/plugins/testcontainers/types/compose";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
+import { filterOwned, ownerKeyFor } from "@/lib/tenancy/ownership";
 
 export async function GET() {
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
+
   try {
     // Check Docker connection first
     const status = await checkDockerStatus();
@@ -32,7 +36,13 @@ export async function GET() {
     }
 
     const result = await listComposeProjects();
-    return NextResponse.json(result);
+    // dx#119: a non-admin lists only their own projects.
+    const projects = filterOwned(
+      auth.principal,
+      result.projects,
+      (p) => p.owner,
+    );
+    return NextResponse.json({ ...result, projects, total: projects.length });
   } catch (error) {
     console.error("[Test Containers] Compose list error:", error);
     return NextResponse.json(
@@ -44,8 +54,8 @@ export async function GET() {
 
 export async function POST(request: Request) {
   // Require authentication for compose project creation
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal("containers:write");
+  if (!auth.authorized) return auth.response;
 
   try {
     // Check Docker connection first
@@ -77,7 +87,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await createComposeProject(body);
+    const result = await createComposeProject({
+      ...body,
+      // dx#119: owner comes from the authenticated caller, never the body.
+      owner: ownerKeyFor(auth.principal) ?? undefined,
+    });
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     console.error("[Test Containers] Compose create error:", error);

@@ -21,6 +21,19 @@ vi.mock("dockerode", () => {
   return { default: MockDocker };
 });
 
+// dx#119: GET resolves the caller's principal; an admin here (sees all).
+vi.mock("@/lib/auth", async () => {
+  const { ADMIN_PRINCIPAL } = await import("../helpers/auth-principal");
+  return {
+    requirePrincipal: async () => ({
+      authorized: true,
+      user: {},
+      subject: null,
+      principal: ADMIN_PRINCIPAL,
+    }),
+  };
+});
+
 import { GET } from "@/app/api/containers/route";
 
 describe("/api/containers", () => {

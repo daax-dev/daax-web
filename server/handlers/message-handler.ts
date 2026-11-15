@@ -7,6 +7,13 @@
 import { WebSocket } from "ws";
 import { IPty } from "../sessions/types";
 import {
+  filterOwned,
+  hasPermission,
+  ownerKeyFor,
+  requireOwnerOrAdmin,
+  type Principal,
+} from "../../lib/tenancy/ownership";
+import {
   startRecording,
   stopRecording,
   listRecordings,
@@ -24,6 +31,12 @@ export interface MessageHandlerContext {
   ws: WebSocket;
   getRecordingId: () => string | undefined;
   setRecordingId: (id: string | undefined) => void;
+  /**
+   * Who this connection acts as (dx#119). Recording messages are scoped to the
+   * principal's own recordings (admins: all); starting/deleting needs
+   * `recording:write`.
+   */
+  principal: Principal;
 }
 
 /**
@@ -69,6 +82,7 @@ export function handleMessage(
         break;
 
       case "startRecording":
+        if (!hasPermission(ctx.principal, "recording:write")) break;
         handleStartRecording(msg, ctx);
         break;
 
@@ -83,7 +97,11 @@ export function handleMessage(
         ctx.ws.send(
           JSON.stringify({
             type: "recordingsList",
-            recordings: listRecordings(),
+            recordings: filterOwned(
+              ctx.principal,
+              listRecordings(),
+              (r) => r.owner,
+            ),
           }),
         );
         break;
@@ -91,7 +109,12 @@ export function handleMessage(
       case "getRecording":
         // Get a specific recording
         if (msg.id) {
-          const recording = getRecording(msg.id);
+          const found = getRecording(msg.id);
+          // Not-yours is indistinguishable from not-found (null).
+          const recording =
+            found && requireOwnerOrAdmin(ctx.principal, found.metadata).ok
+              ? found
+              : null;
           ctx.ws.send(JSON.stringify({ type: "recordingData", recording }));
         }
         break;
@@ -99,7 +122,13 @@ export function handleMessage(
       case "deleteRecording":
         // Delete a recording
         if (msg.id) {
-          const success = deleteRecording(msg.id);
+          const found = getRecording(msg.id);
+          const allowed =
+            hasPermission(ctx.principal, "recording:write") &&
+            (ctx.principal.admin ||
+              (!!found &&
+                requireOwnerOrAdmin(ctx.principal, found.metadata).ok));
+          const success = allowed ? deleteRecording(msg.id) : false;
           ctx.ws.send(
             JSON.stringify({ type: "recordingDeleted", id: msg.id, success }),
           );
@@ -139,6 +168,7 @@ function handleStartRecording(
       cols,
       rows,
       msg.clientSessionId,
+      ownerKeyFor(ctx.principal),
     );
     // startRecording returns null if duplicate (same clientSessionId already recording)
     if (recordingId) {

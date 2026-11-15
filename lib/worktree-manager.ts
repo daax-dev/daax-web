@@ -5,7 +5,14 @@
 
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { existsSync, lstatSync, mkdirSync, realpathSync } from "fs";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "fs";
 import { basename, dirname, join, resolve, sep } from "path";
 import { homedir } from "os";
 import { expandPath } from "./path-utils";
@@ -288,6 +295,13 @@ export interface WorktreeInfo {
   branch: string;
   commit: string;
   projectPath: string;
+  /**
+   * Owner key of the daax user who created it (dx#119); null for the main
+   * worktree and for worktrees created before multi-tenancy.
+   */
+  owner?: string | null;
+  /** True for the repository's main worktree (the shared project checkout). */
+  main?: boolean;
 }
 
 export interface WorktreeStatus {
@@ -310,6 +324,71 @@ export interface CreateWorktreeOptions {
   projectPath: string;
   branchName: string;
   baseBranch?: string;
+  /** Owner key recorded for the new worktree (dx#119). */
+  owner?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Worktree ownership (multi-tenancy — dx#119)
+// ---------------------------------------------------------------------------
+//
+// The owner is recorded in git's PER-WORKTREE admin directory
+// (`<repo>/.git/worktrees/<name>/daax-owner`), not in the working tree, so it
+// never shows up in `git status`, needs no database (host-dev keeps working),
+// and is removed by git together with the worktree.
+
+/** File name of the owner marker inside a worktree's git admin dir. */
+export const WORKTREE_OWNER_FILE = "daax-owner";
+
+/** Absolute git admin dir of a checkout (container namespace), or null. */
+async function absoluteGitDir(containerPath: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["rev-parse", "--absolute-git-dir"],
+      { cwd: containerPath },
+    );
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** A linked worktree's admin dir lives under `<common>/worktrees/<name>`. */
+function isLinkedWorktreeGitDir(gitDir: string): boolean {
+  return /[\\/]worktrees[\\/][^\\/]+$/.test(gitDir);
+}
+
+/**
+ * The worktree at `worktreePath` as an owned resource: null when it is not a
+ * git checkout; `{ owner: null, main: true }` for a main worktree (shared,
+ * admin-only to mutate); else the recorded owner (null = pre-#119).
+ */
+export async function getWorktreeOwner(
+  worktreePath: string,
+): Promise<{ owner: string | null; main: boolean } | null> {
+  const gitDir = await absoluteGitDir(translatePath(worktreePath));
+  if (!gitDir) return null;
+  if (!isLinkedWorktreeGitDir(gitDir)) return { owner: null, main: true };
+  try {
+    const v = readFileSync(join(gitDir, WORKTREE_OWNER_FILE), "utf-8").trim();
+    return { owner: v || null, main: false };
+  } catch {
+    return { owner: null, main: false };
+  }
+}
+
+async function recordWorktreeOwner(
+  containerWorktreePath: string,
+  owner: string,
+): Promise<void> {
+  const gitDir = await absoluteGitDir(containerWorktreePath);
+  if (!gitDir || !isLinkedWorktreeGitDir(gitDir)) {
+    throw new Error("cannot record worktree owner: not a linked worktree");
+  }
+  writeFileSync(join(gitDir, WORKTREE_OWNER_FILE), `${owner}\n`, {
+    mode: 0o644,
+  });
 }
 
 /**
@@ -404,9 +483,10 @@ export async function listWorktrees(
     const worktrees: WorktreeInfo[] = [];
     const blocks = stdout.split("\n\n").filter(Boolean);
 
-    for (const block of blocks) {
+    for (const [index, block] of blocks.entries()) {
       const lines = block.split("\n");
-      const info: Partial<WorktreeInfo> = { projectPath };
+      // `git worktree list` always prints the main worktree first.
+      const info: Partial<WorktreeInfo> = { projectPath, main: index === 0 };
 
       for (const line of lines) {
         if (line.startsWith("worktree ")) {
@@ -422,6 +502,11 @@ export async function listWorktrees(
       // This feature always creates worktrees with new branches,
       // so detached HEAD worktrees are intentionally excluded.
       if (info.path && info.branch) {
+        if (!info.main) {
+          info.owner = (await getWorktreeOwner(info.path))?.owner ?? null;
+        } else {
+          info.owner = null;
+        }
         worktrees.push(info as WorktreeInfo);
       }
     }
@@ -439,7 +524,7 @@ export async function listWorktrees(
 export async function createWorktree(
   options: CreateWorktreeOptions,
 ): Promise<WorktreeInfo> {
-  const { projectPath, branchName, baseBranch } = options;
+  const { projectPath, branchName, baseBranch, owner } = options;
 
   // Validate branch name to prevent command injection
   if (!isValidBranchName(branchName)) {
@@ -469,6 +554,8 @@ export async function createWorktree(
     { cwd: containerProjectPath },
   );
 
+  if (owner) await recordWorktreeOwner(containerWorktreePath, owner);
+
   // Get commit hash
   const { stdout: commit } = await execFileAsync("git", ["rev-parse", "HEAD"], {
     cwd: containerWorktreePath,
@@ -482,6 +569,8 @@ export async function createWorktree(
     branch: branchName,
     commit: commit.trim(),
     projectPath,
+    owner: owner ?? null,
+    main: false,
   };
 }
 

@@ -11,18 +11,21 @@ import {
   startComposeProject,
   checkDockerStatus,
 } from "@/plugins/testcontainers/api";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
+import { composeProjectOr404 } from "@/lib/tenancy/testcontainers";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  // Require authentication for starting a compose project
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  // dx#119: owner-scoped; not-yours is a 404.
+  const auth = await requirePrincipal("containers:write");
+  if (!auth.authorized) return auth.response;
 
   try {
     const { id } = await params;
+    const denied = await composeProjectOr404(auth.principal, id);
+    if (denied) return denied;
 
     const status = await checkDockerStatus();
     if (!status.connected) {

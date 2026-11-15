@@ -41,6 +41,16 @@ import {
 import { handleMessage, MessageHandlerContext } from "./message-handler";
 import { commandTarget, scheduleCommand } from "./command-handler";
 import { resolveWorkspaceRoot, isValidPath } from "../../lib/worktree-manager";
+import {
+  OWNER_LABEL,
+  hasPermission,
+  ownerKeyFor,
+  requireOwnerOrAdmin,
+  type Principal,
+} from "../../lib/tenancy/ownership";
+import { getUserAuthPaths } from "../docker/auth-paths";
+import { lookupContainerOwner } from "../docker/container-owner";
+import { applyTerminalPolicy, tenantMountBase } from "./tenant-policy";
 
 // Auth paths are initialized in terminal-server.ts and passed here
 let claudeAuthHostPath: string;
@@ -55,9 +65,15 @@ export function setAuthPaths(claudePath: string, openCodePath: string): void {
 }
 
 /**
- * Handle a new WebSocket connection
+ * Handle a new WebSocket connection.
+ *
+ * Async only on the `docker exec` path (the container's owner label is looked
+ * up before attaching); every other path completes synchronously.
  */
-export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
+export async function handleConnection(
+  ws: WebSocket,
+  req: IncomingMessage,
+): Promise<void> {
   // Authenticate the upgrade BEFORE any session id / PTY / container spawn
   // (F1b, issue #95). Covers origin, the Traefik forwarded-identity path, the
   // single-use bearer-ticket path, and the loopback LOCAL_OPERATOR bypass.
@@ -81,6 +97,7 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     return;
   }
 
+  const principal = auth.principal;
   const sessionId = crypto.randomUUID();
   console.log(`New terminal session: ${sessionId}`);
 
@@ -100,11 +117,68 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     ws.close(1008, auth.hostShell.reason);
     return;
   }
-  const command = url.searchParams.get("command") || "";
+
+  // Multi-tenancy (dx#119): authentication is not authorization. Every
+  // terminal needs `terminal:exec` (a ticket's signed claim; see ws-auth.ts).
+  if (!hasPermission(principal, "terminal:exec")) {
+    console.log(
+      `Refused terminal for ${auth.method} identity ${auth.user}: no terminal:exec`,
+    );
+    ws.close(
+      1008,
+      auth.method === "forwarded"
+        ? "terminal refused: a terminal ticket is required"
+        : "terminal refused: terminal:exec not granted",
+    );
+    return;
+  }
+
+  // A non-container terminal (`local`, `shell-tmux`, anything unrecognised) is
+  // a shell inside the daax/terminal container itself, which holds the docker
+  // socket and every tenant's workspace and credentials: admins only (dx#119).
+  // Host mode already refused non-admins above.
+  if (mode !== "container" && !principal.admin) {
+    console.log(
+      `Refused ${mode} terminal for non-admin ${auth.method} identity ${auth.user}`,
+    );
+    ws.close(1008, "terminal refused: local shells are admin-only");
+    return;
+  }
+
+  // Locked server-side settings replace the URL parameters (dx#119).
+  const policed = applyTerminalPolicy(
+    {
+      image: url.searchParams.get("image") || DEFAULT_CONTAINER_IMAGE,
+      basePath: url.searchParams.get("basePath") || "~/prj",
+      command: url.searchParams.get("command") || "",
+    },
+    auth.policy,
+  );
+  const command = policed.command;
   const cwd = url.searchParams.get("cwd") || process.cwd();
-  const requestedImage =
-    url.searchParams.get("image") || DEFAULT_CONTAINER_IMAGE;
+  const requestedImage = policed.image;
   const containerName = url.searchParams.get("containerName") || "";
+
+  // `docker exec` into a named container: only its owner (label daax.owner)
+  // or an admin. Not-yours and not-found close identically. Messages that
+  // arrive during the lookup are buffered and replayed once attached.
+  let earlyMessages: Array<Buffer | string> | null = null;
+  if (mode === "container" && containerName) {
+    const buffered: Array<Buffer | string> = [];
+    const collect = (m: Buffer | string) => buffered.push(m);
+    ws.on("message", collect);
+    const container = await lookupContainerOwner(containerName);
+    ws.off("message", collect);
+    if (ws.readyState !== WebSocket.OPEN) return;
+    if (!requireOwnerOrAdmin(principal, container).ok) {
+      console.log(
+        `Refused exec into ${containerName} for ${auth.method} identity ${auth.user}: not found or not owner`,
+      );
+      ws.close(1008, "container not found");
+      return;
+    }
+    earlyMessages = buffered;
+  }
   // Resolve the container image with fallback logic only when starting a new container
   // Skip for local mode, docker exec mode (containerName set), or other non-container scenarios
   const containerImage =
@@ -116,7 +190,7 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     | "git"
     | "planning"
     | null;
-  const basePathParam = url.searchParams.get("basePath") || "~/prj";
+  const basePathParam = policed.basePath;
 
   // OpenCode model/provider params (for opencode sessions)
   // Model format is "provider:model" (e.g., "copilot:gpt-4o", "openai:o1")
@@ -173,7 +247,8 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
   // sibling-prefix bypass (base "/home/u/prj", mount "/home/u/prj-secrets") and
   // followed symlinks planted under the workspace pointing outside it.
   // isValidPath is the same helper the code-server route (#183) can reuse.
-  const securityBasePath = resolveWorkspaceRoot();
+  // Multi-tenancy (dx#119): an admin-set mountRoot narrows the base further.
+  const securityBasePath = tenantMountBase(resolveWorkspaceRoot(), auth.policy);
   if (!isValidPath(mountPath, securityBasePath)) {
     console.log(
       `Rejected mount outside base path: ${mountPath} (base: ${securityBasePath})`,
@@ -183,7 +258,9 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
   }
 
   const sessionType = url.searchParams.get("sessionType") || "shell";
-  const enableRecording = url.searchParams.get("record") === "true";
+  const enableRecording =
+    url.searchParams.get("record") === "true" &&
+    hasPermission(principal, "recording:write");
   // Client-provided session ID for recording deduplication (prevents duplicates from React remounts)
   const clientSessionId = url.searchParams.get("clientSessionId") || undefined;
 
@@ -207,6 +284,7 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     isOpenCodeSession,
     opencodeProvider,
     opencodeModel,
+    principal,
   );
 
   // Check if node-pty is available
@@ -295,6 +373,7 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
           recordingConfig.cols,
           recordingConfig.rows,
           recordingConfig.clientSessionId,
+          ownerKeyFor(principal),
         );
         // startRecording returns null if duplicate (same clientSessionId already recording)
         if (recordingId) {
@@ -376,12 +455,16 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     setRecordingId: (id) => {
       session.recordingId = id;
     },
+    principal,
   };
 
   // WebSocket input -> PTY
   ws.on("message", (message: Buffer | string) => {
     handleMessage(message, msgContext);
   });
+  if (earlyMessages) {
+    for (const m of earlyMessages) handleMessage(m, msgContext);
+  }
 
   ws.on("close", async () => {
     console.log(`WebSocket closed: ${sessionId}`);
@@ -606,6 +689,7 @@ function buildShellCommand(
   isOpenCodeSession: boolean,
   opencodeProvider: string,
   opencodeModel: string,
+  principal: Principal,
 ): { shell: string; shellArgs: string[] } {
   let shell: string;
   let shellArgs: string[];
@@ -637,12 +721,29 @@ function buildShellCommand(
       const useTmux = !command; // Shell sessions get tmux, AI tools run directly
       const tmuxSessionName = `daax-${sessionId.slice(0, 8)}`;
 
+      // Multi-tenancy (dx#119): label the container with its owner so the
+      // listing/kill routes and `docker exec` can scope to it, and mount the
+      // owner's OWN credential store instead of the one shared dir.
+      const owner = ownerKeyFor(principal) ?? "unknown";
+      const creds = getUserAuthPaths(owner, {
+        claudeHostPath: claudeAuthHostPath,
+        openCodeHostPath: openCodeAuthHostPath,
+      });
+      // A mount of the whole workspace would also expose `.daax/` — every
+      // tenant's credential store and the legacy shared one. Shadow it.
+      const mountsWorkspaceRoot =
+        !!HOST_WORKSPACE_PATH &&
+        mountPath.replace(/\/+$/, "") ===
+          HOST_WORKSPACE_PATH.replace(/\/+$/, "");
+
       shellArgs = [
         "run",
         "-it",
         "--rm",
         "--name",
         `daax-${sessionId.slice(0, 8)}`,
+        "--label",
+        `${OWNER_LABEL}=${owner}`,
         // SECURITY / issue #195 (Fable M5): agent containers reach `postgres`
         // via daax-net. Evaluated for segregation and DEFERRED, not fixed here:
         // daax-net is the shared plane for daax's own services (code-server, the
@@ -658,6 +759,9 @@ function buildShellCommand(
         "vscode",
         "-v",
         `${mountPath}:${containerPath}`,
+        ...(mountsWorkspaceRoot
+          ? ["--mount", `type=tmpfs,destination=${containerPath}/.daax`]
+          : []),
         // SECURITY / issue #195 (Fable M5): credential mounts are read-WRITE by
         // necessity, documented accepted risk. Write-back is REQUIRED and `:ro`
         // would break auth persistence (AC#4):
@@ -682,17 +786,20 @@ function buildShellCommand(
         //     containers. So the residual risk for OpenCode host mode is
         //     exfiltration of the operator's REAL OpenCode credential (their
         //     actual OpenCode identity), not a daax-scoped copy.
+        // Multi-tenancy (dx#119): the store is now PER OWNER
+        // (`.daax/users/<owner>/…`, see getUserAuthPaths); only the operator and
+        // the legacy-credentials admin keep the original shared dir.
         // Residual risk: untrusted agent code can read/exfiltrate the long-lived
         // token in whichever store is mounted, and the store is shared across
-        // daax agent sessions — with OpenCode host mode being the operator's real
+        // the same owner's daax agent sessions — with OpenCode host mode being the operator's real
         // global credential (see above). Follow-up (tracked in the #195 decision
         // log): a daax-scoped OpenCode store for host mode, plus per-session,
         // short-lived scoped tokens so a compromised session cannot exfiltrate a
         // durable credential or read another session's token.
         "-v",
-        `${claudeAuthHostPath}:/home/vscode/.claude`, // Persist Claude auth (RW required — see note above)
+        `${creds.claudeHostPath}:/home/vscode/.claude`, // Per-owner Claude auth (RW required — see note above)
         "-v",
-        `${openCodeAuthHostPath}:/home/vscode/.local/share/opencode`, // Persist OpenCode auth (RW required — see note above)
+        `${creds.openCodeHostPath}:/home/vscode/.local/share/opencode`, // Per-owner OpenCode auth (RW required — see note above)
         "-w",
         containerPath,
         "-e",

@@ -26,10 +26,14 @@ const { mockRequireAuth, mockGetAuthUser } = vi.hoisted(() => {
 // ---------------------------------------------------------------------------
 // Mock auth module
 // ---------------------------------------------------------------------------
-vi.mock("@/lib/auth", () => ({
-  requireAuth: mockRequireAuth,
-  getAuthUser: mockGetAuthUser,
-}));
+vi.mock("@/lib/auth", async () => {
+  const { principalFrom } = await import("../helpers/auth-principal");
+  return {
+    requireAuth: mockRequireAuth,
+    getAuthUser: mockGetAuthUser,
+    requirePrincipal: principalFrom(mockRequireAuth),
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Mock heavy dependencies that route handlers import

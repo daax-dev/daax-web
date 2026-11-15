@@ -31,6 +31,12 @@ vi.mock("@/server/handlers/ws-auth", () => ({
     user: "local",
     method: "bypass",
     hostShell: { ok: true },
+    principal: {
+      subject: null,
+      operator: true,
+      admin: true,
+      permissions: ["terminal:exec", "recording:write"],
+    },
   }),
 }));
 vi.mock("@/server/sessions/pty-loader", () => ({ getPty: () => ({ spawn }) }));

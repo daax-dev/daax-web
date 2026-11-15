@@ -18,6 +18,12 @@
 import { NextResponse } from "next/server";
 import { isAiSessionName } from "@/lib/ai-session-name";
 import { mapPool } from "@/lib/concurrency";
+import { requirePrincipal } from "@/lib/auth";
+import {
+  filterOwned,
+  ownerFromLabels,
+  type Principal,
+} from "@/lib/tenancy/ownership";
 import {
   defaultDockerExec,
   dockerUnavailableJson,
@@ -41,6 +47,8 @@ export interface ActiveSession {
   lastActivityAt: string;
   idleSeconds: number;
   uptimeSeconds: number;
+  /** Owner key from the `daax.owner` label; null for unlabelled containers. */
+  owner: string | null;
 }
 
 interface DockerPsRow {
@@ -51,6 +59,8 @@ interface DockerPsRow {
   Status: string;
   State: string;
   CreatedAt: string;
+  /** `docker ps --format '{{json .}}'` labels: "k=v,k2=v2". */
+  Labels?: string;
 }
 
 // Bound how many `docker inspect`/`docker logs` subprocesses run at once so a
@@ -145,15 +155,21 @@ async function getLastLogTimestamp(
 export async function listAndProbeSessions(
   exec: DockerExec = defaultDockerExec,
   now: number = Date.now(),
+  principal?: Principal,
 ): Promise<ActiveSession[]> {
   const rows = await dockerPs(exec);
 
   // Drop non-session containers the prefix filter let through
   // (e.g. daax-code-server, daax-net). `docker ps --format '{{json .}}'`
   // emits "Names" as a comma list; the first entry is canonical.
-  const sessionRows = rows.filter((row) =>
+  const allSessionRows = rows.filter((row) =>
     isAiSessionName((row.Names || "").split(",")[0]?.trim() || ""),
   );
+  // Tenancy (dx#119): filter BEFORE probing so another tenant's containers
+  // are never inspected on this caller's behalf.
+  const sessionRows = principal
+    ? filterOwned(principal, allSessionRows, (r) => ownerFromLabels(r.Labels))
+    : allSessionRows;
 
   const sessions: ActiveSession[] = await mapPool(
     sessionRows,
@@ -192,6 +208,7 @@ export async function listAndProbeSessions(
           startedAtMs > 0
             ? Math.max(0, Math.floor((now - startedAtMs) / 1000))
             : 0,
+        owner: ownerFromLabels(row.Labels),
       };
     },
   );
@@ -202,8 +219,15 @@ export async function listAndProbeSessions(
 }
 
 export async function GET() {
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
+
   try {
-    const sessions = await listAndProbeSessions();
+    const sessions = await listAndProbeSessions(
+      defaultDockerExec,
+      Date.now(),
+      auth.principal,
+    );
     return NextResponse.json({ success: true, sessions });
   } catch (error) {
     // Split deploy (F3 #100): the web plane holds no Docker socket, so this

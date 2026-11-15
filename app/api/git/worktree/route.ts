@@ -8,9 +8,22 @@ import {
   isValidPath,
   isValidBranchName,
   resolveWorkspaceRoot,
+  getWorktreeOwner,
 } from "@/lib/worktree-manager";
 import { generateUniqueName } from "@/lib/name-generator";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
+import { notFound } from "@/lib/tenancy/http";
+import {
+  canAccessOwned,
+  ownerKeyFor,
+  requireOwnerOrAdmin,
+} from "@/lib/tenancy/ownership";
+
+// Multi-tenancy (dx#119): a worktree belongs to the user who created it (owner
+// recorded in git's per-worktree admin dir, see lib/worktree-manager.ts).
+// Creating/removing one is part of running agents, so it needs terminal:exec.
+// The main worktree (the shared project checkout) is listed to everyone and
+// can be cleaned up by no one but an admin.
 
 /**
  * POST /api/git/worktree - Create a new worktree with a unique branch name
@@ -18,9 +31,8 @@ import { requireAuth } from "@/lib/auth";
  * SECURITY: Requires authentication for git operations
  */
 export async function POST(req: NextRequest) {
-  // Require authentication for creating worktrees
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal("terminal:exec");
+  if (!auth.authorized) return auth.response;
 
   try {
     const { projectPath, baseBranch } = await req.json();
@@ -77,6 +89,7 @@ export async function POST(req: NextRequest) {
       projectPath,
       branchName,
       baseBranch,
+      owner: ownerKeyFor(auth.principal),
     });
 
     return NextResponse.json({
@@ -100,6 +113,9 @@ export async function POST(req: NextRequest) {
  * GET /api/git/worktree?projectPath=... - List worktrees for a project
  */
 export async function GET(req: NextRequest) {
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
+
   const projectPath = req.nextUrl.searchParams.get("projectPath");
 
   if (!projectPath) {
@@ -131,7 +147,9 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const worktrees = await listWorktrees(projectPath);
+    const worktrees = (await listWorktrees(projectPath)).filter(
+      (w) => w.main || canAccessOwned(auth.principal, { owner: w.owner }),
+    );
     return NextResponse.json({
       success: true,
       isGitRepo: true,
@@ -155,9 +173,8 @@ export async function GET(req: NextRequest) {
  * SECURITY: Requires authentication for destructive git operations
  */
 export async function DELETE(req: NextRequest) {
-  // Require authentication for deleting worktrees
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal("terminal:exec");
+  if (!auth.authorized) return auth.response;
 
   try {
     const { projectPath, worktreePath, pushBeforeCleanup, forceDelete } =
@@ -192,6 +209,12 @@ export async function DELETE(req: NextRequest) {
         { error: "Invalid worktree path" },
         { status: 400 },
       );
+    }
+
+    // Not-yours (or the shared main worktree, for a non-admin) is a 404.
+    const owned = await getWorktreeOwner(worktreePath);
+    if (!requireOwnerOrAdmin(auth.principal, owned).ok) {
+      return notFound("Worktree");
     }
 
     const result = await cleanupWorktree(projectPath, worktreePath, {

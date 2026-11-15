@@ -102,6 +102,8 @@ export interface ComposeProject {
   error?: string;
   /** Original YAML content */
   yaml?: string;
+  /** Owner key of the creator (dx#119); labels every service container. */
+  owner?: string;
 }
 
 /**
@@ -121,6 +123,8 @@ export interface ComposeCreateRequest {
   yaml: string;
   project?: string; // Associated project
   startImmediately?: boolean;
+  /** Set by the route from the authenticated caller, never from the body. */
+  owner?: string;
 }
 
 /**
