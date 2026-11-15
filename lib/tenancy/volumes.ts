@@ -43,7 +43,8 @@ export async function tenantVolumeViolation(
   for (const v of volumes) {
     const source = typeof v?.source === "string" ? v.source : "";
     if (!source.startsWith("/")) continue; // named volume
-    if (!isValidPath(source, base)) {
+    // Both: a tenant base symlinked outside the workspace must not widen it.
+    if (!isValidPath(source, base) || !isValidPath(source, root)) {
       return `Volume source is outside your workspace: ${source}`;
     }
     if (isValidPath(source, daax) || isValidPath(daax, source)) {

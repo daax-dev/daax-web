@@ -976,3 +976,20 @@ describe("testcontainer / compose bind mounts stay inside the tenant boundary", 
     expect(h.tcOps).toEqual([]);
   });
 });
+
+describe("testcontainer binds with a symlinked tenant base", () => {
+  it("are refused when the base resolves outside the workspace", async () => {
+    // A tenant base outside the workspace: containment in the base alone
+    // would pass, containment in the workspace root does not.
+    h.effective = { settings: { mountRoot: "users/a" }, locked: ["mountRoot"] };
+    as("A");
+    const res = await createTc(
+      req("POST", {
+        image: "redis",
+        volumes: [{ source: "/etc", target: "/data" }],
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(h.tcOps).toEqual([]);
+  });
+});

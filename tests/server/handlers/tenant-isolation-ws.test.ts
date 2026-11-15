@@ -403,6 +403,19 @@ describe("server-side settings from the ticket", () => {
     expect(h.spawn).toHaveBeenCalledTimes(1);
   });
 
+  it("a mountRoot replaced by a symlink to outside the workspace is refused", async () => {
+    h.aliases.set("/workspace/users/a", "/etc");
+    const ws = await connect({
+      ticket: userTicket(A, {
+        settings: { mountRoot: "users/a" },
+        locked: ["mountRoot"],
+      }),
+      query: { cwd: "/workspace/users/a", mount: "/workspace/users/a" },
+    });
+    expect(ws.close).toHaveBeenCalledWith(1008, "Path not allowed");
+    expect(h.spawn).not.toHaveBeenCalled();
+  });
+
   it("an alias (symlink) of the workspace root still gets .daax shadowed", async () => {
     h.aliases.set("/workspace/repo/rootlink", "/workspace");
     await connect({

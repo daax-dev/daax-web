@@ -5,7 +5,7 @@
  */
 
 import { WebSocket } from "ws";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { IncomingMessage } from "http";
 import { getProjectInfo } from "../../lib/project-utils";
@@ -251,7 +251,12 @@ export async function handleConnection(
   // isValidPath is the same helper the code-server route (#183) can reuse.
   // Multi-tenancy (dx#119): an admin-set mountRoot narrows the base further.
   const securityBasePath = tenantMountBase(resolveWorkspaceRoot(), auth.policy);
-  if (!isValidPath(mountPath, securityBasePath)) {
+  // Both checks: a tenant base that is itself a symlink to somewhere outside
+  // the workspace must not widen confinement (dx#119).
+  if (
+    !isValidPath(mountPath, securityBasePath) ||
+    !isValidPath(mountPath, resolveWorkspaceRoot())
+  ) {
     console.log(
       `Rejected mount outside base path: ${mountPath} (base: ${securityBasePath})`,
     );
@@ -274,9 +279,19 @@ export async function handleConnection(
   // A mount that CONTAINS .daax (the workspace root, or any alias of it such
   // as a symlink resolving to it) gets .daax shadowed by a tmpfs. Decided on
   // canonical paths, like the confinement above, so an alias cannot dodge it.
-  // Only when it exists: Docker would otherwise create the mountpoint (an
-  // empty .daax/) inside the bind source on the host.
+  // In container mode the per-owner credential stores are created under
+  // .daax/ just before spawn, so make sure it exists BEFORE deciding (a fresh
+  // workspace must not start an unshadowed container). In host mode stores
+  // live outside the workspace; there, only shadow an existing .daax so Docker
+  // never creates an empty mountpoint in the host workspace.
   const daaxDir = join(resolveWorkspaceRoot(), ".daax");
+  if (HOST_WORKSPACE_PATH) {
+    try {
+      mkdirSync(daaxDir, { recursive: true });
+    } catch {
+      /* existsSync below decides; a failure leaves nothing to expose */
+    }
+  }
   const shadowDaax = existsSync(daaxDir) && isValidPath(daaxDir, mountPath);
 
   const sessionType = url.searchParams.get("sessionType") || "shell";
