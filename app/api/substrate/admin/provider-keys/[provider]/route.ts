@@ -38,12 +38,13 @@ async function handle(
   params: Promise<{ provider: string }>,
   unset: boolean,
 ) {
-  const ctx = substrateDeps();
-  if (!ctx.ok) return ctx.response;
+  // Admin check first: a non-admin gets 404 whatever the backend state.
   const who = await callerFrom(auth);
   if (!who.ok) return who.response;
   const denied = adminOnly(who.caller);
   if (denied) return denied;
+  const ctx = substrateDeps();
+  if (!ctx.ok) return ctx.response;
   const gk = gatewayKeys(ctx.deps);
   if (!gk.ok) return gk.response;
   const { provider } = await params;

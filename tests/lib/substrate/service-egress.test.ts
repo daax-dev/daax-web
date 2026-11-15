@@ -110,6 +110,19 @@ describe("updateEgress", () => {
     expect((await d.store.get(id))?.egressPresets).toEqual(["npm"]);
   });
 
+  it("records the new allowlist when a Suspend lands during the update (Codex r1)", async () => {
+    const d = makeDeps();
+    const id = await running(d);
+    d.backend.setEgress.mockImplementationOnce(async () => {
+      d.store.rows.get(id)!.state = "suspending";
+    });
+    const r = await updateEgress(d.deps, ALICE, id, {
+      egressPresets: ["github"],
+    });
+    expect(r.ok).toBe(true);
+    expect((await d.store.get(id))?.egressPresets).toEqual(["github"]);
+  });
+
   it("502 with the store untouched when substrate fails", async () => {
     const d = makeDeps();
     const id = await running(d);

@@ -208,6 +208,7 @@ export function SubstrateSessionTab({
                 connect={connect}
                 onDetached={onDetached}
                 onRecordingChange={setRecording}
+                onStopped={setDetached}
                 className="h-full w-full"
               />
             </TerminalErrorBoundary>

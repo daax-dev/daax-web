@@ -89,12 +89,28 @@ describe("dx#123 substrate routes", () => {
   });
 
   it.each(calls)(
-    "%s: 404 substrate-disabled when the flag is off",
+    "%s: 404 substrate-disabled when the flag is off (admin)",
     async (_n, call) => {
       delete process.env.DAAX_SUBSTRATE_ENABLED;
+      access.mockResolvedValue({
+        authenticated: true,
+        isAdmin: true,
+        permissions: [],
+      });
       const res = await call();
       expect(res.status).toBe(404);
       expect((await res.json()).error).toBe("substrate-disabled");
+    },
+  );
+
+  it.each(adminCalls)(
+    "%s: a non-admin gets 404 not-found before any backend state is revealed (Codex r1)",
+    async (_n, call) => {
+      Object.assign(process.env, ENABLED);
+      delete process.env.DAAX_SUBSTRATE_ATESPACE; // misconfigured: would be 503
+      const res = await call();
+      expect(res.status).toBe(404);
+      expect((await res.json()).error).toBe("not-found");
     },
   );
 

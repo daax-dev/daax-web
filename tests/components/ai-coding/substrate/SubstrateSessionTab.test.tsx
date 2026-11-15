@@ -115,6 +115,30 @@ describe("SubstrateSessionTab", () => {
     expect(h.onResume).toHaveBeenCalled();
   });
 
+  it("offers a manual Reattach when the terminal stops retrying (Codex r1)", () => {
+    render(
+      <SubstrateSessionTab
+        session={session()}
+        tab={{ id: "s1" }}
+        active
+        busy={false}
+        refresh={vi.fn()}
+        {...handlers()}
+      />,
+    );
+    const first = termProps.length;
+    act(() =>
+      (termProps.at(-1)!.onStopped as (r: string) => void)(
+        "could not reattach: attach failed",
+      ),
+    );
+    expect(screen.queryByTestId("xterm")).toBeNull();
+    act(() => screen.getByRole("button", { name: /Reattach/ }).click());
+    expect(screen.getByTestId("xterm")).toBeInTheDocument();
+    expect(termProps.length).toBeGreaterThan(first);
+    expect(termProps.at(-1)!.wsUrl).not.toBe(termProps[first - 1].wsUrl);
+  });
+
   it("shows the recording state reported by the terminal", () => {
     render(
       <SubstrateSessionTab
