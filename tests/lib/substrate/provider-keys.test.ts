@@ -40,7 +40,7 @@ function fakeSpawn(
       const child = new EventEmitter() as EventEmitter & {
         stdout: EventEmitter;
         stderr: EventEmitter;
-        stdin: { end: (s: string) => void };
+        stdin: { end: (s: string) => void; on: () => void };
         kill: () => void;
       };
       child.stdout = new EventEmitter();
@@ -49,6 +49,7 @@ function fakeSpawn(
       const call: Call = { bin, args, env: opts.env, stdin: "" };
       calls.push(call);
       child.stdin = {
+        on: () => {},
         end: (s: string) => {
           call.stdin = s;
           const r = reply(args);
@@ -141,6 +142,51 @@ describe("GatewayKeys.write", () => {
     expect(err).toBeInstanceOf(ProviderKeyError);
     expect(String(err.message)).not.toContain(SECRET_VALUE);
     expect(f.calls).toHaveLength(1);
+  });
+
+  it("a stdin EPIPE (kubectl exited early) is a generic failure, never an unhandled error (Codex r2)", async () => {
+    const spawn = vi.fn(() => {
+      const child = new EventEmitter() as EventEmitter & {
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+        stdin: EventEmitter & { end: (s: string) => void };
+        kill: () => void;
+      };
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = () => {};
+      const stdin = new EventEmitter() as EventEmitter & {
+        end: (s: string) => void;
+      };
+      stdin.end = () => {
+        setTimeout(() => {
+          // Throws if nobody listens for "error" on the stream.
+          stdin.emit(
+            "error",
+            Object.assign(new Error("write EPIPE"), { code: "EPIPE" }),
+          );
+          child.emit("close", 0);
+        }, 0);
+      };
+      child.stdin = stdin;
+      return child;
+    });
+    const err = await new GatewayKeys(GW, KUBE, spawn as unknown as SpawnFn)
+      .write("openai", SECRET_VALUE)
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ProviderKeyError);
+    expect(err.message).toBe("applying secret llm-upstream failed");
+  });
+
+  it("a spawn that throws is a generic failure", async () => {
+    const spawn = vi.fn(() => {
+      throw new Error(`spawn ENOENT ${SECRET_VALUE}`);
+    });
+    const err = await new GatewayKeys(GW, KUBE, spawn as unknown as SpawnFn)
+      .write("openai", SECRET_VALUE)
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ProviderKeyError);
+    expect(err.message).not.toContain(SECRET_VALUE);
   });
 
   it("tolerates an absent last-applied annotation", async () => {

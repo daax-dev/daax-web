@@ -102,33 +102,57 @@ export class GatewayKeys {
     stdin?: string,
   ): Promise<{ stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
-      const child = this.spawnFn(
-        this.gw.kubectlBin,
-        [...this.globalArgs(), ...args],
-        { env: this.env(), stdio: ["pipe", "pipe", "pipe"] },
-      );
+      let settled = false;
+      // `timer` is assigned below, before any event can fire.
+      // eslint-disable-next-line prefer-const
+      let timer: ReturnType<typeof setTimeout>;
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn();
+      };
+      const fail = (notFound = false) =>
+        finish(() => {
+          const err = new ProviderKeyError(`${what} failed`);
+          // Kept for the not-found check only; never logged or returned.
+          (err as ProviderKeyError & { notFound?: boolean }).notFound =
+            notFound;
+          reject(err);
+        });
+      let child: ReturnType<SpawnFn>;
+      try {
+        child = this.spawnFn(
+          this.gw.kubectlBin,
+          [...this.globalArgs(), ...args],
+          { env: this.env(), stdio: ["pipe", "pipe", "pipe"] },
+        );
+      } catch {
+        fail();
+        return;
+      }
       let stdout = "";
       let stderr = "";
-      const timer = setTimeout(() => child.kill("SIGKILL"), 30_000);
+      let stdinFailed = false;
+      timer = setTimeout(() => child.kill("SIGKILL"), 30_000);
       child.stdout?.on("data", (d: Buffer) => {
         if (stdout.length < 1 << 20) stdout += d.toString("utf8");
       });
       child.stderr?.on("data", (d: Buffer) => {
         if (stderr.length < 64 << 10) stderr += d.toString("utf8");
       });
-      child.on("error", () => {
-        clearTimeout(timer);
-        reject(new ProviderKeyError(`${what} failed`));
+      // kubectl may exit before reading the manifest (bad credentials or
+      // args): the pipe then errors with EPIPE. Without a handler that is an
+      // unhandled stream error; with it, the exit is reported as a failure.
+      child.stdin?.on("error", () => {
+        stdinFailed = true;
       });
+      child.on("error", () => fail());
       child.on("close", (code) => {
-        clearTimeout(timer);
-        if (code === 0) resolve({ stdout, stderr });
-        else {
-          const err = new ProviderKeyError(`${what} failed`);
-          // Kept for the not-found check only; never logged or returned.
-          (err as ProviderKeyError & { notFound?: boolean }).notFound =
-            /notfound|not found/i.test(stderr);
-          reject(err);
+        if (code === 0 && !stdinFailed) {
+          finish(() => resolve({ stdout, stderr }));
+        } else {
+          fail(/notfound|not found/i.test(stderr));
         }
       });
       child.stdin?.end(stdin ?? "");
