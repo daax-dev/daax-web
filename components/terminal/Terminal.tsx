@@ -47,6 +47,12 @@ export interface TerminalProps {
   onDetached?: (reason: string) => boolean | Promise<boolean>;
   /** Recording state from the server (`recordingStarted` / `recordingStopped`). */
   onRecordingChange?: (recording: boolean) => void;
+  /**
+   * Persistent mode only: the component stopped reconnecting (the owner said
+   * no, the retry budget ran out, or the attach was refused with 1008). The
+   * owner should offer a manual Reattach (remount with a new `wsUrl`).
+   */
+  onStopped?: (reason: string) => void;
 }
 
 export interface TerminalRef {
@@ -67,6 +73,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       connect,
       onDetached,
       onRecordingChange,
+      onStopped,
     },
     ref,
   ) {
@@ -88,6 +95,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     const connectRef = useRef(connect);
     const onDetachedRef = useRef(onDetached);
     const onRecordingChangeRef = useRef(onRecordingChange);
+    const onStoppedRef = useRef(onStopped);
     // Persistent mode is fixed for the component's lifetime (per wsUrl).
     const persistent = Boolean(connect);
 
@@ -99,6 +107,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       connectRef.current = connect;
       onDetachedRef.current = onDetached;
       onRecordingChangeRef.current = onRecordingChange;
+      onStoppedRef.current = onStopped;
     }, [
       onSessionStart,
       onExit,
@@ -106,6 +115,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       connect,
       onDetached,
       onRecordingChange,
+      onStopped,
     ]);
 
     useEffect(() => {
@@ -241,12 +251,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
           term.writeln(
             "\x1b[33mDetached. The session keeps running on the server.\x1b[0m",
           );
+          onStoppedRef.current?.(reason);
           return;
         }
         if (reconnectAttemptRef.current >= MAX_PERSISTENT_RETRIES) {
           term.writeln(
             "\x1b[31mCould not reattach after several attempts. Use Reattach to try again.\x1b[0m",
           );
+          onStoppedRef.current?.(`could not reattach: ${reason}`);
           return;
         }
         const delay = Math.min(
@@ -457,6 +469,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
             onErrorRef.current?.(
               `WebSocket refused: ${event.reason || "policy violation"}`,
             );
+            if (persistent) {
+              onStoppedRef.current?.(
+                `attach refused: ${event.reason || "policy violation"}`,
+              );
+            }
           } else if (event.code !== 1000 && shouldReconnectRef.current) {
             const reasonText = event.reason ? ` (${event.reason})` : "";
             term.writeln(

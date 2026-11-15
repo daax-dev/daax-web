@@ -614,6 +614,13 @@ const EGRESS_EDITABLE: readonly SubstrateSession["state"][] = [
   "running",
   "suspended",
 ];
+/** States in which a replaced policy is still recorded (all but End's). */
+const EGRESS_RECORDABLE: readonly SubstrateSession["state"][] = [
+  "running",
+  "suspending",
+  "suspended",
+  "resuming",
+];
 
 async function doUpdateEgress(
   deps: ServiceDeps,
@@ -642,16 +649,18 @@ async function doUpdateEgress(
     logFailure("egress update", id, err);
     return fail(502, "substrate-error", publicReason(err));
   }
+  // The policy is independent of suspend/resume, so the record follows it
+  // through those transitions (Codex r1: a Suspend landing during the
+  // update must not leave the record behind the live policy). Only End
+  // (`ending`, or `ended`) stops the write; End deletes the policy itself.
   const updated = await deps.store.updateEgress(
     id,
-    EGRESS_EDITABLE,
+    EGRESS_RECORDABLE,
     v.presets,
     v.hosts,
   );
   if (!updated) {
-    // Ended (or moved to a transitional state) while the policy was being
-    // replaced. End deletes the policy itself; nothing to undo here.
-    return fail(409, "invalid-state", "the session changed during the update");
+    return fail(409, "invalid-state", "the session ended during the update");
   }
   return ok({ ...updated });
 }

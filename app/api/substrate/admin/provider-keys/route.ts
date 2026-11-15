@@ -18,12 +18,14 @@ import { ProviderKeyError } from "@/lib/substrate/provider-keys";
 export async function GET() {
   const auth = await requireAuthIdentity();
   if (!auth.authenticated) return auth.response;
-  const ctx = substrateDeps();
-  if (!ctx.ok) return ctx.response;
+  // Admin check first: a non-admin gets 404 whatever the backend state
+  // (no configuration detail leaks to them).
   const who = await callerFrom(auth);
   if (!who.ok) return who.response;
   const denied = adminOnly(who.caller);
   if (denied) return denied;
+  const ctx = substrateDeps();
+  if (!ctx.ok) return ctx.response;
   const gk = gatewayKeys(ctx.deps);
   if (!gk.ok) return gk.response;
   try {

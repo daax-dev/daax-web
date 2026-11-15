@@ -137,11 +137,13 @@ describe("Terminal persistent mode", () => {
       throw new Error("session is suspended; resume it first");
     });
     const onDetached = vi.fn(async () => true);
+    const onStopped = vi.fn();
     render(
       <Terminal
         wsUrl="substrate:s1:0"
         connect={connect}
         onDetached={onDetached}
+        onStopped={onStopped}
       />,
     );
     await act(async () => {
@@ -149,6 +151,29 @@ describe("Terminal persistent mode", () => {
     });
     expect(connect.mock.calls.length).toBeLessThanOrEqual(7);
     expect(written.join("\n")).toMatch(/Could not reattach/);
+    // The owner is told, so it can offer a manual Reattach (Codex r1).
+    expect(onStopped).toHaveBeenCalledWith(
+      expect.stringMatching(/could not reattach/),
+    );
+  });
+
+  it("a 1008 refusal stops and tells the owner (Codex r1)", async () => {
+    const ws = new FakeWs();
+    const onStopped = vi.fn();
+    const onDetached = vi.fn(async () => true);
+    render(
+      <Terminal
+        wsUrl="substrate:s1:0"
+        connect={async () => ws as unknown as WebSocket}
+        onDetached={onDetached}
+        onStopped={onStopped}
+      />,
+    );
+    await flush();
+    act(() => ws.onclose?.({ code: 1008, reason: "not your session" }));
+    await flush();
+    expect(onDetached).not.toHaveBeenCalled();
+    expect(onStopped).toHaveBeenCalledWith("attach refused: not your session");
   });
 
   it("reports the recording state", async () => {
