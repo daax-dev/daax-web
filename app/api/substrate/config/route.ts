@@ -5,13 +5,13 @@
  */
 import { NextResponse } from "next/server";
 
-import { requireAuthIdentity } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
 import { describeConfig } from "@/lib/substrate/service";
 import { substrateDeps } from "@/lib/substrate/route-helpers";
 
 export async function GET() {
-  const auth = await requireAuthIdentity();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
   const ctx = substrateDeps();
   if (!ctx.ok) return ctx.response;
   return NextResponse.json(describeConfig(ctx.deps.config));

@@ -46,7 +46,13 @@ const { FakeWs, upstreamInstances } = vi.hoisted(() => {
 
 vi.mock("ws", () => ({ WebSocket: FakeWs }));
 vi.mock("@/server/handlers/ws-auth", () => ({
-  authenticateConnection: () => ({ ok: true, user: "test", method: "bypass" }),
+  authenticateConnection: () => ({
+    ok: true,
+    user: "test",
+    method: "bypass",
+    // The operator bypass is admin (dx#119: the stream is admin-only).
+    principal: { subject: null, operator: true, admin: true, permissions: [] },
+  }),
 }));
 
 import { handleAttentionBridge } from "@/server/handlers/attention-bridge";

@@ -14,7 +14,8 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
+import { adminOnly } from "@/lib/tenancy/http";
 
 /** Raw shape returned by GET /api/sessions/:id/tools from Watchtower. */
 interface WatchtowerTool {
@@ -69,13 +70,20 @@ export async function GET(
   _req: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireAuth();
-  if (!auth.authenticated) {
+  // dx#119: this surface carries other agents' data with no daax owner to
+  // filter on, so it is admin-only until its sessions carry one.
+  const auth = await requirePrincipal();
+  if (!auth.authorized) {
     // Ensure no-store on the auth error so a cached 401 can't persist across
     // auth-state changes (e.g. after the user logs in again).
     const authRes = auth.response.clone ? auth.response.clone() : auth.response;
     authRes.headers.set("Cache-Control", "no-store");
     return authRes;
+  }
+  if (!auth.principal.admin) {
+    const res = adminOnly();
+    res.headers.set("Cache-Control", "no-store");
+    return res;
   }
 
   const { id } = await context.params;

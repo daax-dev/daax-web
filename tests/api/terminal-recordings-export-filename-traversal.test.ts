@@ -139,9 +139,13 @@ vi.mock("child_process", () => ({
   default: { execFileSync: mockExecFileSync },
 }));
 
-vi.mock("@/lib/auth", () => ({
-  requireAuth: mockRequireAuth,
-}));
+vi.mock("@/lib/auth", async () => {
+  const { principalFrom } = await import("../helpers/auth-principal");
+  return {
+    requireAuth: mockRequireAuth,
+    requirePrincipal: principalFrom(mockRequireAuth),
+  };
+});
 
 // NOTE: html-export is intentionally NOT mocked here, so the real
 // generateExportFilename runs inside the publish handler.

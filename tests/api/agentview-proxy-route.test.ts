@@ -17,7 +17,13 @@ const { mockRequireAuth } = vi.hoisted(() => ({
   mockRequireAuth: vi.fn(),
 }));
 
-vi.mock("@/lib/auth", () => ({ requireAuth: mockRequireAuth }));
+vi.mock("@/lib/auth", async () => {
+  const { principalFrom } = await import("../helpers/auth-principal");
+  return {
+    requireAuth: mockRequireAuth,
+    requirePrincipal: principalFrom(mockRequireAuth),
+  };
+});
 
 const mockFetch = vi.fn();
 

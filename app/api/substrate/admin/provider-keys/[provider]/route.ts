@@ -10,7 +10,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 
-import { requireAuthIdentity } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
 import {
   adminOnly,
   audited,
@@ -28,8 +28,8 @@ import type { ServiceResult } from "@/lib/substrate/service";
 const ROUTE = "/api/substrate/admin/provider-keys/:provider";
 
 type Identity = Extract<
-  Awaited<ReturnType<typeof requireAuthIdentity>>,
-  { authenticated: true }
+  Awaited<ReturnType<typeof requirePrincipal>>,
+  { authorized: true }
 >;
 
 async function handle(
@@ -39,7 +39,7 @@ async function handle(
   unset: boolean,
 ) {
   // Admin check first: a non-admin gets 404 whatever the backend state.
-  const who = await callerFrom(auth);
+  const who = callerFrom(auth.principal);
   if (!who.ok) return who.response;
   const denied = adminOnly(who.caller);
   if (denied) return denied;
@@ -115,8 +115,8 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ provider: string }> },
 ) {
-  const auth = await requireAuthIdentity();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
   return handle(auth, request, params, false);
 }
 
@@ -124,7 +124,7 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ provider: string }> },
 ) {
-  const auth = await requireAuthIdentity();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
   return handle(auth, request, params, true);
 }

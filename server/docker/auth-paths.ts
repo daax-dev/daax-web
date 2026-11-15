@@ -12,6 +12,11 @@ import {
   HOST_WORKSPACE_PATH,
   CONTAINER_WORKSPACE_PATH,
 } from "../config/constants";
+import {
+  parseAdminAllowlist,
+  canonicalizeSubject,
+} from "../../lib/rbac/allowlist";
+import { OPERATOR_OWNER, ownerDirName } from "../../lib/tenancy/ownership";
 
 // In container mode, we store auth inside the mounted workspace so we can manage permissions.
 // The daax container has /workspace mounted from HOST_WORKSPACE_PATH.
@@ -200,4 +205,91 @@ export function initializeOpenCodeAuthDir(): {
   }
 
   return { localPath, hostPath };
+}
+
+// ---------------------------------------------------------------------------
+// Per-user credential stores (multi-tenancy — dx#119)
+// ---------------------------------------------------------------------------
+//
+// One shared `.daax/claude` mounted read-write into every user's agent
+// container let any user read (and refresh) everyone else's Claude/OpenCode
+// login. Each owner now gets `.daax/users/<owner>/{claude,opencode}`.
+//
+// Migration (non-destructive, reversible): nothing is moved or deleted. The
+// existing shared store is simply mapped to the admin who owned it — the local
+// operator, plus `DAAX_LEGACY_CREDENTIALS_OWNER` if set, else the first subject
+// in `DAAX_ADMIN_USERS`. Every other user starts with an empty store and logs
+// in once inside their own container. Unset both and remove the legacy dir to
+// retire it.
+//
+// The substrate backend uses no sandbox credentials at all (provider keys stay
+// in the agentgateway LLM gateway); this applies to the docker backend only.
+
+export interface UserAuthPaths {
+  claudeHostPath: string;
+  openCodeHostPath: string;
+  /** True when this owner is mapped onto the pre-#119 shared store. */
+  legacy: boolean;
+}
+
+/** The admin subject the pre-#119 shared credential store belongs to. */
+export function legacyCredentialsOwner(
+  env: Record<string, string | undefined> = process.env,
+): string | null {
+  const explicit = env.DAAX_LEGACY_CREDENTIALS_OWNER?.trim();
+  if (explicit) return canonicalizeSubject(explicit).toLowerCase();
+  const firstSubject = parseAdminAllowlist(env.DAAX_ADMIN_USERS).find(
+    (e) => e.kind === "subject",
+  );
+  return firstSubject ? firstSubject.value : null;
+}
+
+function usersRoot(): { local: string; host: string } {
+  if (HOST_WORKSPACE_PATH) {
+    return {
+      local: `${CONTAINER_WORKSPACE_PATH}/.daax/users`,
+      host: `${HOST_WORKSPACE_PATH}/.daax/users`,
+    };
+  }
+  const dir = join(homedir(), ".daax", "users");
+  return { local: dir, host: dir };
+}
+
+function ensureOwnedDir(localPath: string): void {
+  mkdirSync(localPath, { recursive: true, mode: 0o700 });
+  if (process.getuid && process.getuid() === 0) {
+    try {
+      chownSync(localPath, 1000, 1000);
+    } catch {
+      /* best effort, as for the shared store */
+    }
+  }
+}
+
+/**
+ * Credential host paths to mount into `owner`'s agent container, creating the
+ * per-user directories on first use.
+ */
+export function getUserAuthPaths(
+  owner: string,
+  legacy: { claudeHostPath: string; openCodeHostPath: string },
+  env: Record<string, string | undefined> = process.env,
+): UserAuthPaths {
+  const key = owner.trim().toLowerCase();
+  if (key === OPERATOR_OWNER || key === legacyCredentialsOwner(env)) {
+    return { ...legacy, legacy: true };
+  }
+  const root = usersRoot();
+  const dir = ownerDirName(key);
+  const local = {
+    claude: join(root.local, dir, "claude"),
+    oc: join(root.local, dir, "opencode"),
+  };
+  ensureOwnedDir(local.claude);
+  ensureOwnedDir(local.oc);
+  return {
+    claudeHostPath: join(root.host, dir, "claude"),
+    openCodeHostPath: join(root.host, dir, "opencode"),
+    legacy: false,
+  };
 }

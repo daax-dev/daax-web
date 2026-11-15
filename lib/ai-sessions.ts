@@ -12,6 +12,7 @@ export async function createSession(
   agent: AIAgent,
   containerImage: string,
   workingDirectory: string,
+  owner?: string | null,
 ): Promise<AISession> {
   const id = crypto.randomUUID();
 
@@ -22,6 +23,7 @@ export async function createSession(
     workingDirectory,
     status: "starting",
     createdAt: new Date().toISOString(),
+    ...(owner ? { owner } : {}),
   };
 
   sessionStore.set(id, session);

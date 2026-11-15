@@ -59,6 +59,7 @@ export function startRecording(
   cols: number,
   rows: number,
   clientSessionId?: string,
+  owner?: string | null,
 ): string | null {
   // Deduplication: Check if there's already an active recording for this clientSessionId
   // This prevents duplicate recordings from React Strict Mode double-mounts
@@ -95,6 +96,7 @@ export function startRecording(
     cols,
     rows,
     title: `${sessionType} session - ${new Date().toLocaleString()}`,
+    ...(owner ? { owner } : {}),
   };
 
   // Write asciinema v2 header

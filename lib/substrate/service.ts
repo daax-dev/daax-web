@@ -1,7 +1,8 @@
 /**
  * Substrate session lifecycle for the web plane (dx#113 / #114 / #118).
  *
- * Route handlers authenticate, build a `Caller`, and call these functions.
+ * Route handlers authorize with `requirePrincipal`, build a `Caller` from the
+ * principal (`callerFromPrincipal`), and call these functions.
  * Every operation is owner-scoped through the store's ownership API; a
  * session the caller may not see is reported as not found.
  *
@@ -696,9 +697,15 @@ export async function attachSession(
   }
   const query = { mode: "substrate", session: s.id, actor: s.actorName };
   if (getWsTokenSecret()) {
+    // Multi-tenancy (dx#119): the terminal server enforces from signed claims
+    // only, and refuses a ticket without `perms`. `owner` is the session's
+    // owner (not the caller, who may be an admin), so a recording made at the
+    // hub belongs to the session's owner.
     const { token, exp } = mintTicket(caller.subject, undefined, {
       ...(caller.operator ? { operator: true as const } : {}),
-      substrate: { session: s.id, actor: s.actorName },
+      ...(caller.isAdmin ? { admin: true as const } : {}),
+      perms: [...(caller.permissions ?? [])],
+      substrate: { session: s.id, actor: s.actorName, owner: s.ownerSubject },
     });
     return ok({
       sessionId: s.id,
