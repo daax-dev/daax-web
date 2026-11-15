@@ -229,6 +229,17 @@ export class AteCli {
             resolve(stdout);
           }
         });
+        // A child that exits before reading its stdin (bad flags, auth
+        // failure) makes the write fail with EPIPE on the stdin stream. That
+        // error must be handled here or it crashes the process; the exit
+        // code and stderr reported by "close" carry the real failure.
+        child.stdin?.on("error", (err: NodeJS.ErrnoException) => {
+          if (err.code !== "EPIPE" && err.code !== "ERR_STREAM_DESTROYED") {
+            console.error(
+              `[substrate] kubectl-ate stdin error: ${err.message}`,
+            );
+          }
+        });
         if (opts.stdin !== undefined) child.stdin?.end(opts.stdin);
         else child.stdin?.end();
       });

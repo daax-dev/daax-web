@@ -1,4 +1,7 @@
 import { EventEmitter } from "node:events";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -35,6 +38,7 @@ function fakeSpawn(stdout = "", code = 0, stderr = "") {
       child.stderr = err;
       child.kill = vi.fn();
       child.stdin = {
+        on: vi.fn(),
         end: (data?: string) => {
           call.stdin = data ?? "";
           setTimeout(() => {
@@ -124,6 +128,26 @@ describe("AteCli", () => {
     const cli = new AteCli(cfg, spawn);
     await expect(cli.deleteActor("x")).rejects.toThrow('actor "x" not found');
     expect(await cli.getActor("x")).toBeNull();
+  });
+});
+
+describe("child exits before reading stdin (EPIPE)", () => {
+  it("rejects with the exit status instead of crashing on EPIPE", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fake-ate-"));
+    const bin = join(dir, "kubectl-ate");
+    // Exits at once without reading stdin, like kubectl rejecting a flag.
+    writeFileSync(bin, "#!/bin/sh\necho 'error: unknown flag' >&2\nexit 3\n");
+    chmodSync(bin, 0o755);
+    try {
+      const cli = new AteCli({ ateBin: bin, atespace: "kinsale" });
+      // Large enough that the write cannot complete into the pipe buffer.
+      const manifest = "x".repeat(8 * 1024 * 1024);
+      await expect(
+        cli.createEgress("daax-0123456789", manifest),
+      ).rejects.toThrow(/unknown flag/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
