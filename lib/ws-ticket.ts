@@ -56,12 +56,34 @@ export interface TicketPayload {
   settings?: SecuritySettings;
   /** Settings keys the terminal server must force over the URL params. */
   locked?: SecuritySettingKey[];
+  /**
+   * Substrate attach grant (dx#113/#114), minted only by
+   * `POST /api/substrate/sessions/:id/attach` after it checked that `sub` owns
+   * the session (or is admin). The terminal server attaches only to this
+   * actor, so it needs no session store of its own.
+   */
+  substrate?: SubstrateAttachClaim;
+}
+
+export interface SubstrateAttachClaim {
+  /** daax session id (substrate_sessions.id). */
+  session: string;
+  /** Actor name in the configured atespace. */
+  actor: string;
+  /** The session's owner key (dx#119): recordings made at the hub are its. */
+  owner?: string;
 }
 
 /** Optional claims beyond the subject. */
 export type TicketClaims = Pick<
   TicketPayload,
-  "hostShell" | "operator" | "admin" | "perms" | "settings" | "locked"
+  | "hostShell"
+  | "operator"
+  | "admin"
+  | "perms"
+  | "settings"
+  | "locked"
+  | "substrate"
 >;
 
 export type VerifyResult =

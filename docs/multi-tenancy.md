@@ -65,8 +65,10 @@ whole workspace, `.daax/` is hidden from it by a tmpfs mount, and a non-admin
 can never mount `.daax/` or anything inside it (canonical path checks, so a
 symlink alias of the workspace root is shadowed too). Testcontainer and compose
 bind mounts get the same boundary: inside the user's `mountRoot`, never inside
-or containing `.daax/`. One user's container cannot reach another user's
-credentials.
+or containing `.daax/`. Docker named volumes have no owner (a name can be
+another user's volume or daax's own Postgres data or recordings), so only
+admins may mount them; anonymous volumes are allowed. One user's container
+cannot reach another user's credentials.
 
 **Migration (non-destructive):** nothing is moved or deleted. The existing
 shared `.daax/claude` (host mode: `~/.daax-claude`) keeps serving the local
@@ -76,7 +78,13 @@ with an empty store and logs in once inside their own container. To retire the
 shared store, unset the variable and remove the directory.
 
 The substrate backend uses no sandbox credentials (provider keys stay in the
-agentgateway LLM gateway), so none of this applies to it.
+agentgateway LLM gateway), so none of this applies to it. Substrate sessions
+are owner-scoped through the same gate: list and get need only authentication,
+create and attach need `terminal:exec`, End, Suspend, Resume and egress edits
+need `containers:write`, and another user's session answers 404. An attach
+ticket carries the caller's permissions and the session's owner (recordings
+made from it belong to the owner) and opens only that substrate session, never
+another terminal mode.
 
 Transcripts (the operator's `~/.claude/projects`), the Watchtower attention
 board and its WS stream, and the Agent View proxy carry other agents' data that

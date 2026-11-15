@@ -40,7 +40,11 @@
 import type { IncomingMessage } from "http";
 
 import { isLoopbackAddress } from "../../lib/net/loopback";
-import { verifyTicket, getWsTokenSecret } from "../../lib/ws-ticket";
+import {
+  verifyTicket,
+  getWsTokenSecret,
+  type SubstrateAttachClaim,
+} from "../../lib/ws-ticket";
 import { WS_TICKET_SUBPROTOCOL } from "../../lib/ws-ticket-protocol";
 import { isAllowedOrigin } from "../config/constants";
 import {
@@ -70,6 +74,8 @@ export type AuthDecision =
       user: string;
       method: "forwarded" | "ticket" | "bypass";
       hostShell: HostShellDecision;
+      /** Substrate attach grant carried by a ticket (dx#113), if any. */
+      substrate?: SubstrateAttachClaim;
       /**
        * Multi-tenancy (dx#119): who this connection acts as, for the
        * permission and ownership checks the connection handler makes.
@@ -243,6 +249,17 @@ export function authenticateConnection(req: IncomingMessage): AuthDecision {
     } else {
       hostShell = decideHostShell(payload.sub);
     }
+    const claim = payload.substrate;
+    const substrate =
+      claim &&
+      typeof claim.session === "string" &&
+      typeof claim.actor === "string"
+        ? {
+            session: claim.session,
+            actor: claim.actor,
+            ...(typeof claim.owner === "string" ? { owner: claim.owner } : {}),
+          }
+        : undefined;
     // Operator tickets are honoured only where this server would itself grant
     // the bypass (non-strict), exactly like the host-shell claim above.
     const operatorHonoured = payload.operator === true && !strictMode();
@@ -264,6 +281,7 @@ export function authenticateConnection(req: IncomingMessage): AuthDecision {
       hostShell,
       principal,
       policy,
+      ...(substrate ? { substrate } : {}),
     };
   }
 

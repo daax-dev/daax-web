@@ -30,6 +30,29 @@ export interface TerminalProps {
   onError?: (error: string) => void;
   className?: string;
   initialCommand?: string;
+  /**
+   * Persistent-session mode (substrate, dx#123): open the socket with this
+   * factory instead of `openTerminalWebSocket(wsUrl)`. It is called for every
+   * (re)connect, so each one gets a fresh single-use grant. In this mode a
+   * close the component did not ask for is a detach, never an exit: the
+   * component asks `onDetached` whether to reattach. `wsUrl` then only keys
+   * the connection (change it to force a new one).
+   */
+  connect?: () => Promise<WebSocket>;
+  /**
+   * Persistent mode only: the stream went away (`{type:"detached"}`, a drop,
+   * or a failed attach). Resolve true to reattach with a fresh grant, false
+   * to stay detached (e.g. the session is now suspended).
+   */
+  onDetached?: (reason: string) => boolean | Promise<boolean>;
+  /** Recording state from the server (`recordingStarted` / `recordingStopped`). */
+  onRecordingChange?: (recording: boolean) => void;
+  /**
+   * Persistent mode only: the component stopped reconnecting (the owner said
+   * no, the retry budget ran out, or the attach was refused with 1008). The
+   * owner should offer a manual Reattach (remount with a new `wsUrl`).
+   */
+  onStopped?: (reason: string) => void;
 }
 
 export interface TerminalRef {
@@ -40,7 +63,18 @@ export interface TerminalRef {
 
 export const Terminal = forwardRef<TerminalRef, TerminalProps>(
   function Terminal(
-    { wsUrl, onSessionStart, onExit, onError, className = "", initialCommand },
+    {
+      wsUrl,
+      onSessionStart,
+      onExit,
+      onError,
+      className = "",
+      initialCommand,
+      connect,
+      onDetached,
+      onRecordingChange,
+      onStopped,
+    },
     ref,
   ) {
     const terminalRef = useRef<HTMLDivElement>(null);
@@ -58,13 +92,35 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     const onSessionStartRef = useRef(onSessionStart);
     const onExitRef = useRef(onExit);
     const onErrorRef = useRef(onError);
+    const connectRef = useRef(connect);
+    const onDetachedRef = useRef(onDetached);
+    const onRecordingChangeRef = useRef(onRecordingChange);
+    const onStoppedRef = useRef(onStopped);
+    // Persistent mode is fixed for the component's lifetime (per wsUrl).
+    const persistent = Boolean(connect);
 
     // Update refs when callbacks change
     useEffect(() => {
       onSessionStartRef.current = onSessionStart;
       onExitRef.current = onExit;
       onErrorRef.current = onError;
-    }, [onSessionStart, onExit, onError]);
+      connectRef.current = connect;
+      onDetachedRef.current = onDetached;
+      onRecordingChangeRef.current = onRecordingChange;
+      onStoppedRef.current = onStopped;
+    }, [
+      onSessionStart,
+      onExit,
+      onError,
+      connect,
+      onDetached,
+      onRecordingChange,
+      onStopped,
+    ]);
+
+    useEffect(() => {
+      onRecordingChangeRef.current?.(isRecording);
+    }, [isRecording]);
 
     const handleResize = useCallback(() => {
       if (
@@ -177,10 +233,52 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       // Function to setup WebSocket with all handlers (reusable for
       // reconnections). Async because each (re)connect mints a fresh single-use
       // bearer ticket via openTerminalWebSocket (F1b, #95).
+      // Persistent mode: ask the owner whether to reattach after a detach,
+      // then reconnect with a fresh grant (backoff 1s, 2s, 4s ... max 10s).
+      // Consecutive failed attaches are capped so a broken attach path
+      // (e.g. ticketing off) cannot loop forever.
+      const MAX_PERSISTENT_RETRIES = 6;
+      const handleDetach = async (reason: string): Promise<void> => {
+        if (disposed || !shouldReconnectRef.current) return;
+        let again = false;
+        try {
+          again = Boolean(await onDetachedRef.current?.(reason));
+        } catch {
+          again = false;
+        }
+        if (disposed || !shouldReconnectRef.current) return;
+        if (!again) {
+          term.writeln(
+            "\x1b[33mDetached. The session keeps running on the server.\x1b[0m",
+          );
+          onStoppedRef.current?.(reason);
+          return;
+        }
+        if (reconnectAttemptRef.current >= MAX_PERSISTENT_RETRIES) {
+          term.writeln(
+            "\x1b[31mCould not reattach after several attempts. Use Reattach to try again.\x1b[0m",
+          );
+          onStoppedRef.current?.(`could not reattach: ${reason}`);
+          return;
+        }
+        const delay = Math.min(
+          1000 * Math.pow(2, reconnectAttemptRef.current),
+          10000,
+        );
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectAttemptRef.current += 1;
+          term.writeln("\x1b[33mReattaching with a fresh ticket...\x1b[0m");
+          void setupWebSocket(true);
+        }, delay);
+      };
+
       const setupWebSocket = async (isReconnect = false): Promise<void> => {
         let ws: WebSocket;
+        let detachedReason: string | null = null;
         try {
-          ws = await openTerminalWebSocket(wsUrl);
+          ws = connectRef.current
+            ? await connectRef.current()
+            : await openTerminalWebSocket(wsUrl);
         } catch (err) {
           // Ticket fetch / WebSocket construction failed (invalid URL,
           // mixed-content, etc.). Surface instead of an unhandled rejection.
@@ -190,6 +288,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
             `\x1b[31mFailed to open terminal connection: ${message}\x1b[0m`,
           );
           onErrorRef.current?.(`WebSocket open failed: ${message}`);
+          if (persistent) void handleDetach(`attach failed: ${message}`);
           return;
         }
         if (disposed) {
@@ -207,7 +306,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
             `[Terminal] WebSocket ${isReconnect ? "re" : ""}connected successfully to ${wsUrl}`,
           );
           setConnected(true);
-          reconnectAttemptRef.current = 0;
+          // Persistent mode resets the retry budget only once the server
+          // confirms the attach (the `session` message), not on open.
+          if (!persistent) reconnectAttemptRef.current = 0;
 
           if (isReconnect) {
             term.writeln("\x1b[32mReconnected successfully!\x1b[0m");
@@ -235,7 +336,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
 
             switch (msg.type) {
               case "session":
-                term.writeln(`\x1b[32mSession started: ${msg.id}\x1b[0m`);
+                if (msg.persistent) {
+                  reconnectAttemptRef.current = 0;
+                  term.writeln(
+                    `\x1b[32mAttached to persistent session ${msg.id}. Closing this tab detaches; the agent keeps running.\x1b[0m`,
+                  );
+                } else {
+                  term.writeln(`\x1b[32mSession started: ${msg.id}\x1b[0m`);
+                }
                 if (msg.mode === "container") {
                   term.writeln(
                     `\x1b[36mContainer: ${msg.containerImage}\x1b[0m`,
@@ -302,6 +410,18 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
                 setIsRecording(false);
                 break;
 
+              case "detached":
+                // Persistent session: the actor stream went away (suspend,
+                // End, tunnel lost). The session is NOT ended.
+                detachedReason = String(msg.reason ?? "stream closed");
+                term.writeln("");
+                term.writeln(`\x1b[33mDetached: ${detachedReason}\x1b[0m`);
+                break;
+
+              case "error":
+                term.writeln(`\x1b[31m${String(msg.error ?? "error")}\x1b[0m`);
+                break;
+
               default:
                 console.log("Unknown message type:", msg.type);
             }
@@ -325,6 +445,19 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
             `[Terminal] WebSocket closed: code=${event.code}, reason="${event.reason}", wsUrl=${wsUrl}`,
           );
 
+          // Persistent mode: any close we did not ask for is a detach. The
+          // owner decides whether to reattach (fresh grant) or stay detached.
+          if (persistent && event.code !== 1008) {
+            setIsRecording(false);
+            if (shouldReconnectRef.current) {
+              void handleDetach(
+                detachedReason ??
+                  `connection closed (code ${event.code}${event.reason ? `, ${event.reason}` : ""})`,
+              );
+            }
+            return;
+          }
+
           // 1008 (policy violation) is an auth/origin/ticket rejection (F1b
           // #95): retrying cannot succeed and would hammer the ticket-mint
           // endpoint, so treat it as non-recoverable — surface and stop.
@@ -336,6 +469,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
             onErrorRef.current?.(
               `WebSocket refused: ${event.reason || "policy violation"}`,
             );
+            if (persistent) {
+              onStoppedRef.current?.(
+                `attach refused: ${event.reason || "policy violation"}`,
+              );
+            }
           } else if (event.code !== 1000 && shouldReconnectRef.current) {
             const reasonText = event.reason ? ` (${event.reason})` : "";
             term.writeln(
@@ -414,6 +552,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
         wsRef.current?.close(1000, "Component unmounting"); // Clean close
         term.dispose();
       };
+      // `persistent` derives from `connect`, which is read through a ref.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [wsUrl, handleResize]);
 
     // Method to send input text (for voice input, etc.)

@@ -76,6 +76,8 @@ backlog = "ga"             # Task management (/backlog)
 recordings = "beta"        # Session recordings (/ai-coding/recordings)
 logs = "beta"              # Log viewer (/ai-coding/logs)
 api-tools = "beta"         # API testing tools (/ai-coding/api-tools)
+substrate = "beta"         # Persistent substrate sessions (/ai-coding/substrate), dx#123
+admin = "beta"             # Provider keys + audit, admins only (/ai-coding/admin), dx#123
 
 [subfeatures.maturity.security]
 scanner = "beta"
@@ -112,6 +114,8 @@ order = [
   "recordings",
   "logs",
   "api-tools",
+  "substrate",
+  "admin",
 ]
 
 [subfeatures.order.security]

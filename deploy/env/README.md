@@ -193,3 +193,129 @@ journalctl --user -u daax-host -f
 
 `build` stops a running unit, rebuilds and starts it again. The routes arrive
 with the next `deploy-local.sh install-traefik-config` render.
+
+## Substrate execution backend (dx#113 / #114 / #118) — opt-in, off by default
+
+`DAAX_SUBSTRATE_ENABLED=1` adds a second execution backend: agent sessions as
+[Agent Substrate](https://github.com/agent-substrate/substrate) actors. Unset,
+nothing changes. The container backend stays the default, and
+`/api/substrate/*` answers 404 `substrate-disabled`. No env file in this
+directory enables it yet. In the split deploy, `daax-terminal` first needs
+`kubectl-ate` and a substrate identity (dx#121), and neither compose file
+passes these variables through today.
+
+Both planes read the same variables. The **web** plane runs the lifecycle
+(create, suspend, resume, end, list) and owns the `substrate_sessions` table.
+The **terminal** plane only attaches. It needs `DAAX_WS_TOKEN_SECRET`, because
+the attach grant is a WS ticket with a `substrate` claim. Without that secret,
+only the host-dev loopback operator can attach.
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `DAAX_SUBSTRATE_ENABLED` | yes | `1` turns the backend on |
+| `DAAX_SUBSTRATE_ATESPACE` | yes | atespace the actors live in (e.g. `kinsale`) |
+| `DAAX_SUBSTRATE_KUBECONFIG` | one of | absolute kubeconfig path for the substrate cluster (dev: `~/.kube-substrate/config`) |
+| `DAAX_SUBSTRATE_IN_CLUSTER` | one of | `1` = in-cluster config. Exactly one of the two must be set; `~/.kube/config` is never used implicitly |
+| `DAAX_SUBSTRATE_LLM_HOST` | yes | LLM gateway Service host (e.g. `llm.kinsale-harness.svc.cluster.local`) |
+| `DAAX_SUBSTRATE_LLM_PORT` | no | default `4000` |
+| `DAAX_SUBSTRATE_ATE_BIN` | no | `kubectl-ate` path (default: `kubectl-ate` on PATH) |
+| `DAAX_SUBSTRATE_KUBE_CONTEXT` | no | kubeconfig context |
+| `DAAX_SUBSTRATE_TOKEN_FILE` | no | ate-api bearer token file (otherwise the shared `ate-client` identity) |
+| `DAAX_SUBSTRATE_ENDPOINT` | no | ate-api gRPC target override |
+| `DAAX_SUBSTRATE_TRANSPORT` | no | `proxy` (default: `kubectl ate proxy actor`), `router` (stub, pending dx#115/#121) |
+| `DAAX_SUBSTRATE_TEMPLATES_FILE` | no | substrate-harness `templates.env`; only its `TEMPLATE_DAAX_<AGENT>_<CLASS>=` keys (daax actor image, ptyd) are read, never the harness's ttyd templates |
+| `DAAX_SUBSTRATE_TEMPLATE_<AGENT>_<CLASS>` | no | per-template override, e.g. `DAAX_SUBSTRATE_TEMPLATE_CODEX_GVISOR` |
+| `DAAX_SUBSTRATE_DEFAULT_CLASS` | no | `gvisor` (default) or `microvm` |
+| `DAAX_SUBSTRATE_WATCHTOWER_HOOK_URL` | no | placeholder, see below |
+| `DAAX_SUBSTRATE_GATEWAY_NAMESPACE` | no | namespace of the LLM gateway (e.g. `kinsale-harness`). Turns on AI Coding → Admin → Provider keys; unset = shown as not configured |
+| `DAAX_SUBSTRATE_GATEWAY_SECRET` | no | the gateway's provider-key Secret (default `llm-upstream`) |
+| `DAAX_SUBSTRATE_GATEWAY_DEPLOYMENT` | no | the gateway Deployment restarted after a key write (default `llm`) |
+| `DAAX_SUBSTRATE_KUBECTL_BIN` | no | `kubectl` path for the key writes (default: `kubectl` on PATH) |
+
+Sessions are persistent (dx#114). There is no idle or disconnect timeout.
+Closing the tab only detaches. **End session** is the only kill: it deletes
+the egress policy and then the actor.
+
+### AI Coding UI (dx#123)
+
+The substrate controls live in AI Coding: **Substrate** (`/ai-coding/substrate`:
+sessions list, session tabs, egress editor) and, for admins, **Admin**
+(`/ai-coding/admin`: provider keys and audit). The launcher in the Coding
+Agents layouts offers the substrate backend only when `GET /api/substrate/config`
+answers enabled.
+
+**Egress editor.** `PUT /api/substrate/sessions/:id/egress` replaces a running
+or suspended session's allowlist. Hosts are validated exactly as on create, and
+the rules are replaced with `kubectl ate update egress-policy` (never created,
+so it cannot race End into an orphan policy). `POST /api/substrate/egress/validate`
+runs the same checks for inline errors and changes nothing.
+
+**Provider keys** (`DAAX_SUBSTRATE_GATEWAY_NAMESPACE` set). The web plane writes
+one data key per provider to the gateway Secret, `key` (Anthropic), `openai`,
+`gemini` and `copilot` (substrate-harness `docs/agents.md` §2):
+
+- `kubectl apply --server-side --force-conflicts` with **one field manager per
+  provider** (`daax-web-key`, `daax-web-openai`, `daax-web-gemini`,
+  `daax-web-copilot`), so applying one key never drops another;
+- the manifest goes over stdin, never argv; kubectl output is never echoed or
+  logged; a `last-applied-configuration` copy left by an earlier client-side
+  apply is removed;
+- then `kubectl rollout restart deploy/<gateway>` (the gateway reads its key
+  files at startup);
+- Unset writes the `unset` placeholder (the gateway needs every key file);
+- the UI and API report only set/unset, never a value, prefix or suffix.
+
+It uses the same cluster identity as the rest of the backend
+(`DAAX_SUBSTRATE_KUBECONFIG` or in-cluster), so **the deploy must grant that
+identity**, in the gateway namespace only:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: { name: daax-web-gateway-keys, namespace: <gateway-namespace> }
+rules:
+- apiGroups: [""]
+  resources: [secrets]
+  resourceNames: [llm-upstream]
+  verbs: [get, patch]
+- apiGroups: [apps]
+  resources: [deployments]
+  resourceNames: [llm]
+  verbs: [get, patch]
+```
+
+(`patch` covers server-side apply, the annotation removal and `rollout
+restart`. A Secret that does not exist yet would also need `create`; the deploy
+is expected to `ensure` all four keys first.) The split deploy's web plane has
+no `kubectl` and no substrate identity today (dx#121), so the section shows
+"not configured" there until both are provided.
+
+**Audit.** Substrate actions (create, attach, suspend, resume, end, egress,
+provider key) append to the existing `auth_audit` table with
+`event = substrate.<action>`. There is no new table or migration. A
+provider-key row records only the provider and set/unset. Admins read the rows
+at `GET /api/substrate/admin/audit`.
+
+### Egress exceptions (dx#118)
+
+Every session gets its own EgressPolicy: **default-deny**, plus only the rules
+below. No rule ever opens a private range, and the `atenet-egress` lockdown
+stays in place.
+
+| Rule | Reason | Source |
+|---|---|---|
+| `http` → `$DAAX_SUBSTRATE_LLM_HOST:$DAAX_SUBSTRATE_LLM_PORT` | the LLM gateway; it holds every provider key for all five agents | always |
+| `http` → host:port of `DAAX_SUBSTRATE_WATCHTOWER_HOOK_URL` | Watchtower's Claude hook endpoint, through a gateway route (never `watchtower:4220` directly) | only when set; **placeholder** until that agentgateway route exists in substrate-harness |
+| `tlsPassthrough :443` → `registry.npmjs.org` | npm preset | user-selected |
+| `tlsPassthrough :443` → `pypi.org`, `files.pythonhosted.org` | PyPI preset | user-selected |
+| `tlsPassthrough :443` → `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com`, `raw.githubusercontent.com` | GitHub preset (git remotes per dx#117 land here once decided) | user-selected |
+| `tlsPassthrough :443` → extra hosts | per-session additions | user-supplied, validated |
+
+User-supplied hosts are validated as in substrate-harness `harness/egress.go`.
+The following are refused:
+
+- IP literals
+- internal suffixes (`.svc`, `.cluster.local`, `.internal`, `.lan`, …)
+- rebinding/wildcard-DNS domains (`sslip.io`, `nip.io`, …)
+- over-broad wildcards (`*.github.io`, `*.co.uk`, …)
+- any concrete name that currently resolves to a private, CGNAT, loopback or link-local address

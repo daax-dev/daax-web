@@ -12,7 +12,6 @@ import { getProjectInfo } from "../../lib/project-utils";
 import {
   PORT,
   HOST_WORKSPACE_PATH,
-  DOCKER_NETWORK,
   DEFAULT_TERMINAL_COLS,
   DEFAULT_TERMINAL_ROWS,
   expandPath,
@@ -24,7 +23,6 @@ import {
   resolveContainerImage,
   DEFAULT_CONTAINER_IMAGE,
 } from "../docker/image-manager";
-import { buildPtyEnv } from "../sessions/pty-env";
 import { getPty } from "../sessions/pty-loader";
 import {
   TerminalSession,
@@ -44,27 +42,19 @@ import { handleMessage, MessageHandlerContext } from "./message-handler";
 import { commandTarget, scheduleCommand } from "./command-handler";
 import { resolveWorkspaceRoot, isValidPath } from "../../lib/worktree-manager";
 import {
-  OWNER_LABEL,
   hasPermission,
   ownerKeyFor,
   requireOwnerOrAdmin,
-  type Principal,
 } from "../../lib/tenancy/ownership";
-import { getUserAuthPaths } from "../docker/auth-paths";
 import { lookupContainerOwner } from "../docker/container-owner";
 import { applyTerminalPolicy, tenantMountBase } from "./tenant-policy";
 
-// Auth paths are initialized in terminal-server.ts and passed here
-let claudeAuthHostPath: string;
-let openCodeAuthHostPath: string;
+import { containerBackend } from "../backends/container";
+import { handleSubstrateConnection } from "./substrate-connection";
 
-/**
- * Set the auth paths (called from terminal-server.ts after initialization)
- */
-export function setAuthPaths(claudePath: string, openCodePath: string): void {
-  claudeAuthHostPath = claudePath;
-  openCodeAuthHostPath = openCodePath;
-}
+// The docker / host-shell spawn logic lives in the container backend (dx#113).
+// Auth paths are initialized in terminal-server.ts and handed to it here.
+export { setAuthPaths } from "../backends/container";
 
 /**
  * Handle a new WebSocket connection.
@@ -107,6 +97,44 @@ export async function handleConnection(
   const url = new URL(req.url || "/", `http://localhost:${PORT}`);
   const mode = url.searchParams.get("mode") || "container"; // "local" | "container"
 
+  // Multi-tenancy (dx#119): authentication is not authorization. Every
+  // terminal, substrate attaches included, needs `terminal:exec` (a ticket's
+  // signed claim; see ws-auth.ts).
+  const refuseWithoutExec = (): boolean => {
+    if (hasPermission(principal, "terminal:exec")) return false;
+    console.log(
+      `Refused terminal for ${auth.method} identity ${auth.user}: no terminal:exec`,
+    );
+    ws.close(
+      1008,
+      auth.method === "forwarded"
+        ? "terminal refused: a terminal ticket is required"
+        : "terminal refused: terminal:exec not granted",
+    );
+    return true;
+  };
+
+  // Substrate sessions (dx#113/#114) run in an Agent Substrate actor, not on
+  // this host, so the host-shell gate below does not apply; the substrate
+  // handler authorizes the attach itself (ticket claim or local operator).
+  // Dispatched after the `terminal:exec` check and before the
+  // local-shell refusal below, which would otherwise refuse every non-admin
+  // substrate attach (dx#119). The `.daax` / mountRoot checks are docker-only.
+  // A substrate attach ticket authorizes that one attach and nothing else: it
+  // carries no settings policy, so it must never open another terminal mode.
+  if (auth.substrate && mode !== "substrate") {
+    console.log(
+      `Refused ${mode} terminal for ${auth.method} identity ${auth.user}: substrate attach ticket`,
+    );
+    ws.close(1008, "terminal refused: ticket is for a substrate session");
+    return;
+  }
+  if (mode === "substrate") {
+    if (refuseWithoutExec()) return;
+    handleSubstrateConnection(ws, url, auth);
+    return;
+  }
+
   // In host mode every terminal is host-privileged — a shell as the operator,
   // or docker run/exec against the host's socket — so authentication is not
   // enough: only an admin may open one (lib/host-shell-access.ts). Refused
@@ -120,20 +148,7 @@ export async function handleConnection(
     return;
   }
 
-  // Multi-tenancy (dx#119): authentication is not authorization. Every
-  // terminal needs `terminal:exec` (a ticket's signed claim; see ws-auth.ts).
-  if (!hasPermission(principal, "terminal:exec")) {
-    console.log(
-      `Refused terminal for ${auth.method} identity ${auth.user}: no terminal:exec`,
-    );
-    ws.close(
-      1008,
-      auth.method === "forwarded"
-        ? "terminal refused: a terminal ticket is required"
-        : "terminal refused: terminal:exec not granted",
-    );
-    return;
-  }
+  if (refuseWithoutExec()) return;
 
   // A non-container terminal (`local`, `shell-tmux`, anything unrecognised) is
   // a shell inside the daax/terminal container itself, which holds the docker
@@ -312,23 +327,6 @@ export async function handleConnection(
     `Session ${sessionId}: recording=${enableRecording}${clientSessionId ? `, clientSessionId=${clientSessionId}` : ""}`,
   );
 
-  const { shell, shellArgs } = buildShellCommand(
-    mode,
-    containerName,
-    containerImage,
-    mountPath,
-    containerPath,
-    projectName,
-    basePathParam,
-    sessionId,
-    command,
-    isOpenCodeSession,
-    opencodeProvider,
-    opencodeModel,
-    principal,
-    shadowDaax,
-  );
-
   // Check if node-pty is available
   const pty = getPty();
   if (!pty) {
@@ -343,20 +341,25 @@ export async function handleConnection(
     return;
   }
 
-  // Spawn PTY
-  const ptyProcess = pty.spawn(shell, shellArgs, {
-    name: "xterm-256color",
+  // Spawn PTY via the container backend (today's docker / host-shell path).
+  const { pty: ptyProcess, shell } = containerBackend.spawn({
+    mode,
+    containerName,
+    containerImage,
+    mountPath,
+    containerPath,
+    projectName,
+    basePathParam,
+    sessionId,
+    command,
+    isOpenCodeSession,
+    opencodeProvider,
+    opencodeModel,
+    principal,
+    shadowDaax,
+    cwd,
     cols: DEFAULT_TERMINAL_COLS,
     rows: DEFAULT_TERMINAL_ROWS,
-    cwd: mode === "local" ? cwd : undefined,
-    // buildPtyEnv strips the compose-set HOST posture var and daax's own
-    // server config and credentials, so neither leaks into workbench
-    // terminals or the agents they start (#184 review).
-    env: {
-      ...buildPtyEnv(),
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-    },
   });
 
   // Store recording config but don't start until first output
@@ -713,203 +716,4 @@ function resolveMountPaths(
   }
 
   return { mountPath, containerPath };
-}
-
-/**
- * Build the shell command and arguments for the terminal session
- */
-function buildShellCommand(
-  mode: string,
-  containerName: string,
-  containerImage: string,
-  mountPath: string,
-  containerPath: string,
-  projectName: string,
-  basePathParam: string,
-  sessionId: string,
-  command: string,
-  isOpenCodeSession: boolean,
-  opencodeProvider: string,
-  opencodeModel: string,
-  principal: Principal,
-  shadowDaax: boolean,
-): { shell: string; shellArgs: string[] } {
-  let shell: string;
-  let shellArgs: string[];
-
-  if (mode === "container") {
-    // Container mode; tmux is only enabled later for interactive shell sessions without an initial command
-    shell = "docker";
-
-    if (containerName) {
-      // Exec into existing container
-      console.log(`Exec into container: ${containerName}`);
-      shellArgs = ["exec", "-it", containerName, "/bin/bash", "-l"];
-    } else {
-      // Run new container as vscode user (for pnpm-installed tools)
-      // node-pty provides a PTY, so docker -it should work
-      console.log(
-        `Running new container: ${containerImage} on network: ${DOCKER_NETWORK}`,
-      );
-      console.log(`  Mount path: ${mountPath} -> ${containerPath}`);
-
-      // Build display path for prompt: basePath/projectName or just basePath
-      const displayPath = projectName
-        ? `${basePathParam}/${projectName}`
-        : basePathParam;
-
-      // Determine if we should use tmux wrapper
-      // Use tmux for shell sessions (no command) to enable split/new-window
-      // For AI tools (claude, opencode, etc.), run directly without tmux
-      const useTmux = !command; // Shell sessions get tmux, AI tools run directly
-      const tmuxSessionName = `daax-${sessionId.slice(0, 8)}`;
-
-      // Multi-tenancy (dx#119): label the container with its owner so the
-      // listing/kill routes and `docker exec` can scope to it, and mount the
-      // owner's OWN credential store instead of the one shared dir.
-      const owner = ownerKeyFor(principal) ?? "unknown";
-      const creds = getUserAuthPaths(owner, {
-        claudeHostPath: claudeAuthHostPath,
-        openCodeHostPath: openCodeAuthHostPath,
-      });
-      // A mount containing `.daax/` (every tenant's credential store and the
-      // legacy shared one) gets it shadowed; decided canonically by the caller.
-
-      shellArgs = [
-        "run",
-        "-it",
-        "--rm",
-        "--name",
-        `daax-${sessionId.slice(0, 8)}`,
-        "--label",
-        `${OWNER_LABEL}=${owner}`,
-        // SECURITY / issue #195 (Fable M5): agent containers reach `postgres`
-        // via daax-net. Evaluated for segregation and DEFERRED, not fixed here:
-        // daax-net is the shared plane for daax's own services (code-server, the
-        // MCP gateway, etc.) that agent sessions legitimately use, so moving
-        // agents to an isolated network risks breaking those integrations. The
-        // Postgres exposure is mitigated separately by requiring a real
-        // DAAX_PG_PASSWORD in the deploy compose (the `daax` default is
-        // local-throwaway only). A dedicated agent network with an explicit
-        // allow-list to just the services agents need is the follow-up.
-        "--network",
-        DOCKER_NETWORK,
-        "-u",
-        "vscode",
-        "-v",
-        `${mountPath}:${containerPath}`,
-        ...(shadowDaax
-          ? ["--mount", `type=tmpfs,destination=${containerPath}/.daax`]
-          : []),
-        // SECURITY / issue #195 (Fable M5): credential mounts are read-WRITE by
-        // necessity, documented accepted risk. Write-back is REQUIRED and `:ro`
-        // would break auth persistence (AC#4):
-        //   - Claude Code performs OAuth token refresh and rewrites
-        //     `.claude/.credentials.json`; a read-only mount breaks auth over
-        //     time as the access token expires.
-        //   - Both tools persist the INITIAL login here — the dir is created
-        //     empty (see server/docker/auth-paths.ts) and populated by
-        //     `claude login` / `opencode auth login` INSIDE the container; a
-        //     read-only mount would discard that, so no session could ever
-        //     authenticate.
-        // Mitigation scope differs by tool/mode — be precise:
-        //   - Claude: a daax-DEDICATED store, never the operator's global
-        //     `~/.claude`. Host mode uses `~/.daax-claude`; container mode uses
-        //     `${workspace}/.daax/claude`. Exfiltration here leaks only the
-        //     daax-scoped Claude credential.
-        //   - OpenCode, CONTAINER mode: daax-scoped to
-        //     `${workspace}/.daax/opencode`.
-        //   - OpenCode, HOST mode: NOT daax-scoped. auth-paths.ts resolves this
-        //     to the operator's REAL global `~/.local/share/opencode` (or
-        //     $XDG_DATA_HOME/opencode) and mounts it read-WRITE into agent
-        //     containers. So the residual risk for OpenCode host mode is
-        //     exfiltration of the operator's REAL OpenCode credential (their
-        //     actual OpenCode identity), not a daax-scoped copy.
-        // Multi-tenancy (dx#119): the store is now PER OWNER
-        // (`.daax/users/<owner>/…`, see getUserAuthPaths); only the operator and
-        // the legacy-credentials admin keep the original shared dir.
-        // Residual risk: untrusted agent code can read/exfiltrate the long-lived
-        // token in whichever store is mounted, and the store is shared across
-        // the same owner's daax agent sessions — with OpenCode host mode being the operator's real
-        // global credential (see above). Follow-up (tracked in the #195 decision
-        // log): a daax-scoped OpenCode store for host mode, plus per-session,
-        // short-lived scoped tokens so a compromised session cannot exfiltrate a
-        // durable credential or read another session's token.
-        "-v",
-        `${creds.claudeHostPath}:/home/vscode/.claude`, // Per-owner Claude auth (RW required — see note above)
-        "-v",
-        `${creds.openCodeHostPath}:/home/vscode/.local/share/opencode`, // Per-owner OpenCode auth (RW required — see note above)
-        "-w",
-        containerPath,
-        "-e",
-        "TERM=xterm-256color",
-        "-e",
-        "COLORTERM=truecolor",
-        "-e",
-        `CLAUDE_CONFIG_DIR=/home/vscode/.claude`,
-        "-e",
-        `OPENCODE_CONFIG_DIR=/home/vscode/.local/share/opencode`,
-        "-e",
-        "HOME=/home/vscode",
-        "-e",
-        "PNPM_HOME=/home/vscode/.local/share/pnpm",
-        "-e",
-        `FALCON_PROJECT=${projectName || ""}`,
-        "-e",
-        `FALCON_BASEPATH=${basePathParam}`,
-        "-e",
-        `FALCON_DISPLAY_PATH=${displayPath}`,
-      ];
-
-      // Add OpenCode-specific env vars if this is an OpenCode session
-      if (isOpenCodeSession) {
-        shellArgs.push("-e", `OPENCODE_PROVIDER=${opencodeProvider}`);
-        shellArgs.push("-e", `OPENCODE_MODEL=${opencodeModel}`);
-      }
-
-      if (useTmux) {
-        // Shell mode: wrap in tmux for split/new-window capability
-        // Use zsh for the wrapper shell since PS1 uses zsh-style prompt escapes (%F{blue}...%f)
-        // SECURITY: Use $FALCON_DISPLAY_PATH env var instead of interpolating displayPath
-        // directly to prevent command injection via projectName or basePath
-        shellArgs.push(
-          containerImage,
-          "/bin/zsh",
-          "-l",
-          "-c",
-          // Start tmux with custom PS1, then spawn zsh inside tmux
-          `export PATH=/home/vscode/.local/share/pnpm:$PATH && ` +
-            `export PS1='%F{blue}$FALCON_DISPLAY_PATH%f > ' && ` +
-            `tmux new-session -s ${tmuxSessionName} /bin/zsh -l`,
-        );
-      } else {
-        // AI tool mode - run AI tools (claude, opencode, etc.) directly without tmux
-        // Use zsh with custom PS1 (zsh-style prompt escapes: %F{color}...%f)
-        // SECURITY: Use $FALCON_DISPLAY_PATH env var instead of interpolating displayPath
-        // directly to prevent command injection via projectName or basePath
-        shellArgs.push(
-          containerImage,
-          "/bin/zsh",
-          "-l",
-          "-c",
-          `export PATH=/home/vscode/.local/share/pnpm:$PATH && export PS1='%F{blue}$FALCON_DISPLAY_PATH%f > ' && exec /bin/zsh`,
-        );
-      }
-    }
-  } else if (mode === "shell-tmux") {
-    // Local shell with tmux wrapper for split/new-window capability
-    // Works with both xterm and ghostty terminals
-    const tmuxSessionName = `daax-shell-${sessionId.slice(0, 8)}`;
-    console.log(`Starting local tmux shell session: ${tmuxSessionName}`);
-
-    shell = "tmux";
-    shellArgs = ["new-session", "-s", tmuxSessionName, "/bin/zsh", "-l"];
-  } else {
-    // Local shell - run directly (mode === "local")
-    console.log(`Starting local shell: shell`);
-    shell = "/bin/zsh";
-    shellArgs = ["-l"];
-  }
-
-  return { shell, shellArgs };
 }
