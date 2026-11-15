@@ -11,8 +11,10 @@
  *   DAAX_SUBSTRATE_IT_TEMPLATE=claude-gvisor-98bd47e278 \
  *   node_modules/.bin/vitest run -c vitest.integration.config.ts tests/integration/substrate-kind.test.ts
  *
- * Lifecycle is asserted end to end. The attach step needs the actor to run
- * ptyd (`/healthz` + `/pty`); it is asserted only when DAAX_SUBSTRATE_IT_PTYD=1.
+ * Lifecycle is asserted end to end. The attach steps need a template built
+ * from the daax actor image (ptyd: `/healthz` + `/pty`); they run only with
+ * DAAX_SUBSTRATE_IT_PTYD=1: attach, detach, reattach, and reattach after
+ * suspend/resume, all to the same actor.
  */
 import { afterAll, describe, expect, it } from "vitest";
 
@@ -24,6 +26,17 @@ import { newActorName } from "@/lib/substrate/sessions-store";
 const enabled = process.env.DAAX_SUBSTRATE_IT === "1";
 const rt = enabled ? getSubstrateRuntime() : null;
 const actor = newActorName();
+
+/** Attach, collect output for `ms`, then detach (never ends the actor). */
+async function readFor(name: string, ms: number): Promise<string> {
+  if (!rt?.ok) throw new Error("not configured");
+  const pty = await rt.backend.attach(name, { cols: 100, rows: 30 });
+  let out = "";
+  pty.onData((d) => (out += d));
+  await new Promise((r) => setTimeout(r, ms));
+  pty.kill();
+  return out;
+}
 
 describe.skipIf(!enabled)("substrate backend on a live cluster", () => {
   afterAll(async () => {
@@ -78,12 +91,13 @@ describe.skipIf(!enabled)("substrate backend on a live cluster", () => {
     }
 
     if (process.env.DAAX_SUBSTRATE_IT_PTYD === "1") {
-      const pty = await b.attach(actor, { cols: 100, rows: 30 });
-      let out = "";
-      pty.onData((d) => (out += d));
-      await new Promise((r) => setTimeout(r, 2000));
-      pty.kill(); // detach
-      expect(out.length).toBeGreaterThan(0);
+      // Attach through the real proxy transport + ptyd /pty, detach, and
+      // reattach: the actor (and its tmux `main`) must survive the detach.
+      const first = await readFor(actor, 3000);
+      expect(first.length).toBeGreaterThan(0);
+      expect((await b.state(actor))?.state).toBe("RUNNING");
+      const second = await readFor(actor, 3000);
+      expect(second.length).toBeGreaterThan(0);
       expect((await b.state(actor))?.state).toBe("RUNNING");
     }
 
@@ -91,6 +105,10 @@ describe.skipIf(!enabled)("substrate backend on a live cluster", () => {
     expect((await b.state(actor))?.state).toBe("SUSPENDED");
     await b.resume(actor);
     expect((await b.state(actor))?.state).toBe("RUNNING");
+    if (process.env.DAAX_SUBSTRATE_IT_PTYD === "1") {
+      // The same actor is reattachable after an explicit suspend/resume.
+      expect((await readFor(actor, 3000)).length).toBeGreaterThan(0);
+    }
 
     await b.stop(actor);
     let after = await b.state(actor);

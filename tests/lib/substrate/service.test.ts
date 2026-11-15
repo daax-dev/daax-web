@@ -12,6 +12,7 @@ import {
   suspendSession,
 } from "@/lib/substrate/service";
 import { verifyTicket } from "@/lib/ws-ticket";
+import { ActorNameTakenError } from "@/server/backends/substrate";
 import { ADMIN, ALICE, BOB, makeDeps } from "./fakes";
 
 const SECRET = "s".repeat(64);
@@ -218,6 +219,46 @@ describe("lifecycle", () => {
     expect((await endSession(deps, ALICE, alice.id)).ok).toBe(false);
     expect((await store.get(alice.id))?.state).toBe("error");
     expect((await endSession(deps, ALICE, alice.id)).ok).toBe(true);
+  });
+});
+
+describe("Codex round 1 fixes", () => {
+  it("a name collision never deletes the existing (someone else's) actor", async () => {
+    const { deps, backend, store, settle } = makeDeps();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    backend.spawn.mockRejectedValueOnce(
+      new ActorNameTakenError("daax-0123456789"),
+    );
+    const res = await createSession(deps, ALICE, { agent: "claude" });
+    await settle();
+    if (!res.ok) throw new Error("expected ok");
+    expect(backend.stop).not.toHaveBeenCalled();
+    expect((await store.get(res.body.id))?.state).toBe("error");
+  });
+
+  it.each(["suspending", "resuming"] as const)(
+    "a session stuck in %s (web restart) can still be ended",
+    async (stuck) => {
+      const { deps, backend, store, alice } = await seeded();
+      await store.setState(alice.id, stuck);
+      expect((await endSession(deps, ALICE, alice.id)).ok).toBe(true);
+      expect(backend.stop).toHaveBeenCalledWith(alice.actorName);
+    },
+  );
+
+  it("a suspend completing after End began cannot revive the session", async () => {
+    const { deps, backend, store, alice } = await seeded();
+    let finish!: () => void;
+    backend.suspend.mockImplementationOnce(
+      () => new Promise<void>((r) => (finish = r)),
+    );
+    const suspending = suspendSession(deps, ALICE, alice.id);
+    await new Promise((r) => setTimeout(r, 0));
+    expect((await endSession(deps, ALICE, alice.id)).ok).toBe(true);
+    finish();
+    const res = await suspending;
+    expect(res.ok).toBe(false);
+    expect((await store.get(alice.id))?.state).toBe("ended");
   });
 });
 

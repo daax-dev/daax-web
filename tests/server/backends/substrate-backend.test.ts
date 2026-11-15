@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { SubstrateBackend } from "@/server/backends/substrate";
+import {
+  ActorNameTakenError,
+  SubstrateBackend,
+} from "@/server/backends/substrate";
 import { ContainerBackend } from "@/server/backends/container";
 import { UnsupportedOperationError } from "@/server/backends/types";
 
@@ -74,7 +77,7 @@ describe("SubstrateBackend", () => {
     const b2 = new SubstrateBackend({ cli: c2, gateways, retryDelayMs: 1 });
     await expect(
       b2.spawn({ actorName: ACTOR, template: "t", egressHosts: [] }),
-    ).rejects.toThrow(/already exists/);
+    ).rejects.toBeInstanceOf(ActorNameTakenError);
     expect(c2.createEgress).not.toHaveBeenCalled();
   });
 

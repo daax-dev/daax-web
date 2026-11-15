@@ -32,13 +32,19 @@ import {
   type Resolver,
 } from "./egress";
 import type { ActorInfo } from "./ate-cli";
+import { publicReason } from "./errors";
+
+export { publicReason } from "./errors";
 import {
   newActorName,
   type Caller,
   type SessionsStore,
   type SubstrateSession,
 } from "./sessions-store";
-import type { SubstrateBackend } from "../../server/backends/substrate";
+import {
+  ActorNameTakenError,
+  type SubstrateBackend,
+} from "../../server/backends/substrate";
 import {
   mintTicket,
   getWsTokenSecret,
@@ -195,8 +201,11 @@ export async function createSession(
       logFailure("create", session.id, err);
       // Never leave a half-made actor behind (e.g. created but with no
       // egress policy): tear it down, then record the failure. An `error`
-      // session can only be ended, never resumed.
-      await cleanup(deps, session.actorName, session.id);
+      // session can only be ended, never resumed. A name that was already
+      // taken is someone else's actor: never touch it.
+      if (!(err instanceof ActorNameTakenError)) {
+        await cleanup(deps, session.actorName, session.id);
+      }
       await deps.store.transition(
         session.id,
         ["creating"],
@@ -208,23 +217,6 @@ export async function createSession(
   (deps.background ?? ((p) => void p))(provision);
 
   return ok<SessionView>(session, 202);
-}
-
-/**
- * What a user may see about a substrate failure. Raw kubectl-ate stderr
- * (endpoints, paths, identities) goes to the server log only.
- */
-export function publicReason(err: unknown): string {
-  const s = String((err as Error)?.message ?? err).toLowerCase();
-  if (s.includes("timed out")) return "the substrate API timed out";
-  if (s.includes("not found")) return "the actor no longer exists";
-  if (s.includes("quota") || s.includes("resourceexhausted"))
-    return "the cluster has no capacity for this session";
-  if (s.includes("unavailable") || s.includes("connection refused"))
-    return "the substrate API is unavailable";
-  if (s.includes("permission") || s.includes("unauthenticated"))
-    return "daax is not authorized for this substrate operation";
-  return "the substrate operation failed (see server logs)";
 }
 
 function logFailure(op: string, id: string, err: unknown): void {
@@ -301,10 +293,17 @@ export async function suspendSession(
   } catch (err) {
     logFailure("suspend", id, err);
     const reason = publicReason(err);
-    await deps.store.setState(id, "running", `suspend: ${reason}`);
+    await deps.store.transition(
+      id,
+      ["suspending"],
+      "running",
+      `suspend: ${reason}`,
+    );
     return fail(502, "substrate-error", reason);
   }
-  await deps.store.setState(id, "suspended");
+  if (!(await deps.store.transition(id, ["suspending"], "suspended"))) {
+    return fail(409, "invalid-state", "the session changed during suspend");
+  }
   return ok({ ...s, state: "suspended" });
 }
 
@@ -326,11 +325,18 @@ export async function resumeSession(
     if (!isAlreadyRunning(err)) {
       logFailure("resume", id, err);
       const reason = publicReason(err);
-      await deps.store.setState(id, "suspended", `resume: ${reason}`);
+      await deps.store.transition(
+        id,
+        ["resuming"],
+        "suspended",
+        `resume: ${reason}`,
+      );
       return fail(502, "substrate-error", reason);
     }
   }
-  await deps.store.setState(id, "running");
+  if (!(await deps.store.transition(id, ["resuming"], "running"))) {
+    return fail(409, "invalid-state", "the session changed during resume");
+  }
   return ok({ ...s, state: "running" });
 }
 
@@ -345,7 +351,19 @@ export async function endSession(
   if (
     !(await deps.store.transition(
       id,
-      ["creating", "running", "suspended", "error", "ending"],
+      // Every live state, including the transitional ones: a web-plane
+      // restart mid-suspend/resume must never leave an unkillable session.
+      // Completions of those operations use guarded transitions, so they
+      // cannot overwrite `ending`.
+      [
+        "creating",
+        "running",
+        "suspending",
+        "suspended",
+        "resuming",
+        "error",
+        "ending",
+      ],
       "ending",
     ))
   ) {
@@ -356,7 +374,7 @@ export async function endSession(
   } catch (err) {
     logFailure("end", id, err);
     const reason = publicReason(err);
-    await deps.store.setState(id, "error", `end: ${reason}`);
+    await deps.store.transition(id, ["ending"], "error", `end: ${reason}`);
     return fail(502, "substrate-error", reason);
   }
   await deps.store.markEnded(id);

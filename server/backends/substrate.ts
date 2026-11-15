@@ -68,6 +68,13 @@ export interface SubstrateBackendDeps {
   createDeadlineMs?: number;
 }
 
+/** The actor name was already in use before this spawn: not ours. */
+export class ActorNameTakenError extends Error {
+  constructor(name: string) {
+    super(`actor ${name} already exists`);
+  }
+}
+
 function assertActorName(name: string): void {
   if (!ACTOR_NAME_RE.test(name)) {
     throw new Error(`not a daax substrate actor name: ${name}`);
@@ -100,7 +107,12 @@ export class SubstrateBackend implements ExecutionBackend<
         await cli.createActor(spec.actorName, spec.template);
         break;
       } catch (err) {
-        if (attempt > 0 && isAlreadyExists(err)) break;
+        if (isAlreadyExists(err)) {
+          // On a retry it means an earlier attempt landed; on the first
+          // attempt the name belongs to someone else: never adopt it.
+          if (attempt > 0) break;
+          throw new ActorNameTakenError(spec.actorName);
+        }
         if (!isRetryable(err) || Date.now() > deadline) throw err;
         await new Promise((r) => setTimeout(r, delay));
       }

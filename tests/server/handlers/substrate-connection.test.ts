@@ -151,39 +151,57 @@ describe("SubstrateHub", () => {
     expect(pty.write).not.toHaveBeenCalled(); // no EOF, no typed command
   });
 
-  it("recording continues across reattaches (same recording id, started once)", async () => {
-    const ptys = [fakePty(), fakePty()];
-    let i = 0;
-    const hub = new SubstrateHub(
-      SESSION,
-      ACTOR,
-      async () => ptys[i++] as unknown as IPty,
-    );
+  it("recording continues across reattaches and while nobody is attached", async () => {
+    const pty = fakePty();
+    const attach = vi.fn(async () => pty as unknown as IPty);
+    const hub = new SubstrateHub(SESSION, ACTOR, attach);
     const first = fakeWs();
     await hub.join(first as unknown as WebSocket, {
       record: true,
       sessionType: "claude",
     });
-    ptys[0].emit("one");
+    pty.emit("one");
     expect(rec.startRecording).toHaveBeenCalledTimes(1);
     expect(rec.startRecording.mock.calls[0][0]).toBe(SESSION);
     hub.leave(first as unknown as WebSocket);
+    // Recording: the stream stays open with no viewers (not a kill, not a stop).
+    expect(pty.kill).not.toHaveBeenCalled();
     expect(rec.stopRecording).not.toHaveBeenCalled();
     expect(rec.flushRecordingBuffer).toHaveBeenCalledWith(SESSION);
+    pty.emit("while-away");
+    expect(rec.recordOutput).toHaveBeenCalledWith(SESSION, "while-away");
 
     const second = fakeWs();
     await hub.join(second as unknown as WebSocket, {
       record: true,
       sessionType: "claude",
     });
+    expect(attach).toHaveBeenCalledTimes(1); // same stream, same actor
     expect(sent(second)).toContainEqual({
       type: "recordingStarted",
       recordingId: "substrate-1-abcdef01",
     });
-    ptys[1].emit("two");
+    pty.emit("two");
     expect(rec.startRecording).toHaveBeenCalledTimes(1);
     expect(rec.recordOutput).toHaveBeenCalledWith(SESSION, "one");
     expect(rec.recordOutput).toHaveBeenCalledWith(SESSION, "two");
+  });
+
+  it("without a recording the last viewer leaving closes the stream", async () => {
+    const pty = fakePty();
+    const hub = new SubstrateHub(
+      SESSION,
+      ACTOR,
+      async () => pty as unknown as IPty,
+    );
+    const ws = fakeWs();
+    await hub.join(ws as unknown as WebSocket, {
+      record: false,
+      sessionType: "s",
+    });
+    hub.recordingId = undefined;
+    hub.leave(ws as unknown as WebSocket);
+    expect(pty.kill).toHaveBeenCalledTimes(1);
   });
 
   it("input sent while the upstream connects is queued, not lost", async () => {
@@ -365,5 +383,40 @@ describe("SubstrateHub races (review fixes)", () => {
     await flush();
     pty.emit("b");
     expect(rec.startRecording).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("attach failure reporting", () => {
+  it("never sends kubectl-ate stderr to the browser", async () => {
+    const ws = fakeWs();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    handleSubstrateConnection(
+      ws as unknown as WebSocket,
+      new URL("ws://x/?mode=substrate"),
+      {
+        ok: true,
+        user: "alice",
+        method: "ticket",
+        hostShell: { ok: false, reason: "x" },
+        substrate: { session: SESSION, actor: ACTOR },
+      },
+      {
+        ok: true,
+        backend: {
+          attach: async () => {
+            throw new Error(
+              "actor tunnel exited during startup: dial tcp 10.128.0.5:8080 token-file /run/secret/ate",
+            );
+          },
+        },
+      } as never,
+    );
+    await flush();
+    await flush();
+    const err = sent(ws).at(-1);
+    expect(err.error).toBe(
+      "Could not attach to the session: could not reach the session (is it running?)",
+    );
+    expect(JSON.stringify(sent(ws))).not.toMatch(/10\.128|token-file/);
   });
 });

@@ -34,6 +34,7 @@ import {
   DEFAULT_TERMINAL_ROWS,
 } from "../config/constants";
 import { ACTOR_NAME_RE } from "../../lib/substrate/sessions-store";
+import { publicReason } from "../../lib/substrate/errors";
 import { getSubstrateRuntime } from "../backends/substrate-runtime";
 
 const UUID_RE =
@@ -243,6 +244,14 @@ export class SubstrateHub {
   leave(ws: WebSocket): void {
     this.clients.delete(ws);
     if (this.clients.size === 0) {
+      if (this.recordingId) {
+        // Recording: keep the stream (and its tunnel) open with no viewers,
+        // so what the agent does while nobody watches is recorded too. It
+        // ends with the stream itself (suspend, End, terminal shutdown) or
+        // when a viewer stops the recording and leaves.
+        flushRecordingBuffer(this.sessionId);
+        return;
+      }
       const up = this.upstream;
       this.upstream = null;
       up?.kill(); // closes the stream + releases the local tunnel only
@@ -359,7 +368,7 @@ export function handleSubstrateConnection(
         ws.send(
           JSON.stringify({
             type: "error",
-            error: `Could not attach to the session: ${err.message}`,
+            error: `Could not attach to the session: ${publicReason(err)}`,
           }),
         );
         ws.close(1011, "attach failed");
