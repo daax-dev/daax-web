@@ -214,6 +214,9 @@ services:
     environment:
       - DOCKER_NETWORK=daax-net
       - HOST_WORKSPACE_PATH=${DAAX_WORKSPACE:-${HOME}/prj}
+      # Operator override for the agent image (server/config/constants.ts,
+      # agentImageOverride). Empty (the default) = the browser's choice.
+      - DAAX_AGENT_IMAGE_OVERRIDE=${DAAX_AGENT_IMAGE_OVERRIDE:-}
       - CLAUDE_CODE_CONFIG=/host-config/.claude.json
       - CLAUDE_PROJECTS_DIR=/host-claude/projects
       - NEXT_PUBLIC_DEPLOYMENT_MODE=container

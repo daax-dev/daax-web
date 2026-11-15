@@ -23,6 +23,7 @@ import {
   resolveContainerImage,
   DEFAULT_CONTAINER_IMAGE,
 } from "../docker/image-manager";
+import { withAgentImageOverride } from "../docker/agent-image-override";
 import { getPty } from "../sessions/pty-loader";
 import {
   TerminalSession,
@@ -201,10 +202,12 @@ export async function handleConnection(
     earlyMessages = buffered;
   }
   // Resolve the container image with fallback logic only when starting a new container
-  // Skip for local mode, docker exec mode (containerName set), or other non-container scenarios
+  // Skip for local mode, docker exec mode (containerName set), or other non-container scenarios.
+  // A new container honours the operator's DAAX_AGENT_IMAGE_OVERRIDE over the
+  // client's choice (withAgentImageOverride, server/docker/agent-image-override.ts).
   const containerImage =
     mode === "container" && !containerName
-      ? resolveContainerImage(requestedImage)
+      ? resolveContainerImage(withAgentImageOverride(requestedImage))
       : requestedImage;
   const projectName = url.searchParams.get("project") || "";
   const projectType = url.searchParams.get("projectType") as

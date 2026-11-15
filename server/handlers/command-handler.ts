@@ -152,12 +152,20 @@ export function buildFullCommand(
     return `export PATH=/usr/local/bin:/home/vscode/.local/share/pnpm:/home/vscode/.local/bin:$PATH && ${command}`;
   }
 
-  // For copilot command, run JS version directly (native binary requires glibc, Alpine uses musl)
-  // The shell script /home/vscode/.local/share/pnpm/copilot tries native first and fails silently on Alpine
+  // For copilot command, use the pnpm shim by full path, like gemini/codex.
+  // It used to run `node .../pnpm/global/5/node_modules/@github/copilot/index.js`
+  // directly, a musl workaround for the old Alpine agent images. Every current
+  // agent image is Debian (glibc), and pnpm's global store is now `global/v11`
+  // with a package entry that is no longer `index.js`, so that path exists in
+  // none of the five digest-pinned images and every copilot session died on
+  // "Cannot find module". The shim resolves its own entrypoint and works on all
+  // of them, and on the daax-agents:local fallback (store `global/5`).
   // Uses start-of-string anchor followed by whitespace or end-of-string to avoid matching "copilot" as part of longer words like "copilot-test"
   if (/^copilot(?:\s|$)/.test(command)) {
-    const copilotArgs = command.replace(/^copilot\s*/, "");
-    return `node /home/vscode/.local/share/pnpm/global/5/node_modules/@github/copilot/index.js${copilotArgs ? " " + copilotArgs : ""}`;
+    return command.replace(
+      /^copilot(?=\s|$)/,
+      "/home/vscode/.local/share/pnpm/copilot",
+    );
   }
 
   // For gemini command, use full path (pnpm-installed)
