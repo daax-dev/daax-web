@@ -100,7 +100,9 @@ beforeEach(() => {
     "git",
     `case "$*" in
   *--show-toplevel*) echo "$FAKE_CLONE" ;;
-  *"worktree add"*) mkdir -p "\${@: -2:1}/.git" ;;
+  # The checkout gets a .git and the one bun.lock line build reads node-pty's
+  # version from (#519), as a real worktree at the pinned ref would have.
+  *"worktree add"*) mkdir -p "\${@: -2:1}/.git" && printf '    "node-pty": ["node-pty@1.1.0", "", {}, "sha512-x"],\\n' >"\${@: -2:1}/bun.lock" ;;
   *"rev-parse HEAD"*) echo "$FAKE_REF" ;;
   *) : ;;
 esac`,
