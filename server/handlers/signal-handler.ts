@@ -8,6 +8,7 @@ import { shutdown as shutdownBacklogServer } from "../startup";
 import { SHUTDOWN_TIMEOUT_MS } from "../config/constants";
 import { getAllSessions, getSessionCount } from "../sessions/session-manager";
 import { WebSocketServer } from "ws";
+import { closeSubstrateTransports } from "../backends/substrate-runtime";
 
 // Track if shutdown is intentional (from SIGINT/SIGTERM)
 let isIntentionalShutdown = false;
@@ -50,6 +51,14 @@ export async function gracefulShutdown(
     } catch (e) {
       console.error(`[Terminal Server] Error closing session ${sessionId}:`, e);
     }
+  }
+
+  // Close local substrate tunnels. Substrate sessions themselves persist
+  // (dx#114): only the port forwards go away; viewers reattach after restart.
+  try {
+    closeSubstrateTransports();
+  } catch (e) {
+    console.error("[Terminal Server] Error closing substrate tunnels:", e);
   }
 
   // Finally close WebSocket server

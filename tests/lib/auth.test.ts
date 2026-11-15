@@ -124,6 +124,28 @@ describe("auth module", () => {
       });
     });
 
+    it("reads the display name traefik-forward-auth sends (X-Forwarded-Displayname)", async () => {
+      // The host-local gate (dx#120) forwards the `name` claim under this
+      // header; the configured X-Forwarded-Name still wins when both are set.
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "0a209463-2b79-4459-9df8-a45fbf9159ba",
+          "x-forwarded-username": "jpoley",
+          "x-forwarded-displayname": "Jason Poley",
+        }),
+      );
+      expect((await getAuthUser()).username).toBe("Jason Poley");
+
+      mockHeaders.mockResolvedValue(
+        createMockHeaders({
+          "x-forwarded-user": "0a209463-2b79-4459-9df8-a45fbf9159ba",
+          "x-forwarded-name": "JP",
+          "x-forwarded-displayname": "Jason Poley",
+        }),
+      );
+      expect((await getAuthUser()).username).toBe("JP");
+    });
+
     it("should use userId as username when displayname is not present", async () => {
       mockHeaders.mockResolvedValue(
         createMockHeaders({

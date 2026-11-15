@@ -26,11 +26,11 @@
 # has no HOST_WORKSPACE_PATH, so its terminal is a shell ON THE HOST.
 #
 # THE PRIVILEGE, stated once: a browser-reachable shell running as the operator
-# on this machine, with everything the operator can reach. It is served only at
-# https://daax-host.<host>.poley.dev behind the same Pocket ID forward-auth
-# chain as daax.<host> (deploy/traefik-daax.yml.tpl, routers daax-host*), and
-# both listeners bind 127.0.0.1, so nothing on the tailnet reaches them except
-# through Traefik. The terminal admits a loopback upgrade carrying
+# on this machine, with everything the operator can reach. Its only ingress is
+# https://daax-host.<host>.poley.dev, and that route is NOT rendered today: it
+# needs an admins-only gate on the host's own forward-auth, which does not exist
+# yet (deploy/traefik-daax.yml.tpl; idp-per-host-002). Both listeners bind
+# 127.0.0.1, so nothing on the tailnet reaches them except through Traefik. The terminal admits a loopback upgrade carrying
 # X-Forwarded-User (server/handlers/ws-auth.ts), so any local process that can
 # open 127.0.0.1:$WS_PORT can claim a name — on a single-operator host that is
 # the operator already. Do not run this on a host with other local users.
