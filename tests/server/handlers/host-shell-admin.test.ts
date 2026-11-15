@@ -241,6 +241,7 @@ describe("container terminals on a host-mode daax", () => {
     expect(spawn.mock.calls[0][1]).toEqual([
       "exec",
       "-it",
+      "--",
       "daax-postgres",
       "/bin/bash",
       "-l",

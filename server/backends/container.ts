@@ -155,7 +155,7 @@ export class ContainerBackend implements ExecutionBackend<
   attach(id: string, opts: AttachOptions): IPty {
     return spawnPty(
       "docker",
-      ["exec", "-it", id, "/bin/bash", "-l"],
+      ["exec", "-it", "--", id, "/bin/bash", "-l"],
       opts.cols,
       opts.rows,
       undefined,
@@ -219,9 +219,10 @@ export function buildShellCommand(
     shell = "docker";
 
     if (containerName) {
-      // Exec into existing container
+      // Exec into an existing container. `--` ends docker's option parsing so
+      // a client-supplied name starting with `-` can never be read as a flag.
       console.log(`Exec into container: ${containerName}`);
-      shellArgs = ["exec", "-it", containerName, "/bin/bash", "-l"];
+      shellArgs = ["exec", "-it", "--", containerName, "/bin/bash", "-l"];
     } else {
       // Run new container as vscode user (for pnpm-installed tools)
       // node-pty provides a PTY, so docker -it should work
