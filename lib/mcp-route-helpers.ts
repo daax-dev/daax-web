@@ -17,20 +17,11 @@ export function getDefaultProjectPath(): string {
   return process.cwd();
 }
 
-// Validate a remote MCP target URL before it is used. Only http/https are
-// permitted (#182 Copilot): this blocks file:, data:, empty, and other schemes
-// up-front with a controlled result instead of letting a fetch throw. No
-// command is ever spawned from a URL — it is only fetched or handed to the
-// inspector UI — so this is a scheme guard, not a command guard.
-export function isAllowedRemoteUrl(raw: unknown): raw is string {
-  if (typeof raw !== "string" || raw.length === 0) return false;
-  try {
-    const u = new URL(raw);
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
+// Validation of a remote MCP target URL now lives in lib/ssrf-guard.ts
+// (assertPublicHttpUrl): it enforces the http/https scheme AND resolves the host
+// to reject private / link-local / metadata / RFC1918 targets before any
+// server-side fetch (A2). The old scheme-only `isAllowedRemoteUrl` was replaced
+// by that stronger guard at every call site.
 
 // Build an explicit, minimal env for a spawned MCP child process (#182). Only
 // PATH and HOME from the app environment (so the launcher is resolvable), plus

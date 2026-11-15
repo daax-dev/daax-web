@@ -4,23 +4,7 @@
  * them so the SSRF/secret-leak guarantees can't silently regress.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { isAllowedRemoteUrl, buildChildEnv } from "@/lib/mcp-route-helpers";
-
-describe("isAllowedRemoteUrl (#182)", () => {
-  it("accepts http and https URLs", () => {
-    expect(isAllowedRemoteUrl("http://example.com/mcp")).toBe(true);
-    expect(isAllowedRemoteUrl("https://example.com:8080/sse")).toBe(true);
-  });
-
-  it("rejects non-http(s) schemes, empty, and non-string input", () => {
-    expect(isAllowedRemoteUrl("file:///etc/passwd")).toBe(false);
-    expect(isAllowedRemoteUrl("data:text/plain,hi")).toBe(false);
-    expect(isAllowedRemoteUrl("")).toBe(false);
-    expect(isAllowedRemoteUrl("not a url")).toBe(false);
-    expect(isAllowedRemoteUrl(undefined)).toBe(false);
-    expect(isAllowedRemoteUrl(123)).toBe(false);
-  });
-});
+import { buildChildEnv } from "@/lib/mcp-route-helpers";
 
 describe("buildChildEnv (#182)", () => {
   const savedPath = process.env.PATH;
