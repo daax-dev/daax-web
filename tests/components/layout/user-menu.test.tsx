@@ -9,12 +9,24 @@ const realLocation = window.location;
 let assign: ReturnType<typeof vi.fn>;
 let reload: ReturnType<typeof vi.fn>;
 let fetched: string[];
+let logoutRequests: RequestInit[];
 
-function serve(payload: Record<string, unknown>) {
+type GateBehaviour = "redirect" | "network-error";
+
+/**
+ * Serves /api/auth/user and models the host gate (traefik-forward-auth
+ * v4.14.1): `POST /portals/main/logout` answers 303, which `redirect:
+ * "manual"` surfaces as an opaque redirect; a GET matches no route (404).
+ */
+function serve(
+  payload: Record<string, unknown>,
+  gate: GateBehaviour = "redirect",
+) {
   fetched = [];
+  logoutRequests = [];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
+    vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
       fetched.push(url);
       if (url === "/api/auth/user") {
@@ -22,6 +34,14 @@ function serve(payload: Record<string, unknown>) {
           status: 200,
           headers: { "content-type": "application/json" },
         });
+      }
+      if (url === "/portals/main/logout") {
+        logoutRequests.push(init);
+        if (gate === "network-error") throw new TypeError("Failed to fetch");
+        if ((init.method ?? "GET").toUpperCase() !== "POST") {
+          return new Response(null, { status: 404 });
+        }
+        return { type: "opaqueredirect", status: 0, ok: false } as Response;
       }
       return new Response(null, { status: 200 });
     }),
@@ -99,6 +119,31 @@ describe("UserMenu", () => {
 
     expect(reload).toHaveBeenCalledTimes(1);
     expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("signs out of the gate with a POST that does not follow its 303", async () => {
+    serve({ ...user, logoutUrl: "https://auth.galway.poley.dev/logout" });
+
+    await renderAndLogOut();
+
+    expect(logoutRequests).toHaveLength(1);
+    expect(logoutRequests[0]).toMatchObject({
+      method: "POST",
+      credentials: "include",
+      redirect: "manual",
+    });
+  });
+
+  it("still ends the IdP session when the gate cannot be reached", async () => {
+    serve(
+      { ...user, logoutUrl: "https://auth.galway.poley.dev/logout" },
+      "network-error",
+    );
+
+    await renderAndLogOut();
+
+    expect(logoutRequests).toHaveLength(1);
+    expect(assign).toHaveBeenCalledWith("https://auth.galway.poley.dev/logout");
   });
 
   it("never sends the browser or a request to auth.poley.dev", async () => {
