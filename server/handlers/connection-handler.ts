@@ -288,8 +288,12 @@ export async function handleConnection(
   if (HOST_WORKSPACE_PATH) {
     try {
       mkdirSync(daaxDir, { recursive: true });
-    } catch {
-      /* existsSync below decides; a failure leaves nothing to expose */
+    } catch (err) {
+      // Fail closed: without .daax the shadow cannot be guaranteed, and the
+      // credential stores created next would then be visible.
+      console.error(`Cannot prepare ${daaxDir}; refusing terminal:`, err);
+      ws.close(1011, "workspace not ready");
+      return;
     }
   }
   const shadowDaax = existsSync(daaxDir) && isValidPath(daaxDir, mountPath);

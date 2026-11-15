@@ -16,6 +16,7 @@ import type { WebSocket } from "ws";
 vi.hoisted(() => {
   process.env.HOST_WORKSPACE_PATH = "/srv/ws";
 });
+const fsState = vi.hoisted(() => ({ mkdirFails: false }));
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   // /.dockerenv → container mode; /workspace/.daax exists (as it does in a
@@ -24,7 +25,21 @@ vi.mock("node:fs", async (importOriginal) => {
     path === "/.dockerenv" || path === "/workspace/.daax"
       ? true
       : actual.existsSync(path);
-  return { ...actual, existsSync, default: { ...actual, existsSync } };
+  // Creating .daax is stood in (the real /workspace does not exist here);
+  // fsState.mkdirFails simulates an unwritable workspace.
+  const mkdirSync = (...args: unknown[]) => {
+    if (String(args[0]) === "/workspace/.daax") {
+      if (fsState.mkdirFails) throw new Error("EACCES");
+      return undefined;
+    }
+    return (actual.mkdirSync as (...a: unknown[]) => unknown)(...args);
+  };
+  return {
+    ...actual,
+    existsSync,
+    mkdirSync,
+    default: { ...actual, existsSync, mkdirSync },
+  };
 });
 
 const h = vi.hoisted(() => {
@@ -191,6 +206,7 @@ beforeEach(() => {
   h.owners.clear();
   h.validPathCalls.length = 0;
   h.aliases.clear();
+  fsState.mkdirFails = false;
   h.owners.set("daax-aaaaaaaa", A);
   h.owners.set("daax-bbbbbbbb", B);
   h.owners.set("daax-postgres", null);
@@ -426,6 +442,13 @@ describe("server-side settings from the ticket", () => {
       },
     });
     expect(runArgs()).toContain("type=tmpfs,destination=/workspace/.daax");
+  });
+
+  it("fails closed when .daax cannot be prepared", async () => {
+    fsState.mkdirFails = true;
+    const ws = await connect({ ticket: userTicket(A) });
+    expect(ws.close).toHaveBeenCalledWith(1011, "workspace not ready");
+    expect(h.spawn).not.toHaveBeenCalled();
   });
 
   it("a mount that does not contain .daax gets no shadow", async () => {
