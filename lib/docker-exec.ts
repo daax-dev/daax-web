@@ -9,6 +9,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { NextResponse } from "next/server";
 
+import { ownerFromLabels } from "./tenancy/ownership";
+
 const execFileAsync = promisify(execFile);
 
 export type DockerExec = (
@@ -68,4 +70,39 @@ export function dockerUnavailableJson(error: unknown): NextResponse {
     },
     { status: 503 },
   );
+}
+
+/**
+ * A container as an owned resource for the tenancy checks (dx#119): null when
+ * `docker inspect` finds no such container, else `{ owner }` from its
+ * `daax.owner` label (null owner = unlabelled, admins only).
+ */
+export async function inspectContainerOwner(
+  name: string,
+  exec: DockerExec = defaultDockerExec,
+): Promise<{ owner: string | null } | null> {
+  let stdout: string;
+  try {
+    ({ stdout } = await exec([
+      "inspect",
+      "--type",
+      "container",
+      "--format",
+      "{{json .Config.Labels}}",
+      name,
+    ]));
+  } catch (error) {
+    if (isDockerUnavailableError(error)) throw error;
+    return null;
+  }
+  try {
+    const labels = JSON.parse(stdout.trim() || "null");
+    return {
+      owner: ownerFromLabels(
+        labels && typeof labels === "object" ? labels : null,
+      ),
+    };
+  } catch {
+    return { owner: null };
+  }
 }

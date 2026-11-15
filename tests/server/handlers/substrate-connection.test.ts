@@ -25,9 +25,25 @@ import {
   SubstrateHub,
 } from "@/server/handlers/substrate-connection";
 import type { IPty } from "@/server/sessions/types";
+import type { Principal } from "@/lib/tenancy/ownership";
 
 const SESSION = "6f1c2a9e-1111-4222-8333-444455556666";
 const ACTOR = "daax-0123456789";
+const OWNER = "0b8d2c1e-aaaa-4bbb-8ccc-ddddeeeeffff";
+
+/** A non-admin tenant as a ticket's signed claims describe it (dx#119). */
+const USER: Principal = {
+  subject: OWNER,
+  operator: false,
+  admin: false,
+  permissions: ["terminal:exec", "containers:write", "recording:write"],
+};
+const OPERATOR: Principal = {
+  subject: null,
+  operator: true,
+  admin: true,
+  permissions: ["terminal:exec", "recording:write"],
+};
 
 function fakePty() {
   const data: Array<(d: string) => void> = [];
@@ -76,11 +92,16 @@ beforeEach(() => {
 
 describe("resolveAttachTarget", () => {
   const url = (q: string) => new URL(`ws://x/?mode=substrate&${q}`);
-  const ticket = (substrate?: { session: string; actor: string }) => ({
+  const ticket = (substrate?: {
+    session: string;
+    actor: string;
+    owner?: string;
+  }) => ({
     ok: true as const,
     user: "alice",
     method: "ticket" as const,
     hostShell: { ok: false as const, reason: "x" },
+    principal: USER,
     substrate,
   });
 
@@ -90,7 +111,13 @@ describe("resolveAttachTarget", () => {
         ticket({ session: SESSION, actor: ACTOR }),
         url("actor=daax-ffffffffff"),
       ),
-    ).toEqual({ ok: true, session: SESSION, actor: ACTOR });
+    ).toEqual({ ok: true, session: SESSION, actor: ACTOR, owner: null });
+    expect(
+      resolveAttachTarget(
+        ticket({ session: SESSION, actor: ACTOR, owner: OWNER }),
+        url(""),
+      ),
+    ).toEqual({ ok: true, session: SESSION, actor: ACTOR, owner: OWNER });
     expect(
       resolveAttachTarget(
         ticket({ session: SESSION, actor: ACTOR }),
@@ -103,7 +130,13 @@ describe("resolveAttachTarget", () => {
     expect(resolveAttachTarget(ticket(), url("")).ok).toBe(false);
     expect(
       resolveAttachTarget(
-        { ok: true, user: "u", method: "forwarded", hostShell: { ok: true } },
+        {
+          ok: true,
+          user: "u",
+          method: "forwarded",
+          hostShell: { ok: true },
+          principal: USER,
+        },
         url(`session=${SESSION}&actor=${ACTOR}`),
       ).ok,
     ).toBe(false);
@@ -115,10 +148,11 @@ describe("resolveAttachTarget", () => {
       user: "local",
       method: "bypass" as const,
       hostShell: { ok: true as const },
+      principal: OPERATOR,
     };
     expect(
       resolveAttachTarget(op, url(`session=${SESSION}&actor=${ACTOR}`)),
-    ).toEqual({ ok: true, session: SESSION, actor: ACTOR });
+    ).toEqual({ ok: true, session: SESSION, actor: ACTOR, owner: "local" });
     expect(
       resolveAttachTarget(op, url(`session=${SESSION}&actor=jimmy`)).ok,
     ).toBe(false);
@@ -299,7 +333,8 @@ describe("handleSubstrateConnection", () => {
     user: "alice",
     method: "ticket" as const,
     hostShell: { ok: false as const, reason: "x" },
-    substrate: { session: SESSION, actor: ACTOR },
+    principal: USER,
+    substrate: { session: SESSION, actor: ACTOR, owner: OWNER },
   };
 
   it("refuses when the backend is disabled", () => {
@@ -412,7 +447,8 @@ describe("SubstrateHub races (review fixes)", () => {
         user: "alice",
         method: "ticket",
         hostShell: { ok: false, reason: "x" },
-        substrate: { session: SESSION, actor: ACTOR },
+        principal: USER,
+        substrate: { session: SESSION, actor: ACTOR, owner: OWNER },
       },
       { ok: true, backend } as never,
     );
@@ -423,6 +459,70 @@ describe("SubstrateHub races (review fixes)", () => {
     await flush();
     pty.emit("b");
     expect(rec.startRecording).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("recording ownership (dx#119)", () => {
+  const ADMIN: Principal = {
+    subject: "ad000000-0000-4000-8000-0000000000ad",
+    operator: false,
+    admin: true,
+    permissions: ["terminal:exec", "recording:write"],
+  };
+  const adminAuth = {
+    ok: true as const,
+    user: "root",
+    method: "ticket" as const,
+    hostShell: { ok: false as const, reason: "x" },
+    principal: ADMIN,
+    substrate: { session: SESSION, actor: ACTOR, owner: OWNER },
+  };
+
+  it("a recording an admin starts on a user's session belongs to the session owner", async () => {
+    const pty = fakePty();
+    const backend = { attach: vi.fn(async () => pty as unknown as IPty) };
+    const ws = fakeWs();
+    handleSubstrateConnection(
+      ws as unknown as WebSocket,
+      new URL("ws://x/?mode=substrate"),
+      adminAuth,
+      { ok: true, backend } as never,
+    );
+    await flush();
+    ws.fire("message", JSON.stringify({ type: "startRecording" }));
+    await flush();
+    expect(rec.startRecording).toHaveBeenCalledTimes(1);
+    expect(rec.startRecording.mock.calls[0][6]).toBe(OWNER);
+  });
+
+  it("an auto-started recording belongs to the session owner too", async () => {
+    const pty = fakePty();
+    const backend = { attach: vi.fn(async () => pty as unknown as IPty) };
+    const ws = fakeWs();
+    handleSubstrateConnection(
+      ws as unknown as WebSocket,
+      new URL("ws://x/?mode=substrate&record=true"),
+      adminAuth,
+      { ok: true, backend } as never,
+    );
+    await flush();
+    pty.emit("a");
+    expect(rec.startRecording.mock.calls[0][6]).toBe(OWNER);
+  });
+
+  it("record=true without recording:write does not record", async () => {
+    const pty = fakePty();
+    const backend = { attach: vi.fn(async () => pty as unknown as IPty) };
+    const ws = fakeWs();
+    handleSubstrateConnection(
+      ws as unknown as WebSocket,
+      new URL("ws://x/?mode=substrate&record=true"),
+      { ...adminAuth, principal: { ...USER, permissions: ["terminal:exec"] } },
+      { ok: true, backend } as never,
+    );
+    await flush();
+    pty.emit("a");
+    expect(rec.startRecording).not.toHaveBeenCalled();
   });
 });
 
@@ -438,7 +538,8 @@ describe("attach failure reporting", () => {
         user: "alice",
         method: "ticket",
         hostShell: { ok: false, reason: "x" },
-        substrate: { session: SESSION, actor: ACTOR },
+        principal: USER,
+        substrate: { session: SESSION, actor: ACTOR, owner: OWNER },
       },
       {
         ok: true,

@@ -6,8 +6,9 @@ import {
 } from "@/server/backlog-server";
 import { expandPath, isValidPort } from "@/lib/path-utils";
 import { getSettings } from "@/lib/settings";
+import { requireAuth } from "@/lib/auth";
+import { confineToRealRoot, PathConfinementError } from "@/lib/path-confine";
 import { existsSync } from "fs";
-import { join } from "path";
 import { homedir } from "os";
 
 // Default base path for project resolution
@@ -51,7 +52,12 @@ function resolveWorkspacePath(basePath: string): string {
  */
 function getBacklogProjectPath(projectName: string, basePath: string): string {
   const workspacePath = resolveWorkspacePath(basePath);
-  return join(workspacePath, projectName);
+  // Confine to the workspace root (A9). POSIX path.join lets an ABSOLUTE
+  // projectName replace the root entirely (and `..` climb out); confineToRealRoot
+  // resolves + boundary-checks AND dereferences symlinks (an in-workspace symlink
+  // like `escape -> /tmp/other` is rejected), throwing PathConfinementError on
+  // any escape, so the subprocess can only ever start inside the real workspace.
+  return confineToRealRoot(workspacePath, projectName);
 }
 
 /**
@@ -59,6 +65,11 @@ function getBacklogProjectPath(projectName: string, basePath: string): string {
  * Returns the status of the BacklogServer subprocess
  */
 export async function GET() {
+  // Defense-in-depth (A3): the POST guard was added in-handler; do the same for
+  // GET so subprocess state/health is not disclosed if middleware is bypassed.
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const status = backlogServer.getStatus();
     const health = status.running
@@ -89,6 +100,13 @@ export async function GET() {
  * Body: { action: "start" | "stop" | "restart", port?: number, projectName?: string }
  */
 export async function POST(request: Request) {
+  // Require authentication in-handler (A3/A4 defense-in-depth): this route
+  // controls a subprocess (start/stop/restart the backlog server) and was
+  // previously middleware-only. A per-route guard means a disabled or bypassed
+  // middleware is not a total authz failure.
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   // Parse JSON body with explicit error handling
   let body: unknown;
   try {
@@ -129,14 +147,6 @@ export async function POST(request: Request) {
           );
         }
 
-        // Security: Reject path traversal attempts
-        if (projectName.includes("..")) {
-          return NextResponse.json(
-            { error: "Invalid project name" },
-            { status: 400 },
-          );
-        }
-
         // Validate port is a number in acceptable range (1024-65535)
         if (!isValidPort(port)) {
           return NextResponse.json(
@@ -145,11 +155,20 @@ export async function POST(request: Request) {
           );
         }
 
-        // Get the project path for the backlog subprocess
-        const projectPath = getBacklogProjectPath(
-          projectName,
-          DEFAULT_BASE_PATH,
-        );
+        // Get the project path for the backlog subprocess (confined to the
+        // workspace root — rejects `..` traversal AND absolute-path replacement).
+        let projectPath: string;
+        try {
+          projectPath = getBacklogProjectPath(projectName, DEFAULT_BASE_PATH);
+        } catch (err) {
+          if (err instanceof PathConfinementError) {
+            return NextResponse.json(
+              { error: "Invalid project name" },
+              { status: 400 },
+            );
+          }
+          throw err;
+        }
 
         // Detailed logging for debugging
         console.log(`[Backlog API] Environment check:`);
@@ -252,18 +271,20 @@ export async function POST(request: Request) {
       case "restart": {
         // If projectName provided, construct full path; otherwise restart with existing config
         if (projectName) {
-          if (projectName.includes("..")) {
-            return NextResponse.json(
-              { error: "Invalid project name" },
-              { status: 400 },
-            );
+          // Get the project path for the backlog subprocess (confined to the
+          // workspace root — rejects `..` and absolute-path replacement).
+          let projectPath: string;
+          try {
+            projectPath = getBacklogProjectPath(projectName, DEFAULT_BASE_PATH);
+          } catch (err) {
+            if (err instanceof PathConfinementError) {
+              return NextResponse.json(
+                { error: "Invalid project name" },
+                { status: 400 },
+              );
+            }
+            throw err;
           }
-
-          // Get the project path for the backlog subprocess
-          const projectPath = getBacklogProjectPath(
-            projectName,
-            DEFAULT_BASE_PATH,
-          );
           console.log(
             `[Backlog API] Restarting server for project: ${projectName} at path: ${projectPath}`,
           );

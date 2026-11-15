@@ -7,13 +7,27 @@
  * `local` / `shell-tmux` shells, because all of them are a node-pty spawn of a
  * local command. Sessions are ephemeral: the connection handler still sends
  * EOF then SIGTERM on WS close. `buildShellCommand` below is the original
- * function, byte for byte apart from the `export`.
+ * function, apart from the `export`, the multi-tenancy (dx#119) additions
+ * to `docker run` (the owner label, the owner's own credential store and the
+ * `.daax` tmpfs shadow), the `--` before the container name on `docker exec`
+ * (#482 A6), and running the herdr bootstrap as the new container's own
+ * command instead of typing it into the shell (#485).
  */
 import { DOCKER_NETWORK } from "../config/constants";
+import {
+  buildFullCommand,
+  runsAsContainerCommand,
+} from "../handlers/command-handler";
 import { getPty } from "../sessions/pty-loader";
 import type { IPty } from "../sessions/types";
 import { buildPtyEnv } from "../sessions/pty-env";
 import { isAiSessionName } from "../../lib/ai-session-name";
+import {
+  OWNER_LABEL,
+  ownerKeyFor,
+  type Principal,
+} from "../../lib/tenancy/ownership";
+import { getUserAuthPaths } from "../docker/auth-paths";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
@@ -48,6 +62,10 @@ export interface ContainerSpawnSpec {
   isOpenCodeSession: boolean;
   opencodeProvider: string;
   opencodeModel: string;
+  /** Who the session acts as (dx#119): owner label + credential store. */
+  principal: Principal;
+  /** Shadow `<containerPath>/.daax` with a tmpfs (decided canonically by the caller). */
+  shadowDaax: boolean;
   cwd: string;
   cols: number;
   rows: number;
@@ -131,6 +149,8 @@ export class ContainerBackend implements ExecutionBackend<
       spec.isOpenCodeSession,
       spec.opencodeProvider,
       spec.opencodeModel,
+      spec.principal,
+      spec.shadowDaax,
     );
   }
 
@@ -155,7 +175,7 @@ export class ContainerBackend implements ExecutionBackend<
   attach(id: string, opts: AttachOptions): IPty {
     return spawnPty(
       "docker",
-      ["exec", "-it", id, "/bin/bash", "-l"],
+      ["exec", "-it", "--", id, "/bin/bash", "-l"],
       opts.cols,
       opts.rows,
       undefined,
@@ -195,7 +215,11 @@ export class ContainerBackend implements ExecutionBackend<
 export const containerBackend = new ContainerBackend();
 
 /**
- * Build the shell command and arguments for the terminal session
+ * Build the shell command and arguments for the terminal session.
+ *
+ * Since the dx#113 move, a new agent container whose command is an inline
+ * bootstrap (herdr-claude, see runsAsContainerCommand) runs it as its own
+ * `zsh -c` command rather than an interactive shell.
  */
 export function buildShellCommand(
   mode: string,
@@ -210,6 +234,8 @@ export function buildShellCommand(
   isOpenCodeSession: boolean,
   opencodeProvider: string,
   opencodeModel: string,
+  principal: Principal,
+  shadowDaax: boolean,
 ): { shell: string; shellArgs: string[] } {
   let shell: string;
   let shellArgs: string[];
@@ -219,9 +245,10 @@ export function buildShellCommand(
     shell = "docker";
 
     if (containerName) {
-      // Exec into existing container
+      // Exec into an existing container. `--` ends docker's option parsing so
+      // a client-supplied name starting with `-` can never be read as a flag.
       console.log(`Exec into container: ${containerName}`);
-      shellArgs = ["exec", "-it", containerName, "/bin/bash", "-l"];
+      shellArgs = ["exec", "-it", "--", containerName, "/bin/bash", "-l"];
     } else {
       // Run new container as vscode user (for pnpm-installed tools)
       // node-pty provides a PTY, so docker -it should work
@@ -241,12 +268,25 @@ export function buildShellCommand(
       const useTmux = !command; // Shell sessions get tmux, AI tools run directly
       const tmuxSessionName = `daax-${sessionId.slice(0, 8)}`;
 
+      // Multi-tenancy (dx#119): label the container with its owner so the
+      // listing/kill routes and `docker exec` can scope to it, and mount the
+      // owner's OWN credential store instead of the one shared dir.
+      const owner = ownerKeyFor(principal) ?? "unknown";
+      const creds = getUserAuthPaths(owner, {
+        claudeHostPath: claudeAuthHostPath,
+        openCodeHostPath: openCodeAuthHostPath,
+      });
+      // A mount containing `.daax/` (every tenant's credential store and the
+      // legacy shared one) gets it shadowed; decided canonically by the caller.
+
       shellArgs = [
         "run",
         "-it",
         "--rm",
         "--name",
         `daax-${sessionId.slice(0, 8)}`,
+        "--label",
+        `${OWNER_LABEL}=${owner}`,
         // SECURITY / issue #195 (Fable M5): agent containers reach `postgres`
         // via daax-net. Evaluated for segregation and DEFERRED, not fixed here:
         // daax-net is the shared plane for daax's own services (code-server, the
@@ -262,6 +302,9 @@ export function buildShellCommand(
         "vscode",
         "-v",
         `${mountPath}:${containerPath}`,
+        ...(shadowDaax
+          ? ["--mount", `type=tmpfs,destination=${containerPath}/.daax`]
+          : []),
         // SECURITY / issue #195 (Fable M5): credential mounts are read-WRITE by
         // necessity, documented accepted risk. Write-back is REQUIRED and `:ro`
         // would break auth persistence (AC#4):
@@ -280,23 +323,23 @@ export function buildShellCommand(
         //     daax-scoped Claude credential.
         //   - OpenCode, CONTAINER mode: daax-scoped to
         //     `${workspace}/.daax/opencode`.
-        //   - OpenCode, HOST mode: NOT daax-scoped. auth-paths.ts resolves this
-        //     to the operator's REAL global `~/.local/share/opencode` (or
-        //     $XDG_DATA_HOME/opencode) and mounts it read-WRITE into agent
-        //     containers. So the residual risk for OpenCode host mode is
-        //     exfiltration of the operator's REAL OpenCode credential (their
-        //     actual OpenCode identity), not a daax-scoped copy.
+        //   - OpenCode, HOST mode: daax-scoped to `~/.daax-opencode`
+        //     (auth-paths.ts), created empty and populated by `opencode auth
+        //     login` inside a daax container. The operator's real global
+        //     `~/.local/share/opencode` is never mounted.
+        // Multi-tenancy (dx#119): the store is now PER OWNER
+        // (`.daax/users/<owner>/…`, see getUserAuthPaths); only the operator and
+        // the legacy-credentials admin keep the original shared dir.
         // Residual risk: untrusted agent code can read/exfiltrate the long-lived
-        // token in whichever store is mounted, and the store is shared across
-        // daax agent sessions — with OpenCode host mode being the operator's real
-        // global credential (see above). Follow-up (tracked in the #195 decision
-        // log): a daax-scoped OpenCode store for host mode, plus per-session,
-        // short-lived scoped tokens so a compromised session cannot exfiltrate a
-        // durable credential or read another session's token.
+        // token in whichever daax-scoped store is mounted, and the store is
+        // shared across the same owner's daax agent sessions. Follow-up (tracked
+        // in the #195 decision log): per-session, short-lived scoped tokens so a
+        // compromised session cannot exfiltrate a durable credential or read
+        // another session's token.
         "-v",
-        `${claudeAuthHostPath}:/home/vscode/.claude`, // Persist Claude auth (RW required — see note above)
+        `${creds.claudeHostPath}:/home/vscode/.claude`, // Per-owner Claude auth (RW required — see note above)
         "-v",
-        `${openCodeAuthHostPath}:/home/vscode/.local/share/opencode`, // Persist OpenCode auth (RW required — see note above)
+        `${creds.openCodeHostPath}:/home/vscode/.local/share/opencode`, // Per-owner OpenCode auth (RW required — see note above)
         "-w",
         containerPath,
         "-e",
@@ -345,12 +388,21 @@ export function buildShellCommand(
         // Use zsh with custom PS1 (zsh-style prompt escapes: %F{color}...%f)
         // SECURITY: Use $FALCON_DISPLAY_PATH env var instead of interpolating displayPath
         // directly to prevent command injection via projectName or basePath
+        //
+        // An inline-bootstrap command (herdr-claude) is the container's OWN
+        // command instead of being typed into this shell afterwards, so its
+        // long multi-stage expansion is never echoed at the user. The script is
+        // its own argv element, so its single quotes need no re-quoting. Every
+        // other tool keeps the interactive shell and has its (short) command
+        // typed in by scheduleCommand().
         shellArgs.push(
           containerImage,
           "/bin/zsh",
           "-l",
           "-c",
-          `export PATH=/home/vscode/.local/share/pnpm:$PATH && export PS1='%F{blue}$FALCON_DISPLAY_PATH%f > ' && exec /bin/zsh`,
+          runsAsContainerCommand(mode, containerName, command)
+            ? `export PS1='%F{blue}$FALCON_DISPLAY_PATH%f > ' && ${buildFullCommand(command, "agent-container")}`
+            : `export PATH=/home/vscode/.local/share/pnpm:$PATH && export PS1='%F{blue}$FALCON_DISPLAY_PATH%f > ' && exec /bin/zsh`,
         );
       }
     }

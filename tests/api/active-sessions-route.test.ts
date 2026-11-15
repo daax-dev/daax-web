@@ -21,6 +21,19 @@ vi.mock("@/lib/docker-exec", async (importOriginal) => {
   return { ...actual, defaultDockerExec: mockDefaultDockerExec };
 });
 
+// dx#119: GET resolves the caller's principal; an admin here (sees all).
+vi.mock("@/lib/auth", async () => {
+  const { ADMIN_PRINCIPAL } = await import("../helpers/auth-principal");
+  return {
+    requirePrincipal: async () => ({
+      authorized: true,
+      user: {},
+      subject: null,
+      principal: ADMIN_PRINCIPAL,
+    }),
+  };
+});
+
 import { GET, listAndProbeSessions } from "@/app/api/ai/active-sessions/route";
 import type { DockerExec } from "@/lib/docker-exec";
 

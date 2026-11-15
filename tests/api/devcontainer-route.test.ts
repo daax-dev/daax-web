@@ -35,6 +35,22 @@ vi.mock("fs/promises", () => ({
   writeFile: vi.fn(),
 }));
 
+// GET/POST now require authentication in-handler (A4). Mock it authenticated so
+// these tests exercise the action logic (a dedicated 401 test lives in
+// tests/api/premortem-route-guards.test.ts).
+vi.mock("@/lib/auth", () => ({
+  requireAuth: vi.fn(async () => ({
+    authenticated: true,
+    user: {
+      username: "tester",
+      email: null,
+      groups: [],
+      authenticated: true,
+      pictureUrl: null,
+    },
+  })),
+}));
+
 import {
   checkRepoStatus,
   listTemplates,

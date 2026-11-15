@@ -5,15 +5,50 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextResponse } from "next/server";
 
-const { identity, access, query } = vi.hoisted(() => ({
+const { identity, access, query, granted, requested } = vi.hoisted(() => ({
   identity: vi.fn(),
   access: vi.fn(),
   query: vi.fn(),
+  granted: { override: null as string[] | null },
+  requested: [] as Array<string | null>,
 }));
 vi.mock("@/lib/auth", () => ({
-  requireAuthIdentity: identity,
-  resolveAccess: access,
+  requirePrincipal: (perm?: string) => fakeRequirePrincipal(perm),
 }));
+/**
+ * `requirePrincipal` (dx#119) rebuilt on the identity/access fakes: 401 when
+ * unauthenticated, 403 when the default role lacks the permission, else the
+ * principal (admin: every permission; user: the default user role's).
+ */
+async function fakeRequirePrincipal(perm?: string) {
+  const id = await identity();
+  if (!id.authenticated) return { authorized: false, response: id.response };
+  const a = await access();
+  const permissions: string[] =
+    granted.override ??
+    (a.isAdmin
+      ? ["admin:*", "terminal:exec", "containers:write", "recording:write"]
+      : ["terminal:exec", "containers:write", "recording:write"]);
+  requested.push(perm ?? null);
+  if (perm && !permissions.includes(perm)) {
+    return {
+      authorized: false,
+      response: NextResponse.json({ error: "forbidden" }, { status: 403 }),
+    };
+  }
+  return {
+    authorized: true,
+    user: {},
+    subject: id.subject,
+    principal: {
+      subject: id.operator ? null : id.subject,
+      operator: id.operator === true,
+      admin: a.isAdmin === true,
+      permissions,
+    },
+  };
+}
+
 vi.mock("@/lib/db/pg", () => ({ query }));
 
 import { PUT as putEgress } from "@/app/api/substrate/sessions/[id]/egress/route";
@@ -69,6 +104,8 @@ beforeEach(() => {
     permissions: [],
   });
   query.mockResolvedValue({ rows: [], rowCount: 0 });
+  granted.override = null;
+  requested.length = 0;
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 afterEach(() => {

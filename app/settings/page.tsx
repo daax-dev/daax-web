@@ -71,6 +71,11 @@ import {
   type HomepageCardConfig,
   type BrandingConfig,
 } from "@/lib/settings";
+import {
+  loadServerSecuritySettings,
+  saveServerSecuritySettings,
+  type ServerSettingsState,
+} from "@/lib/settings-server";
 import { ContainerImageSelector } from "@/components/settings/ContainerImageSelector";
 import { AGENT_ICONS, AGENT_ACCENTS } from "@/components/icons/AgentIcons";
 import { cn } from "@/lib/utils";
@@ -105,6 +110,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 
+import { HomepageCardsHelp } from "@/components/settings/HomepageCardsHelp";
 import { useAdminAccess } from "@/hooks/use-admin-access";
 import { useProject } from "@/lib/project-context";
 import { buildProjectTree, type ProjectTreeNode } from "@/lib/project-tree";
@@ -296,6 +302,12 @@ function SettingsInner() {
 
   const [detectedMode, setDetectedMode] = useState<DeploymentMode>("host");
   const [settings, setSettings] = useState<DaaxSettings>(DEFAULT_SETTINGS);
+  // Server-held security settings (dx#119): which keys an admin locked.
+  const [serverSettings, setServerSettings] = useState<ServerSettingsState>({
+    serverSide: false,
+    locked: [],
+  });
+  const [serverSaveError, setServerSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [directories, setDirectories] = useState<WorkspaceDirectory[]>([]);
   const [loadingDirs, setLoadingDirs] = useState(false);
@@ -345,6 +357,19 @@ function SettingsInner() {
     setSettings({ ...saved, deploymentMode: mode, branding });
     setOrderedPlugins(getOrderedPlugins(saved));
     setOrderedCards(getOrderedHomepageCards(saved));
+    // Refresh the security keys from the server (the authority, dx#119).
+    loadServerSecuritySettings().then((state) => {
+      setServerSettings(state);
+      if (state.serverSide) {
+        const fresh = getSettings();
+        setSettings((prev) => ({
+          ...prev,
+          containerImage: fresh.containerImage,
+          basePath: fresh.basePath,
+          claudeSkipPermissions: fresh.claudeSkipPermissions,
+        }));
+      }
+    });
   }, []);
 
   // Fetch available branding logos
@@ -464,6 +489,8 @@ function SettingsInner() {
     // subscription refreshes the project context with the new base path.
     saveSettings(settings);
     setSaved(true);
+    const server = await saveServerSecuritySettings(serverSettings, settings);
+    setServerSaveError(server.ok ? null : (server.error ?? "save failed"));
 
     // Refresh only this page's own directory list. The shared project context
     // is already refreshed by the settings subscription above, so the previous
@@ -524,6 +551,20 @@ function SettingsInner() {
         <div>
           <h1 className="text-2xl font-bold">Settings</h1>
           <p className="text-muted-foreground">Configure Daax preferences</p>
+          {serverSettings.locked.length > 0 && (
+            <p
+              className="text-sm text-muted-foreground mt-2"
+              data-testid="settings-locked-note"
+            >
+              Locked by an admin (enforced by the server):{" "}
+              {serverSettings.locked.join(", ")}
+            </p>
+          )}
+          {serverSaveError && (
+            <p className="text-sm text-destructive mt-2" role="alert">
+              Server-side settings were not saved: {serverSaveError}
+            </p>
+          )}
         </div>
 
         {/* GitHub OAuth result messages */}
@@ -3595,6 +3636,7 @@ function SettingsInner() {
                     color to change the card accent. Blue and green cards have
                     colored borders; white cards use the default style.
                   </p>
+                  <HomepageCardsHelp />
                 </CardContent>
               </Card>
 

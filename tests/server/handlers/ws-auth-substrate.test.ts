@@ -50,4 +50,35 @@ describe("substrate claim", () => {
     expect(authenticateConnection(req(token)).ok).toBe(true);
     expect(authenticateConnection(req(token)).ok).toBe(false);
   });
+
+  // Multi-tenancy (dx#119): the attach ticket's signed claims are the only
+  // authority on the terminal plane.
+  it("carries the session owner and the caller's signed perms and admin flag", () => {
+    const { token } = mintTicket("bob", undefined, {
+      perms: ["terminal:exec"],
+      substrate: { ...claim, owner: "alice" },
+    });
+    const d = authenticateConnection(req(token));
+    if (!d.ok) throw new Error(d.reason);
+    expect(d.substrate).toEqual({ ...claim, owner: "alice" });
+    expect(d.principal).toMatchObject({
+      subject: "bob",
+      admin: false,
+      permissions: ["terminal:exec"],
+    });
+
+    const admin = mintTicket("root", undefined, {
+      admin: true,
+      perms: ["terminal:exec", "containers:write"],
+      substrate: { ...claim, owner: "alice" },
+    });
+    const a = authenticateConnection(req(admin.token));
+    expect(a.ok && a.principal.admin).toBe(true);
+  });
+
+  it("a ticket without perms grants no permissions (pre-#119 tickets)", () => {
+    const { token } = mintTicket("alice", undefined, { substrate: claim });
+    const d = authenticateConnection(req(token));
+    expect(d.ok && d.principal.permissions).toEqual([]);
+  });
 });

@@ -149,19 +149,21 @@ describe("buildFullCommand", () => {
   });
 
   describe("copilot command", () => {
-    const copilotPath =
-      "/home/vscode/.local/share/pnpm/global/5/node_modules/@github/copilot/index.js";
+    // The pnpm shim, which resolves its own entrypoint. The previous command
+    // ran node on a pinned pnpm global-store path (`global/5/.../index.js`)
+    // that exists in no current agent image (store `global/v11`).
+    const copilotPath = "/home/vscode/.local/share/pnpm/copilot";
 
-    it("transforms bare copilot command to node execution", () => {
+    it("runs the copilot shim by full path", () => {
       const result = buildFullCommand("copilot", "agent-container");
 
-      expect(result).toBe(`node ${copilotPath}`);
+      expect(result).toBe(copilotPath);
     });
 
     it("transforms copilot with arguments", () => {
       const result = buildFullCommand("copilot --help", "agent-container");
 
-      expect(result).toBe(`node ${copilotPath} --help`);
+      expect(result).toBe(`${copilotPath} --help`);
     });
 
     it("transforms copilot with complex arguments", () => {
@@ -170,7 +172,15 @@ describe("buildFullCommand", () => {
         "agent-container",
       );
 
-      expect(result).toBe(`node ${copilotPath} chat --continue`);
+      expect(result).toBe(`${copilotPath} chat --continue`);
+    });
+
+    it("never pins a pnpm global-store path", () => {
+      for (const cmd of ["copilot", "copilot --help"]) {
+        expect(buildFullCommand(cmd, "agent-container")).not.toMatch(
+          /pnpm\/global\//,
+        );
+      }
     });
 
     it("does not match copilot-test (word boundary)", () => {

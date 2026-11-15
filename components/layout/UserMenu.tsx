@@ -33,11 +33,20 @@ export function UserMenu() {
 
   const handleLogout = async (e: Event) => {
     e.preventDefault();
-    // 1. Clear the traefik-forward-auth session cookie
+    // 1. Clear the traefik-forward-auth session cookie. The host gate
+    //    (traefik-forward-auth v4.14.1) registers its portal logout as POST
+    //    only: a GET matches no route (404) and clears nothing. The POST is
+    //    answered 303 to the gate's portal page; `redirect: "manual"` leaves
+    //    that unfollowed (an opaque redirect) while its Set-Cookie still
+    //    applies.
     try {
-      await fetch(LOGOUT_URL, { credentials: "include", redirect: "manual" });
+      await fetch(LOGOUT_URL, {
+        method: "POST",
+        credentials: "include",
+        redirect: "manual",
+      });
     } catch {
-      // redirect: manual returns opaque-redirect, cookies are still cleared
+      // Network failure: still end the IdP session below.
     }
     // 2. End the IdP session at this host's own provider, which the server
     //    names at runtime (DAAX_AUTH_LOGOUT_URL). Pocket ID's <idp>/logout asks

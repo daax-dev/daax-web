@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { spawn, type ChildProcess } from "child_process";
 import { isValidDockerImageName } from "@/lib/docker-validation";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
 import {
   defaultDockerExec,
   dockerUnavailableJson,
@@ -20,9 +20,12 @@ import {
  * - "failed": Pull failed (non-zero exit code or process error)
  */
 export async function POST(request: NextRequest) {
-  // Docker pull triggers real resource usage — requires authentication (#197)
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  // Docker pull triggers real resource usage on the shared host (#197); it
+  // needs containers:write (dx#119).
+  const auth = await requirePrincipal("containers:write", {
+    route: "POST /api/docker/pull",
+  });
+  if (!auth.authorized) return auth.response;
 
   let body: { image?: string };
   try {

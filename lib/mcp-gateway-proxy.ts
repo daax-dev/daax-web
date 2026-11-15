@@ -12,6 +12,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import * as readline from "readline";
+import { buildChildEnv } from "@/lib/mcp-route-helpers";
 
 // ============================================================================
 // PATHS
@@ -395,8 +396,13 @@ async function spawnMcp(
     throw new Error(`MCP ${mcpId} has no command configured`);
   }
 
+  // Minimal child env (A5): do NOT spread the full process.env — that leaks the
+  // app's secrets (GITHUB_TOKEN, DATABASE_URL, DAAX_WS_TOKEN_SECRET,
+  // DAAX_PROXY_SECRET, CLAWD_GATEWAY_TOKEN, …) into every gateway-spawned MCP,
+  // which is untrusted code. buildChildEnv passes only PATH/HOME plus the MCP's
+  // own declared env — the same guarantee the mcp/tools + inspector routes use.
   const proc = spawn(config.command, config.args || [], {
-    env: { ...process.env, ...config.env },
+    env: buildChildEnv(config.env) as NodeJS.ProcessEnv,
     stdio: ["pipe", "pipe", "pipe"],
   });
 

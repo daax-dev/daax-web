@@ -45,12 +45,27 @@ vi.mock("@/server/sessions/session-manager", () => ({
   hasSession: () => true,
 }));
 vi.mock("@/lib/worktree-manager", () => ({
-  isValidPath: () => true,
+  // Confinement always passes, except the dx#119 ".daax" check (base ends in
+  // /.daax), which these cases never target.
+  isValidPath: (_p: string, base: string) => !base.endsWith("/.daax"),
   resolveWorkspaceRoot: () => "/home/dev/prj",
 }));
 vi.mock("@/server/docker/image-manager", () => ({
   resolveContainerImage: (image: string) => image,
   DEFAULT_CONTAINER_IMAGE: "daax-agent:test",
+}));
+// Ownership lookup (docker inspect) and per-user credential dirs (mkdir) are
+// stood in: these cases are about the host-shell gate (dx#119 has its own
+// suite in tenant-isolation.test.ts).
+vi.mock("@/server/docker/container-owner", () => ({
+  lookupContainerOwner: async () => ({ owner: null }),
+}));
+vi.mock("@/server/docker/auth-paths", () => ({
+  getUserAuthPaths: () => ({
+    claudeHostPath: "/creds/claude",
+    openCodeHostPath: "/creds/opencode",
+    legacy: false,
+  }),
 }));
 vi.mock("@/server/recording/recorder", () => ({
   startRecording: vi.fn(),
@@ -60,20 +75,38 @@ vi.mock("@/server/recording/recorder", () => ({
 
 import { handleConnection } from "@/server/handlers/connection-handler";
 import { _resetSeenJti } from "@/server/handlers/ws-auth";
-import { mintTicket } from "@/lib/ws-ticket";
+import { mintTicket as mintRaw, type TicketClaims } from "@/lib/ws-ticket";
+import { permissionsForRoles } from "@/lib/rbac/permissions";
+
+// The app signs the caller's RBAC into every ticket (dx#119); a ticket for a
+// DAAX_ADMIN_USERS subject is minted as admin, anyone else as a user.
+function mintTicket(sub: string, now?: number, claims: TicketClaims = {}) {
+  const admin = sub === ADMIN || claims.operator === true;
+  return mintRaw(sub, now, {
+    perms: permissionsForRoles([admin ? "admin" : "user"]),
+    ...(admin ? { admin: true as const } : {}),
+    ...claims,
+  });
+}
 
 const ADMIN = "62d9d61c-cae1-49d0-aa94-ff34091199b7";
 const OTHER = "0b7c4a1e-5f3d-4e2a-9c81-7d6e5f4a3b21";
 const ORIGIN = "https://daax.galway.poley.dev";
 
-function connect(opts: {
+async function connect(opts: {
   mode: string;
   containerName?: string;
   headers?: Record<string, string>;
   remoteAddress?: string;
   ticket?: string;
 }) {
-  const ws = { send: vi.fn(), on: vi.fn(), close: vi.fn(), readyState: 1 };
+  const ws = {
+    send: vi.fn(),
+    on: vi.fn(),
+    off: vi.fn(),
+    close: vi.fn(),
+    readyState: 1,
+  };
   const headers: Record<string, string> = { origin: ORIGIN, ...opts.headers };
   if (opts.ticket)
     headers["sec-websocket-protocol"] = `daax-ws-ticket, ${opts.ticket}`;
@@ -86,7 +119,7 @@ function connect(opts: {
     socket: { remoteAddress: opts.remoteAddress ?? "127.0.0.1" },
     headers,
   } as unknown as IncomingMessage;
-  handleConnection(ws as unknown as WebSocket, req);
+  await handleConnection(ws as unknown as WebSocket, req);
   vi.advanceTimersByTime(1000);
   return ws;
 }
@@ -109,8 +142,14 @@ afterEach(() => {
 });
 
 describe("host shell over the forwarded-identity path", () => {
-  it("an admin subject gets a host shell", () => {
-    const ws = connect({
+  // The bare forwarded path is the no-ticketing posture (host-dev behind
+  // Traefik). With ticketing configured a ticket is required (dx#119).
+  beforeEach(() => {
+    vi.stubEnv("DAAX_WS_TOKEN_SECRET", "");
+  });
+
+  it("an admin subject gets a host shell", async () => {
+    const ws = await connect({
       mode: "local",
       headers: { "x-forwarded-user": ADMIN },
     });
@@ -118,10 +157,10 @@ describe("host shell over the forwarded-identity path", () => {
     expect(spawn.mock.calls[0][0]).toBe("/bin/zsh");
   });
 
-  it("a username or email in DAAX_ADMIN_USERS is not enough: only the subject counts", () => {
+  it("a username or email in DAAX_ADMIN_USERS is not enough: only the subject counts", async () => {
     // Username and email are attributes a user may be able to set, so a
     // non-admin claiming the operator's is refused.
-    const ws = connect({
+    const ws = await connect({
       mode: "local",
       headers: {
         "x-forwarded-user": OTHER,
@@ -136,8 +175,8 @@ describe("host shell over the forwarded-identity path", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("a subject entry matches case-insensitively", () => {
-    const ws = connect({
+  it("a subject entry matches case-insensitively", async () => {
+    const ws = await connect({
       mode: "local",
       headers: { "x-forwarded-user": ADMIN.toUpperCase() },
     });
@@ -145,8 +184,8 @@ describe("host shell over the forwarded-identity path", () => {
     expect(spawn).toHaveBeenCalledTimes(1);
   });
 
-  it("a non-admin is refused with the reason, and nothing is spawned", () => {
-    const ws = connect({
+  it("a non-admin is refused with the reason, and nothing is spawned", async () => {
+    const ws = await connect({
       mode: "local",
       headers: {
         "x-forwarded-user": OTHER,
@@ -163,8 +202,11 @@ describe("host shell over the forwarded-identity path", () => {
 
   it.each(["shell-tmux", "bogus"])(
     "mode=%s is a host shell too and is refused for a non-admin",
-    (mode) => {
-      const ws = connect({ mode, headers: { "x-forwarded-user": OTHER } });
+    async (mode) => {
+      const ws = await connect({
+        mode,
+        headers: { "x-forwarded-user": OTHER },
+      });
       expect(ws.close).toHaveBeenCalledWith(
         1008,
         "host terminal refused: not in DAAX_ADMIN_USERS",
@@ -175,9 +217,9 @@ describe("host shell over the forwarded-identity path", () => {
 
   it.each(["", "jason.poley@gmail.com jpoley"])(
     "DAAX_ADMIN_USERS=%j names no subject and refuses even the operator's own",
-    (list) => {
+    async (list) => {
       vi.stubEnv("DAAX_ADMIN_USERS", list);
-      const ws = connect({
+      const ws = await connect({
         mode: "local",
         headers: {
           "x-forwarded-user": ADMIN,
@@ -195,8 +237,12 @@ describe("host shell over the forwarded-identity path", () => {
 });
 
 describe("container terminals on a host-mode daax", () => {
-  it("a non-admin's new container (docker run on the host socket) is refused", () => {
-    const ws = connect({
+  beforeEach(() => {
+    vi.stubEnv("DAAX_WS_TOKEN_SECRET", "");
+  });
+
+  it("a non-admin's new container (docker run on the host socket) is refused", async () => {
+    const ws = await connect({
       mode: "container",
       headers: { "x-forwarded-user": OTHER },
     });
@@ -207,8 +253,8 @@ describe("container terminals on a host-mode daax", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("a non-admin's docker exec into a named container is refused", () => {
-    const ws = connect({
+  it("a non-admin's docker exec into a named container is refused", async () => {
+    const ws = await connect({
       mode: "container",
       containerName: "daax-postgres",
       headers: { "x-forwarded-user": OTHER },
@@ -220,8 +266,8 @@ describe("container terminals on a host-mode daax", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("an admin gets a new container", () => {
-    const ws = connect({
+  it("an admin gets a new container", async () => {
+    const ws = await connect({
       mode: "container",
       headers: { "x-forwarded-user": ADMIN },
     });
@@ -230,8 +276,8 @@ describe("container terminals on a host-mode daax", () => {
     expect(spawn.mock.calls[0][1]).toContain("run");
   });
 
-  it("an admin gets docker exec into a named container", () => {
-    const ws = connect({
+  it("an admin gets docker exec into a named container", async () => {
+    const ws = await connect({
       mode: "container",
       containerName: "daax-postgres",
       headers: { "x-forwarded-user": ADMIN },
@@ -241,6 +287,7 @@ describe("container terminals on a host-mode daax", () => {
     expect(spawn.mock.calls[0][1]).toEqual([
       "exec",
       "-it",
+      "--",
       "daax-postgres",
       "/bin/bash",
       "-l",
@@ -249,9 +296,9 @@ describe("container terminals on a host-mode daax", () => {
 });
 
 describe("host shell over the ticket path", () => {
-  it("a ticket minted with the claim for an admin gets a host shell", () => {
+  it("a ticket minted with the claim for an admin gets a host shell", async () => {
     const { token } = mintTicket(ADMIN, undefined, { hostShell: true });
-    const ws = connect({
+    const ws = await connect({
       mode: "local",
       remoteAddress: "100.64.0.5",
       ticket: token,
@@ -260,9 +307,9 @@ describe("host shell over the ticket path", () => {
     expect(spawn.mock.calls[0][0]).toBe("/bin/zsh");
   });
 
-  it("a ticket without the claim is refused even for an admin subject", () => {
+  it("a ticket without the claim is refused even for an admin subject", async () => {
     const { token } = mintTicket(ADMIN);
-    const ws = connect({
+    const ws = await connect({
       mode: "local",
       remoteAddress: "100.64.0.5",
       ticket: token,
@@ -274,11 +321,11 @@ describe("host shell over the ticket path", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("the claim is re-checked at connect: a non-admin carrying it is refused", () => {
+  it("the claim is re-checked at connect: a non-admin carrying it is refused", async () => {
     // The app minted it while OTHER was an admin; DAAX_ADMIN_USERS no longer
     // names OTHER, and the terminal server's list is the one that counts.
     const { token } = mintTicket(OTHER, undefined, { hostShell: true });
-    const ws = connect({
+    const ws = await connect({
       mode: "local",
       remoteAddress: "100.64.0.5",
       ticket: token,
@@ -290,13 +337,13 @@ describe("host shell over the ticket path", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("a local-operator ticket is honoured, as the operator is on the HTTP plane", () => {
+  it("a local-operator ticket is honoured, as the operator is on the HTTP plane", async () => {
     vi.stubEnv("DAAX_ADMIN_USERS", "");
     const { token } = mintTicket("local", undefined, {
       hostShell: true,
       operator: true,
     });
-    const ws = connect({
+    const ws = await connect({
       mode: "local",
       remoteAddress: "100.64.0.5",
       ticket: token,
@@ -305,13 +352,13 @@ describe("host shell over the ticket path", () => {
     expect(spawn.mock.calls[0][0]).toBe("/bin/zsh");
   });
 
-  it("under DAAX_REQUIRE_AUTH=1 a local-operator ticket is refused", () => {
+  it("under DAAX_REQUIRE_AUTH=1 a local-operator ticket is refused", async () => {
     vi.stubEnv("DAAX_REQUIRE_AUTH", "1");
     const { token } = mintTicket("local", undefined, {
       hostShell: true,
       operator: true,
     });
-    const ws = connect({
+    const ws = await connect({
       mode: "local",
       remoteAddress: "100.64.0.5",
       ticket: token,
@@ -323,9 +370,9 @@ describe("host shell over the ticket path", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("a non-admin ticket is refused a docker exec into a named container", () => {
+  it("a non-admin ticket is refused a docker exec into a named container", async () => {
     const { token } = mintTicket(OTHER);
-    const ws = connect({
+    const ws = await connect({
       mode: "container",
       containerName: "daax-postgres",
       remoteAddress: "100.64.0.5",
@@ -338,9 +385,9 @@ describe("host shell over the ticket path", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("an admin ticket gets a docker exec into a named container", () => {
+  it("an admin ticket gets a docker exec into a named container", async () => {
     const { token } = mintTicket(ADMIN, undefined, { hostShell: true });
-    const ws = connect({
+    const ws = await connect({
       mode: "container",
       containerName: "daax-postgres",
       remoteAddress: "100.64.0.5",
@@ -352,17 +399,17 @@ describe("host shell over the ticket path", () => {
 });
 
 describe("unchanged postures", () => {
-  it("the loopback local operator (host-dev, no credentials) keeps its host shell", () => {
+  it("the loopback local operator (host-dev, no credentials) keeps its host shell", async () => {
     vi.stubEnv("DAAX_ADMIN_USERS", "");
-    const ws = connect({ mode: "local" });
+    const ws = await connect({ mode: "local" });
     expect(ws.close).not.toHaveBeenCalled();
     expect(spawn.mock.calls[0][0]).toBe("/bin/zsh");
   });
 
-  it("a loopback upgrade carrying X-Forwarded-For is not the local operator", () => {
+  it("a loopback upgrade carrying X-Forwarded-For is not the local operator", async () => {
     // It came through a proxy whose identity header is missing.
     vi.stubEnv("DAAX_ADMIN_USERS", "");
-    const ws = connect({
+    const ws = await connect({
       mode: "local",
       headers: { "x-forwarded-for": "203.0.113.7" },
     });
@@ -370,10 +417,10 @@ describe("unchanged postures", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("HOST_WORKSPACE_PATH on a process outside Docker does not make it container mode", () => {
+  it("HOST_WORKSPACE_PATH on a process outside Docker does not make it container mode", async () => {
     vi.stubEnv("HOST_WORKSPACE_PATH", "/home/dev/prj");
     docker.present = false;
-    const ws = connect({
+    const ws = await connect({
       mode: "local",
       headers: { "x-forwarded-user": OTHER },
     });
@@ -384,9 +431,9 @@ describe("unchanged postures", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("inside Docker without HOST_WORKSPACE_PATH it is still host mode", () => {
+  it("inside Docker without HOST_WORKSPACE_PATH it is still host mode", async () => {
     docker.present = true;
-    const ws = connect({
+    const ws = await connect({
       mode: "container",
       headers: { "x-forwarded-user": OTHER },
     });
@@ -397,29 +444,49 @@ describe("unchanged postures", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("in container mode a non-admin's local shell runs as before", () => {
+  // dx#119: these two used to run for any forwarded identity. A bare
+  // forwarded non-admin now has no permissions on this plane (no Postgres to
+  // resolve roles), and a local shell is admin-only in container mode.
+  it("in container mode a bare forwarded non-admin must present a ticket", async () => {
     vi.stubEnv("HOST_WORKSPACE_PATH", "/home/dev/prj");
     docker.present = true;
-    const ws = connect({
-      mode: "local",
+    const ws = await connect({
+      mode: "container",
       headers: { "x-forwarded-user": OTHER },
     });
-    expect(ws.close).not.toHaveBeenCalled();
-    expect(spawn.mock.calls[0][0]).toBe("/bin/zsh");
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "terminal refused: a terminal ticket is required",
+    );
+    expect(spawn).not.toHaveBeenCalled();
   });
 
-  it.each([undefined, "daax-postgres"])(
-    "in container mode a non-admin's container terminal (containerName=%s) runs as before",
-    (containerName) => {
-      vi.stubEnv("HOST_WORKSPACE_PATH", "/home/dev/prj");
-      docker.present = true;
-      const ws = connect({
-        mode: "container",
-        containerName,
-        headers: { "x-forwarded-user": OTHER },
-      });
-      expect(ws.close).not.toHaveBeenCalled();
-      expect(spawn.mock.calls[0][0]).toBe("docker");
-    },
-  );
+  it("in container mode a non-admin's local shell is refused", async () => {
+    vi.stubEnv("HOST_WORKSPACE_PATH", "/home/dev/prj");
+    docker.present = true;
+    const { token } = mintTicket(OTHER);
+    const ws = await connect({
+      mode: "local",
+      remoteAddress: "100.64.0.5",
+      ticket: token,
+    });
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "terminal refused: local shells are admin-only",
+    );
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("in container mode a non-admin's ticketed container terminal runs as before", async () => {
+    vi.stubEnv("HOST_WORKSPACE_PATH", "/home/dev/prj");
+    docker.present = true;
+    const { token } = mintTicket(OTHER);
+    const ws = await connect({
+      mode: "container",
+      remoteAddress: "100.64.0.5",
+      ticket: token,
+    });
+    expect(ws.close).not.toHaveBeenCalled();
+    expect(spawn.mock.calls[0][0]).toBe("docker");
+  });
 });

@@ -46,6 +46,27 @@ export const DEFAULT_CONTAINER_IMAGE =
   process.env.CLAUDE_CONTAINER_IMAGE ||
   "jpoley/daax-agents@sha256:bd80594f01811b6ebe3e30e588ad7599fb34e9b078da24fca2e8767755a96d32";
 export const FALLBACK_CONTAINER_IMAGE = "daax-agents:local";
+
+// Authoritative operator override for the AI-agent container image.
+//
+// CLAUDE_CONTAINER_IMAGE above is only a DEFAULT: it applies when a session
+// arrives with no `image` query param, and AI-tool sessions always send one
+// (components/terminal/TerminalManager.tsx, from browser localStorage). So an
+// operator who must move every new session to a different image — the client
+// defaults in lib/settings.ts are digest-pinned and only move with a code
+// change — has no server-side lever, and each user must edit Settings by hand.
+//
+// When set, it WINS over the client-supplied image for every new agent
+// container (withAgentImageOverride, server/docker/agent-image-override.ts).
+// It only narrows what a client can select, cannot be set by a request, and
+// leaves the auth and mount-confinement checks untouched. Read at call time so one
+// image serves every host and tests can set it per case. Unset (the default)
+// keeps per-session image selection in the UI.
+export function agentImageOverride(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  return (env.DAAX_AGENT_IMAGE_OVERRIDE ?? "").trim();
+}
 export const DOCKER_NETWORK = process.env.DOCKER_NETWORK || "daax-net";
 
 // Host workspace path for volume mounts when running in container

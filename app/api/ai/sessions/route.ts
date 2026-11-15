@@ -3,17 +3,26 @@ import type { AIAgent, CreateSessionRequest } from "@/types/ai-session";
 import { AI_AGENTS } from "@/types/ai-session";
 import { DEFAULT_AI_CODING_SETTINGS } from "@/lib/settings";
 import { sessionStore, createSession, getAllSessions } from "@/lib/ai-sessions";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
+import { filterOwned, ownerKeyFor } from "@/lib/tenancy/ownership";
 
-// SECURITY: POST operations require authentication via requireAuth()
+// SECURITY: owner-scoped (dx#119). Listing shows the caller's sessions (admins:
+// all); creating needs containers:write and stamps the caller as owner.
 
 // Derive valid agents from AI_AGENTS to ensure sync with type definition
 const VALID_AGENTS = Object.keys(AI_AGENTS) as AIAgent[];
 
 // GET /api/ai/sessions - List all sessions
 export async function GET() {
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
+
   try {
-    const allSessions = getAllSessions();
+    const allSessions = filterOwned(
+      auth.principal,
+      getAllSessions(),
+      (s) => s.owner,
+    );
     return NextResponse.json({
       success: true,
       sessions: allSessions,
@@ -34,8 +43,8 @@ export async function GET() {
 // POST /api/ai/sessions - Create new session
 export async function POST(request: NextRequest) {
   // Require authentication for session creation (spawns containers)
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal("containers:write");
+  if (!auth.authorized) return auth.response;
 
   try {
     const body: CreateSessionRequest = await request.json();
@@ -73,6 +82,7 @@ export async function POST(request: NextRequest) {
       body.agent,
       containerImage,
       body.workingDirectory,
+      ownerKeyFor(auth.principal),
     );
 
     // TODO: Actually spawn container here

@@ -5,10 +5,14 @@
  * subject, agent, template, created, state. Persisted in Postgres
  * (`substrate_sessions`, migrations/1781568000400_substrate-sessions.js).
  *
- * Ownership API (what multi-tenancy builds on):
- *   - `Caller`            who is asking: subject + whether they are admin.
- *   - `canAccess(c, s)`   owner or admin.
- *   - `filterVisible(c, rows)`.
+ * Ownership API, delegated to the shared tenancy gate (dx#119,
+ * lib/tenancy/ownership.ts) so substrate sessions follow exactly the rules
+ * every other owner-scoped surface does:
+ *   - `Caller`            who is asking: owner key + whether they are admin.
+ *                         Built from a `Principal` with `callerFromPrincipal`.
+ *   - `canAccess(c, s)`   `requireOwnerOrAdmin` on `ownerSubject` (owner keys
+ *                         compare case-insensitively, as the gate does).
+ *   - `filterVisible(c, rows)`: `filterOwned`.
  *   - `store.listVisible(c)` / `store.getVisible(c, id)`: the query-level
  *     equivalents. A non-owner sees `null` (callers answer 404, so the
  *     existence of another user's session is not disclosed).
@@ -16,6 +20,14 @@
  * The store takes a `query` function so unit tests run without Postgres.
  */
 import { randomUUID } from "node:crypto";
+
+import type { Permission } from "../rbac/permissions";
+import {
+  filterOwned,
+  ownerKeyFor,
+  requireOwnerOrAdmin,
+  type Principal,
+} from "../tenancy/ownership";
 
 export const SESSION_STATES = [
   "creating",
@@ -50,23 +62,54 @@ export interface SubstrateSession {
 
 /** The authenticated caller, as resolved by the web plane. */
 export interface Caller {
-  /** Trusted subject; `local` for the host-dev local operator. */
+  /** Owner key: trusted subject, or `local` for the host-dev operator. */
   subject: string;
   isAdmin: boolean;
+  /** The host-dev local operator (admin-equivalent). */
+  operator?: boolean;
+  /** Effective permissions, signed into attach tickets (dx#119). */
+  permissions?: readonly Permission[];
+}
+
+/**
+ * The substrate caller for a tenancy principal: the owner key is
+ * `ownerKeyFor` (subject, or `local` for the operator). Null when the
+ * principal has neither, which must not own sessions.
+ */
+export function callerFromPrincipal(p: Principal): Caller | null {
+  const subject = ownerKeyFor(p);
+  if (!subject) return null;
+  return {
+    subject,
+    isAdmin: p.admin,
+    operator: p.operator,
+    permissions: p.permissions,
+  };
+}
+
+function principalOf(caller: Caller): Principal {
+  return {
+    subject: caller.subject,
+    operator: false,
+    admin: caller.isAdmin,
+    permissions: caller.permissions ?? [],
+  };
 }
 
 export function canAccess(
   caller: Caller,
   session: Pick<SubstrateSession, "ownerSubject">,
 ): boolean {
-  return caller.isAdmin || session.ownerSubject === caller.subject;
+  return requireOwnerOrAdmin(principalOf(caller), {
+    owner: session.ownerSubject,
+  }).ok;
 }
 
 export function filterVisible<T extends Pick<SubstrateSession, "ownerSubject">>(
   caller: Caller,
   rows: readonly T[],
 ): T[] {
-  return rows.filter((r) => canAccess(caller, r));
+  return filterOwned(principalOf(caller), rows, (r) => r.ownerSubject);
 }
 
 /** Actor names daax mints: `daax-` + 10 hex (substrate-harness name rules). */
@@ -186,7 +229,8 @@ export class SessionsStore {
           `SELECT ${COLS} FROM substrate_sessions WHERE ended_at IS NULL ORDER BY created_at DESC`,
         )
       : await this.q<Row>(
-          `SELECT ${COLS} FROM substrate_sessions WHERE ended_at IS NULL AND owner_subject = $1 ORDER BY created_at DESC`,
+          // Case-insensitive, like the shared tenancy gate (dx#119).
+          `SELECT ${COLS} FROM substrate_sessions WHERE ended_at IS NULL AND lower(owner_subject) = lower($1) ORDER BY created_at DESC`,
           [caller.subject],
         );
     return rows.map(fromRow);

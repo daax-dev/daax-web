@@ -13,7 +13,8 @@
  */
 
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
+import { containerOr404 } from "@/lib/tenancy/http";
 import { getDocker, dockerUnavailableResponse } from "@/lib/host-docker";
 
 interface RouteParams {
@@ -21,8 +22,9 @@ interface RouteParams {
 }
 
 export async function GET(request: Request, { params }: RouteParams) {
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  // dx#119: owner-scoped (label daax.owner); not-yours is a 404.
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
 
   const docker = getDocker();
   const unavailable = await dockerUnavailableResponse(docker);
@@ -30,6 +32,8 @@ export async function GET(request: Request, { params }: RouteParams) {
 
   try {
     const { id } = await params;
+    const denied = await containerOr404(auth.principal, docker, id);
+    if (denied) return denied;
     const { searchParams } = new URL(request.url);
     const tailParam = parseInt(searchParams.get("tail") || "200", 10);
     const tail = Number.isFinite(tailParam)

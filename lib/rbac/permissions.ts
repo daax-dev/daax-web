@@ -21,47 +21,67 @@
  *       admin:db:read   — provenance-admin table/actions LIST + row/schema reads
  *       admin:db:write  — provenance-admin table row create/update/delete
  *       admin:users:write — provenance-admin action mutations
+ *       workers:manage  — digital worker create/update/delete, goals
+ *       workers:run     — queue/cancel digital worker runs (run, ask, voice)
  *   - ENFORCED via the SERVER ACCESS SUMMARY only (no route `requireRole` call):
  *       admin:users:read  — resolved by `resolveAccess()` / `/api/auth/access`
- *                           and used for admin-UI gating (settings/provenance
- *                           admin surface); it is NOT checked by a route handler.
- *   - FORWARD-LOOKING (declared for the model but NOT yet gated at any route;
- *     the corresponding routes are still `requireAuth`-only). Do NOT assume a
- *     holder is restricted by these until the route enforcement lands:
- *       terminal:exec, containers:write, mcp:manage, recording:write, settings:write
+ *                           and used for admin-UI gating.
+ *   - ENFORCED for multi-tenancy (dx#119) — owner-scoped (lib/tenancy):
+ *       terminal:exec      — WS terminal spawn/attach (signed ticket claim) and
+ *                            the ticket mint route
+ *       containers:write   — container/session start/stop/restart/delete/reap,
+ *                            testcontainers create/mutate, docker pull
+ *       recording:write    — recording start (WS), delete, publish, create-pr
+ *                            (reading and the HTML export are owner-scoped
+ *                            reads)
+ *       settings:write     — PUT the caller's own server-side settings
+ *       admin:settings:write — PUT the admin settings policy (defaults, locks,
+ *                            per-user overrides)
+ *   - FORWARD-LOOKING (declared but NOT yet gated at any route):
+ *       mcp:manage
  * See ENFORCED_PERMISSIONS below for the machine-readable set.
  */
 export const PERMISSIONS = Object.freeze([
-  // Forward-looking (not yet enforced at routes).
+  // Owner-scoped tenant permissions (dx#119).
   "terminal:exec",
   "containers:write",
-  "mcp:manage",
   "recording:write",
   "settings:write",
-  // Enforced. admin:users:read via the server access summary (resolveAccess);
+  // Forward-looking (not yet enforced at routes).
+  "mcp:manage",
+  // Admin. admin:users:read via the server access summary (resolveAccess);
   // the rest via a route requireRole call.
   "admin:users:read",
   "admin:users:write",
   "admin:db:read",
   "admin:db:write",
+  "admin:settings:write",
+  "workers:manage",
+  "workers:run",
 ] as const);
 
 export type Permission = (typeof PERMISSIONS)[number];
 
 /**
- * The subset of {@link PERMISSIONS} that is actually enforced today — either by a
- * route `requireRole` call (`admin:db:read`, `admin:db:write`,
- * `admin:users:write`) or by the server-side access summary that gates the admin
- * UI (`admin:users:read`, resolved via `resolveAccess()` / `/api/auth/access`).
- * Everything else in the catalog is forward-looking (declared for the RBAC model
- * but the route is still `requireAuth`-only), so a permission's presence in the
- * catalog does NOT by itself mean the surface is access-controlled.
+ * The subset of {@link PERMISSIONS} that is actually enforced today — by a route
+ * `requireRole` / `requirePrincipal` call, by the terminal server from the
+ * signed WS ticket, or by the server-side access summary that gates the admin
+ * UI (`admin:users:read`). Everything else in the catalog is forward-looking,
+ * so a permission's presence in the catalog does NOT by itself mean the surface
+ * is access-controlled.
  */
 export const ENFORCED_PERMISSIONS: readonly Permission[] = Object.freeze([
+  "terminal:exec",
+  "containers:write",
+  "recording:write",
+  "settings:write",
+  "admin:settings:write",
   "admin:users:read",
   "admin:users:write",
   "admin:db:read",
   "admin:db:write",
+  "workers:manage",
+  "workers:run",
 ]);
 
 /** The default role granted on a genuine JIT insert (docs §3 F5). */
@@ -89,10 +109,16 @@ export const ADMIN_UI_PERMISSION: Permission = "admin:users:read";
 export const ROLE_PERMISSIONS: Readonly<Record<string, readonly Permission[]>> =
   Object.freeze({
     [ADMIN_ROLE]: PERMISSIONS,
+    // A user acts on their OWN resources only; ownership is enforced by
+    // lib/tenancy/ownership.ts, not by the permission itself.
     [DEFAULT_ROLE]: Object.freeze([
       "terminal:exec",
       "containers:write",
       "recording:write",
+      "settings:write",
+      // workers:run is admin-only until workers and runs carry an owner:
+      // a run executes on the shared Claude login and mounts the whole
+      // workspace (every tenant's .daax credential store).
     ]) as readonly Permission[],
   });
 

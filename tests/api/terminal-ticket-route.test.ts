@@ -1,15 +1,21 @@
 /**
- * Tests for POST /api/terminal/ticket (F1b, issue #95).
- * requireAuthIdentity is mocked; the real ws-ticket mint and the real
- * host-shell admin decision run against env values.
+ * Tests for POST /api/terminal/ticket (F1b, issue #95; tenancy claims dx#119).
+ * requirePrincipal and the settings store are mocked; the real ws-ticket mint
+ * and the real host-shell admin decision run against env values.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { mockRequireAuthIdentity } = vi.hoisted(() => ({
+const { mockRequireAuthIdentity, mockEffective } = vi.hoisted(() => ({
   mockRequireAuthIdentity: vi.fn(),
+  mockEffective: vi.fn(),
 }));
 
-vi.mock("@/lib/auth", () => ({ requireAuthIdentity: mockRequireAuthIdentity }));
+// requirePrincipal("terminal:exec") is the gate now. The helper below builds
+// its result from the same fixtures the pre-#119 cases used.
+vi.mock("@/lib/auth", () => ({ requirePrincipal: mockRequireAuthIdentity }));
+vi.mock("@/lib/tenancy/settings-store", () => ({
+  getEffectiveSettings: mockEffective,
+}));
 
 import { POST } from "@/app/api/terminal/ticket/route";
 import { verifyTicket } from "@/lib/ws-ticket";
@@ -19,11 +25,25 @@ const OTHER = "0b7c4a1e-5f3d-4e2a-9c81-7d6e5f4a3b21";
 
 function authed(
   subject: string | null,
-  opts: { operator?: boolean; username?: string; email?: string } = {},
+  opts: {
+    operator?: boolean;
+    username?: string;
+    email?: string;
+    admin?: boolean;
+  } = {},
 ) {
+  const operator = opts.operator ?? false;
+  const admin = opts.admin ?? (operator || subject === ADMIN);
   return {
-    authenticated: true,
-    operator: opts.operator ?? false,
+    authorized: true,
+    principal: {
+      subject,
+      operator,
+      admin,
+      permissions: admin
+        ? ["terminal:exec", "recording:write", "admin:users:read"]
+        : ["terminal:exec", "recording:write"],
+    },
     user: {
       username: opts.username ?? "Alice Display",
       email: opts.email ?? null,
@@ -48,6 +68,7 @@ async function mintedPayload() {
 describe("POST /api/terminal/ticket", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEffective.mockResolvedValue({ settings: {}, locked: [] });
     vi.stubEnv("DAAX_WS_TOKEN_SECRET", "ws-token-secret-value");
     vi.stubEnv("DAAX_ADMIN_USERS", `${ADMIN} jason.poley@gmail.com jpoley`);
   });
@@ -57,7 +78,7 @@ describe("POST /api/terminal/ticket", () => {
 
   it("returns 401 when unauthenticated", async () => {
     mockRequireAuthIdentity.mockResolvedValue({
-      authenticated: false,
+      authorized: false,
       response: new Response(
         JSON.stringify({ error: "Authentication required" }),
         { status: 401 },
@@ -129,5 +150,61 @@ describe("POST /api/terminal/ticket", () => {
     expect(payload.sub).toBe("local");
     expect(payload.operator).toBe(true);
     expect(payload.hostShell).toBe(true);
+  });
+
+  // ---- dx#119 tenancy claims ----
+
+  it("requires terminal:exec (a 403 from the gate is returned as-is)", async () => {
+    mockRequireAuthIdentity.mockResolvedValue({
+      authorized: false,
+      response: new Response("{}", { status: 403 }),
+    });
+    const res = await POST();
+    expect(res.status).toBe(403);
+    expect(mockRequireAuthIdentity).toHaveBeenCalledWith(
+      "terminal:exec",
+      expect.anything(),
+    );
+  });
+
+  it("signs the caller's permissions and admin flag", async () => {
+    mockRequireAuthIdentity.mockResolvedValue(authed(OTHER));
+    const user = await mintedPayload();
+    expect(user.perms).toEqual(["terminal:exec", "recording:write"]);
+    expect(user.admin).toBeUndefined();
+
+    mockRequireAuthIdentity.mockResolvedValue(authed(ADMIN));
+    const admin = await mintedPayload();
+    expect(admin.admin).toBe(true);
+  });
+
+  it("signs the user's server-side settings and locks", async () => {
+    mockEffective.mockResolvedValue({
+      settings: { containerImage: "daax-agent:locked", mountRoot: "users/b" },
+      locked: ["containerImage", "mountRoot"],
+    });
+    mockRequireAuthIdentity.mockResolvedValue(authed(OTHER));
+    const payload = await mintedPayload();
+    expect(mockEffective).toHaveBeenCalledWith(OTHER);
+    expect(payload.settings).toEqual({
+      containerImage: "daax-agent:locked",
+      mountRoot: "users/b",
+    });
+    expect(payload.locked).toEqual(["containerImage", "mountRoot"]);
+  });
+
+  it("fails closed (503) when the settings store is unavailable", async () => {
+    mockEffective.mockRejectedValue(new Error("db down"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    mockRequireAuthIdentity.mockResolvedValue(authed(OTHER));
+    const res = await POST();
+    expect(res.status).toBe(503);
+  });
+
+  it("the operator has no settings row and carries no policy", async () => {
+    mockRequireAuthIdentity.mockResolvedValue(authed(null, { operator: true }));
+    const payload = await mintedPayload();
+    expect(mockEffective).not.toHaveBeenCalled();
+    expect(payload.settings).toBeUndefined();
   });
 });

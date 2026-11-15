@@ -6,15 +6,49 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextResponse } from "next/server";
 
-const { identity } = vi.hoisted(() => ({ identity: vi.fn() }));
-vi.mock("@/lib/auth", () => ({
-  requireAuthIdentity: identity,
-  resolveAccess: vi.fn(async () => ({
-    authenticated: true,
-    isAdmin: false,
-    permissions: [],
-  })),
+const { identity, access, granted, requested } = vi.hoisted(() => ({
+  identity: vi.fn(),
+  access: vi.fn(async () => ({ isAdmin: false })),
+  granted: { override: null as string[] | null },
+  requested: [] as Array<string | null>,
 }));
+vi.mock("@/lib/auth", () => ({
+  requirePrincipal: (perm?: string) => fakeRequirePrincipal(perm),
+}));
+/**
+ * `requirePrincipal` (dx#119) rebuilt on the identity/access fakes: 401 when
+ * unauthenticated, 403 when the default role lacks the permission, else the
+ * principal (admin: every permission; user: the default user role's).
+ */
+async function fakeRequirePrincipal(perm?: string) {
+  const id = await identity();
+  if (!id.authenticated) return { authorized: false, response: id.response };
+  const a = await access();
+  const permissions: string[] =
+    granted.override ??
+    (a.isAdmin
+      ? ["admin:*", "terminal:exec", "containers:write", "recording:write"]
+      : ["terminal:exec", "containers:write", "recording:write"]);
+  requested.push(perm ?? null);
+  if (perm && !permissions.includes(perm)) {
+    return {
+      authorized: false,
+      response: NextResponse.json({ error: "forbidden" }, { status: 403 }),
+    };
+  }
+  return {
+    authorized: true,
+    user: {},
+    subject: id.subject,
+    principal: {
+      subject: id.operator ? null : id.subject,
+      operator: id.operator === true,
+      admin: a.isAdmin === true,
+      permissions,
+    },
+  };
+}
+
 vi.mock("@/lib/db/pg", () => ({ query: vi.fn() }));
 
 import { GET as getConfig } from "@/app/api/substrate/config/route";
@@ -55,6 +89,8 @@ beforeEach(() => {
     subject: "alice",
     user: {},
   });
+  granted.override = null;
+  requested.length = 0;
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 afterEach(() => {
@@ -106,4 +142,34 @@ describe("substrate routes", () => {
     expect(res.status).toBe(503);
     expect((await res.json()).error).toBe("db-unconfigured");
   });
+
+  // Multi-tenancy (dx#119): each route asks requirePrincipal for the
+  // permission the merge notes of #530 assign it.
+  it.each([
+    ["config", null],
+    ["list", null],
+    ["create", "terminal:exec"],
+    ["get", null],
+    ["delete", "containers:write"],
+    ["attach", "terminal:exec"],
+    ["suspend", "containers:write"],
+    ["resume", "containers:write"],
+    ["end", "containers:write"],
+  ] as const)("%s requires %s", async (name, perm) => {
+    delete process.env.DAAX_SUBSTRATE_ENABLED;
+    const call = calls.find(([n]) => n === name)![1];
+    await call();
+    expect(requested).toEqual([perm]);
+  });
+
+  it.each(calls)(
+    "%s: a principal with no permissions is refused 403 or reaches only reads",
+    async (name, call) => {
+      delete process.env.DAAX_SUBSTRATE_ENABLED;
+      granted.override = [];
+      const res = await call();
+      const reads = ["config", "list", "get"];
+      expect(res.status).toBe(reads.includes(name) ? 404 : 403);
+    },
+  );
 });

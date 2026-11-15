@@ -9,11 +9,9 @@
     "backlog/drafts",
     "backlog/drafts/[draftId]",
     "backlog/search",
-    "backlog/status",
     "code-server",
     "cyber/safe-mcp/rules/[id]/test",
     "cyber/safe-mcp/scan",
-    "devcontainer",
     "ec/pub/[channel]"
   ]
 }

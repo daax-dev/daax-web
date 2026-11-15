@@ -3,6 +3,9 @@ import { readdirSync, readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
+import { requirePrincipal } from "@/lib/auth";
+import { filterOwned } from "@/lib/tenancy/ownership";
+
 // Terminal recordings storage path (matches terminal-server.ts)
 const RECORDINGS_DIR = join(homedir(), ".daax", "recordings");
 
@@ -17,13 +20,18 @@ interface RecordingMetadata {
   cols: number;
   rows: number;
   title?: string;
+  owner?: string;
 }
 
 /**
  * GET /api/terminal-recordings
- * List all terminal recordings
+ * List the caller's terminal recordings (dx#119: admins see all; recordings
+ * made before multi-tenancy carry no owner and are listed to admins only).
  */
 export async function GET(): Promise<NextResponse> {
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
+
   try {
     if (!existsSync(RECORDINGS_DIR)) {
       return NextResponse.json({ recordings: [] });
@@ -44,7 +52,9 @@ export async function GET(): Promise<NextResponse> {
       .filter((r): r is RecordingMetadata => r !== null)
       .sort((a, b) => b.startTime - a.startTime);
 
-    return NextResponse.json({ recordings });
+    return NextResponse.json({
+      recordings: filterOwned(auth.principal, recordings, (r) => r.owner),
+    });
   } catch (error) {
     console.error("[Terminal Recordings API] Error listing recordings:", error);
     return NextResponse.json(

@@ -83,7 +83,7 @@ DAAX_WORKSPACE=/abs/path bun run docker:run   # run with workspace mount + HOST_
 The **production deploy** (`deploy/docker-compose.yml` + Traefik) runs the two planes as **separate services**:
 
 - **`daax` (web)** — Next.js only (`start:web`, port 4200). Traefik-facing. **Holds the Docker socket again** (#501: group-based `group_add ${DOCKER_GID}`, non-root; root-equivalent on the host — an operator decision recorded in `deploy/docker-compose.yml`). It still mounts `/workspace` (editor/MCP) and connects to Postgres, and it MINTS the WS bearer ticket (`POST /api/terminal/ticket`).
-- **`terminal` (`daax-terminal` image)** — `server/terminal-server.ts` only (`start:terminal`, port 4201). Holds `docker.sock` (group-based access via `group_add: ${DOCKER_GID}`, non-root `node` user, boot preflight) + the workspace spawn machinery. It VERIFIES the WS ticket. Traefik's `/ws` route targets `127.0.0.1:4201`, now published by this service. Needs no Postgres and no Claude-config mount.
+- **`terminal` (`daax-terminal` image)** — `server/terminal-server.ts` only (`start:terminal`, port 4201). Holds `docker.sock` (group-based access via `group_add: ${DOCKER_GID}`, non-root `node` user, boot preflight) + the workspace spawn machinery. It VERIFIES the WS ticket. Traefik's `/ws` route targets `127.0.0.1:4201`, now published by this service. Needs no Postgres and no Claude-config mount. **The terminal plane must stay single-instance:** single-use ticket replay protection keeps the used `jti`s in an in-memory `Map` (`server/handlers/ws-auth.ts`), so a second, load-balanced terminal instance would accept a replayed ticket. Move the replay set to shared state (Postgres/Redis) before scaling it out.
 - **Service contract:** both services share the SAME `DAAX_WS_TOKEN_SECRET` (stateless HMAC ticket — no shared memory), the `/workspace` mount, and `HOST_WORKSPACE_PATH`. The web tier reaches the terminal for its `/api/health` deep-probe via `TERMINAL_INTERNAL_HOST=terminal` over `daax-net`. Both also mount the shared `daax-recordings` named volume at `/home/node/.daax`: the terminal plane records to `~/.daax/recordings` and the web plane serves `GET /api/terminal-recordings` from the same path — without the shared volume the web API silently returns an empty list — and the volume preserves recordings across terminal-container recreates.
 - **Images:** the `terminal` Dockerfile target (`FROM runner`) builds the `daax-terminal` image. `deploy/docker-compose.yml` builds it locally (like `daax:latest`); CI smoke-builds both targets on every PR (`ci.yml` container-build job) and `publish-images.yml` pushes `ghcr.io/daax-dev/daax-terminal` for registry-pull deploys.
 - **Supporting services (fleet, 2026-09-13):** the deploy compose also runs `code-server`, `watchtower`, `hawkeye` and `provenance`, each pulled by digest from its signed GHCR image (`CODE_SERVER_IMAGE`, `WATCHTOWER_IMAGE`, `HAWKEYE_IMAGE`, `PROVENANCE_IMAGE` in `deploy/env/<host>.env`; `*_OVERRIDE` digests win, as for `DAAX_IMAGE`). `scripts/deploy.sh --effective <target>` prints the effective pins (`DEPLOY_SH_API=2`) for dx `scripts/deploy-fleet.sh`.
@@ -164,11 +164,21 @@ bun run test:e2e:ci-local # The CI e2e job's environment locally: production mod
                           # Must be green before a PR carries the `e2e` label
 bun run test:all     # Vitest + Playwright + agent quick-verify
 
+# Digital workers CLI (talks to the REST API; DAAX_URL, default http://127.0.0.1:4200)
+bun run workers ls | show <w> | run <w> [--wait] | ask <w> "question" | pause|resume <w> | runs <w> | logs <run> [--follow] | goals <w>
+
 # Components
 bunx shadcn@latest add <component-name>   # installs to components/ui/
 ```
 
-## Tech Stack
+## Digital Workers
+
+Top-level module `/workers` (design: `docs/plans/digital-workers.md`; decisions: `.logs/decisions/digital-workers.jsonl`). A worker has instructions, goals (optionally linked to a Backlog.md project), MCP servers, an autonomy level (`observe`/`propose`/`act`), an engine (`claude-cli` default, `codex-cli`, or `agent-sdk` which needs `ANTHROPIC_API_KEY`) and a run mode (`schedule` cron in UTC, `adhoc`, `continuous` with cooldown and daily cap). The first template is the Technical Project Manager (`lib/workers/templates.ts`, created disabled with `propose`).
+
+- **Engine placement:** the scheduler/runner runs in the web process (started from `instrumentation.ts` when Postgres is configured; one leader via a Postgres advisory lock; `WORKERS_SCHEDULER=off` disables it). API routes only queue runs.
+- **Both modes:** host dev runs the CLIs on the host with the operator's own logins; container mode (`HOST_WORKSPACE_PATH` set) runs them in the agent image (`daax-w-<hex>` containers) with the shared Claude login dir; codex needs `<workspace>/.daax/codex/auth.json` there.
+- **Write limits are enforced, not prompted:** each run lists every MCP server's tools and passes the engine an exact allow-list for the autonomy level; merge/push/deploy/delete are denied at every level.
+- **Interaction:** web UI (list, detail tabs, ask bar), CLI (`bun run workers`), voice (browser speech recognition in the ask bar + optional spoken answers).
 
 | Category        | Technology                                                                                                                               |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
@@ -198,6 +208,7 @@ See `.claude/architecture.md` for the full repository layout, plugin/maturity mo
 | `/ai-coding`   | AI coding agents            |
 | `/code-server` | VS Code in browser          |
 | `/mcp`         | MCP catalog and management  |
+| `/workers`     | Digital workers (TPM, …)    |
 | `/analytics`   | System stats and analytics  |
 | `/settings`    | App settings                |
 

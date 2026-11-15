@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   PERMISSIONS,
+  ENFORCED_PERMISSIONS,
   ROLE_PERMISSIONS,
   ADMIN_ROLE,
   DEFAULT_ROLE,
@@ -21,11 +22,13 @@ describe("rbac permission resolution (F5 #101)", () => {
     expect(roleHasPermission(DEFAULT_ROLE, "terminal:exec")).toBe(true);
     expect(roleHasPermission(DEFAULT_ROLE, "containers:write")).toBe(true);
     expect(roleHasPermission(DEFAULT_ROLE, "recording:write")).toBe(true);
+    // Own settings only (dx#119); the policy permission stays admin-only.
+    expect(roleHasPermission(DEFAULT_ROLE, "settings:write")).toBe(true);
+    expect(roleHasPermission(DEFAULT_ROLE, "admin:settings:write")).toBe(false);
     // Privileged permissions are NOT held by the default role.
     expect(roleHasPermission(DEFAULT_ROLE, "admin:users:read")).toBe(false);
     expect(roleHasPermission(DEFAULT_ROLE, "admin:users:write")).toBe(false);
     expect(roleHasPermission(DEFAULT_ROLE, "admin:db:read")).toBe(false);
-    expect(roleHasPermission(DEFAULT_ROLE, "settings:write")).toBe(false);
     expect(roleHasPermission(DEFAULT_ROLE, "mcp:manage")).toBe(false);
   });
 
@@ -59,6 +62,18 @@ describe("rbac permission resolution (F5 #101)", () => {
     expect(rolesAreAdmin([ADMIN_ROLE])).toBe(true);
     expect(rolesAreAdmin([DEFAULT_ROLE])).toBe(false);
     expect(rolesAreAdmin([])).toBe(false);
+  });
+
+  it("digital workers: user may run workers, only admin may manage them", () => {
+    expect(PERMISSIONS).toContain("workers:manage");
+    expect(PERMISSIONS).toContain("workers:run");
+    expect(ENFORCED_PERMISSIONS).toContain("workers:manage");
+    expect(ENFORCED_PERMISSIONS).toContain("workers:run");
+    // Admin-only until workers carry an owner (see lib/rbac/permissions.ts).
+    expect(roleHasPermission(DEFAULT_ROLE, "workers:run")).toBe(false);
+    expect(roleHasPermission(DEFAULT_ROLE, "workers:manage")).toBe(false);
+    expect(roleHasPermission(ADMIN_ROLE, "workers:manage")).toBe(true);
+    expect(roleHasPermission(ADMIN_ROLE, "workers:run")).toBe(true);
   });
 
   it("the ROLE_PERMISSIONS catalog is frozen (cannot be mutated at runtime)", () => {

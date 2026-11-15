@@ -5,6 +5,8 @@
  */
 
 import { WebSocket } from "ws";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { IncomingMessage } from "http";
 import { getProjectInfo } from "../../lib/project-utils";
 import {
@@ -21,6 +23,7 @@ import {
   resolveContainerImage,
   DEFAULT_CONTAINER_IMAGE,
 } from "../docker/image-manager";
+import { withAgentImageOverride } from "../docker/agent-image-override";
 import { getPty } from "../sessions/pty-loader";
 import {
   TerminalSession,
@@ -37,8 +40,19 @@ import {
   recordOutput,
 } from "../recording/recorder";
 import { handleMessage, MessageHandlerContext } from "./message-handler";
-import { commandTarget, scheduleCommand } from "./command-handler";
+import {
+  commandTarget,
+  runsAsContainerCommand,
+  scheduleCommand,
+} from "./command-handler";
 import { resolveWorkspaceRoot, isValidPath } from "../../lib/worktree-manager";
+import {
+  hasPermission,
+  ownerKeyFor,
+  requireOwnerOrAdmin,
+} from "../../lib/tenancy/ownership";
+import { lookupContainerOwner } from "../docker/container-owner";
+import { applyTerminalPolicy, tenantMountBase } from "./tenant-policy";
 
 import { containerBackend } from "../backends/container";
 import { handleSubstrateConnection } from "./substrate-connection";
@@ -48,9 +62,15 @@ import { handleSubstrateConnection } from "./substrate-connection";
 export { setAuthPaths } from "../backends/container";
 
 /**
- * Handle a new WebSocket connection
+ * Handle a new WebSocket connection.
+ *
+ * Async only on the `docker exec` path (the container's owner label is looked
+ * up before attaching); every other path completes synchronously.
  */
-export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
+export async function handleConnection(
+  ws: WebSocket,
+  req: IncomingMessage,
+): Promise<void> {
   // Authenticate the upgrade BEFORE any session id / PTY / container spawn
   // (F1b, issue #95). Covers origin, the Traefik forwarded-identity path, the
   // single-use bearer-ticket path, and the loopback LOCAL_OPERATOR bypass.
@@ -74,6 +94,7 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     return;
   }
 
+  const principal = auth.principal;
   const sessionId = crypto.randomUUID();
   console.log(`New terminal session: ${sessionId}`);
 
@@ -81,10 +102,40 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
   const url = new URL(req.url || "/", `http://localhost:${PORT}`);
   const mode = url.searchParams.get("mode") || "container"; // "local" | "container"
 
+  // Multi-tenancy (dx#119): authentication is not authorization. Every
+  // terminal, substrate attaches included, needs `terminal:exec` (a ticket's
+  // signed claim; see ws-auth.ts).
+  const refuseWithoutExec = (): boolean => {
+    if (hasPermission(principal, "terminal:exec")) return false;
+    console.log(
+      `Refused terminal for ${auth.method} identity ${auth.user}: no terminal:exec`,
+    );
+    ws.close(
+      1008,
+      auth.method === "forwarded"
+        ? "terminal refused: a terminal ticket is required"
+        : "terminal refused: terminal:exec not granted",
+    );
+    return true;
+  };
+
   // Substrate sessions (dx#113/#114) run in an Agent Substrate actor, not on
   // this host, so the host-shell gate below does not apply; the substrate
   // handler authorizes the attach itself (ticket claim or local operator).
+  // Dispatched after the `terminal:exec` check and before the
+  // local-shell refusal below, which would otherwise refuse every non-admin
+  // substrate attach (dx#119). The `.daax` / mountRoot checks are docker-only.
+  // A substrate attach ticket authorizes that one attach and nothing else: it
+  // carries no settings policy, so it must never open another terminal mode.
+  if (auth.substrate && mode !== "substrate") {
+    console.log(
+      `Refused ${mode} terminal for ${auth.method} identity ${auth.user}: substrate attach ticket`,
+    );
+    ws.close(1008, "terminal refused: ticket is for a substrate session");
+    return;
+  }
   if (mode === "substrate") {
+    if (refuseWithoutExec()) return;
     handleSubstrateConnection(ws, url, auth);
     return;
   }
@@ -101,23 +152,69 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     ws.close(1008, auth.hostShell.reason);
     return;
   }
-  const command = url.searchParams.get("command") || "";
+
+  if (refuseWithoutExec()) return;
+
+  // A non-container terminal (`local`, `shell-tmux`, anything unrecognised) is
+  // a shell inside the daax/terminal container itself, which holds the docker
+  // socket and every tenant's workspace and credentials: admins only (dx#119).
+  // Host mode already refused non-admins above.
+  if (mode !== "container" && !principal.admin) {
+    console.log(
+      `Refused ${mode} terminal for non-admin ${auth.method} identity ${auth.user}`,
+    );
+    ws.close(1008, "terminal refused: local shells are admin-only");
+    return;
+  }
+
+  // Locked server-side settings replace the URL parameters (dx#119).
+  const policed = applyTerminalPolicy(
+    {
+      image: url.searchParams.get("image") || DEFAULT_CONTAINER_IMAGE,
+      basePath: url.searchParams.get("basePath") || "~/prj",
+      command: url.searchParams.get("command") || "",
+    },
+    auth.policy,
+  );
+  const command = policed.command;
   const cwd = url.searchParams.get("cwd") || process.cwd();
-  const requestedImage =
-    url.searchParams.get("image") || DEFAULT_CONTAINER_IMAGE;
+  const requestedImage = policed.image;
   const containerName = url.searchParams.get("containerName") || "";
+
+  // `docker exec` into a named container: only its owner (label daax.owner)
+  // or an admin. Not-yours and not-found close identically. Messages that
+  // arrive during the lookup are buffered and replayed once attached.
+  let earlyMessages: Array<Buffer | string> | null = null;
+  if (mode === "container" && containerName) {
+    const buffered: Array<Buffer | string> = [];
+    const collect = (m: Buffer | string) => buffered.push(m);
+    ws.on("message", collect);
+    const container = await lookupContainerOwner(containerName);
+    ws.off("message", collect);
+    if (ws.readyState !== WebSocket.OPEN) return;
+    if (!requireOwnerOrAdmin(principal, container).ok) {
+      console.log(
+        `Refused exec into ${containerName} for ${auth.method} identity ${auth.user}: not found or not owner`,
+      );
+      ws.close(1008, "container not found");
+      return;
+    }
+    earlyMessages = buffered;
+  }
   // Resolve the container image with fallback logic only when starting a new container
-  // Skip for local mode, docker exec mode (containerName set), or other non-container scenarios
+  // Skip for local mode, docker exec mode (containerName set), or other non-container scenarios.
+  // A new container honours the operator's DAAX_AGENT_IMAGE_OVERRIDE over the
+  // client's choice (withAgentImageOverride, server/docker/agent-image-override.ts).
   const containerImage =
     mode === "container" && !containerName
-      ? resolveContainerImage(requestedImage)
+      ? resolveContainerImage(withAgentImageOverride(requestedImage))
       : requestedImage;
   const projectName = url.searchParams.get("project") || "";
   const projectType = url.searchParams.get("projectType") as
     | "git"
     | "planning"
     | null;
-  const basePathParam = url.searchParams.get("basePath") || "~/prj";
+  const basePathParam = policed.basePath;
 
   // OpenCode model/provider params (for opencode sessions)
   // Model format is "provider:model" (e.g., "copilot:gpt-4o", "openai:o1")
@@ -174,8 +271,14 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
   // sibling-prefix bypass (base "/home/u/prj", mount "/home/u/prj-secrets") and
   // followed symlinks planted under the workspace pointing outside it.
   // isValidPath is the same helper the code-server route (#183) can reuse.
-  const securityBasePath = resolveWorkspaceRoot();
-  if (!isValidPath(mountPath, securityBasePath)) {
+  // Multi-tenancy (dx#119): an admin-set mountRoot narrows the base further.
+  const securityBasePath = tenantMountBase(resolveWorkspaceRoot(), auth.policy);
+  // Both checks: a tenant base that is itself a symlink to somewhere outside
+  // the workspace must not widen confinement (dx#119).
+  if (
+    !isValidPath(mountPath, securityBasePath) ||
+    !isValidPath(mountPath, resolveWorkspaceRoot())
+  ) {
     console.log(
       `Rejected mount outside base path: ${mountPath} (base: ${securityBasePath})`,
     );
@@ -183,8 +286,44 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     return;
   }
 
+  // Multi-tenancy (dx#119): `.daax/` under the workspace holds every tenant's
+  // credential store (and the legacy shared one). A non-admin may never mount
+  // it or anything inside it. Canonical (realpath) check via isValidPath, so a
+  // symlink planted in the workspace cannot point a mount into it.
+  if (
+    !principal.admin &&
+    isValidPath(mountPath, join(resolveWorkspaceRoot(), ".daax"))
+  ) {
+    console.log(`Rejected mount into .daax for ${auth.user}: ${mountPath}`);
+    ws.close(1008, "Path not allowed");
+    return;
+  }
+  // A mount that CONTAINS .daax (the workspace root, or any alias of it such
+  // as a symlink resolving to it) gets .daax shadowed by a tmpfs. Decided on
+  // canonical paths, like the confinement above, so an alias cannot dodge it.
+  // In container mode the per-owner credential stores are created under
+  // .daax/ just before spawn, so make sure it exists BEFORE deciding (a fresh
+  // workspace must not start an unshadowed container). In host mode stores
+  // live outside the workspace; there, only shadow an existing .daax so Docker
+  // never creates an empty mountpoint in the host workspace.
+  const daaxDir = join(resolveWorkspaceRoot(), ".daax");
+  if (HOST_WORKSPACE_PATH) {
+    try {
+      mkdirSync(daaxDir, { recursive: true });
+    } catch (err) {
+      // Fail closed: without .daax the shadow cannot be guaranteed, and the
+      // credential stores created next would then be visible.
+      console.error(`Cannot prepare ${daaxDir}; refusing terminal:`, err);
+      ws.close(1011, "workspace not ready");
+      return;
+    }
+  }
+  const shadowDaax = existsSync(daaxDir) && isValidPath(daaxDir, mountPath);
+
   const sessionType = url.searchParams.get("sessionType") || "shell";
-  const enableRecording = url.searchParams.get("record") === "true";
+  const enableRecording =
+    url.searchParams.get("record") === "true" &&
+    hasPermission(principal, "recording:write");
   // Client-provided session ID for recording deduplication (prevents duplicates from React remounts)
   const clientSessionId = url.searchParams.get("clientSessionId") || undefined;
 
@@ -223,6 +362,8 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     isOpenCodeSession,
     opencodeProvider,
     opencodeModel,
+    principal,
+    shadowDaax,
     cwd,
     cols: DEFAULT_TERMINAL_COLS,
     rows: DEFAULT_TERMINAL_ROWS,
@@ -284,6 +425,7 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
           recordingConfig.cols,
           recordingConfig.rows,
           recordingConfig.clientSessionId,
+          ownerKeyFor(principal),
         );
         // startRecording returns null if duplicate (same clientSessionId already recording)
         if (recordingId) {
@@ -365,12 +507,16 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     setRecordingId: (id) => {
       session.recordingId = id;
     },
+    principal,
   };
 
   // WebSocket input -> PTY
   ws.on("message", (message: Buffer | string) => {
     handleMessage(message, msgContext);
   });
+  if (earlyMessages) {
+    for (const m of earlyMessages) handleMessage(m, msgContext);
+  }
 
   ws.on("close", async () => {
     console.log(`WebSocket closed: ${sessionId}`);
@@ -433,8 +579,11 @@ export function handleConnection(ws: WebSocket, req: IncomingMessage): void {
     // Don't propagate - just log
   });
 
-  // If a command was specified, run it after shell initialization
-  if (command) {
+  // If a command was specified, run it after shell initialization. An
+  // inline-bootstrap command is already the new container's own command (see
+  // runsAsContainerCommand), so typing it again would run it twice and echo
+  // the wall of text that avoids.
+  if (command && !runsAsContainerCommand(mode, containerName, command)) {
     const commandTimeout = scheduleCommand(
       command,
       sessionId,

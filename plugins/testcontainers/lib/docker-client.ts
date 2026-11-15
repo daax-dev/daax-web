@@ -652,6 +652,8 @@ export class DockerClient {
                 "com.docker.compose.project": project.name,
                 "com.docker.compose.service": service.name,
                 "org.daax.testcontainers.compose": project.id,
+                // dx#119: after the YAML's labels so a service cannot spoof it.
+                ...(project.owner ? { "daax.owner": project.owner } : {}),
               },
             },
             { skipWait: true },

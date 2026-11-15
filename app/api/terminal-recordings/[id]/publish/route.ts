@@ -14,7 +14,8 @@ import {
   generateExportFilename,
 } from "@/plugins/terminal-recorder/lib/html-export";
 import type { TerminalRecording } from "@/plugins/terminal-recorder/types";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
+import { recordingOr404 } from "@/lib/tenancy/http";
 import { isValidRecordingId } from "@/server/recording/recorder";
 import { RECORDINGS_DIR } from "@/server/config/constants";
 
@@ -170,8 +171,9 @@ export async function POST(
   context: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   // Require authentication before any filesystem write or git command
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  // dx#119: owner-scoped; not-yours is a 404.
+  const auth = await requirePrincipal("recording:write");
+  if (!auth.authorized) return auth.response;
 
   try {
     const { id } = await context.params;
@@ -181,6 +183,8 @@ export async function POST(
         { status: 400 },
       );
     }
+    const denied = recordingOr404(auth.principal, id);
+    if (denied) return denied;
     const body = await request.json().catch(() => ({}));
     const exportPath = body.exportPath || "docs/recordings";
 

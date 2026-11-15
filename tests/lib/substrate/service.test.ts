@@ -12,6 +12,12 @@ import {
   suspendSession,
 } from "@/lib/substrate/service";
 import { verifyTicket } from "@/lib/ws-ticket";
+import { permissionsForRoles } from "@/lib/rbac/permissions";
+import {
+  callerFromPrincipal,
+  canAccess,
+  filterVisible,
+} from "@/lib/substrate/sessions-store";
 import { ActorNameTakenError } from "@/server/backends/substrate";
 import { ADMIN, ALICE, BOB, makeDeps } from "./fakes";
 
@@ -508,5 +514,121 @@ describe("attachSession", () => {
     await store.setState(other.body.id, "running");
     const denied = await attachSession(deps, ALICE, other.body.id);
     expect(!denied.ok && denied.status).toBe(503);
+  });
+});
+
+// Multi-tenancy (dx#119): substrate sessions go through the shared gate.
+describe("cross-tenant substrate sessions (dx#119)", () => {
+  const saved = process.env.DAAX_WS_TOKEN_SECRET;
+  beforeEach(() => {
+    process.env.DAAX_WS_TOKEN_SECRET = SECRET;
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.DAAX_WS_TOKEN_SECRET;
+    else process.env.DAAX_WS_TOKEN_SECRET = saved;
+  });
+  const userB = callerFromPrincipal({
+    subject: "bob-sub",
+    operator: false,
+    admin: false,
+    permissions: permissionsForRoles(["user"]),
+  })!;
+  const admin = callerFromPrincipal({
+    subject: "admin-sub",
+    operator: false,
+    admin: true,
+    permissions: permissionsForRoles(["admin"]),
+  })!;
+
+  it("user B gets 404 on every operation on user A's session; nothing reaches the backend", async () => {
+    const { deps, backend, alice } = await seeded();
+    for (const op of [
+      () => getSession(deps, userB, alice.id),
+      () => attachSession(deps, userB, alice.id),
+      () => suspendSession(deps, userB, alice.id),
+      () => resumeSession(deps, userB, alice.id),
+      () => endSession(deps, userB, alice.id),
+    ]) {
+      expect((await op()).status).toBe(404);
+    }
+    const list = await listSessions(deps, userB);
+    expect(
+      list.ok && list.body.sessions.map((x) => x.ownerSubject),
+    ).not.toContain("alice-sub");
+    expect(backend.suspend).not.toHaveBeenCalled();
+    expect(backend.resume).not.toHaveBeenCalled();
+    expect(backend.stop).not.toHaveBeenCalled();
+  });
+
+  it("the admin's attach ticket carries admin, its perms and the session owner", async () => {
+    const { deps, alice } = await seeded();
+    const res = await attachSession(deps, admin, alice.id);
+    if (!res.ok) throw new Error(res.message);
+    const v = verifyTicket(res.body.ticket!.token);
+    expect(v.valid && v.payload).toMatchObject({
+      sub: "admin-sub",
+      admin: true,
+      substrate: {
+        session: alice.id,
+        actor: alice.actorName,
+        owner: "alice-sub",
+      },
+    });
+    expect(v.valid && v.payload.perms).toContain("terminal:exec");
+  });
+
+  it("a user's attach ticket carries the user's perms and no admin claim", async () => {
+    const { deps, alice } = await seeded();
+    const owner = callerFromPrincipal({
+      subject: "alice-sub",
+      operator: false,
+      admin: false,
+      permissions: permissionsForRoles(["user"]),
+    })!;
+    const res = await attachSession(deps, owner, alice.id);
+    if (!res.ok) throw new Error(res.message);
+    const v = verifyTicket(res.body.ticket!.token);
+    if (!v.valid) throw new Error(v.reason);
+    expect(v.payload.admin).toBeUndefined();
+    expect(v.payload.perms).toEqual(permissionsForRoles(["user"]));
+    expect(v.payload.substrate?.owner).toBe("alice-sub");
+  });
+
+  it("owner keys compare case-insensitively, as the shared gate does", () => {
+    const s = { ownerSubject: "A0000000-0000-4000-8000-00000000000A" };
+    const a = {
+      subject: "a0000000-0000-4000-8000-00000000000a",
+      isAdmin: false,
+    };
+    expect(canAccess(a, s)).toBe(true);
+    expect(canAccess({ subject: "someone-else", isAdmin: false }, s)).toBe(
+      false,
+    );
+    expect(filterVisible(a, [s, { ownerSubject: "other" }])).toEqual([s]);
+    // An empty owner (never written by daax) is admin-only, like any
+    // unowned resource.
+    expect(canAccess(a, { ownerSubject: "" })).toBe(false);
+    expect(
+      canAccess({ subject: "x", isAdmin: true }, { ownerSubject: "" }),
+    ).toBe(true);
+  });
+
+  it("the operator principal owns sessions as `local`", () => {
+    expect(
+      callerFromPrincipal({
+        subject: null,
+        operator: true,
+        admin: true,
+        permissions: [],
+      }),
+    ).toMatchObject({ subject: "local", isAdmin: true, operator: true });
+    expect(
+      callerFromPrincipal({
+        subject: null,
+        operator: false,
+        admin: false,
+        permissions: [],
+      }),
+    ).toBeNull();
   });
 });

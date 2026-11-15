@@ -91,6 +91,11 @@ describe("POST /api/mcp/tools — security (#182)", () => {
 
   beforeEach(() => {
     envSnapshot = { ...process.env };
+    // A2: the SSRF guard blocks loopback/private targets by default. The
+    // registry-trust test below uses a localhost URL as its legit registered
+    // target, so opt it in via the operator allow-list; the separate A2 test
+    // asserts a non-allow-listed private/metadata URL is still rejected.
+    process.env.DAAX_MCP_ALLOWED_HOSTS = "localhost";
     mockSpawn.mockReturnValue(makeFakeProc() as never);
     mockRequireAuth.mockResolvedValue({
       authenticated: true,
@@ -379,7 +384,33 @@ describe("POST /api/mcp/tools — security (#182)", () => {
     expect(mockSpawn).not.toHaveBeenCalled();
     for (const call of fetchMock.mock.calls) {
       expect(call[0]).toBe("http://localhost:9999/mcp");
+      // A2 redirect hardening: server-side fetch must NOT follow redirects (a
+      // public host could 3xx→169.254.169.254). `redirect: "error"` forbids it.
+      expect((call[1] as { redirect?: string } | undefined)?.redirect).toBe(
+        "error",
+      );
     }
     // fetch stub cleanup handled by afterEach (vi.unstubAllGlobals()).
+  });
+
+  it("A2: a registered URL pointing at cloud metadata / a private IP is rejected (400) and never fetched", async () => {
+    // Not on the allow-list → the SSRF guard must reject the literal private IP
+    // before any fetch. Covers the second-order SSRF chain the premortem flagged.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock as never);
+    mockDiscoverAllMcps.mockReturnValue({
+      mcps: [
+        {
+          id: "ssrf-mcp",
+          config: { url: "http://169.254.169.254/latest/meta-data/" },
+        },
+      ],
+    });
+
+    const res = await POST(makeRequest({ mcpId: "ssrf-mcp" }));
+
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 });

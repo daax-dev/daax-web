@@ -24,6 +24,41 @@ export function commandTarget(mode: string): CommandTarget {
 }
 
 /**
+ * Commands whose expansion runs as a NEW agent container's own command instead
+ * of being typed into its already-running shell.
+ *
+ * `herdr-claude` expands (buildFullCommand) to a ~1000-character multi-stage
+ * bootstrap: PATH export, presence check, background server + poll loop,
+ * workspace create, agent start, exec. Typed into the pty, the shell echoes the
+ * whole wall of text at the user before anything happens. Run as the
+ * container's `zsh -c` argument it does the same thing with nothing echoed.
+ *
+ * Only commands whose expansion ends by exec'ing a long-running process (or an
+ * interactive shell on every failure path) belong here: a container command
+ * that returns exits the container.
+ */
+export function isInlineBootstrapCommand(command: string): boolean {
+  return /^herdr-claude(?:\s|$)/.test(command);
+}
+
+/**
+ * Whether this session's command is the container's own command (see
+ * isInlineBootstrapCommand): only for `docker run` of a new agent container.
+ * `docker exec` into an existing one, and local shells, still get it typed in.
+ * The container backend and the connection handler both decide by this, so a
+ * command is never run twice nor not at all.
+ */
+export function runsAsContainerCommand(
+  mode: string,
+  containerName: string,
+  command: string,
+): boolean {
+  return (
+    mode === "container" && !containerName && isInlineBootstrapCommand(command)
+  );
+}
+
+/**
  * Build the full command string, handling special cases for AI tools.
  */
 /**
@@ -117,12 +152,20 @@ export function buildFullCommand(
     return `export PATH=/usr/local/bin:/home/vscode/.local/share/pnpm:/home/vscode/.local/bin:$PATH && ${command}`;
   }
 
-  // For copilot command, run JS version directly (native binary requires glibc, Alpine uses musl)
-  // The shell script /home/vscode/.local/share/pnpm/copilot tries native first and fails silently on Alpine
+  // For copilot command, use the pnpm shim by full path, like gemini/codex.
+  // It used to run `node .../pnpm/global/5/node_modules/@github/copilot/index.js`
+  // directly, a musl workaround for the old Alpine agent images. Every current
+  // agent image is Debian (glibc), and pnpm's global store is now `global/v11`
+  // with a package entry that is no longer `index.js`, so that path exists in
+  // none of the five digest-pinned images and every copilot session died on
+  // "Cannot find module". The shim resolves its own entrypoint and works on all
+  // of them, and on the daax-agents:local fallback (store `global/5`).
   // Uses start-of-string anchor followed by whitespace or end-of-string to avoid matching "copilot" as part of longer words like "copilot-test"
   if (/^copilot(?:\s|$)/.test(command)) {
-    const copilotArgs = command.replace(/^copilot\s*/, "");
-    return `node /home/vscode/.local/share/pnpm/global/5/node_modules/@github/copilot/index.js${copilotArgs ? " " + copilotArgs : ""}`;
+    return command.replace(
+      /^copilot(?=\s|$)/,
+      "/home/vscode/.local/share/pnpm/copilot",
+    );
   }
 
   // For gemini command, use full path (pnpm-installed)

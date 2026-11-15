@@ -18,6 +18,11 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 import { WS_TICKET_TTL_MS } from "./ws-ticket-protocol";
+import type { Permission } from "./rbac/permissions";
+import type {
+  SecuritySettingKey,
+  SecuritySettings,
+} from "./tenancy/settings-policy";
 
 export { WS_TICKET_SUBPROTOCOL, WS_TICKET_TTL_MS } from "./ws-ticket-protocol";
 
@@ -39,6 +44,19 @@ export interface TicketPayload {
   /** The caller was the local-operator bypass, which has no subject. */
   operator?: true;
   /**
+   * Multi-tenancy (dx#119). The terminal server has no Postgres, so the app
+   * resolves the caller's RBAC and server-side settings at mint time and signs
+   * them here; the terminal server enforces from these claims only.
+   */
+  /** Caller holds the admin role (sees/acts on every tenant's resources). */
+  admin?: true;
+  /** Effective permissions. Absent = none (a pre-#119 ticket is refused). */
+  perms?: Permission[];
+  /** Effective security settings (lib/tenancy/settings-policy.ts). */
+  settings?: SecuritySettings;
+  /** Settings keys the terminal server must force over the URL params. */
+  locked?: SecuritySettingKey[];
+  /**
    * Substrate attach grant (dx#113/#114), minted only by
    * `POST /api/substrate/sessions/:id/attach` after it checked that `sub` owns
    * the session (or is admin). The terminal server attaches only to this
@@ -52,12 +70,20 @@ export interface SubstrateAttachClaim {
   session: string;
   /** Actor name in the configured atespace. */
   actor: string;
+  /** The session's owner key (dx#119): recordings made at the hub are its. */
+  owner?: string;
 }
 
 /** Optional claims beyond the subject. */
 export type TicketClaims = Pick<
   TicketPayload,
-  "hostShell" | "operator" | "substrate"
+  | "hostShell"
+  | "operator"
+  | "admin"
+  | "perms"
+  | "settings"
+  | "locked"
+  | "substrate"
 >;
 
 export type VerifyResult =

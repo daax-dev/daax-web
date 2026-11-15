@@ -13,7 +13,8 @@ import {
   initCleanupScheduler,
 } from "@/plugins/testcontainers/lib/cleanup-scheduler";
 import { checkDockerStatus } from "@/plugins/testcontainers/api";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
+import { adminOnly } from "@/lib/tenancy/http";
 
 export async function GET() {
   try {
@@ -45,9 +46,11 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  // Require authentication for cleanup operations
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  // dx#119: cleanup acts on EVERY tenant's expired testcontainers, so it is
+  // admin-only (a user removes their own via DELETE /api/testcontainers/[id]).
+  const auth = await requirePrincipal("containers:write");
+  if (!auth.authorized) return auth.response;
+  if (!auth.principal.admin) return adminOnly();
 
   try {
     const status = await checkDockerStatus();

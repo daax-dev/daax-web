@@ -242,6 +242,13 @@ describe("ContainerBackend", () => {
       isOpenCodeSession: false,
       opencodeProvider: "copilot",
       opencodeModel: "gpt-4o",
+      principal: {
+        subject: "0b8d2c1e-aaaa-4bbb-8ccc-ddddeeeeffff",
+        operator: false,
+        admin: false,
+        permissions: ["terminal:exec"],
+      },
+      shadowDaax: false,
       cwd: "/",
       cols: 80,
       rows: 24,

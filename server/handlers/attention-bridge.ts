@@ -85,6 +85,15 @@ export function handleAttentionBridge(
     client.close(auth.code, "unauthorized");
     return;
   }
+  // dx#119: the stream relays every agent's live events (prompts, tool output)
+  // with no daax owner to filter on, so it is admin-only.
+  if (!auth.principal.admin) {
+    console.log(
+      `Refused attention stream for non-admin ${auth.method} identity ${auth.user}`,
+    );
+    client.close(1008, "attention stream is admin-only");
+    return;
+  }
 
   const upstreamUrl = watchtowerWsUrl();
   let upstream: WebSocket;
