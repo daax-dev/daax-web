@@ -48,7 +48,7 @@ import { TPM_TEMPLATE } from "@/lib/workers/templates";
 import { parseWorkerCreate } from "@/lib/workers/validation";
 
 const MIGRATIONS_DIR = path.resolve(process.cwd(), "migrations");
-const MIGRATION = "1781568000400_digital-workers";
+const MIGRATION = "1781568000600_digital-workers";
 const TABLES = ["workers", "worker_goals", "worker_runs", "worker_run_events"];
 const configured = isDbConfigured();
 
