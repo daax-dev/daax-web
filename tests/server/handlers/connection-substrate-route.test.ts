@@ -2,12 +2,15 @@
  * handleConnection routes ?mode=substrate to the substrate handler before the
  * host-shell gate and before any node-pty spawn; every other mode still goes
  * through the container backend's node-pty spawn (unchanged).
+ *
+ * Multi-tenancy (dx#119): the `terminal:exec` check runs BEFORE the substrate
+ * dispatch, and the dispatch runs BEFORE the non-admin local-shell refusal.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { IncomingMessage } from "http";
 import type { WebSocket } from "ws";
 
-const { spawn, substrate } = vi.hoisted(() => {
+const { spawn, substrate, principal } = vi.hoisted(() => {
   const pty = {
     onData: vi.fn(),
     onExit: vi.fn(),
@@ -16,7 +19,18 @@ const { spawn, substrate } = vi.hoisted(() => {
     kill: vi.fn(),
     pid: 1,
   };
-  return { spawn: vi.fn(() => pty), substrate: vi.fn() };
+  return {
+    spawn: vi.fn(() => pty),
+    substrate: vi.fn(),
+    principal: {
+      current: {
+        subject: "0b8d2c1e-aaaa-4bbb-8ccc-ddddeeeeffff",
+        operator: false,
+        admin: false,
+        permissions: ["terminal:exec"] as string[],
+      },
+    },
+  };
 });
 
 vi.mock("@/server/handlers/ws-auth", () => ({
@@ -26,6 +40,7 @@ vi.mock("@/server/handlers/ws-auth", () => ({
     method: "ticket",
     hostShell: { ok: false, reason: "host terminal refused: not admin" },
     substrate: { session: "s", actor: "daax-0123456789" },
+    principal: principal.current,
   }),
 }));
 vi.mock("@/server/handlers/substrate-connection", () => ({
@@ -66,6 +81,12 @@ function connect(q: string) {
 beforeEach(() => {
   spawn.mockClear();
   substrate.mockClear();
+  principal.current = {
+    subject: "0b8d2c1e-aaaa-4bbb-8ccc-ddddeeeeffff",
+    operator: false,
+    admin: false,
+    permissions: ["terminal:exec"],
+  };
   vi.spyOn(console, "log").mockImplementation(() => {});
 });
 
@@ -81,5 +102,22 @@ describe("mode routing", () => {
     connect("mode=container");
     connect("mode=local");
     expect(substrate).not.toHaveBeenCalled();
+  });
+
+  it("a non-admin with terminal:exec reaches the substrate handler (not the local-shell refusal)", () => {
+    const ws = connect("mode=substrate");
+    expect(substrate).toHaveBeenCalledTimes(1);
+    expect(substrate.mock.calls[0][2].principal.admin).toBe(false);
+    expect(ws.close).not.toHaveBeenCalled();
+  });
+
+  it("without terminal:exec a substrate attach is refused before dispatch", () => {
+    principal.current = { ...principal.current, permissions: [] };
+    const ws = connect("mode=substrate");
+    expect(substrate).not.toHaveBeenCalled();
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "terminal refused: terminal:exec not granted",
+    );
   });
 });

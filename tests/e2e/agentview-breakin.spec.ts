@@ -99,6 +99,9 @@ test.beforeAll(async () => {
       AGENTVIEW_DAEMON_IDENTITY_HEADER: "X-Auth-Request-User",
       DAAX_REQUIRE_AUTH: "1",
       DAAX_PROXY_SECRET: "fixture-daax-proof",
+      // dx#119: the Agent View proxy is admin-only (the host's agents carry no
+      // daax owner), so the forwarded fixture identity is the admin.
+      DAAX_ADMIN_USERS: "a8e78e55-bcde-4789-9210-981476abc123",
     },
   );
 });

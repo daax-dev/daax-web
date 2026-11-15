@@ -6,14 +6,22 @@
 
 import { NextResponse } from 'next/server';
 import { getContainerLogs, checkDockerStatus } from '@/plugins/testcontainers/api';
+import { requirePrincipal } from "@/lib/auth";
+import { testcontainerOr404 } from "@/lib/tenancy/testcontainers";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
 export async function GET(request: Request, { params }: RouteParams) {
+  // dx#119: owner-scoped; not-yours is a 404.
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
+
   try {
     const { id } = await params;
+    const denied = await testcontainerOr404(auth.principal, id);
+    if (denied) return denied;
     const { searchParams } = new URL(request.url);
 
     const status = await checkDockerStatus();

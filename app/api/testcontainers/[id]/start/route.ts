@@ -11,19 +11,22 @@ import {
   startContainer,
   checkDockerStatus,
 } from "@/plugins/testcontainers/api";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
+import { testcontainerOr404 } from "@/lib/tenancy/testcontainers";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
 export async function POST(_request: Request, { params }: RouteParams) {
-  // Require authentication for container operations
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  // dx#119: owner-scoped; not-yours is a 404.
+  const auth = await requirePrincipal("containers:write");
+  if (!auth.authorized) return auth.response;
 
   try {
     const { id } = await params;
+    const denied = await testcontainerOr404(auth.principal, id);
+    if (denied) return denied;
 
     const status = await checkDockerStatus();
     if (!status.connected) {

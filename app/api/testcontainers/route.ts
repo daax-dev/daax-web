@@ -14,11 +14,22 @@ import {
   checkDockerStatus,
 } from "@/plugins/testcontainers/api";
 import type { ContainerCreateRequest } from "@/plugins/testcontainers/types";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
+import { tenantVolumeViolation } from "@/lib/tenancy/volumes";
+import {
+  OWNER_LABEL,
+  filterOwned,
+  ownerFromLabels,
+  ownerKeyFor,
+} from "@/lib/tenancy/ownership";
 import { isValidDockerImageName } from "@/lib/docker-validation";
 import { validateVolumes } from "@/plugins/testcontainers/lib/volume-validation";
 
 export async function GET(request: Request) {
+  // dx#119: a non-admin lists only containers labelled with their owner key.
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
+
   try {
     // Check Docker connection first
     const status = await checkDockerStatus();
@@ -42,8 +53,21 @@ export async function GET(request: Request) {
     const page = parseInt(searchParams.get("page") || "1", 10);
     const pageSize = parseInt(searchParams.get("pageSize") || "50", 10);
 
-    const result = await listContainers(filter, page, pageSize);
-    return NextResponse.json(result);
+    if (auth.principal.admin) {
+      return NextResponse.json(await listContainers(filter, page, pageSize));
+    }
+    // Filter before paginating so totals and pages reflect only own containers.
+    const all = await listContainers(filter, 1, Number.MAX_SAFE_INTEGER);
+    const own = filterOwned(auth.principal, all.containers, (c) =>
+      ownerFromLabels(c.labels ?? null),
+    );
+    const start = (page - 1) * pageSize;
+    return NextResponse.json({
+      containers: own.slice(start, start + pageSize),
+      total: own.length,
+      page,
+      pageSize,
+    });
   } catch (error) {
     console.error("[Test Containers] List error:", error);
     return NextResponse.json(
@@ -55,8 +79,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   // Require authentication for container creation
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal("containers:write");
+  if (!auth.authorized) return auth.response;
 
   try {
     // Check Docker connection first
@@ -159,7 +183,25 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await createContainer(body);
+    // dx#119: a non-admin's binds also stay inside their own mount boundary
+    // and never reach the .daax credential stores.
+    const tenantViolation = await tenantVolumeViolation(
+      auth.principal,
+      body.volumes,
+    );
+    if (tenantViolation) {
+      return NextResponse.json({ error: tenantViolation }, { status: 400 });
+    }
+
+    // dx#119: stamp the owner AFTER the caller's labels so it cannot be spoofed.
+    const owner = ownerKeyFor(auth.principal);
+    const result = await createContainer({
+      ...body,
+      labels: {
+        ...(body.labels ?? {}),
+        ...(owner ? { [OWNER_LABEL]: owner } : {}),
+      },
+    });
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     console.error("[Test Containers] Create error:", error);

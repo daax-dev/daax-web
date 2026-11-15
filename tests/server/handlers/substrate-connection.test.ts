@@ -25,9 +25,25 @@ import {
   SubstrateHub,
 } from "@/server/handlers/substrate-connection";
 import type { IPty } from "@/server/sessions/types";
+import type { Principal } from "@/lib/tenancy/ownership";
 
 const SESSION = "6f1c2a9e-1111-4222-8333-444455556666";
 const ACTOR = "daax-0123456789";
+const OWNER = "0b8d2c1e-aaaa-4bbb-8ccc-ddddeeeeffff";
+
+/** A non-admin tenant as a ticket's signed claims describe it (dx#119). */
+const USER: Principal = {
+  subject: OWNER,
+  operator: false,
+  admin: false,
+  permissions: ["terminal:exec", "containers:write", "recording:write"],
+};
+const OPERATOR: Principal = {
+  subject: null,
+  operator: true,
+  admin: true,
+  permissions: ["terminal:exec", "recording:write"],
+};
 
 function fakePty() {
   const data: Array<(d: string) => void> = [];
@@ -76,11 +92,16 @@ beforeEach(() => {
 
 describe("resolveAttachTarget", () => {
   const url = (q: string) => new URL(`ws://x/?mode=substrate&${q}`);
-  const ticket = (substrate?: { session: string; actor: string }) => ({
+  const ticket = (substrate?: {
+    session: string;
+    actor: string;
+    owner?: string;
+  }) => ({
     ok: true as const,
     user: "alice",
     method: "ticket" as const,
     hostShell: { ok: false as const, reason: "x" },
+    principal: USER,
     substrate,
   });
 
@@ -90,7 +111,13 @@ describe("resolveAttachTarget", () => {
         ticket({ session: SESSION, actor: ACTOR }),
         url("actor=daax-ffffffffff"),
       ),
-    ).toEqual({ ok: true, session: SESSION, actor: ACTOR });
+    ).toEqual({ ok: true, session: SESSION, actor: ACTOR, owner: null });
+    expect(
+      resolveAttachTarget(
+        ticket({ session: SESSION, actor: ACTOR, owner: OWNER }),
+        url(""),
+      ),
+    ).toEqual({ ok: true, session: SESSION, actor: ACTOR, owner: OWNER });
     expect(
       resolveAttachTarget(
         ticket({ session: SESSION, actor: ACTOR }),
@@ -103,7 +130,13 @@ describe("resolveAttachTarget", () => {
     expect(resolveAttachTarget(ticket(), url("")).ok).toBe(false);
     expect(
       resolveAttachTarget(
-        { ok: true, user: "u", method: "forwarded", hostShell: { ok: true } },
+        {
+          ok: true,
+          user: "u",
+          method: "forwarded",
+          hostShell: { ok: true },
+          principal: USER,
+        },
         url(`session=${SESSION}&actor=${ACTOR}`),
       ).ok,
     ).toBe(false);
@@ -115,10 +148,11 @@ describe("resolveAttachTarget", () => {
       user: "local",
       method: "bypass" as const,
       hostShell: { ok: true as const },
+      principal: OPERATOR,
     };
     expect(
       resolveAttachTarget(op, url(`session=${SESSION}&actor=${ACTOR}`)),
-    ).toEqual({ ok: true, session: SESSION, actor: ACTOR });
+    ).toEqual({ ok: true, session: SESSION, actor: ACTOR, owner: "local" });
     expect(
       resolveAttachTarget(op, url(`session=${SESSION}&actor=jimmy`)).ok,
     ).toBe(false);
@@ -299,7 +333,8 @@ describe("handleSubstrateConnection", () => {
     user: "alice",
     method: "ticket" as const,
     hostShell: { ok: false as const, reason: "x" },
-    substrate: { session: SESSION, actor: ACTOR },
+    principal: USER,
+    substrate: { session: SESSION, actor: ACTOR, owner: OWNER },
   };
 
   it("refuses when the backend is disabled", () => {
@@ -412,7 +447,8 @@ describe("SubstrateHub races (review fixes)", () => {
         user: "alice",
         method: "ticket",
         hostShell: { ok: false, reason: "x" },
-        substrate: { session: SESSION, actor: ACTOR },
+        principal: USER,
+        substrate: { session: SESSION, actor: ACTOR, owner: OWNER },
       },
       { ok: true, backend } as never,
     );
@@ -438,7 +474,8 @@ describe("attach failure reporting", () => {
         user: "alice",
         method: "ticket",
         hostShell: { ok: false, reason: "x" },
-        substrate: { session: SESSION, actor: ACTOR },
+        principal: USER,
+        substrate: { session: SESSION, actor: ACTOR, owner: OWNER },
       },
       {
         ok: true,

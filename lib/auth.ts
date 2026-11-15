@@ -22,6 +22,7 @@ import {
   rolesGrantPermission,
 } from "./rbac/permissions";
 import { jitProvision, writeAudit } from "./rbac/store";
+import type { Principal } from "./tenancy/ownership";
 import { isDbConfigured } from "./db/config";
 import { idpOrigin } from "./idp-urls";
 
@@ -180,7 +181,13 @@ export async function requireAuthOrThrow(): Promise<AuthUser> {
  * the same `if (!x.authorized) return x.response` shape as `requireAuth()`.
  */
 export type RoleResult =
-  | { authorized: true; user: AuthUser; subject: string | null }
+  | {
+      authorized: true;
+      user: AuthUser;
+      subject: string | null;
+      /** The caller's tenancy principal (dx#119) for owner-scoped checks. */
+      principal: Principal;
+    }
   | { authorized: false; response: NextResponse };
 
 /** Extract best-effort client IP / user-agent for the audit row. */
@@ -242,6 +249,30 @@ export async function requireRole(
   permission: Permission,
   opts?: { route?: string },
 ): Promise<RoleResult> {
+  return authorizeRequest(permission, opts);
+}
+
+/**
+ * Resolve the caller's tenancy {@link Principal} (dx#119), optionally also
+ * requiring `permission`. Same trust, JIT-provisioning and fail-closed rules
+ * as {@link requireRole}; with no permission it only authenticates and resolves
+ * roles (and writes no audit row), for owner-scoped READS where any
+ * authenticated user may list their own resources.
+ *
+ * Routes then call `requireOwnerOrAdmin(principal, resource)` /
+ * `filterOwned(...)` from `lib/tenancy/ownership.ts`.
+ */
+export async function requirePrincipal(
+  permission?: Permission,
+  opts?: { route?: string },
+): Promise<RoleResult> {
+  return authorizeRequest(permission ?? null, opts);
+}
+
+async function authorizeRequest(
+  permission: Permission | null,
+  opts?: { route?: string },
+): Promise<RoleResult> {
   const h = await headers();
   // Derive the forward-auth context ONCE and reuse it for both the trust
   // decision and the role resolution below — evaluateAuthDecision() would
@@ -276,7 +307,17 @@ export async function requireRole(
       subject: null,
       detail: "local-operator",
     });
-    return { authorized: true, user: decision.user, subject: null };
+    return {
+      authorized: true,
+      user: decision.user,
+      subject: null,
+      principal: {
+        subject: null,
+        operator: true,
+        admin: true,
+        permissions: permissionsForRoles(["admin"]),
+      },
+    };
   }
 
   // allow-user: resolve roles from the identity store.
@@ -344,7 +385,8 @@ export async function requireRole(
     };
   }
 
-  const allowed = rolesGrantPermission(roles, permission);
+  const allowed =
+    permission === null || rolesGrantPermission(roles, permission);
   await writeAuditSafe({
     event: "authz",
     outcome: allowed ? "allow" : "deny",
@@ -362,7 +404,17 @@ export async function requireRole(
       response: deny403("You do not have permission to perform this action"),
     };
   }
-  return { authorized: true, user: ctx.user, subject };
+  return {
+    authorized: true,
+    user: ctx.user,
+    subject,
+    principal: {
+      subject,
+      operator: false,
+      admin: rolesAreAdmin(roles),
+      permissions: permissionsForRoles(roles),
+    },
+  };
 }
 
 // writeAudit is already best-effort (never throws); this thin wrapper keeps the
@@ -380,6 +432,9 @@ async function writeAuditSafe(
   entry: Parameters<typeof writeAudit>[0],
 ): Promise<void> {
   if (!isDbConfigured()) return;
+  // A permission-less principal resolution (requirePrincipal() for an
+  // owner-scoped read) is not an authorization decision; do not audit it.
+  if (entry.permission === null) return;
   try {
     await writeAudit(entry);
   } catch {

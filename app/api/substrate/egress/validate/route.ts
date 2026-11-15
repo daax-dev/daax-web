@@ -7,7 +7,7 @@
  */
 import { NextRequest } from "next/server";
 
-import { requireAuthIdentity } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
 import { checkEgress } from "@/lib/substrate/service";
 import {
   respond,
@@ -16,8 +16,8 @@ import {
 } from "@/lib/substrate/route-helpers";
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAuthIdentity();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
   const ctx = substrateDeps();
   if (!ctx.ok) return ctx.response;
   let body: unknown;

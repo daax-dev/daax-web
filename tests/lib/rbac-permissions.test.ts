@@ -21,11 +21,13 @@ describe("rbac permission resolution (F5 #101)", () => {
     expect(roleHasPermission(DEFAULT_ROLE, "terminal:exec")).toBe(true);
     expect(roleHasPermission(DEFAULT_ROLE, "containers:write")).toBe(true);
     expect(roleHasPermission(DEFAULT_ROLE, "recording:write")).toBe(true);
+    // Own settings only (dx#119); the policy permission stays admin-only.
+    expect(roleHasPermission(DEFAULT_ROLE, "settings:write")).toBe(true);
+    expect(roleHasPermission(DEFAULT_ROLE, "admin:settings:write")).toBe(false);
     // Privileged permissions are NOT held by the default role.
     expect(roleHasPermission(DEFAULT_ROLE, "admin:users:read")).toBe(false);
     expect(roleHasPermission(DEFAULT_ROLE, "admin:users:write")).toBe(false);
     expect(roleHasPermission(DEFAULT_ROLE, "admin:db:read")).toBe(false);
-    expect(roleHasPermission(DEFAULT_ROLE, "settings:write")).toBe(false);
     expect(roleHasPermission(DEFAULT_ROLE, "mcp:manage")).toBe(false);
   });
 

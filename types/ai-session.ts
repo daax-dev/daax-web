@@ -22,6 +22,8 @@ export interface AISession {
   error?: string;
   /** Optional custom session name for display */
   name?: string;
+  /** Owner key (subject, or "local" for the operator) — dx#119. */
+  owner?: string;
 }
 
 export interface CreateSessionRequest {

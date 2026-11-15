@@ -12,7 +12,12 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
+import {
+  canAccessOwned,
+  normalizeOwnerLabel,
+  type Principal,
+} from "@/lib/tenancy/ownership";
 import { isAiSessionName } from "@/lib/ai-session-name";
 import { mapPool } from "@/lib/concurrency";
 import {
@@ -35,7 +40,10 @@ interface ReapResult {
   reason?: string;
 }
 
-async function listDaaxContainerNames(exec: DockerExec): Promise<string[]> {
+async function listDaaxContainerNames(
+  exec: DockerExec,
+  principal?: Principal,
+): Promise<string[]> {
   const { stdout } = await exec(
     [
       "ps",
@@ -43,18 +51,27 @@ async function listDaaxContainerNames(exec: DockerExec): Promise<string[]> {
       "--filter",
       `name=${DAAX_NAME_PREFIX}`,
       "--format",
-      "{{.Names}}",
+      '{{.Names}}\t{{.Label "daax.owner"}}',
     ],
     { maxBuffer: 1024 * 1024 },
   );
   // `docker ps --filter name=` is a substring match, so it also returns
   // infrastructure containers like daax-code-server. Keep only the exact
   // session shape — this list feeds an unconditional `docker rm -f`.
+  // Tenancy (dx#119): a non-admin reaps only their own sessions.
   return stdout
     .trim()
     .split("\n")
-    .map((s) => s.trim())
-    .filter(isAiSessionName);
+    .map((line) => {
+      const [name = "", owner = ""] = line.split("\t");
+      return { name: name.trim(), owner: normalizeOwnerLabel(owner) };
+    })
+    .filter(
+      (row) =>
+        isAiSessionName(row.name) &&
+        (!principal || canAccessOwned(principal, { owner: row.owner })),
+    )
+    .map((row) => row.name);
 }
 
 async function lastActivityMs(name: string, exec: DockerExec): Promise<number> {
@@ -103,8 +120,9 @@ export async function reapSessions(
   idleThresholdSeconds: number,
   exec: DockerExec = defaultDockerExec,
   now: number = Date.now(),
+  principal?: Principal,
 ): Promise<ReapResult[]> {
-  const names = await listDaaxContainerNames(exec);
+  const names = await listDaaxContainerNames(exec, principal);
 
   // Bounded-concurrency fan-out. The per-candidate try/catch stays inside
   // the worker so one failure is reported (removed:false + reason) without
@@ -135,8 +153,8 @@ export async function reapSessions(
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal("containers:write");
+  if (!auth.authorized) return auth.response;
 
   let idleThresholdSeconds = DEFAULT_IDLE_THRESHOLD_SECONDS;
   try {
@@ -153,7 +171,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const results = await reapSessions(idleThresholdSeconds);
+    const results = await reapSessions(
+      idleThresholdSeconds,
+      defaultDockerExec,
+      Date.now(),
+      auth.principal,
+    );
     const reaped = results.filter((r) => r.removed).length;
     return NextResponse.json({
       success: true,

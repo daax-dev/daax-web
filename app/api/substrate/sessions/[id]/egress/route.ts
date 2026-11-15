@@ -8,7 +8,7 @@
  */
 import { NextRequest } from "next/server";
 
-import { requireAuthIdentity } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
 import { updateEgress } from "@/lib/substrate/service";
 import {
   audited,
@@ -22,11 +22,13 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireAuthIdentity();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal("containers:write", {
+    route: "PUT /api/substrate/sessions/:id/egress",
+  });
+  if (!auth.authorized) return auth.response;
   const ctx = substrateDeps();
   if (!ctx.ok) return ctx.response;
-  const who = await callerFrom(auth);
+  const who = callerFrom(auth.principal);
   if (!who.ok) return who.response;
   let body: unknown;
   try {

@@ -83,6 +83,13 @@ function createTestContext(
     setRecordingId: (id: string | undefined) => {
       recordingId = id;
     },
+    // The pre-#119 behaviour these cases cover is the operator's (admin).
+    principal: {
+      subject: null,
+      operator: true,
+      admin: true,
+      permissions: ["terminal:exec", "recording:write"],
+    },
     ...overrides,
   };
 }
@@ -330,6 +337,7 @@ describe("handleMessage", () => {
         100,
         30,
         "client-abc",
+        "local", // owner: the operator principal
       );
       expect(ctx.getRecordingId()).toBe("recording-456");
       expect(ctx.ws.send).toHaveBeenCalledWith(
@@ -353,6 +361,7 @@ describe("handleMessage", () => {
         120, // default cols
         30, // default rows
         undefined,
+        "local", // owner: the operator principal
       );
     });
 
@@ -370,6 +379,7 @@ describe("handleMessage", () => {
         120,
         30,
         undefined,
+        "local", // owner: the operator principal
       );
     });
 
@@ -411,6 +421,7 @@ describe("handleMessage", () => {
         120,
         30,
         undefined,
+        "local", // owner: the operator principal
       );
     });
   });
@@ -697,6 +708,7 @@ describe("handleMessage", () => {
         expect.any(Number),
         expect.any(Number),
         undefined,
+        "local", // owner: the operator principal
       );
     });
 

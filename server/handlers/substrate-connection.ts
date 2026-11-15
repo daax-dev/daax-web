@@ -36,6 +36,7 @@ import {
 import { ACTOR_NAME_RE } from "../../lib/substrate/sessions-store";
 import { publicReason } from "../../lib/substrate/errors";
 import { getSubstrateRuntime } from "../backends/substrate-runtime";
+import { hasPermission, ownerKeyFor } from "../../lib/tenancy/ownership";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -43,7 +44,7 @@ const UUID_RE =
 type Accepted = Extract<AuthDecision, { ok: true }>;
 
 export type AttachTarget =
-  | { ok: true; session: string; actor: string }
+  | { ok: true; session: string; actor: string; owner: string | null }
   | { ok: false; reason: string };
 
 /** Decide which session/actor this upgrade may attach to. Pure. */
@@ -63,14 +64,27 @@ export function resolveAttachTarget(auth: Accepted, url: URL): AttachTarget {
     if (!UUID_RE.test(claim.session) || !ACTOR_NAME_RE.test(claim.actor)) {
       return { ok: false, reason: "malformed substrate claim" };
     }
-    return { ok: true, session: claim.session, actor: claim.actor };
+    return {
+      ok: true,
+      session: claim.session,
+      actor: claim.actor,
+      owner: claim.owner ?? null,
+    };
   }
   if (auth.method === "bypass") {
     const actor = url.searchParams.get("actor") ?? "";
     if (!qSession || !UUID_RE.test(qSession) || !ACTOR_NAME_RE.test(actor)) {
       return { ok: false, reason: "session and actor are required" };
     }
-    return { ok: true, session: qSession, actor };
+    // The loopback operator attaches without a store check (host dev,
+    // admin-equivalent); it has no session owner to hand, so recordings it
+    // starts belong to the operator.
+    return {
+      ok: true,
+      session: qSession,
+      actor,
+      owner: ownerKeyFor(auth.principal),
+    };
   }
   return {
     ok: false,
@@ -86,6 +100,8 @@ export type AttachFn = (
 interface JoinOptions {
   record: boolean;
   sessionType: string;
+  /** The session's owner key (dx#119), stamped on its recording. */
+  owner?: string | null;
 }
 
 /**
@@ -103,6 +119,7 @@ export class SubstrateHub {
   /** Auto-record on output (a viewer asked with ?record=true). */
   recordWanted = false;
   private sessionType = "substrate";
+  private owner: string | null = null;
 
   constructor(
     readonly sessionId: string,
@@ -145,6 +162,8 @@ export class SubstrateHub {
         `substrate:${this.actor}`,
         this.cols,
         this.rows,
+        undefined,
+        this.owner,
       );
       if (id) {
         this.recordingId = id;
@@ -208,6 +227,7 @@ export class SubstrateHub {
 
   async join(ws: WebSocket, opts: JoinOptions): Promise<void> {
     this.clients.add(ws);
+    if (opts.owner) this.owner = opts.owner;
     if (opts.record) {
       this.recordWanted = true;
       this.sessionType = opts.sessionType;
@@ -338,6 +358,7 @@ export function handleSubstrateConnection(
     ptyProcess: hub.facade,
     ws,
     getRecordingId: () => hub.recordingId,
+    principal: auth.principal,
     setRecordingId: (id) => {
       hub.recordingId = id;
       // An explicit stop (the session's recording is shared by its viewers)
@@ -358,8 +379,12 @@ export function handleSubstrateConnection(
 
   hub
     .join(ws, {
-      record: url.searchParams.get("record") === "true",
+      // Recording needs `recording:write`, as on the container path (dx#119).
+      record:
+        url.searchParams.get("record") === "true" &&
+        hasPermission(auth.principal, "recording:write"),
       sessionType,
+      owner: target.owner,
     })
     .catch((err: Error) => {
       console.error(

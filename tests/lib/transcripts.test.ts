@@ -1,4 +1,4 @@
-import { afterEach, describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { mkdtemp, rm, writeFile, mkdir } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -13,6 +13,19 @@ import {
   listCopilotSessions,
 } from "@/lib/transcripts/copilot";
 import { isSafeSessionId, isPathWithin } from "@/lib/transcripts/types";
+// dx#119: transcripts are admin-only; these cases are the admin/operator's.
+vi.mock("@/lib/auth", async () => {
+  const { ADMIN_PRINCIPAL } = await import("../helpers/auth-principal");
+  return {
+    requirePrincipal: async () => ({
+      authorized: true,
+      user: {},
+      subject: null,
+      principal: ADMIN_PRINCIPAL,
+    }),
+  };
+});
+
 import { GET as transcriptDetailGET } from "@/app/api/transcripts/[id]/route";
 import { GET as transcriptListGET } from "@/app/api/transcripts/route";
 

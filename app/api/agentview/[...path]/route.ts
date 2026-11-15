@@ -6,7 +6,8 @@
 
 import { NextResponse } from "next/server";
 import { deriveAuthContext } from "@/lib/auth-trust";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
+import { adminOnly } from "@/lib/tenancy/http";
 import {
   agentviewDaemonUrl,
   fetchDaemon,
@@ -29,11 +30,18 @@ export async function GET(
   req: Request,
   context: { params: Promise<{ path: string[] }> },
 ) {
-  const auth = await requireAuth();
-  if (!auth.authenticated) {
+  // dx#119: this surface carries other agents' data with no daax owner to
+  // filter on, so it is admin-only until its sessions carry one.
+  const auth = await requirePrincipal();
+  if (!auth.authorized) {
     const authRes = auth.response.clone ? auth.response.clone() : auth.response;
     authRes.headers.set("Cache-Control", "no-store");
     return authRes;
+  }
+  if (!auth.principal.admin) {
+    const res = adminOnly();
+    res.headers.set("Cache-Control", "no-store");
+    return res;
   }
 
   const { path: segments } = await context.params;
@@ -182,9 +190,16 @@ export async function POST(
 ) {
   const refusal = guardSignalWrite(req);
   if (refusal) return refusal;
-  const auth = await requireAuth();
-  if (!auth.authenticated) {
+  // dx#119: this surface carries other agents' data with no daax owner to
+  // filter on, so it is admin-only until its sessions carry one.
+  const auth = await requirePrincipal();
+  if (!auth.authorized) {
     const res = auth.response.clone();
+    res.headers.set("Cache-Control", "no-store");
+    return res;
+  }
+  if (!auth.principal.admin) {
+    const res = adminOnly();
     res.headers.set("Cache-Control", "no-store");
     return res;
   }

@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { requirePrincipal } from "@/lib/auth";
+import { adminOnly } from "@/lib/tenancy/http";
 import { readdir, readFile, stat } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
@@ -66,6 +68,12 @@ function isValidIndexEntry(e: unknown): e is SessionIndexEntry {
 }
 
 export async function GET() {
+  // dx#119: these are the operator's own agent transcripts (no daax owner),
+  // so they are admin-only.
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
+  if (!auth.principal.admin) return adminOnly();
+
   const projectsDir = getClaudeProjectsDir();
 
   try {

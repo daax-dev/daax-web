@@ -17,6 +17,11 @@ export interface RecordingMetadata {
   cols: number;
   rows: number;
   title?: string;
+  /**
+   * Owner key (subject, or "local" for the operator) — dx#119. Absent on
+   * recordings made before multi-tenancy; those are visible to admins only.
+   */
+  owner?: string;
 }
 
 /**

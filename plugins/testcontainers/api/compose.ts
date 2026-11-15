@@ -114,6 +114,7 @@ export async function createComposeProject(
 
   // Parse the YAML
   const project = parseComposeYaml(yaml, name);
+  if (request.owner) project.owner = request.owner;
 
   // Validate the project
   const validation = validateComposeProject(project);

@@ -29,7 +29,13 @@ vi.mock("@/lib/docker-exec", async (importOriginal) => {
 // Guard added in #197: mock auth as authenticated so these streaming/validation
 // tests exercise the handler past the requireAuth() gate deterministically
 // (independent of DAAX_REQUIRE_AUTH / the host-dev LOCAL_OPERATOR bypass).
-vi.mock("@/lib/auth", () => ({ requireAuth: mockRequireAuth }));
+vi.mock("@/lib/auth", async () => {
+  const { principalFrom } = await import("../helpers/auth-principal");
+  return {
+    requireAuth: mockRequireAuth,
+    requirePrincipal: principalFrom(mockRequireAuth),
+  };
+});
 
 // Mock child_process.spawn (ESM requires default export)
 vi.mock("child_process", async () => {

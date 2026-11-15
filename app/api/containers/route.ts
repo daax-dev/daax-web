@@ -4,8 +4,9 @@
  *
  * Unlike /api/testcontainers (which filters to testcontainers-managed
  * containers by label), this lists ALL containers on the host so the
- * Containers > Running view can show the full picture. Read-only: no
- * auth guard, matching the other read-only GET listings.
+ * Containers > Running view can show the full picture — to admins. A
+ * non-admin sees only containers labelled `daax.owner=<their subject>`
+ * (multi-tenancy, dx#119).
  *
  * Query params:
  *   all=1  → include stopped containers (default: running only)
@@ -13,6 +14,9 @@
 
 import { NextResponse } from "next/server";
 import Docker from "dockerode";
+
+import { requirePrincipal } from "@/lib/auth";
+import { filterOwned, ownerFromLabels } from "@/lib/tenancy/ownership";
 
 interface HostContainer {
   id: string;
@@ -24,7 +28,7 @@ interface HostContainer {
 }
 // Note: container labels and createdAt are deliberately NOT returned. Labels
 // frequently carry secrets (registry credentials, CI tokens, Tailscale auth
-// keys, Compose metadata) and this is an unauthenticated read-only endpoint;
+// keys, Compose metadata) and this is a read-only listing;
 // the Running view does not render either field, so they are omitted to keep
 // the payload minimal.
 
@@ -54,6 +58,9 @@ function formatPorts(ports?: Docker.Port[] | null): string[] {
 }
 
 export async function GET(request: Request) {
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
+
   const { searchParams } = new URL(request.url);
   const all =
     searchParams.get("all") === "1" || searchParams.get("all") === "true";
@@ -76,7 +83,11 @@ export async function GET(request: Request) {
   }
 
   try {
-    const containers = await docker.listContainers({ all });
+    const containers = filterOwned(
+      auth.principal,
+      await docker.listContainers({ all }),
+      (c) => ownerFromLabels(c.Labels ?? null),
+    );
     const result: HostContainer[] = containers.map((c) => ({
       id: c.Id.substring(0, 12),
       name: c.Names[0]?.replace(/^\//, "") || c.Id.substring(0, 12),

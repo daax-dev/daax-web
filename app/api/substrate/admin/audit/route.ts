@@ -5,7 +5,7 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 
-import { requireAuthIdentity } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
 import {
   adminOnly,
   callerFrom,
@@ -15,11 +15,11 @@ import {
 } from "@/lib/substrate/route-helpers";
 
 export async function GET(request: NextRequest) {
-  const auth = await requireAuthIdentity();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
   // Admin check first: a non-admin gets 404 whatever the backend state
   // (no configuration detail leaks to them).
-  const who = await callerFrom(auth);
+  const who = callerFrom(auth.principal);
   if (!who.ok) return who.response;
   const denied = adminOnly(who.caller);
   if (denied) return denied;
