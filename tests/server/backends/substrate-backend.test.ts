@@ -76,9 +76,32 @@ describe("SubstrateBackend", () => {
         new Error("FailedPrecondition: golden snapshot building"),
       )
       .mockRejectedValueOnce(new Error("already exists"));
+    const onActorCreated = vi.fn(async () => {});
     const b = new SubstrateBackend({ cli: c, gateways, retryDelayMs: 1 });
-    await b.spawn({ actorName: ACTOR, template: "t", egressHosts: [] });
+    // "already exists" on a retry does not prove the earlier attempt was
+    // ours: never adopted, never marked owned (Codex round 4).
+    await expect(
+      b.spawn({
+        actorName: ACTOR,
+        template: "t",
+        egressHosts: [],
+        onActorCreated,
+      }),
+    ).rejects.toBeInstanceOf(ActorNameTakenError);
     expect(c.createActor).toHaveBeenCalledTimes(2);
+    expect(onActorCreated).not.toHaveBeenCalled();
+    expect(c.createEgress).not.toHaveBeenCalled();
+
+    const c1 = cli();
+    c1.createActor.mockRejectedValueOnce(
+      new Error("FailedPrecondition: golden snapshot building"),
+    );
+    await new SubstrateBackend({ cli: c1, gateways, retryDelayMs: 1 }).spawn({
+      actorName: ACTOR,
+      template: "t",
+      egressHosts: [],
+    });
+    expect(c1.createActor).toHaveBeenCalledTimes(2);
 
     const c2 = cli();
     c2.createActor.mockRejectedValueOnce(new Error("already exists"));

@@ -3,7 +3,8 @@
  *
  *   GET    — one session (owner or admin; otherwise 404).
  *   DELETE — End session: deletes the egress policy and the actor. Same as
- *            POST /api/substrate/sessions/:id/end. The only kill.
+ *            POST /api/substrate/sessions/:id/end. The only kill. 200 `ended`,
+ *            or 202 `ending` while a create is still in flight.
  */
 import { NextRequest } from "next/server";
 

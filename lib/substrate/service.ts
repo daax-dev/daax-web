@@ -186,63 +186,75 @@ export async function createSession(
   });
 
   const provision = (async () => {
-    // The name this session currently owns. A collision (the name was taken
-    // before we created anything) moves the session to a fresh name, so the
-    // record never points at an actor it does not own: End can then never
-    // delete someone else's actor.
+    // The name this session currently owns. A collision moves the session to
+    // a fresh name, so the record never points at an actor it does not own.
     let actorName = session.actorName;
     // Set only once this session's create call made `actorName`: cleanup
     // deletes nothing it did not create.
     let created = false;
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const owned = actorName;
-        await deps.backend.spawn({
-          actorName,
-          template,
-          egressHosts: hosts,
-          onActorCreated: async () => {
-            created = true;
-            await deps.store.markActorOwned(session.id, owned);
-          },
-        });
-        if (
-          !(await deps.store.transition(session.id, ["creating"], "running"))
-        ) {
-          // Ended (or otherwise moved) while provisioning: whatever spawn
-          // created after End's delete must not outlive the session.
-          if (created) await cleanup(deps, actorName, session.id);
-          await deps.store.markEnded(session.id);
-        }
-        return;
-      } catch (err) {
-        logFailure("create", session.id, err);
-        if (err instanceof ActorNameTakenError) {
-          const fresh = newActorName();
+    inFlight.add(session.id);
+    try {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const owned = actorName;
+          await deps.backend.spawn({
+            actorName,
+            template,
+            egressHosts: hosts,
+            onActorCreated: async () => {
+              created = true;
+              await deps.store.markActorOwned(session.id, owned);
+            },
+          });
           if (
-            attempt < MAX_NAME_ATTEMPTS - 1 &&
-            (await deps.store.renameActor(session.id, actorName, fresh))
+            !(await deps.store.transition(session.id, ["creating"], "running"))
           ) {
-            actorName = fresh;
-            continue;
+            // End arrived while provisioning (state `ending`): finish it here.
+            await finishEnd(deps, session.id, created ? actorName : null);
           }
-          // Out of attempts (or ended meanwhile): this session owns no actor,
-          // so close the record without any substrate call.
-          await deps.store.markEnded(session.id);
+          return;
+        } catch (err) {
+          logFailure("create", session.id, err);
+          if (err instanceof ActorNameTakenError) {
+            const fresh = newActorName();
+            if (
+              attempt < MAX_NAME_ATTEMPTS - 1 &&
+              (await deps.store.renameActor(session.id, actorName, fresh))
+            ) {
+              actorName = fresh;
+              continue;
+            }
+            // Out of attempts, or End arrived: this session owns no actor,
+            // so close the record without any substrate call.
+            await deps.store.markEnded(session.id);
+            return;
+          }
+          // An `error` session can only be ended, never resumed. If End
+          // arrived meanwhile, finish it; otherwise tear down what this
+          // session created and record the failure.
+          if (
+            await deps.store.transition(
+              session.id,
+              ["creating"],
+              "error",
+              `create: ${publicReason(err)}`,
+            )
+          ) {
+            if (created && !(await tryStop(deps, actorName, session.id))) {
+              await deps.store.setState(
+                session.id,
+                "error",
+                `create: ${publicReason(err)}; cleanup failed, End to retry`,
+              );
+            }
+          } else {
+            await finishEnd(deps, session.id, created ? actorName : null);
+          }
           return;
         }
-        // Never leave a half-made actor behind (e.g. created but with no
-        // egress policy): tear down what this session created, then record
-        // the failure. An `error` session can only be ended, never resumed.
-        if (created) await cleanup(deps, actorName, session.id);
-        await deps.store.transition(
-          session.id,
-          ["creating"],
-          "error",
-          `create: ${publicReason(err)}`,
-        );
-        return;
       }
+    } finally {
+      inFlight.delete(session.id);
     }
   })();
   (deps.background ?? ((p) => void p))(provision);
@@ -266,16 +278,44 @@ export function isAlreadyRunning(err: unknown): boolean {
   );
 }
 
-async function cleanup(
+/** Sessions whose create is still running in this process. */
+const inFlight = new Set<string>();
+
+/** Delete an actor + its policy; false (logged) on failure. */
+async function tryStop(
   deps: ServiceDeps,
   actorName: string,
   id: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
     await deps.backend.stop(actorName);
+    return true;
   } catch (err) {
     logFailure("cleanup", id, err);
+    return false;
   }
+}
+
+/**
+ * Complete an End that arrived during provisioning (state `ending`). The
+ * record is closed only once what this session created is gone; a failed
+ * delete leaves it visible as `error` so End can be retried.
+ */
+async function finishEnd(
+  deps: ServiceDeps,
+  id: string,
+  ownedActor: string | null,
+): Promise<void> {
+  if (ownedActor && !(await tryStop(deps, ownedActor, id))) {
+    await deps.store.transition(
+      id,
+      ["ending"],
+      "error",
+      "end: the actor could not be deleted; End to retry",
+    );
+    return;
+  }
+  await deps.store.markEnded(id);
 }
 
 export async function listSessions(
@@ -379,7 +419,7 @@ export async function endSession(
   deps: ServiceDeps,
   caller: Caller,
   id: string,
-): Promise<ServiceResult<{ id: string; state: "ended" }>> {
+): Promise<ServiceResult<{ id: string; state: "ended" | "ending" }>> {
   const s = await deps.store.getVisible(caller, id);
   if (!s) return notFound();
   if (
@@ -402,6 +442,12 @@ export async function endSession(
     ))
   ) {
     return fail(409, "invalid-state", `cannot end a ${s.state} session now`);
+  }
+  // A create still running in this process finishes the End itself (it
+  // knows what it made). Answer 202 `ending`; the record closes once the
+  // actor is gone, or shows `error` if the delete fails.
+  if (s.state === "creating" && inFlight.has(id)) {
+    return ok({ id, state: "ending" as const }, 202);
   }
   // Re-read after taking the session to `ending`: no rename can happen any
   // more (renames need `creating`), and ownership is current. An actor this

@@ -91,14 +91,50 @@ describe("createSession", () => {
     const res = await createSession(deps, ALICE, { agent: "claude" });
     if (!res.ok) throw new Error("expected ok");
     // The candidate name may still belong to someone else: End must not
-    // touch it before this session's create call has confirmed it.
-    expect((await endSession(deps, ALICE, res.body.id)).ok).toBe(true);
+    // touch it before this session's create call has confirmed it. The
+    // in-flight create finishes the End (202 `ending`).
+    const end = await endSession(deps, ALICE, res.body.id);
+    expect(end.ok && end.status).toBe(202);
+    expect(end.ok && end.body.state).toBe("ending");
     expect(backend.stop).not.toHaveBeenCalled();
     finishSpawn();
     await settle();
     expect(backend.stop).toHaveBeenCalledTimes(1);
     expect(backend.stop).toHaveBeenCalledWith(res.body.actorName);
     expect((await store.get(res.body.id))?.state).toBe("ended");
+  });
+
+  it("a failed cleanup after End leaves a visible, retryable error (never a hidden live actor)", async () => {
+    let finishSpawn!: () => void;
+    const { deps, backend, store, settle } = makeDeps();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    backend.spawn.mockImplementationOnce(
+      (spec) =>
+        new Promise<null>(
+          (r) =>
+            (finishSpawn = async () => {
+              await spec.onActorCreated?.();
+              r(null);
+            }),
+        ),
+    );
+    const res = await createSession(deps, ALICE, { agent: "claude" });
+    if (!res.ok) throw new Error("expected ok");
+    await endSession(deps, ALICE, res.body.id);
+    backend.stop.mockRejectedValueOnce(new Error("unavailable"));
+    finishSpawn();
+    await settle();
+    const row = await store.get(res.body.id);
+    expect(row).toMatchObject({
+      state: "error",
+      actorOwned: true,
+      endedAt: null,
+    });
+    expect((await getSession(deps, ALICE, res.body.id)).ok).toBe(true);
+    // End retry (create no longer in flight) deletes the owned actor.
+    const retry = await endSession(deps, ALICE, res.body.id);
+    expect(retry.ok && retry.body.state).toBe("ended");
+    expect(backend.stop).toHaveBeenLastCalledWith(res.body.actorName);
   });
 
   it("End during a create that collides never deletes the taken actor", async () => {

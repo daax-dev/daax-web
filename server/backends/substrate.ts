@@ -114,9 +114,11 @@ export class SubstrateBackend implements ExecutionBackend<
         break;
       } catch (err) {
         if (isAlreadyExists(err)) {
-          // On a retry it means an earlier attempt landed; on the first
-          // attempt the name belongs to someone else: never adopt it.
-          if (attempt > 0) break;
+          // Never adopt an existing actor. Even on a retry, "already exists"
+          // does not prove an earlier attempt of ours landed (another
+          // creator may have taken the name in between). The caller moves
+          // to a fresh name; at worst an actor of ours is left unowned,
+          // never someone else's deleted.
           throw new ActorNameTakenError(spec.actorName);
         }
         if (!isRetryable(err) || Date.now() > deadline) throw err;

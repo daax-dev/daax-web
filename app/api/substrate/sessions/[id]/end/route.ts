@@ -2,6 +2,8 @@
  * POST /api/substrate/sessions/:id/end (dx#113 / #114)
  *
  * End session: delete the egress policy and the actor. The only operation that kills an agent.
+ * 200 `ended`, or 202 `ending` when a create is still in flight (it finishes
+ * the End itself; poll GET until 404, or `error` if the delete failed).
  */
 import { NextRequest } from "next/server";
 

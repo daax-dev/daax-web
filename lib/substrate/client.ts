@@ -68,7 +68,7 @@ export const substrateApi = {
   resume: (id: string) =>
     call<SessionView>(`${base}/${enc(id)}/resume`, { method: "POST" }),
   end: (id: string) =>
-    call<{ id: string; state: "ended" }>(`${base}/${enc(id)}/end`, {
+    call<{ id: string; state: "ended" | "ending" }>(`${base}/${enc(id)}/end`, {
       method: "POST",
     }),
 };
