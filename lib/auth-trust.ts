@@ -31,7 +31,8 @@ export interface HeaderReader {
 // Pocket ID forward-auth headers:
 //   X-Forwarded-User     → user ID (UUID)
 //   X-Forwarded-Username → username (e.g., "jpoley")
-//   X-Forwarded-Name     → display name (e.g., "JP")
+//   X-Forwarded-Name     → display name (e.g., "JP"); traefik-forward-auth
+//                          sends X-Forwarded-Displayname instead
 //   X-Forwarded-Email    → email address
 //   X-Forwarded-Groups   → comma-separated group memberships
 //   X-Forwarded-Admin    → "true" if admin user
@@ -40,6 +41,11 @@ const USERNAME_HEADER =
   process.env.DAAX_AUTH_USERNAME_HEADER || "x-forwarded-username";
 const DISPLAYNAME_HEADER =
   process.env.DAAX_AUTH_DISPLAYNAME_HEADER || "x-forwarded-name";
+// The host-local gate (traefik-forward-auth v4 in front of this host's own
+// Pocket ID, dx#120) sends the `name` claim as X-Forwarded-Displayname; the
+// retired shared IdP's fork sent X-Forwarded-Name. Read the configured header
+// first, then this one, so either gate yields a display name.
+const FORWARD_AUTH_DISPLAYNAME_HEADER = "x-forwarded-displayname";
 const EMAIL_HEADER = process.env.DAAX_AUTH_EMAIL_HEADER || "x-forwarded-email";
 const GROUPS_HEADER =
   process.env.DAAX_AUTH_GROUPS_HEADER || "x-forwarded-groups";
@@ -325,7 +331,12 @@ export function deriveAuthContext(h: HeaderReader): AuthContext {
   // upstream via rawUserHeader, then coalesce empty/whitespace to null here.
   const userId = (rawUserHeader ?? "").trim() || null;
   const username = (h.get(USERNAME_HEADER) || "").trim() || null;
-  const displayName = (h.get(DISPLAYNAME_HEADER) || "").trim() || null;
+  const displayName =
+    (
+      h.get(DISPLAYNAME_HEADER) ||
+      h.get(FORWARD_AUTH_DISPLAYNAME_HEADER) ||
+      ""
+    ).trim() || null;
   const email = h.get(EMAIL_HEADER) || null;
   const groupsRaw = h.get(GROUPS_HEADER) || "";
   const groups = groupsRaw
