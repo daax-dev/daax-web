@@ -7,9 +7,11 @@
  * `local` / `shell-tmux` shells, because all of them are a node-pty spawn of a
  * local command. Sessions are ephemeral: the connection handler still sends
  * EOF then SIGTERM on WS close. `buildShellCommand` below is the original
- * function, apart from the `export` and the multi-tenancy (dx#119) additions
- * to `docker run`: the owner label, the owner's own credential store and the
- * `.daax` tmpfs shadow.
+ * function, apart from the `export`, the multi-tenancy (dx#119) additions
+ * to `docker run` (the owner label, the owner's own credential store and the
+ * `.daax` tmpfs shadow), the `--` before the container name on `docker exec`
+ * (#482 A6), and running the herdr bootstrap as the new container's own
+ * command instead of typing it into the shell (#485).
  */
 import { DOCKER_NETWORK } from "../config/constants";
 import {
