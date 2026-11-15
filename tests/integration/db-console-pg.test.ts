@@ -98,7 +98,7 @@ describe.skipIf(!configured)("DB console on Postgres (F6 #102)", () => {
   });
 
   it("R2: auth_audit is append-only — INSERT allowed, UPDATE and DELETE rejected (42501)", async () => {
-    // Locks the append-only guarantee (migration 1781568000600) so a future
+    // Locks the append-only guarantee (migration 1781568000700) so a future
     // migration that drops the trigger fails loudly here rather than silently
     // re-opening audit-log tampering via the super-admin DB console.
     await query("INSERT INTO auth_audit (event, outcome) VALUES ($1,$2)", [

@@ -426,7 +426,7 @@ async function authorizeRequest(
 // would let a transient audit hiccup lock out the operator for no security gain.
 // Integrity of the rows that ARE written is now enforced at the DB itself: the
 // auth_audit table is append-only via a trigger (migration
-// 1781568000600_auth-audit-append-only), so a super-admin console cannot rewrite
+// 1781568000700_auth-audit-append-only), so a super-admin console cannot rewrite
 // or delete history even though this write path is best-effort.
 //
 // writeAudit is already best-effort (never throws); this thin wrapper keeps the
