@@ -1,8 +1,9 @@
 /**
  * Live attach against ptyd actors on a dev cluster (dx#113 / #114 / #115).
  * OPT-IN: DAAX_SUBSTRATE_IT=1 and DAAX_SUBSTRATE_IT_PTYD=1, plus the usual
- * DAAX_SUBSTRATE_* config and DAAX_SUBSTRATE_IT_PTYD_TEMPLATES, a comma list
- * of ActorTemplates built from the daax actor image (ptyd on :80).
+ * DAAX_SUBSTRATE_* config. Templates (daax actor image, ptyd on :80) come
+ * from DAAX_SUBSTRATE_IT_PTYD_TEMPLATES (comma list) or, if unset, from the
+ * backend's own config: claude on every class via DAAX_SUBSTRATE_TEMPLATES_FILE.
  *
  * For each template it drives the real substrate backend, the `proxy`
  * transport and the terminal server's session hub (the same objects the
@@ -21,15 +22,26 @@ import type { WebSocket } from "ws";
 import { getSubstrateRuntime } from "@/server/backends/substrate-runtime";
 import { newActorName } from "@/lib/substrate/sessions-store";
 import { SubstrateHub } from "@/server/handlers/substrate-connection";
+import { resolveTemplate, SANDBOX_CLASSES } from "@/lib/substrate/config";
 
 const enabled =
   process.env.DAAX_SUBSTRATE_IT === "1" &&
   process.env.DAAX_SUBSTRATE_IT_PTYD === "1";
-const templates = (process.env.DAAX_SUBSTRATE_IT_PTYD_TEMPLATES ?? "")
-  .split(",")
+const rt = enabled ? getSubstrateRuntime() : null;
+// Explicit list, or what the backend's own template config resolves for
+// claude on every sandbox class (DAAX_SUBSTRATE_TEMPLATES_FILE, the
+// substrate-harness templates.env with TEMPLATE_DAAX_* keys).
+const templates = (
+  process.env.DAAX_SUBSTRATE_IT_PTYD_TEMPLATES
+    ? process.env.DAAX_SUBSTRATE_IT_PTYD_TEMPLATES.split(",")
+    : rt?.ok
+      ? SANDBOX_CLASSES.map(
+          (cls) => resolveTemplate(rt.config, "claude", cls) ?? "",
+        )
+      : []
+)
   .map((t) => t.trim())
   .filter(Boolean);
-const rt = enabled ? getSubstrateRuntime() : null;
 const created: string[] = [];
 
 /** A stand-in browser tab: collects what the hub sends it. */

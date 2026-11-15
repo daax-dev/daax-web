@@ -223,7 +223,7 @@ only the host-dev loopback operator can attach.
 | `DAAX_SUBSTRATE_TOKEN_FILE` | no | ate-api bearer token file (otherwise the shared `ate-client` identity) |
 | `DAAX_SUBSTRATE_ENDPOINT` | no | ate-api gRPC target override |
 | `DAAX_SUBSTRATE_TRANSPORT` | no | `proxy` (default: `kubectl ate proxy actor`), `router` (stub, pending dx#115/#121) |
-| `DAAX_SUBSTRATE_TEMPLATES_FILE` | no | substrate-harness `templates.env` (`TEMPLATE_<AGENT>_<CLASS>=`) |
+| `DAAX_SUBSTRATE_TEMPLATES_FILE` | no | substrate-harness `templates.env`; only its `TEMPLATE_DAAX_<AGENT>_<CLASS>=` keys (daax actor image, ptyd) are read, never the harness's ttyd templates |
 | `DAAX_SUBSTRATE_TEMPLATE_<AGENT>_<CLASS>` | no | per-template override, e.g. `DAAX_SUBSTRATE_TEMPLATE_CODEX_GVISOR` |
 | `DAAX_SUBSTRATE_DEFAULT_CLASS` | no | `gvisor` (default) or `microvm` |
 | `DAAX_SUBSTRATE_WATCHTOWER_HOOK_URL` | no | placeholder, see below |

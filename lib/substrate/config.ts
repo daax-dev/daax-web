@@ -179,9 +179,11 @@ export function isSandboxClass(v: unknown): v is SandboxClass {
 }
 
 /**
- * Template for an agent x class, from substrate-harness's `templates.env`
- * scheme: `TEMPLATE_<AGENT>_<CLASS>`, falling back to `TEMPLATE_<CLASS>` for
- * claude only (render.sh writes that key for the first agent). An env override
+ * Template for an agent x class, from substrate-harness's `templates.env`:
+ * only `TEMPLATE_DAAX_<AGENT>_<CLASS>`, the daax actor image templates
+ * (deploy/actor-templates/daax.yaml.tmpl, ptyd on :80). The same file's
+ * `TEMPLATE_<AGENT>_<CLASS>` / `TEMPLATE_<CLASS>` keys are the harness's own
+ * ttyd templates, which have no ptyd, so they are never used. An env override
  * `DAAX_SUBSTRATE_TEMPLATE_<AGENT>_<CLASS>` wins. Read fresh on each call so a
  * redeploy of templates needs no restart.
  */
@@ -215,8 +217,6 @@ export function resolveTemplate(
         .replace(/^["']|["']$/g, ""),
     );
   }
-  const name =
-    values.get(`TEMPLATE_${key}`) ||
-    (agent === "claude" ? values.get(`TEMPLATE_${cls.toUpperCase()}`) : "");
+  const name = values.get(`TEMPLATE_DAAX_${key}`);
   return name && NAME_RE.test(name) ? name : null;
 }

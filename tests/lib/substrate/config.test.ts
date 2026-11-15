@@ -91,23 +91,31 @@ describe("resolveSubstrateConfig", () => {
 });
 
 describe("resolveTemplate", () => {
+  // substrate-harness render.sh output: harness (ttyd) keys and daax keys.
   const file = [
     "TEMPLATE_GVISOR=claude-gvisor-98bd47e278",
-    "TEMPLATE_MICROVM=claude-microvm-98bd47e278",
-    "TEMPLATE_CODEX_GVISOR='codex-gvisor-1234567890'",
+    "TEMPLATE_CLAUDE_GVISOR=claude-gvisor-98bd47e278",
+    "TEMPLATE_DAAX_CLAUDE_GVISOR=daax-claude-gvisor-1a1cb1427e",
+    "TEMPLATE_DAAX_CLAUDE_MICROVM='daax-claude-microvm-1bd3cd3dd0'",
     "# comment",
   ].join("\n");
   const read = () => file;
   const cfg = { templatesFile: "/x/templates.env" };
 
-  it("reads TEMPLATE_<AGENT>_<CLASS>, falling back to TEMPLATE_<CLASS> for claude only", () => {
-    expect(resolveTemplate(cfg, "codex", "gvisor", {}, read)).toBe(
-      "codex-gvisor-1234567890",
+  it("reads only the daax (ptyd) keys, never the harness's ttyd templates", () => {
+    expect(resolveTemplate(cfg, "claude", "gvisor", {}, read)).toBe(
+      "daax-claude-gvisor-1a1cb1427e",
     );
     expect(resolveTemplate(cfg, "claude", "microvm", {}, read)).toBe(
-      "claude-microvm-98bd47e278",
+      "daax-claude-microvm-1bd3cd3dd0",
     );
-    expect(resolveTemplate(cfg, "gemini", "gvisor", {}, read)).toBeNull();
+    // No fallback to the harness keys.
+    expect(resolveTemplate(cfg, "codex", "gvisor", {}, read)).toBeNull();
+    const harnessOnly = () =>
+      "TEMPLATE_GVISOR=claude-gvisor-98bd47e278\nTEMPLATE_CLAUDE_GVISOR=claude-gvisor-98bd47e278";
+    expect(
+      resolveTemplate(cfg, "claude", "gvisor", {}, harnessOnly),
+    ).toBeNull();
   });
 
   it("an env override wins; a missing file yields null", () => {
