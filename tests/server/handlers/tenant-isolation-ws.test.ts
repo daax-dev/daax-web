@@ -294,6 +294,7 @@ describe("container ownership", () => {
     expect(runArgs()).toEqual([
       "exec",
       "-it",
+      "--", // #482 A6: a name can never be read as a docker flag
       "daax-aaaaaaaa",
       "/bin/bash",
       "-l",
