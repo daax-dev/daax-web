@@ -6,6 +6,7 @@
  */
 
 import { homedir } from "os";
+import { join } from "path";
 import { mkdirSync, existsSync, chownSync } from "fs";
 import {
   HOST_WORKSPACE_PATH,

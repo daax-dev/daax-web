@@ -13,6 +13,32 @@ import { join } from "node:path";
 
 const { discoverAllMcps } = vi.hoisted(() => ({ discoverAllMcps: vi.fn() }));
 vi.mock("@/lib/mcp-config", () => ({ discoverAllMcps }));
+// `.example` hosts never resolve, so they stand in for public hosts here. Every
+// other input, literal IPs included, goes through the real guard.
+vi.mock("@/lib/ssrf-guard", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/ssrf-guard")>(
+      "@/lib/ssrf-guard",
+    );
+  return {
+    ...actual,
+    assertPublicHttpUrl: async (raw: unknown) => {
+      if (typeof raw === "string") {
+        try {
+          const u = new URL(raw);
+          if (
+            u.hostname.endsWith(".example") &&
+            (u.protocol === "https:" || u.protocol === "http:")
+          )
+            return { ok: true, url: raw };
+        } catch {
+          /* fall through to the real guard */
+        }
+      }
+      return actual.assertPublicHttpUrl(raw);
+    },
+  };
+});
 
 import {
   isReadOnlyTool,
@@ -147,12 +173,12 @@ describe("isReservedEnvName", () => {
 describe("resolveMcpServers", () => {
   beforeEach(() => discoverAllMcps.mockReset());
 
-  it("inline: passes through only named env vars that are present, never others", () => {
+  it("inline: passes through only named env vars that are present, never others", async () => {
     const env = {
       GITHUB_TOKEN: "ghp_x",
       OTHER_SECRET: "nope",
     } as unknown as NodeJS.ProcessEnv;
-    const { resolved, missing } = resolveMcpServers(
+    const { resolved, missing } = await resolveMcpServers(
       [
         {
           kind: "inline",
@@ -194,7 +220,7 @@ describe("resolveMcpServers", () => {
     expect(discoverAllMcps).not.toHaveBeenCalled();
   });
 
-  it("inline: reserved names are never passed through, even when listed", () => {
+  it("inline: reserved names are never passed through, even when listed", async () => {
     const env = {
       GITHUB_TOKEN: "ghp_x",
       DATABASE_URL: "postgres://u:pw@db/daax",
@@ -202,7 +228,7 @@ describe("resolveMcpServers", () => {
       ANTHROPIC_API_KEY: "sk-ant",
       PATH: "/evil",
     } as unknown as NodeJS.ProcessEnv;
-    const { resolved } = resolveMcpServers(
+    const { resolved } = await resolveMcpServers(
       [
         {
           kind: "inline",
@@ -224,7 +250,7 @@ describe("resolveMcpServers", () => {
     expect(resolved[0].env).toEqual({ GITHUB_TOKEN: "ghp_x" });
   });
 
-  it("ref: resolves from discovery, reports missing and invalid-URL refs", () => {
+  it("ref: resolves from discovery, reports missing and invalid-URL refs", async () => {
     discoverAllMcps.mockReturnValue({
       mcps: [
         {
@@ -236,7 +262,7 @@ describe("resolveMcpServers", () => {
         { id: "noconfig" },
       ],
     });
-    const { resolved, missing } = resolveMcpServers(
+    const { resolved, missing } = await resolveMcpServers(
       [
         { kind: "ref", id: "github" },
         { kind: "ref", id: "remote" },
@@ -383,5 +409,41 @@ describe("listServerTools (http)", () => {
       "tools/list",
     ]);
     expect(tools).toEqual([{ name: "task_list", readOnly: true }]);
+  });
+
+  it("SSRF (#482 A2): private, loopback, metadata and non-http URLs never resolve", async () => {
+    discoverAllMcps.mockReturnValue({
+      mcps: [
+        { id: "pg", config: { type: "http", url: "http://10.0.0.5:5432/" } },
+        { id: "meta", config: { url: "http://169.254.169.254/latest" } },
+      ],
+    });
+    const { resolved, missing } = await resolveMcpServers(
+      [
+        { kind: "ref", id: "pg" },
+        { kind: "ref", id: "meta" },
+        {
+          kind: "inline",
+          id: "loop",
+          type: "http",
+          url: "http://127.0.0.1:4201/",
+        },
+        {
+          kind: "inline",
+          id: "file",
+          type: "http",
+          url: "file:///etc/passwd",
+        },
+      ],
+      "/workspace/proj",
+      {} as unknown as NodeJS.ProcessEnv,
+    );
+    expect(resolved).toEqual([]);
+    expect(missing).toEqual([
+      "pg (invalid URL)",
+      "meta (invalid URL)",
+      "loop (invalid URL)",
+      "file (invalid URL)",
+    ]);
   });
 });

@@ -10,7 +10,8 @@
 
 import { spawn } from "node:child_process";
 import { discoverAllMcps } from "@/lib/mcp-config";
-import { buildChildEnv, isAllowedRemoteUrl } from "@/lib/mcp-route-helpers";
+import { buildChildEnv } from "@/lib/mcp-route-helpers";
+import { assertPublicHttpUrl } from "@/lib/ssrf-guard";
 import { LineTail } from "./events";
 import type { WorkerMcpServer } from "@/types/workers";
 
@@ -164,11 +165,11 @@ export function isReadOnlyTool(tool: {
  * Resolve worker servers to launch configs. Unknown refs and invalid remote
  * URLs are returned as `missing` (recorded as run warnings, not fatal).
  */
-export function resolveMcpServers(
+export async function resolveMcpServers(
   servers: WorkerMcpServer[],
   projectPath: string,
   env: NodeJS.ProcessEnv = process.env,
-): { resolved: ResolvedMcpServer[]; missing: string[] } {
+): Promise<{ resolved: ResolvedMcpServer[]; missing: string[] }> {
   const resolved: ResolvedMcpServer[] = [];
   const missing: string[] = [];
   const hasRefs = servers.some((s) => s.kind === "ref");
@@ -184,7 +185,10 @@ export function resolveMcpServers(
       }
       const type =
         cfg.type === "http" || (!cfg.command && cfg.url) ? "http" : "stdio";
-      if (type === "http" && !isAllowedRemoteUrl(cfg.url)) {
+      // The run fetches this URL from the daax server itself (SDK engine,
+      // tool discovery), so it gets the same SSRF guard as the MCP routes
+      // (#482 A2): http(s) only, and no private or reserved address.
+      if (type === "http" && !(await assertPublicHttpUrl(cfg.url)).ok) {
         missing.push(`${s.id} (invalid URL)`);
         continue;
       }
@@ -197,6 +201,10 @@ export function resolveMcpServers(
         url: cfg.url,
         env: cfgEnv,
       });
+      continue;
+    }
+    if (s.type === "http" && !(await assertPublicHttpUrl(s.url)).ok) {
+      missing.push(`${s.id} (invalid URL)`);
       continue;
     }
     const passthrough: Record<string, string> = {};

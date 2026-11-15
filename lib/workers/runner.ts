@@ -222,7 +222,7 @@ export async function executeRun(
     const workingDir = resolveWorkingDir(worker, root);
     const goals = await listGoals(worker.id, "active");
 
-    const { resolved, missing } = resolveMcpServers(
+    const { resolved, missing } = await resolveMcpServers(
       worker.mcpServers,
       workingDir,
     );
