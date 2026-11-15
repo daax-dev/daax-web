@@ -10,6 +10,10 @@
  * function, byte for byte apart from the `export`.
  */
 import { DOCKER_NETWORK } from "../config/constants";
+import {
+  buildFullCommand,
+  runsAsContainerCommand,
+} from "../handlers/command-handler";
 import { getPty } from "../sessions/pty-loader";
 import type { IPty } from "../sessions/types";
 import { buildPtyEnv } from "../sessions/pty-env";
@@ -195,7 +199,11 @@ export class ContainerBackend implements ExecutionBackend<
 export const containerBackend = new ContainerBackend();
 
 /**
- * Build the shell command and arguments for the terminal session
+ * Build the shell command and arguments for the terminal session.
+ *
+ * Since the dx#113 move, a new agent container whose command is an inline
+ * bootstrap (herdr-claude, see runsAsContainerCommand) runs it as its own
+ * `zsh -c` command rather than an interactive shell.
  */
 export function buildShellCommand(
   mode: string,
@@ -345,12 +353,21 @@ export function buildShellCommand(
         // Use zsh with custom PS1 (zsh-style prompt escapes: %F{color}...%f)
         // SECURITY: Use $FALCON_DISPLAY_PATH env var instead of interpolating displayPath
         // directly to prevent command injection via projectName or basePath
+        //
+        // An inline-bootstrap command (herdr-claude) is the container's OWN
+        // command instead of being typed into this shell afterwards, so its
+        // long multi-stage expansion is never echoed at the user. The script is
+        // its own argv element, so its single quotes need no re-quoting. Every
+        // other tool keeps the interactive shell and has its (short) command
+        // typed in by scheduleCommand().
         shellArgs.push(
           containerImage,
           "/bin/zsh",
           "-l",
           "-c",
-          `export PATH=/home/vscode/.local/share/pnpm:$PATH && export PS1='%F{blue}$FALCON_DISPLAY_PATH%f > ' && exec /bin/zsh`,
+          runsAsContainerCommand(mode, containerName, command)
+            ? `export PS1='%F{blue}$FALCON_DISPLAY_PATH%f > ' && ${buildFullCommand(command, "agent-container")}`
+            : `export PATH=/home/vscode/.local/share/pnpm:$PATH && export PS1='%F{blue}$FALCON_DISPLAY_PATH%f > ' && exec /bin/zsh`,
         );
       }
     }
