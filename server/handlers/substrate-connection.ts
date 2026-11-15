@@ -220,8 +220,9 @@ export class SubstrateHub {
       throw err;
     }
     if (!this.clients.has(ws)) {
-      // Left while connecting; if nobody else is here, detach right away.
-      if (this.clients.size === 0) {
+      // Left while connecting; if nobody else is here and nothing is being
+      // recorded (or was asked to be), detach right away.
+      if (this.clients.size === 0 && !this.recordingId && !this.recordWanted) {
         const up = this.upstream;
         this.upstream = null;
         up?.kill();

@@ -40,6 +40,10 @@ exports.up = (pgm) => {
       default: pgm.func("'{}'::text[]"),
     },
     state: { type: "text", notNull: true },
+    // True once THIS session's create call made the actor. End deletes an
+    // actor only when this is set, so a name that belongs to someone else
+    // (collision) or was never created is never touched.
+    actor_owned: { type: "boolean", notNull: true, default: false },
     last_error: { type: "text" },
     created_at: {
       type: "timestamptz",

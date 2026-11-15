@@ -40,6 +40,8 @@ export interface SubstrateSession {
   egressPresets: string[];
   egressHosts: string[];
   state: SessionState;
+  /** This session created its actor (End may delete it). */
+  actorOwned: boolean;
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
@@ -90,6 +92,7 @@ interface Row {
   egress_presets: string[];
   egress_hosts: string[];
   state: SessionState;
+  actor_owned: boolean;
   last_error: string | null;
   created_at: Date | string;
   updated_at: Date | string;
@@ -111,6 +114,7 @@ export function fromRow(r: Row): SubstrateSession {
     egressPresets: r.egress_presets ?? [],
     egressHosts: r.egress_hosts ?? [],
     state: r.state,
+    actorOwned: Boolean(r.actor_owned),
     lastError: r.last_error,
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
@@ -130,7 +134,7 @@ export interface NewSession {
 }
 
 const COLS =
-  "id, actor_name, atespace, owner_subject, agent, sandbox_class, template, egress_presets, egress_hosts, state, last_error, created_at, updated_at, ended_at";
+  "id, actor_name, atespace, owner_subject, agent, sandbox_class, template, egress_presets, egress_hosts, state, actor_owned, last_error, created_at, updated_at, ended_at";
 
 export class SessionsStore {
   constructor(private readonly q: QueryFn) {}
@@ -228,6 +232,15 @@ export class SessionsStore {
       [id, from, to],
     );
     return (res.rowCount ?? 0) > 0;
+  }
+
+  /** Record that this session's create call made `actorName`. */
+  async markActorOwned(id: string, actorName: string): Promise<void> {
+    await this.q(
+      `UPDATE substrate_sessions SET actor_owned = true, updated_at = now()
+         WHERE id = $1 AND actor_name = $2`,
+      [id, actorName],
+    );
   }
 
   async markEnded(id: string): Promise<void> {

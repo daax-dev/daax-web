@@ -24,6 +24,7 @@ export class MemoryStore {
       ...s,
       id,
       state: "creating",
+      actorOwned: false,
       lastError: null,
       createdAt: now,
       updatedAt: now,
@@ -72,6 +73,10 @@ export class MemoryStore {
     r.actorName = to;
     return true;
   }
+  async markActorOwned(id: string, actorName: string) {
+    const r = this.rows.get(id);
+    if (r && r.actorName === actorName) r.actorOwned = true;
+  }
   async markEnded(id: string) {
     const r = this.rows.get(id);
     if (r && !r.endedAt) Object.assign(r, { state: "ended", endedAt: "now" });
@@ -80,7 +85,11 @@ export class MemoryStore {
 
 export function fakeBackend() {
   return {
-    spawn: vi.fn(async () => null),
+    // Like the real backend: report ownership once the actor is created.
+    spawn: vi.fn(async (spec: { onActorCreated?: () => Promise<void> }) => {
+      await spec.onActorCreated?.();
+      return null;
+    }),
     stop: vi.fn(async () => {}),
     suspend: vi.fn(async () => {}),
     resume: vi.fn(async () => {}),

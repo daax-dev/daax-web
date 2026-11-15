@@ -124,6 +124,19 @@ describe.skipIf(!configured)("substrate_sessions (Postgres)", () => {
     ).toBe(false);
   });
 
+  it("actor ownership starts false and is set only for the current name", async () => {
+    const s = await store.create({
+      ...base,
+      actorName: "daax-3333333333",
+      ownerSubject: "alice",
+    });
+    expect(s.actorOwned).toBe(false);
+    await store.markActorOwned(s.id, "daax-4444444444");
+    expect((await store.get(s.id))?.actorOwned).toBe(false);
+    await store.markActorOwned(s.id, "daax-3333333333");
+    expect((await store.get(s.id))?.actorOwned).toBe(true);
+  });
+
   it("rejects an unknown state", async () => {
     const s = await store.create({
       ...base,

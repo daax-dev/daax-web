@@ -37,12 +37,20 @@ describe("SubstrateBackend", () => {
     for (const k of ["createActor", "createEgress", "resumeActor"] as const)
       c[k].mockImplementation(async () => void order.push(k));
     const b = new SubstrateBackend({ cli: c, gateways });
+    const onActorCreated = vi.fn(async () => void order.push("owned"));
     await b.spawn({
+      onActorCreated,
       actorName: ACTOR,
       template: "claude-gvisor-x",
       egressHosts: ["registry.npmjs.org"],
     });
-    expect(order).toEqual(["createActor", "createEgress", "resumeActor"]);
+    expect(order).toEqual([
+      "createActor",
+      "owned",
+      "createEgress",
+      "resumeActor",
+    ]);
+    expect(onActorCreated).toHaveBeenCalledTimes(1);
     expect(c.createActor).toHaveBeenCalledWith(ACTOR, "claude-gvisor-x");
     const manifest = JSON.parse(c.createEgress.mock.calls[0][1]);
     expect(manifest.rules).toEqual([

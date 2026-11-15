@@ -39,6 +39,12 @@ export interface SubstrateSpawnSpec {
   template: string;
   /** Validated egress hosts (presets + extras) for TLS passthrough. */
   egressHosts: string[];
+  /**
+   * Called as soon as this spawn's create call has made the actor, before
+   * anything else, so the caller can record ownership (End deletes only
+   * owned actors).
+   */
+  onActorCreated?: () => Promise<void>;
 }
 
 export interface SubstrateSessionInfo extends BackendSessionInfo {
@@ -117,6 +123,7 @@ export class SubstrateBackend implements ExecutionBackend<
         await new Promise((r) => setTimeout(r, delay));
       }
     }
+    await spec.onActorCreated?.();
     await cli.createEgress(
       spec.actorName,
       renderEgressPolicy(this.deps.gateways, spec.egressHosts),

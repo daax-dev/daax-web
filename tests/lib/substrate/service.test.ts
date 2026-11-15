@@ -38,22 +38,27 @@ describe("createSession", () => {
     expect(res.body.egressHosts).toContain("registry.npmjs.org");
     expect(res.body.egressHosts).toContain("example.org");
     await settle();
-    expect(backend.spawn).toHaveBeenCalledWith({
-      actorName: res.body.actorName,
-      template: "codex-gvisor-abc",
-      egressHosts: res.body.egressHosts,
-    });
+    expect(backend.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorName: res.body.actorName,
+        template: "codex-gvisor-abc",
+        egressHosts: res.body.egressHosts,
+      }),
+    );
+    expect((await store.get(res.body.id))?.actorOwned).toBe(true);
     expect((await store.get(res.body.id))?.state).toBe("running");
   });
 
   it("a provisioning failure tears down the half-made actor and records a public reason", async () => {
     const { deps, backend, store, settle } = makeDeps();
     vi.spyOn(console, "error").mockImplementation(() => {});
-    backend.spawn.mockRejectedValueOnce(
-      new Error(
+    // The actor was created, then a later step failed.
+    backend.spawn.mockImplementationOnce(async (spec) => {
+      await spec.onActorCreated?.();
+      throw new Error(
         "ResourceExhausted: quota; token-file /run/secret/ate endpoint 10.128.0.5:8080",
-      ),
-    );
+      );
+    });
     const res = await createSession(deps, ALICE, { agent: "claude" });
     await settle();
     if (!res.ok) throw new Error("expected ok");
@@ -70,20 +75,55 @@ describe("createSession", () => {
     expect(backend.resume).not.toHaveBeenCalled();
   });
 
-  it("End during provisioning: whatever spawn creates afterwards is removed", async () => {
+  it("End before the actor exists deletes nothing; the create then cleans up what it made", async () => {
     let finishSpawn!: () => void;
     const { deps, backend, store, settle } = makeDeps();
     backend.spawn.mockImplementationOnce(
-      () => new Promise<null>((r) => (finishSpawn = () => r(null))),
+      (spec) =>
+        new Promise<null>(
+          (r) =>
+            (finishSpawn = async () => {
+              await spec.onActorCreated?.();
+              r(null);
+            }),
+        ),
+    );
+    const res = await createSession(deps, ALICE, { agent: "claude" });
+    if (!res.ok) throw new Error("expected ok");
+    // The candidate name may still belong to someone else: End must not
+    // touch it before this session's create call has confirmed it.
+    expect((await endSession(deps, ALICE, res.body.id)).ok).toBe(true);
+    expect(backend.stop).not.toHaveBeenCalled();
+    finishSpawn();
+    await settle();
+    expect(backend.stop).toHaveBeenCalledTimes(1);
+    expect(backend.stop).toHaveBeenCalledWith(res.body.actorName);
+    expect((await store.get(res.body.id))?.state).toBe("ended");
+  });
+
+  it("End during a create that collides never deletes the taken actor", async () => {
+    let reject!: (e: Error) => void;
+    const { deps, backend, settle } = makeDeps();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    backend.spawn.mockImplementationOnce(
+      () => new Promise<null>((_r, rj) => (reject = rj)),
     );
     const res = await createSession(deps, ALICE, { agent: "claude" });
     if (!res.ok) throw new Error("expected ok");
     expect((await endSession(deps, ALICE, res.body.id)).ok).toBe(true);
-    expect(backend.stop).toHaveBeenCalledTimes(1);
-    finishSpawn();
+    reject(new ActorNameTakenError(res.body.actorName));
     await settle();
-    expect(backend.stop).toHaveBeenCalledTimes(2);
-    expect((await store.get(res.body.id))?.state).toBe("ended");
+    expect(backend.stop).not.toHaveBeenCalled();
+    expect(backend.spawn).toHaveBeenCalledTimes(1); // no fresh-name retry after End
+  });
+
+  it("a create failure before the actor exists deletes nothing", async () => {
+    const { deps, backend, settle } = makeDeps();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    backend.spawn.mockRejectedValueOnce(new Error("permission denied"));
+    await createSession(deps, ALICE, { agent: "claude" });
+    await settle();
+    expect(backend.stop).not.toHaveBeenCalled();
   });
 
   it.each([

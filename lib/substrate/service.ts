@@ -191,15 +191,28 @@ export async function createSession(
     // record never points at an actor it does not own: End can then never
     // delete someone else's actor.
     let actorName = session.actorName;
+    // Set only once this session's create call made `actorName`: cleanup
+    // deletes nothing it did not create.
+    let created = false;
     for (let attempt = 0; ; attempt++) {
       try {
-        await deps.backend.spawn({ actorName, template, egressHosts: hosts });
+        const owned = actorName;
+        await deps.backend.spawn({
+          actorName,
+          template,
+          egressHosts: hosts,
+          onActorCreated: async () => {
+            created = true;
+            await deps.store.markActorOwned(session.id, owned);
+          },
+        });
         if (
           !(await deps.store.transition(session.id, ["creating"], "running"))
         ) {
           // Ended (or otherwise moved) while provisioning: whatever spawn
           // created after End's delete must not outlive the session.
-          await cleanup(deps, actorName, session.id);
+          if (created) await cleanup(deps, actorName, session.id);
+          await deps.store.markEnded(session.id);
         }
         return;
       } catch (err) {
@@ -219,9 +232,9 @@ export async function createSession(
           return;
         }
         // Never leave a half-made actor behind (e.g. created but with no
-        // egress policy): tear it down, then record the failure. An `error`
-        // session can only be ended, never resumed.
-        await cleanup(deps, actorName, session.id);
+        // egress policy): tear down what this session created, then record
+        // the failure. An `error` session can only be ended, never resumed.
+        if (created) await cleanup(deps, actorName, session.id);
         await deps.store.transition(
           session.id,
           ["creating"],
@@ -390,8 +403,13 @@ export async function endSession(
   ) {
     return fail(409, "invalid-state", `cannot end a ${s.state} session now`);
   }
+  // Re-read after taking the session to `ending`: no rename can happen any
+  // more (renames need `creating`), and ownership is current. An actor this
+  // session never confirmed creating is never deleted; a create still in
+  // flight sees `ending` and cleans up what it made itself.
+  const current = await deps.store.get(id);
   try {
-    await deps.backend.stop(s.actorName);
+    if (current?.actorOwned) await deps.backend.stop(current.actorName);
   } catch (err) {
     logFailure("end", id, err);
     const reason = publicReason(err);
