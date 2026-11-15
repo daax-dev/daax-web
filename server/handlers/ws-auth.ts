@@ -31,7 +31,11 @@
 import type { IncomingMessage } from "http";
 
 import { isLoopbackAddress } from "../../lib/net/loopback";
-import { verifyTicket, getWsTokenSecret } from "../../lib/ws-ticket";
+import {
+  verifyTicket,
+  getWsTokenSecret,
+  type SubstrateAttachClaim,
+} from "../../lib/ws-ticket";
 import { WS_TICKET_SUBPROTOCOL } from "../../lib/ws-ticket-protocol";
 import { isAllowedOrigin } from "../config/constants";
 import {
@@ -45,6 +49,8 @@ export type AuthDecision =
       user: string;
       method: "forwarded" | "ticket" | "bypass";
       hostShell: HostShellDecision;
+      /** Substrate attach grant carried by a ticket (dx#113), if any. */
+      substrate?: SubstrateAttachClaim;
     }
   | { ok: false; code: number; reason: string };
 
@@ -176,7 +182,20 @@ export function authenticateConnection(req: IncomingMessage): AuthDecision {
     } else {
       hostShell = decideHostShell(payload.sub);
     }
-    return { ok: true, user: payload.sub, method: "ticket", hostShell };
+    const claim = payload.substrate;
+    const substrate =
+      claim &&
+      typeof claim.session === "string" &&
+      typeof claim.actor === "string"
+        ? { session: claim.session, actor: claim.actor }
+        : undefined;
+    return {
+      ok: true,
+      user: payload.sub,
+      method: "ticket",
+      hostShell,
+      ...(substrate ? { substrate } : {}),
+    };
   }
 
   // No credentials.

@@ -193,3 +193,65 @@ journalctl --user -u daax-host -f
 
 `build` stops a running unit, rebuilds and starts it again. The routes arrive
 with the next `deploy-local.sh install-traefik-config` render.
+
+## Substrate execution backend (dx#113 / #114 / #118) — opt-in, off by default
+
+`DAAX_SUBSTRATE_ENABLED=1` adds a second execution backend: agent sessions as
+[Agent Substrate](https://github.com/agent-substrate/substrate) actors. Unset,
+nothing changes. The container backend stays the default, and
+`/api/substrate/*` answers 404 `substrate-disabled`. No env file in this
+directory enables it yet. In the split deploy, `daax-terminal` first needs
+`kubectl-ate` and a substrate identity (dx#121), and neither compose file
+passes these variables through today.
+
+Both planes read the same variables. The **web** plane runs the lifecycle
+(create, suspend, resume, end, list) and owns the `substrate_sessions` table.
+The **terminal** plane only attaches. It needs `DAAX_WS_TOKEN_SECRET`, because
+the attach grant is a WS ticket with a `substrate` claim. Without that secret,
+only the host-dev loopback operator can attach.
+
+| Variable | Required | Meaning |
+|---|---|---|
+| `DAAX_SUBSTRATE_ENABLED` | yes | `1` turns the backend on |
+| `DAAX_SUBSTRATE_ATESPACE` | yes | atespace the actors live in (e.g. `kinsale`) |
+| `DAAX_SUBSTRATE_KUBECONFIG` | one of | absolute kubeconfig path for the substrate cluster (dev: `~/.kube-substrate/config`) |
+| `DAAX_SUBSTRATE_IN_CLUSTER` | one of | `1` = in-cluster config. Exactly one of the two must be set; `~/.kube/config` is never used implicitly |
+| `DAAX_SUBSTRATE_LLM_HOST` | yes | LLM gateway Service host (e.g. `llm.kinsale-harness.svc.cluster.local`) |
+| `DAAX_SUBSTRATE_LLM_PORT` | no | default `4000` |
+| `DAAX_SUBSTRATE_ATE_BIN` | no | `kubectl-ate` path (default: `kubectl-ate` on PATH) |
+| `DAAX_SUBSTRATE_KUBE_CONTEXT` | no | kubeconfig context |
+| `DAAX_SUBSTRATE_TOKEN_FILE` | no | ate-api bearer token file (otherwise the shared `ate-client` identity) |
+| `DAAX_SUBSTRATE_ENDPOINT` | no | ate-api gRPC target override |
+| `DAAX_SUBSTRATE_TRANSPORT` | no | `proxy` (default: `kubectl ate proxy actor`), `router` (stub, pending dx#115/#121) |
+| `DAAX_SUBSTRATE_TEMPLATES_FILE` | no | substrate-harness `templates.env`; only its `TEMPLATE_DAAX_<AGENT>_<CLASS>=` keys (daax actor image, ptyd) are read, never the harness's ttyd templates |
+| `DAAX_SUBSTRATE_TEMPLATE_<AGENT>_<CLASS>` | no | per-template override, e.g. `DAAX_SUBSTRATE_TEMPLATE_CODEX_GVISOR` |
+| `DAAX_SUBSTRATE_DEFAULT_CLASS` | no | `gvisor` (default) or `microvm` |
+| `DAAX_SUBSTRATE_WATCHTOWER_HOOK_URL` | no | placeholder, see below |
+
+Sessions are persistent (dx#114). There is no idle or disconnect timeout.
+Closing the tab only detaches. **End session** is the only kill: it deletes
+the egress policy and then the actor.
+
+### Egress exceptions (dx#118)
+
+Every session gets its own EgressPolicy: **default-deny**, plus only the rules
+below. No rule ever opens a private range, and the `atenet-egress` lockdown
+stays in place.
+
+| Rule | Reason | Source |
+|---|---|---|
+| `http` → `$DAAX_SUBSTRATE_LLM_HOST:$DAAX_SUBSTRATE_LLM_PORT` | the LLM gateway; it holds every provider key for all five agents | always |
+| `http` → host:port of `DAAX_SUBSTRATE_WATCHTOWER_HOOK_URL` | Watchtower's Claude hook endpoint, through a gateway route (never `watchtower:4220` directly) | only when set; **placeholder** until that agentgateway route exists in substrate-harness |
+| `tlsPassthrough :443` → `registry.npmjs.org` | npm preset | user-selected |
+| `tlsPassthrough :443` → `pypi.org`, `files.pythonhosted.org` | PyPI preset | user-selected |
+| `tlsPassthrough :443` → `github.com`, `api.github.com`, `codeload.github.com`, `objects.githubusercontent.com`, `raw.githubusercontent.com` | GitHub preset (git remotes per dx#117 land here once decided) | user-selected |
+| `tlsPassthrough :443` → extra hosts | per-session additions | user-supplied, validated |
+
+User-supplied hosts are validated as in substrate-harness `harness/egress.go`.
+The following are refused:
+
+- IP literals
+- internal suffixes (`.svc`, `.cluster.local`, `.internal`, `.lan`, …)
+- rebinding/wildcard-DNS domains (`sslip.io`, `nip.io`, …)
+- over-broad wildcards (`*.github.io`, `*.co.uk`, …)
+- any concrete name that currently resolves to a private, CGNAT, loopback or link-local address
