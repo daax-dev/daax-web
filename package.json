@@ -54,10 +54,12 @@
     "rebuild-test": "./rebuild-test.sh",
     "rebuild-test:full": "./rebuild-test.sh --full",
     "rebuild-test:all": "./rebuild-test.sh --all",
-    "sync:issue-templates": "tsx scripts/sync-issue-templates.ts"
+    "sync:issue-templates": "tsx scripts/sync-issue-templates.ts",
+    "workers": "tsx scripts/workers-cli.ts"
   },
   "packageManager": "bun@1.3.9",
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.283",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-avatar": "^1.1.11",
@@ -87,6 +89,7 @@
     "@xyflow/react": "^12.10.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "croner": "10.0.1",
     "dockerode": "^4.0.9",
     "ghostty-web": "0.4.0-next.20.g1858a59",
     "glob": "^13.0.6",

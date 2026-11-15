@@ -20,6 +20,7 @@ import {
   Container,
   Kanban,
   MessageSquare,
+  UserCog,
 } from "lucide-react";
 import { McpIcon } from "@/components/icons/McpIcon";
 import {
@@ -50,6 +51,7 @@ const CARD_ICONS: Record<
   Container,
   Kanban,
   MessageSquare,
+  UserCog,
   Mcp: McpIcon,
   Provenance: ShieldCheck, // Use ShieldCheck as fallback until we have a custom logo
 };
