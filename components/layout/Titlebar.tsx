@@ -37,8 +37,10 @@ import {
   Boxes,
   FlaskConical,
   Radar,
+  Layers,
 } from "lucide-react";
 import { McpIcon } from "@/components/icons/McpIcon";
+import { useAdminAccess } from "@/hooks/use-admin-access";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
@@ -79,6 +81,7 @@ interface SubNavItem {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   subFeatureId: string; // Maps to ai-coding subFeature ID in settings
+  adminOnly?: boolean; // Shown only to admins (server-resolved, /api/auth/access)
 }
 
 // Default AI Coding submenu items - can be reordered via settings.subFeatureOrder["ai-coding"]
@@ -115,6 +118,12 @@ const DEFAULT_AI_CODING_ITEMS: SubNavItem[] = [
     subFeatureId: "agentview",
   },
   {
+    href: "/ai-coding/substrate",
+    label: "Substrate",
+    icon: Layers,
+    subFeatureId: "substrate",
+  },
+  {
     href: "/workflow-editor",
     label: "Workflow Editor",
     icon: Workflow,
@@ -143,6 +152,13 @@ const DEFAULT_AI_CODING_ITEMS: SubNavItem[] = [
     label: "API Tools",
     icon: Network,
     subFeatureId: "api-tools",
+  },
+  {
+    href: "/ai-coding/admin",
+    label: "Admin",
+    icon: ShieldCheck,
+    subFeatureId: "admin",
+    adminOnly: true,
   },
 ];
 
@@ -444,6 +460,7 @@ function ProjectTreeItem({
 
 export function Titlebar() {
   const pathname = usePathname();
+  const { isAdmin } = useAdminAccess();
   const {
     activeProject,
     setActiveProject,
@@ -793,12 +810,14 @@ export function Titlebar() {
                 DEFAULT_AI_CODING_ITEMS,
                 settings.subFeatureOrder["ai-coding"],
               )
-                .filter((item) =>
-                  isSubFeatureVisible(
-                    "ai-coding",
-                    item.subFeatureId,
-                    settings || undefined,
-                  ),
+                .filter(
+                  (item) =>
+                    (!item.adminOnly || isAdmin) &&
+                    isSubFeatureVisible(
+                      "ai-coding",
+                      item.subFeatureId,
+                      settings || undefined,
+                    ),
                 )
                 .map((item) => {
                   const Icon = item.icon;

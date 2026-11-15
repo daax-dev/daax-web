@@ -53,6 +53,21 @@ export interface SubstrateConfig {
    * default; when set it adds exactly one http rule for this URL's host:port.
    */
   watchtowerHook?: { host: string; port: number; url: string };
+  /**
+   * The LLM gateway's provider-key Secret (dx#123 AI Coding -> Admin). Unset
+   * unless `DAAX_SUBSTRATE_GATEWAY_NAMESPACE` is set; the admin key editor is
+   * then shown as not configured. Uses the same pinned cluster identity.
+   */
+  gateway?: GatewaySecretConfig;
+}
+
+export interface GatewaySecretConfig {
+  namespace: string;
+  /** Secret holding one data key per provider (`key`, `openai`, ...). */
+  secret: string;
+  /** Deployment restarted after a key write (keys are read at startup). */
+  deployment: string;
+  kubectlBin: string;
 }
 
 export type SubstrateConfigResult =
@@ -148,6 +163,24 @@ export function resolveSubstrateConfig(
     };
   }
 
+  let gateway: GatewaySecretConfig | undefined;
+  const gwNs = env.DAAX_SUBSTRATE_GATEWAY_NAMESPACE?.trim();
+  if (gwNs) {
+    const secret = env.DAAX_SUBSTRATE_GATEWAY_SECRET?.trim() || "llm-upstream";
+    const deployment = env.DAAX_SUBSTRATE_GATEWAY_DEPLOYMENT?.trim() || "llm";
+    if (![gwNs, secret, deployment].every((n) => NAME_RE.test(n))) {
+      return fail(
+        "DAAX_SUBSTRATE_GATEWAY_NAMESPACE / _SECRET / _DEPLOYMENT must be valid Kubernetes names",
+      );
+    }
+    gateway = {
+      namespace: gwNs,
+      secret,
+      deployment,
+      kubectlBin: env.DAAX_SUBSTRATE_KUBECTL_BIN?.trim() || "kubectl",
+    };
+  }
+
   return {
     enabled: true,
     config: {
@@ -164,6 +197,7 @@ export function resolveSubstrateConfig(
       llmPort,
       defaultClass,
       watchtowerHook,
+      gateway,
     },
   };
 }

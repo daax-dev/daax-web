@@ -12,6 +12,7 @@ import { NextRequest } from "next/server";
 import { requireAuthIdentity } from "@/lib/auth";
 import { createSession, listSessions } from "@/lib/substrate/service";
 import {
+  audited,
   callerFrom,
   respond,
   serverError,
@@ -59,7 +60,22 @@ export async function POST(request: NextRequest) {
     });
   }
   try {
-    return respond(await createSession(ctx.deps, who.caller, body));
+    const input = body as Record<string, unknown>;
+    const result = await createSession(ctx.deps, who.caller, input);
+    return respond(
+      await audited(
+        who.caller,
+        "substrate.create",
+        "/api/substrate/sessions",
+        result,
+        result.ok ? result.body.id : null,
+        {
+          agent: typeof input.agent === "string" ? input.agent : null,
+          sandboxClass: result.ok ? result.body.sandboxClass : null,
+          egressHosts: result.ok ? result.body.egressHosts : undefined,
+        },
+      ),
+    );
   } catch (err) {
     return serverError(err);
   }

@@ -8,6 +8,7 @@ import { NextRequest } from "next/server";
 import { requireAuthIdentity } from "@/lib/auth";
 import { resumeSession } from "@/lib/substrate/service";
 import {
+  audited,
   callerFrom,
   respond,
   serverError,
@@ -25,8 +26,15 @@ export async function POST(
   const who = await callerFrom(auth);
   if (!who.ok) return who.response;
   try {
+    const id = (await params).id;
     return respond(
-      await resumeSession(ctx.deps, who.caller, (await params).id),
+      await audited(
+        who.caller,
+        "substrate.resume",
+        "/api/substrate/sessions/:id/resume",
+        await resumeSession(ctx.deps, who.caller, id),
+        id,
+      ),
     );
   } catch (err) {
     return serverError(err);

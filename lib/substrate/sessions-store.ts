@@ -243,6 +243,25 @@ export class SessionsStore {
     );
   }
 
+  /**
+   * Record a replaced egress allowlist, only while the session is still in
+   * one of `states`. The updated session, or null if it moved on.
+   */
+  async updateEgress(
+    id: string,
+    states: readonly SessionState[],
+    presets: string[],
+    hosts: string[],
+  ): Promise<SubstrateSession | null> {
+    const { rows } = await this.q<Row>(
+      `UPDATE substrate_sessions SET egress_presets = $3, egress_hosts = $4, updated_at = now()
+         WHERE id = $1 AND ended_at IS NULL AND state = ANY($2::text[])
+         RETURNING ${COLS}`,
+      [id, states, presets, hosts],
+    );
+    return rows[0] ? fromRow(rows[0]) : null;
+  }
+
   async markEnded(id: string): Promise<void> {
     await this.q(
       `UPDATE substrate_sessions SET state = 'ended', ended_at = now(), updated_at = now() WHERE id = $1 AND ended_at IS NULL`,

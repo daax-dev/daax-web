@@ -15,9 +15,24 @@
  * Closing the socket detaches. The agent keeps running.
  */
 import { buildTerminalWsUrl } from "../websocket-utils";
-import type { SessionView, AttachGrant } from "./service";
+import type {
+  SessionView,
+  AttachGrant,
+  EgressCheck,
+  SubstrateUiConfig,
+} from "./service";
+import type { SubstrateAuditRow } from "./audit";
+import type { ProviderId, ProviderStatus } from "./provider-keys";
 
-export type { SessionView, AttachGrant };
+export type {
+  SessionView,
+  AttachGrant,
+  EgressCheck,
+  SubstrateUiConfig,
+  SubstrateAuditRow,
+  ProviderId,
+  ProviderStatus,
+};
 
 export interface CreateSessionRequest {
   agent: "claude" | "codex" | "gemini" | "opencode" | "copilot";
@@ -55,8 +70,13 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 const base = "/api/substrate/sessions";
 const enc = encodeURIComponent;
 
+export interface EgressUpdate {
+  egressPresets?: Array<"npm" | "pypi" | "github">;
+  egressHosts?: string[];
+}
+
 export const substrateApi = {
-  config: () => call<Record<string, unknown>>("/api/substrate/config"),
+  config: () => call<SubstrateUiConfig>("/api/substrate/config"),
   list: () => call<{ sessions: SessionView[] }>(base),
   get: (id: string) => call<SessionView>(`${base}/${enc(id)}`),
   create: (req: CreateSessionRequest) =>
@@ -71,6 +91,38 @@ export const substrateApi = {
     call<{ id: string; state: "ended" | "ending" }>(`${base}/${enc(id)}/end`, {
       method: "POST",
     }),
+  /** Replace a running/suspended session's egress allowlist (dx#123). */
+  updateEgress: (id: string, req: EgressUpdate) =>
+    call<SessionView>(`${base}/${enc(id)}/egress`, {
+      method: "PUT",
+      body: JSON.stringify(req),
+    }),
+  /** Inline validation; changes nothing. */
+  validateEgress: (req: EgressUpdate) =>
+    call<EgressCheck>("/api/substrate/egress/validate", {
+      method: "POST",
+      body: JSON.stringify(req),
+    }),
+  /** Admin: set/unset per provider (never a value). */
+  providerKeys: () =>
+    call<{ namespace: string; secret: string; providers: ProviderStatus[] }>(
+      "/api/substrate/admin/provider-keys",
+    ),
+  setProviderKey: (id: ProviderId, value: string) =>
+    call<{ id: ProviderId; set: boolean }>(
+      `/api/substrate/admin/provider-keys/${enc(id)}`,
+      { method: "PUT", body: JSON.stringify({ value }) },
+    ),
+  unsetProviderKey: (id: ProviderId) =>
+    call<{ id: ProviderId; set: boolean }>(
+      `/api/substrate/admin/provider-keys/${enc(id)}`,
+      { method: "DELETE" },
+    ),
+  /** Admin: newest substrate audit rows. */
+  audit: (limit = 200) =>
+    call<{ entries: SubstrateAuditRow[] }>(
+      `/api/substrate/admin/audit?limit=${limit}`,
+    ),
 };
 
 /**
