@@ -13,14 +13,8 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { AGENT_ICONS, AGENT_ACCENTS } from "@/components/icons/AgentIcons";
-import { getSettings, sortByAgentOrder } from "@/lib/settings";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { AgentLaunchDialog } from "@/components/ai-coding/substrate/AgentLaunchDialog";
 import {
   Tooltip,
   TooltipContent,
@@ -107,7 +101,6 @@ export function AgentTabsLayout() {
   const [editingName, setEditingName] = useState("");
   const [expandedTabId, setExpandedTabId] = useState<string | null>(null);
   const [launchDialogOpen, setLaunchDialogOpen] = useState(false);
-  const [selectedTool, setSelectedTool] = useState<AIToolId>("claude");
   const inputRef = useRef<HTMLInputElement>(null);
   // Tab DOM nodes by session id, so arrow-key navigation can move focus to the
   // newly selected tab (roving tabindex / WAI-ARIA tabs pattern).
@@ -580,65 +573,12 @@ export function AgentTabsLayout() {
         )}
       </div>
 
-      {/* Launch Agent Dialog */}
-      <Dialog open={launchDialogOpen} onOpenChange={setLaunchDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Launch New Agent</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-6 py-4">
-            <div>
-              <label className="text-sm font-medium mb-3 block">Agent:</label>
-              <div className="space-y-2">
-                {sortByAgentOrder(
-                  [
-                    { id: "claude", label: "Claude Code" },
-                    { id: "herdr-claude", label: "Herdr + Claude" },
-                    { id: "opencode", label: "OpenCode" },
-                    { id: "copilot", label: "GitHub Copilot" },
-                    { id: "gemini", label: "Gemini CLI" },
-                    { id: "codex", label: "Codex CLI" },
-                  ] as { id: AIToolId; label: string }[],
-                  (t) => t.id,
-                  getSettings().aiAgentOrder,
-                ).map(({ id, label }) => {
-                  const { Icon, accent } = TOOL_META[id];
-                  return (
-                    <label
-                      key={id}
-                      className="flex items-center gap-2 cursor-pointer"
-                    >
-                      <input
-                        type="radio"
-                        value={id}
-                        checked={selectedTool === id}
-                        onChange={(e) =>
-                          setSelectedTool(e.target.value as AIToolId)
-                        }
-                        className="text-primary"
-                      />
-                      <Icon className={cn("h-4 w-4", accent)} />
-                      <span>{label}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setLaunchDialogOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button onClick={() => launchSession(selectedTool)}>
-                Launch
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Launch Agent Dialog: backend (container | substrate), dx#123 */}
+      <AgentLaunchDialog
+        open={launchDialogOpen}
+        onOpenChange={setLaunchDialogOpen}
+        onLaunchContainer={launchSession}
+      />
     </div>
   );
 }

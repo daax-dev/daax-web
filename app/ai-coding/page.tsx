@@ -46,6 +46,7 @@ import { CloudProviderIcon } from "@/components/icons/CloudProviderIcons";
 import { AGENT_ICONS, AGENT_ACCENTS } from "@/components/icons/AgentIcons";
 import { TerminalRecordingsPanel } from "@/plugins/terminal-recorder";
 import { AgentTabsLayout } from "./AgentTabsLayout";
+import { AgentLaunchDialog } from "@/components/ai-coding/substrate/AgentLaunchDialog";
 import { McpStatusBar } from "@/components/session/McpStatusBar";
 
 // AI Tools available in the container
@@ -170,6 +171,8 @@ function AgentTreeLayout() {
   // Sub-feature visibility checks
   // Feature visibility - use state to avoid hydration mismatch
   const [showLocalAgents, setShowLocalAgents] = useState(true);
+  // Shared launcher with the backend choice (container | substrate), dx#123.
+  const [launchDialogOpen, setLaunchDialogOpen] = useState(false);
   const [showTailscaleAgents, setShowTailscaleAgents] = useState(true);
   const [showCloudAgents, setShowCloudAgents] = useState(true);
 
@@ -645,14 +648,26 @@ function AgentTreeLayout() {
           {/* Sidebar Header */}
           <div className="flex items-center justify-between px-4 py-2 border-b">
             <span className="text-sm font-semibold">AI Agents</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              onClick={() => setSidebarOpen(false)}
-            >
-              <PanelLeftClose className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setLaunchDialogOpen(true)}
+                aria-label="Launch new agent"
+                title="Launch new agent (container or substrate)"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setSidebarOpen(false)}
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
 
           {/* Agent Sections */}
@@ -1315,6 +1330,11 @@ function AgentTreeLayout() {
           )}
         </div>
       </div>
+      <AgentLaunchDialog
+        open={launchDialogOpen}
+        onOpenChange={setLaunchDialogOpen}
+        onLaunchContainer={(tool) => void handleCreateSession(tool)}
+      />
     </div>
   );
 }
