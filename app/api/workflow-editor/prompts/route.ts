@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import path from "path";
 import { expandPath, getSettings } from "@/lib/settings";
-import { confineToRoot, PathConfinementError } from "@/lib/path-confine";
+import { confineToRealRoot, PathConfinementError } from "@/lib/path-confine";
 import { requireAuth } from "@/lib/auth";
 
 interface PromptInfo {
@@ -146,6 +146,12 @@ async function loadPromptsFromDir(
 }
 
 export async function GET() {
+  // Defense-in-depth (A3): this read dumps `.claude/commands` prompt content;
+  // require auth in-handler so a disabled/bypassed middleware is not a total
+  // disclosure.
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   try {
     const settings = getSettings();
     const basePath = expandPath(settings.basePath);
@@ -264,7 +270,7 @@ export async function PUT(request: NextRequest) {
     }
 
     try {
-      filePath = confineToRoot(promptsRoot, ...segments);
+      filePath = confineToRealRoot(promptsRoot, ...segments);
     } catch (err) {
       if (err instanceof PathConfinementError) {
         return NextResponse.json(

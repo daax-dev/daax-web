@@ -1,5 +1,4 @@
-import { describe, it, expect } from "vitest";
-import { join } from "path";
+import { describe, it, expect, vi } from "vitest";
 
 /**
  * Tests for auth-paths.ts module
@@ -11,8 +10,8 @@ import { join } from "path";
  *
  * Key behaviors tested:
  * - Container mode: paths use /workspace/.daax/ when HOST_WORKSPACE_PATH is set
- * - Host mode: paths use ~/.daax-claude or ~/.local/share/opencode
- * - OpenCode respects XDG_DATA_HOME environment variable
+ * - Host mode: paths use ~/.daax-claude or ~/.daax-opencode (daax-scoped;
+ *   never the operator's real ~/.local/share/opencode or $XDG_DATA_HOME)
  * - initializeClaudeAuthDir exits process on failure (Claude is required)
  * - initializeOpenCodeAuthDir does NOT exit on failure (OpenCode is optional)
  *
@@ -92,11 +91,9 @@ function getOpenCodeAuthLocalPath(
     // Container mode: create inside the mounted workspace
     return `${CONTAINER_WORKSPACE_PATH}/.daax/opencode`;
   }
-  // Host mode: respect XDG_DATA_HOME if set
-  if (xdgDataHome && xdgDataHome.trim().length > 0) {
-    return join(xdgDataHome, "opencode");
-  }
-  return `${homedir}/.local/share/opencode`;
+  // Host mode: daax-scoped store; XDG_DATA_HOME is deliberately ignored
+  void xdgDataHome;
+  return `${homedir}/.daax-opencode`;
 }
 
 /**
@@ -112,11 +109,9 @@ function getOpenCodeAuthHostPath(
     // Container mode: translate to host path for Docker volume mount
     return `${hostWorkspacePath}/.daax/opencode`;
   }
-  // Host mode: same as local path
-  if (xdgDataHome && xdgDataHome.trim().length > 0) {
-    return join(xdgDataHome, "opencode");
-  }
-  return `${homedir}/.local/share/opencode`;
+  // Host mode: same as local path (daax-scoped; XDG_DATA_HOME ignored)
+  void xdgDataHome;
+  return `${homedir}/.daax-opencode`;
 }
 
 /**
@@ -316,30 +311,30 @@ describe("auth-paths", () => {
 
   describe("getOpenCodeAuthLocalPath", () => {
     describe("host mode without XDG_DATA_HOME", () => {
-      it("returns default .local/share/opencode path", () => {
+      it("returns the daax-scoped ~/.daax-opencode path", () => {
         const result = getOpenCodeAuthLocalPath("", TEST_HOMEDIR, undefined);
-        expect(result).toBe("/home/testuser/.local/share/opencode");
+        expect(result).toBe("/home/testuser/.daax-opencode");
       });
     });
 
     describe("host mode with XDG_DATA_HOME", () => {
-      it("respects XDG_DATA_HOME environment variable", () => {
+      it("ignores XDG_DATA_HOME (never the operator's real store)", () => {
         const result = getOpenCodeAuthLocalPath(
           "",
           TEST_HOMEDIR,
           "/custom/data/home",
         );
-        expect(result).toBe("/custom/data/home/opencode");
+        expect(result).toBe("/home/testuser/.daax-opencode");
       });
 
       it("ignores empty XDG_DATA_HOME", () => {
         const result = getOpenCodeAuthLocalPath("", TEST_HOMEDIR, "");
-        expect(result).toBe("/home/testuser/.local/share/opencode");
+        expect(result).toBe("/home/testuser/.daax-opencode");
       });
 
       it("ignores whitespace-only XDG_DATA_HOME", () => {
         const result = getOpenCodeAuthLocalPath("", TEST_HOMEDIR, "   ");
-        expect(result).toBe("/home/testuser/.local/share/opencode");
+        expect(result).toBe("/home/testuser/.daax-opencode");
       });
     });
 
@@ -357,20 +352,20 @@ describe("auth-paths", () => {
 
   describe("getOpenCodeAuthHostPath", () => {
     describe("host mode without XDG_DATA_HOME", () => {
-      it("returns default .local/share/opencode path", () => {
+      it("returns the daax-scoped ~/.daax-opencode path", () => {
         const result = getOpenCodeAuthHostPath("", TEST_HOMEDIR, undefined);
-        expect(result).toBe("/home/testuser/.local/share/opencode");
+        expect(result).toBe("/home/testuser/.daax-opencode");
       });
     });
 
     describe("host mode with XDG_DATA_HOME", () => {
-      it("respects XDG_DATA_HOME environment variable", () => {
+      it("ignores XDG_DATA_HOME (never the operator's real store)", () => {
         const result = getOpenCodeAuthHostPath(
           "",
           TEST_HOMEDIR,
           "/custom/data/home",
         );
-        expect(result).toBe("/custom/data/home/opencode");
+        expect(result).toBe("/home/testuser/.daax-opencode");
       });
     });
 
@@ -563,11 +558,11 @@ describe("auth-paths", () => {
 
         expect(fs.calls.mkdir).toHaveLength(1);
         expect(fs.calls.mkdir[0]).toEqual([
-          "/home/testuser/.local/share/opencode",
+          "/home/testuser/.daax-opencode",
           { recursive: true, mode: 0o755 },
         ]);
-        expect(result.localPath).toBe("/home/testuser/.local/share/opencode");
-        expect(result.hostPath).toBe("/home/testuser/.local/share/opencode");
+        expect(result.localPath).toBe("/home/testuser/.daax-opencode");
+        expect(result.hostPath).toBe("/home/testuser/.daax-opencode");
       });
 
       it("returns both local and host paths in container mode", () => {
@@ -606,7 +601,7 @@ describe("auth-paths", () => {
 
         expect(fs.calls.chown).toHaveLength(1);
         expect(fs.calls.chown[0]).toEqual([
-          "/home/testuser/.local/share/opencode",
+          "/home/testuser/.daax-opencode",
           1000,
           1000,
         ]);
@@ -674,7 +669,7 @@ describe("auth-paths", () => {
         // Should NOT exit - OpenCode is optional
         expect(process.exitCode).toBeNull();
         // Should still return paths
-        expect(result.localPath).toBe("/home/testuser/.local/share/opencode");
+        expect(result.localPath).toBe("/home/testuser/.daax-opencode");
       });
 
       it("warns but continues when chown fails", () => {
@@ -697,13 +692,13 @@ describe("auth-paths", () => {
           ),
         ).toBe(true);
         // Should still return paths
-        expect(result.localPath).toBe("/home/testuser/.local/share/opencode");
+        expect(result.localPath).toBe("/home/testuser/.daax-opencode");
         expect(process.exitCode).toBeNull();
       });
     });
 
     describe("XDG_DATA_HOME integration", () => {
-      it("uses XDG_DATA_HOME when set", () => {
+      it("ignores XDG_DATA_HOME and creates the daax-scoped store", () => {
         const fs = createMockFs({});
         const process = createMockProcess({ uid: 1000 });
         const console = createConsoleTracker();
@@ -719,11 +714,11 @@ describe("auth-paths", () => {
 
         expect(fs.calls.mkdir).toHaveLength(1);
         expect(fs.calls.mkdir[0]).toEqual([
-          "/custom/xdg/data/opencode",
+          "/home/testuser/.daax-opencode",
           { recursive: true, mode: 0o755 },
         ]);
-        expect(result.localPath).toBe("/custom/xdg/data/opencode");
-        expect(result.hostPath).toBe("/custom/xdg/data/opencode");
+        expect(result.localPath).toBe("/home/testuser/.daax-opencode");
+        expect(result.hostPath).toBe("/home/testuser/.daax-opencode");
       });
     });
   });
@@ -803,5 +798,31 @@ describe("auth-paths", () => {
 
       expect(process.exitCode).toBeNull();
     });
+  });
+});
+
+// The reference implementations above only mirror the module; this drives the
+// REAL server/docker/auth-paths.ts so the daax-scoped OpenCode store cannot
+// silently regress to the operator's real global credential store.
+describe("auth-paths module — OpenCode host mode (real implementation)", () => {
+  it("resolves to ~/.daax-opencode and ignores XDG_DATA_HOME", async () => {
+    const savedHost = process.env.HOST_WORKSPACE_PATH;
+    const savedXdg = process.env.XDG_DATA_HOME;
+    delete process.env.HOST_WORKSPACE_PATH;
+    process.env.XDG_DATA_HOME = "/custom/xdg/data";
+    try {
+      vi.resetModules();
+      const { homedir } = await import("os");
+      const mod = await import("@/server/docker/auth-paths");
+      const expected = `${homedir()}/.daax-opencode`;
+      expect(mod.getOpenCodeAuthLocalPath()).toBe(expected);
+      expect(mod.getOpenCodeAuthHostPath()).toBe(expected);
+    } finally {
+      if (savedHost === undefined) delete process.env.HOST_WORKSPACE_PATH;
+      else process.env.HOST_WORKSPACE_PATH = savedHost;
+      if (savedXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = savedXdg;
+      vi.resetModules();
+    }
   });
 });

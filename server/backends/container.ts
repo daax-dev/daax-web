@@ -169,7 +169,7 @@ export class ContainerBackend implements ExecutionBackend<
   attach(id: string, opts: AttachOptions): IPty {
     return spawnPty(
       "docker",
-      ["exec", "-it", id, "/bin/bash", "-l"],
+      ["exec", "-it", "--", id, "/bin/bash", "-l"],
       opts.cols,
       opts.rows,
       undefined,
@@ -235,9 +235,10 @@ export function buildShellCommand(
     shell = "docker";
 
     if (containerName) {
-      // Exec into existing container
+      // Exec into an existing container. `--` ends docker's option parsing so
+      // a client-supplied name starting with `-` can never be read as a flag.
       console.log(`Exec into container: ${containerName}`);
-      shellArgs = ["exec", "-it", containerName, "/bin/bash", "-l"];
+      shellArgs = ["exec", "-it", "--", containerName, "/bin/bash", "-l"];
     } else {
       // Run new container as vscode user (for pnpm-installed tools)
       // node-pty provides a PTY, so docker -it should work
@@ -312,22 +313,19 @@ export function buildShellCommand(
         //     daax-scoped Claude credential.
         //   - OpenCode, CONTAINER mode: daax-scoped to
         //     `${workspace}/.daax/opencode`.
-        //   - OpenCode, HOST mode: NOT daax-scoped. auth-paths.ts resolves this
-        //     to the operator's REAL global `~/.local/share/opencode` (or
-        //     $XDG_DATA_HOME/opencode) and mounts it read-WRITE into agent
-        //     containers. So the residual risk for OpenCode host mode is
-        //     exfiltration of the operator's REAL OpenCode credential (their
-        //     actual OpenCode identity), not a daax-scoped copy.
+        //   - OpenCode, HOST mode: daax-scoped to `~/.daax-opencode`
+        //     (auth-paths.ts), created empty and populated by `opencode auth
+        //     login` inside a daax container. The operator's real global
+        //     `~/.local/share/opencode` is never mounted.
         // Multi-tenancy (dx#119): the store is now PER OWNER
         // (`.daax/users/<owner>/…`, see getUserAuthPaths); only the operator and
         // the legacy-credentials admin keep the original shared dir.
         // Residual risk: untrusted agent code can read/exfiltrate the long-lived
-        // token in whichever store is mounted, and the store is shared across
-        // the same owner's daax agent sessions — with OpenCode host mode being the operator's real
-        // global credential (see above). Follow-up (tracked in the #195 decision
-        // log): a daax-scoped OpenCode store for host mode, plus per-session,
-        // short-lived scoped tokens so a compromised session cannot exfiltrate a
-        // durable credential or read another session's token.
+        // token in whichever daax-scoped store is mounted, and the store is
+        // shared across the same owner's daax agent sessions. Follow-up (tracked
+        // in the #195 decision log): per-session, short-lived scoped tokens so a
+        // compromised session cannot exfiltrate a durable credential or read
+        // another session's token.
         "-v",
         `${creds.claudeHostPath}:/home/vscode/.claude`, // Per-owner Claude auth (RW required — see note above)
         "-v",
