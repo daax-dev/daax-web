@@ -217,6 +217,19 @@ export class SessionsStore {
     return (res.rowCount ?? 0) > 0;
   }
 
+  /**
+   * Move a still-creating session to a fresh actor name (after a name
+   * collision). False if it is no longer creating or the name changed.
+   */
+  async renameActor(id: string, from: string, to: string): Promise<boolean> {
+    const res = await this.q(
+      `UPDATE substrate_sessions SET actor_name = $3, updated_at = now()
+         WHERE id = $1 AND actor_name = $2 AND state = 'creating' AND ended_at IS NULL`,
+      [id, from, to],
+    );
+    return (res.rowCount ?? 0) > 0;
+  }
+
   async markEnded(id: string): Promise<void> {
     await this.q(
       `UPDATE substrate_sessions SET state = 'ended', ended_at = now(), updated_at = now() WHERE id = $1 AND ended_at IS NULL`,

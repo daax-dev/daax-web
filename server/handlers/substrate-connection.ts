@@ -244,12 +244,12 @@ export class SubstrateHub {
   leave(ws: WebSocket): void {
     this.clients.delete(ws);
     if (this.clients.size === 0) {
-      if (this.recordingId) {
-        // Recording: keep the stream (and its tunnel) open with no viewers,
+      if (this.recordingId || this.recordWanted) {
+        // Recording (or asked to record, before the first output arrived): keep the stream (and its tunnel) open with no viewers,
         // so what the agent does while nobody watches is recorded too. It
         // ends with the stream itself (suspend, End, terminal shutdown) or
         // when a viewer stops the recording and leaves.
-        flushRecordingBuffer(this.sessionId);
+        if (this.recordingId) flushRecordingBuffer(this.sessionId);
         return;
       }
       const up = this.upstream;

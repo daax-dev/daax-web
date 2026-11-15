@@ -187,6 +187,25 @@ describe("SubstrateHub", () => {
     expect(rec.recordOutput).toHaveBeenCalledWith(SESSION, "two");
   });
 
+  it("a viewer who asked to record and left before any output keeps the stream recording", async () => {
+    const pty = fakePty();
+    const hub = new SubstrateHub(
+      SESSION,
+      ACTOR,
+      async () => pty as unknown as IPty,
+    );
+    const ws = fakeWs();
+    await hub.join(ws as unknown as WebSocket, {
+      record: true,
+      sessionType: "claude",
+    });
+    hub.leave(ws as unknown as WebSocket); // before the first output
+    expect(pty.kill).not.toHaveBeenCalled();
+    pty.emit("unattended");
+    expect(rec.startRecording).toHaveBeenCalledTimes(1);
+    expect(rec.recordOutput).toHaveBeenCalledWith(SESSION, "unattended");
+  });
+
   it("without a recording the last viewer leaving closes the stream", async () => {
     const pty = fakePty();
     const hub = new SubstrateHub(

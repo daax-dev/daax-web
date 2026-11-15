@@ -65,6 +65,13 @@ export class MemoryStore {
     r.lastError = lastError;
     return true;
   }
+  async renameActor(id: string, from: string, to: string) {
+    const r = this.rows.get(id);
+    if (!r || r.endedAt || r.state !== "creating" || r.actorName !== from)
+      return false;
+    r.actorName = to;
+    return true;
+  }
   async markEnded(id: string) {
     const r = this.rows.get(id);
     if (r && !r.endedAt) Object.assign(r, { state: "ended", endedAt: "now" });

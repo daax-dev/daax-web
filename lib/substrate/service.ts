@@ -186,38 +186,59 @@ export async function createSession(
   });
 
   const provision = (async () => {
-    try {
-      await deps.backend.spawn({
-        actorName: session.actorName,
-        template,
-        egressHosts: hosts,
-      });
-      if (!(await deps.store.transition(session.id, ["creating"], "running"))) {
-        // Ended (or otherwise moved) while provisioning: whatever spawn
-        // created after End's delete must not outlive the session.
-        await cleanup(deps, session.actorName, session.id);
+    // The name this session currently owns. A collision (the name was taken
+    // before we created anything) moves the session to a fresh name, so the
+    // record never points at an actor it does not own: End can then never
+    // delete someone else's actor.
+    let actorName = session.actorName;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await deps.backend.spawn({ actorName, template, egressHosts: hosts });
+        if (
+          !(await deps.store.transition(session.id, ["creating"], "running"))
+        ) {
+          // Ended (or otherwise moved) while provisioning: whatever spawn
+          // created after End's delete must not outlive the session.
+          await cleanup(deps, actorName, session.id);
+        }
+        return;
+      } catch (err) {
+        logFailure("create", session.id, err);
+        if (err instanceof ActorNameTakenError) {
+          const fresh = newActorName();
+          if (
+            attempt < MAX_NAME_ATTEMPTS - 1 &&
+            (await deps.store.renameActor(session.id, actorName, fresh))
+          ) {
+            actorName = fresh;
+            continue;
+          }
+          // Out of attempts (or ended meanwhile): this session owns no actor,
+          // so close the record without any substrate call.
+          await deps.store.markEnded(session.id);
+          return;
+        }
+        // Never leave a half-made actor behind (e.g. created but with no
+        // egress policy): tear it down, then record the failure. An `error`
+        // session can only be ended, never resumed.
+        await cleanup(deps, actorName, session.id);
+        await deps.store.transition(
+          session.id,
+          ["creating"],
+          "error",
+          `create: ${publicReason(err)}`,
+        );
+        return;
       }
-    } catch (err) {
-      logFailure("create", session.id, err);
-      // Never leave a half-made actor behind (e.g. created but with no
-      // egress policy): tear it down, then record the failure. An `error`
-      // session can only be ended, never resumed. A name that was already
-      // taken is someone else's actor: never touch it.
-      if (!(err instanceof ActorNameTakenError)) {
-        await cleanup(deps, session.actorName, session.id);
-      }
-      await deps.store.transition(
-        session.id,
-        ["creating"],
-        "error",
-        `create: ${publicReason(err)}`,
-      );
     }
   })();
   (deps.background ?? ((p) => void p))(provision);
 
   return ok<SessionView>(session, 202);
 }
+
+/** Fresh-name retries after an actor-name collision. */
+const MAX_NAME_ATTEMPTS = 3;
 
 function logFailure(op: string, id: string, err: unknown): void {
   console.error(

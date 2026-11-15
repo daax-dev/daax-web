@@ -223,17 +223,41 @@ describe("lifecycle", () => {
 });
 
 describe("Codex round 1 fixes", () => {
-  it("a name collision never deletes the existing (someone else's) actor", async () => {
+  it("a name collision moves the session to a fresh name; End never touches the taken one", async () => {
     const { deps, backend, store, settle } = makeDeps();
     vi.spyOn(console, "error").mockImplementation(() => {});
-    backend.spawn.mockRejectedValueOnce(
-      new ActorNameTakenError("daax-0123456789"),
-    );
+    backend.spawn.mockRejectedValueOnce(new ActorNameTakenError("taken"));
     const res = await createSession(deps, ALICE, { agent: "claude" });
     await settle();
     if (!res.ok) throw new Error("expected ok");
+    const taken = res.body.actorName;
+    const calls = backend.spawn.mock.calls as unknown as Array<
+      [{ actorName: string }]
+    >;
+    expect(calls).toHaveLength(2);
+    const fresh = calls[1][0].actorName;
+    expect(fresh).not.toBe(taken);
+    const row = await store.get(res.body.id);
+    expect(row).toMatchObject({ state: "running", actorName: fresh });
     expect(backend.stop).not.toHaveBeenCalled();
-    expect((await store.get(res.body.id))?.state).toBe("error");
+    expect((await endSession(deps, ALICE, res.body.id)).ok).toBe(true);
+    expect(backend.stop).toHaveBeenCalledTimes(1);
+    expect(backend.stop).toHaveBeenCalledWith(fresh);
+    expect(backend.stop).not.toHaveBeenCalledWith(taken);
+  });
+
+  it("if every name collides, the record closes without any substrate call", async () => {
+    const { deps, backend, store, settle } = makeDeps();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    backend.spawn.mockRejectedValue(new ActorNameTakenError("taken"));
+    const res = await createSession(deps, ALICE, { agent: "claude" });
+    await settle();
+    if (!res.ok) throw new Error("expected ok");
+    expect(backend.spawn).toHaveBeenCalledTimes(3);
+    expect((await store.get(res.body.id))?.state).toBe("ended");
+    const end = await endSession(deps, ALICE, res.body.id);
+    expect(!end.ok && end.status).toBe(404);
+    expect(backend.stop).not.toHaveBeenCalled();
   });
 
   it.each(["suspending", "resuming"] as const)(

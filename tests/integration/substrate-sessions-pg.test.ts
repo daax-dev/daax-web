@@ -105,6 +105,25 @@ describe.skipIf(!configured)("substrate_sessions (Postgres)", () => {
     ).resolves.toBeTruthy();
   });
 
+  it("renameActor only moves a still-creating session from the expected name", async () => {
+    const s = await store.create({
+      ...base,
+      actorName: "daax-eeeeeeeeee",
+      ownerSubject: "alice",
+    });
+    expect(
+      await store.renameActor(s.id, "daax-ffffffffff", "daax-1111111111"),
+    ).toBe(false);
+    expect(
+      await store.renameActor(s.id, "daax-eeeeeeeeee", "daax-1111111111"),
+    ).toBe(true);
+    expect((await store.get(s.id))?.actorName).toBe("daax-1111111111");
+    await store.transition(s.id, ["creating"], "running");
+    expect(
+      await store.renameActor(s.id, "daax-1111111111", "daax-2222222222"),
+    ).toBe(false);
+  });
+
   it("rejects an unknown state", async () => {
     const s = await store.create({
       ...base,
