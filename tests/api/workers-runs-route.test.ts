@@ -124,6 +124,20 @@ describe("auth / availability", () => {
     expect(m.cancel).not.toHaveBeenCalled();
   });
 
+  it("run reads are admin-only (workers:manage, 403 for a non-admin)", async () => {
+    m.requireRole.mockResolvedValue({
+      authorized: false,
+      response: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
+    });
+    expect((await runsGET(req("/x"), ctx())).status).toBe(403);
+    expect((await runGET(req("/x"), runCtx())).status).toBe(403);
+    expect(m.requireRole.mock.calls.map((c) => c[0])).toEqual([
+      "workers:manage",
+      "workers:manage",
+    ]);
+    expect(m.requireAuth).not.toHaveBeenCalled();
+  });
+
   it("503 when Postgres is not configured", async () => {
     m.isDbConfigured.mockReturnValue(false);
     expect((await runsPOST(req("/x", "POST", {}), ctx())).status).toBe(503);

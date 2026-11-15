@@ -1,11 +1,11 @@
 /**
  * /api/workers — list workers, create a worker (from a template or a body).
  *
- * GET: requireAuth. POST: requireRole("workers:manage").
+ * GET: requireRole("workers:manage") (admin-only until workers are owned). POST: requireRole("workers:manage").
  */
 
 import { NextResponse } from "next/server";
-import { requireAuth, requireRole } from "@/lib/auth";
+import { requireRole } from "@/lib/auth";
 import {
   dbUnavailable,
   engineAvailability,
@@ -22,8 +22,10 @@ import { parseWorkerCreate } from "@/lib/workers/validation";
 const ROUTE = "/api/workers";
 
 export async function GET() {
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  // Admin-only reads until workers carry an owner (instructions, run
+  // events and other users' asks are not tenant-scoped yet).
+  const auth = await requireRole("workers:manage", { route: ROUTE });
+  if (!auth.authorized) return auth.response;
   const unavailable = dbUnavailable();
   if (unavailable) return unavailable;
   try {

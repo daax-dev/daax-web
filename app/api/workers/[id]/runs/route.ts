@@ -1,12 +1,12 @@
 /**
  * /api/workers/[id]/runs — run history, and queue an ad hoc run / question.
  *
- * GET: requireAuth. POST: requireRole("workers:run").
+ * GET: requireRole("workers:manage") (admin-only until workers are owned). POST: requireRole("workers:run").
  * POST answers 202 with the queued run; the scheduler leader executes it.
  */
 
 import { NextResponse } from "next/server";
-import { requireAuth, requireRole } from "@/lib/auth";
+import { requireRole } from "@/lib/auth";
 import {
   dbUnavailable,
   jsonError,
@@ -25,8 +25,12 @@ import { parseRunRequest } from "@/lib/workers/validation";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(request: Request, { params }: Ctx) {
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  // Admin-only reads until workers carry an owner (instructions, run
+  // events and other users' asks are not tenant-scoped yet).
+  const auth = await requireRole("workers:manage", {
+    route: "/api/workers/[id]/runs",
+  });
+  if (!auth.authorized) return auth.response;
   const unavailable = dbUnavailable();
   if (unavailable) return unavailable;
   const { id } = await params;

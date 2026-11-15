@@ -69,7 +69,8 @@ describe("rbac permission resolution (F5 #101)", () => {
     expect(PERMISSIONS).toContain("workers:run");
     expect(ENFORCED_PERMISSIONS).toContain("workers:manage");
     expect(ENFORCED_PERMISSIONS).toContain("workers:run");
-    expect(roleHasPermission(DEFAULT_ROLE, "workers:run")).toBe(true);
+    // Admin-only until workers carry an owner (see lib/rbac/permissions.ts).
+    expect(roleHasPermission(DEFAULT_ROLE, "workers:run")).toBe(false);
     expect(roleHasPermission(DEFAULT_ROLE, "workers:manage")).toBe(false);
     expect(roleHasPermission(ADMIN_ROLE, "workers:manage")).toBe(true);
     expect(roleHasPermission(ADMIN_ROLE, "workers:run")).toBe(true);

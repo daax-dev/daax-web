@@ -533,12 +533,15 @@ export function Titlebar() {
 
     // Filter by visibility. "settings" is excluded here — it is rendered as a
     // fixed gear next to the user avatar and is not part of the reorderable nav.
+    // Digital workers are admin-only until workers carry an owner (the API
+    // answers 403 to everyone else), so the nav does not offer them either.
     return items.filter(
       (item) =>
         item.pluginId !== "settings" &&
+        (item.pluginId !== "workers" || isAdmin) &&
         isPluginVisible(item.pluginId, settings),
     );
-  }, [settings]);
+  }, [settings, isAdmin]);
 
   // Build the nested tree from the flat directory list, then hide any
   // directories the user disabled in settings (cascading to their children).

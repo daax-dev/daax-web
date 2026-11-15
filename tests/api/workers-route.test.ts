@@ -147,6 +147,24 @@ describe("auth gates", () => {
     expect(m.listWorkerSummaries).not.toHaveBeenCalled();
   });
 
+  it("reads are admin-only (workers:manage, 403 for a non-admin) until workers are owned", async () => {
+    deny403();
+    const results = await Promise.all([
+      listGET(),
+      detailGET(req("/x"), ctx()),
+      goalsGET(req("/x"), ctx()),
+    ]);
+    for (const r of results) expect(r.status).toBe(403);
+    expect(m.requireRole.mock.calls.map((c) => c[0])).toEqual([
+      "workers:manage",
+      "workers:manage",
+      "workers:manage",
+    ]);
+    expect(m.requireAuth).not.toHaveBeenCalled();
+    expect(m.listWorkerSummaries).not.toHaveBeenCalled();
+    expect(m.getWorker).not.toHaveBeenCalled();
+  });
+
   it("mutations require workers:manage and return 403 when denied", async () => {
     deny403();
     const results = await Promise.all([

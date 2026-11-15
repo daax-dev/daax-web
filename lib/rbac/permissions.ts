@@ -116,7 +116,9 @@ export const ROLE_PERMISSIONS: Readonly<Record<string, readonly Permission[]>> =
       "containers:write",
       "recording:write",
       "settings:write",
-      "workers:run",
+      // workers:run is admin-only until workers and runs carry an owner:
+      // a run executes on the shared Claude login and mounts the whole
+      // workspace (every tenant's .daax credential store).
     ]) as readonly Permission[],
   });
 

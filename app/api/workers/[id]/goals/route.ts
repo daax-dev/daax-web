@@ -1,11 +1,11 @@
 /**
  * /api/workers/[id]/goals — list and add goals.
  *
- * GET: requireAuth. POST: requireRole("workers:manage").
+ * GET: requireRole("workers:manage") (admin-only until workers are owned). POST: requireRole("workers:manage").
  */
 
 import { NextResponse } from "next/server";
-import { requireAuth, requireRole } from "@/lib/auth";
+import { requireRole } from "@/lib/auth";
 import {
   dbUnavailable,
   jsonError,
@@ -23,8 +23,12 @@ import { parseGoal } from "@/lib/workers/validation";
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_request: Request, { params }: Ctx) {
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  // Admin-only reads until workers carry an owner (instructions, run
+  // events and other users' asks are not tenant-scoped yet).
+  const auth = await requireRole("workers:manage", {
+    route: "/api/workers/[id]/goals",
+  });
+  if (!auth.authorized) return auth.response;
   const unavailable = dbUnavailable();
   if (unavailable) return unavailable;
   const { id } = await params;

@@ -1,11 +1,11 @@
 /**
  * /api/workers/[id] — worker detail (id or slug), update, delete.
  *
- * GET: requireAuth. PATCH/DELETE: requireRole("workers:manage").
+ * GET: requireRole("workers:manage") (admin-only until workers are owned). PATCH/DELETE: requireRole("workers:manage").
  */
 
 import { NextResponse } from "next/server";
-import { requireAuth, requireRole } from "@/lib/auth";
+import { requireRole } from "@/lib/auth";
 import {
   dbUnavailable,
   jsonError,
@@ -26,8 +26,10 @@ type Ctx = { params: Promise<{ id: string }> };
 const ROUTE = "/api/workers/[id]";
 
 export async function GET(_request: Request, { params }: Ctx) {
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  // Admin-only reads until workers carry an owner (instructions, run
+  // events and other users' asks are not tenant-scoped yet).
+  const auth = await requireRole("workers:manage", { route: ROUTE });
+  if (!auth.authorized) return auth.response;
   const unavailable = dbUnavailable();
   if (unavailable) return unavailable;
   const { id } = await params;

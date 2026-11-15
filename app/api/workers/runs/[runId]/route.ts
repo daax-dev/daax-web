@@ -1,12 +1,12 @@
 /**
  * /api/workers/runs/[runId] — a run with its event stream, and cancel.
  *
- * GET: requireAuth; `?after=<seq>` returns only newer events (polling).
+ * GET: requireRole("workers:manage") (admin-only until workers are owned); `?after=<seq>` returns only newer events (polling).
  * DELETE: requireRole("workers:run") — cancel a queued or running run.
  */
 
 import { NextResponse } from "next/server";
-import { requireAuth, requireRole } from "@/lib/auth";
+import { requireRole } from "@/lib/auth";
 import { dbUnavailable, jsonError, serverError } from "@/lib/workers/http";
 import { getScheduler } from "@/lib/workers/scheduler";
 import { failRunningRun, getRun, listRunEvents } from "@/lib/workers/store";
@@ -16,8 +16,12 @@ type Ctx = { params: Promise<{ runId: string }> };
 const EVENTS_PAGE = 500;
 
 export async function GET(request: Request, { params }: Ctx) {
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  // Admin-only reads until workers carry an owner (instructions, run
+  // events and other users' asks are not tenant-scoped yet).
+  const auth = await requireRole("workers:manage", {
+    route: "/api/workers/runs/[runId]",
+  });
+  if (!auth.authorized) return auth.response;
   const unavailable = dbUnavailable();
   if (unavailable) return unavailable;
   const { runId } = await params;
