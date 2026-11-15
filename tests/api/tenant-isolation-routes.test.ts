@@ -278,7 +278,9 @@ vi.mock("@/plugins/testcontainers/api/compose", () => tcApi);
 // ---- worktrees -------------------------------------------------------------
 vi.mock("@/lib/worktree-manager", () => ({
   resolveWorkspaceRoot: () => "/workspace",
-  isValidPath: () => true,
+  // Containment on a separator boundary (the real one also canonicalizes).
+  isValidPath: (p: string, base: string) =>
+    p === base || p.startsWith(base.replace(/\/+$/, "") + "/"),
   isValidBranchName: () => true,
   isGitRepo: async () => true,
   listBranches: async () => [],
@@ -927,5 +929,50 @@ describe("surfaces with no daax owner to filter on are admin-only", () => {
         })
       ).status,
     ).toBe(403);
+  });
+});
+
+// ===========================================================================
+describe("testcontainer / compose bind mounts stay inside the tenant boundary", () => {
+  const create = (source: string) =>
+    createTc(
+      req("POST", {
+        image: "redis",
+        volumes: [{ source, target: "/data" }],
+      }),
+    );
+
+  it("a user confined by mountRoot cannot bind another tenant's directory", async () => {
+    h.effective = { settings: { mountRoot: "users/a" }, locked: ["mountRoot"] };
+    as("A");
+    expect((await create("/workspace/users/b/data")).status).toBe(400);
+    expect((await create("/workspace/users/a/data")).status).toBe(201);
+  });
+
+  it.each([
+    "/workspace/.daax/users/bbbbbbbb",
+    "/workspace/.daax",
+    "/workspace",
+  ])("a user cannot bind %s (credential stores)", async (source) => {
+    as("A");
+    expect((await create(source)).status).toBe(400);
+    expect(h.tcOps).toEqual([]);
+  });
+
+  it("the admin is not narrowed by the tenant boundary", async () => {
+    as("ADMIN");
+    expect((await create("/workspace/users/b/data")).status).toBe(201);
+  });
+
+  it("a compose service binding .daax is refused before anything is stored", async () => {
+    as("A");
+    const res = await createCompose(
+      req("POST", {
+        name: "x",
+        yaml: "services:\n  db:\n    image: redis\n    volumes:\n      - /workspace/.daax:/x\n",
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(h.tcOps).toEqual([]);
   });
 });

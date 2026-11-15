@@ -18,8 +18,12 @@ vi.hoisted(() => {
 });
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
+  // /.dockerenv → container mode; /workspace/.daax exists (as it does in a
+  // real container-mode workspace).
   const existsSync = (path: import("node:fs").PathLike) =>
-    path === "/.dockerenv" ? true : actual.existsSync(path);
+    path === "/.dockerenv" || path === "/workspace/.daax"
+      ? true
+      : actual.existsSync(path);
   return { ...actual, existsSync, default: { ...actual, existsSync } };
 });
 
@@ -36,6 +40,7 @@ const h = vi.hoisted(() => {
     pty,
     spawn: vi.fn((..._args: unknown[]) => pty),
     owners: new Map<string, string | null>(),
+    aliases: new Map<string, string>(),
     validPathCalls: [] as Array<[string, string]>,
     recordings: [] as Array<{ id: string; owner?: string }>,
     startRecording: vi.fn((..._a: unknown[]) => "rec-new"),
@@ -53,11 +58,20 @@ vi.mock("@/server/sessions/session-manager", () => ({
   hasSession: () => true,
 }));
 vi.mock("@/lib/worktree-manager", () => ({
-  // Lexical stand-in for the canonical check: inside `base` iff it contains
-  // the base's last segment. Enough for the confinement calls made here.
+  // Stand-in for the real canonical check: translate the host workspace
+  // (/srv/ws) to the container namespace (/workspace), resolve the "symlink"
+  // aliases in h.aliases, then test containment on a separator boundary.
   isValidPath: (p: string, base: string) => {
     h.validPathCalls.push([p, base]);
-    return base.endsWith("/.daax") ? p.includes("/.daax") : true;
+    const canon = (x: string) => {
+      const t = x
+        .replace(/^\/srv\/ws(?=\/|$)/, "/workspace")
+        .replace(/\/+$/, "");
+      return h.aliases.get(t) ?? t;
+    };
+    const c = canon(p);
+    const b = canon(base);
+    return c === b || c.startsWith(b + "/");
   },
   resolveWorkspaceRoot: () => "/workspace",
 }));
@@ -176,6 +190,7 @@ beforeEach(() => {
   h.deleteRecording.mockClear();
   h.owners.clear();
   h.validPathCalls.length = 0;
+  h.aliases.clear();
   h.owners.set("daax-aaaaaaaa", A);
   h.owners.set("daax-bbbbbbbb", B);
   h.owners.set("daax-postgres", null);
@@ -367,14 +382,42 @@ describe("server-side settings from the ticket", () => {
     expect(typed).not.toContain("--dangerously-skip-permissions");
   });
 
-  it("an admin-set mountRoot narrows the mount confinement base", async () => {
-    await connect({
-      ticket: userTicket(A, {
+  it("an admin-set mountRoot confines the user's mounts to that subtree", async () => {
+    const ticket = () =>
+      userTicket(A, {
         settings: { mountRoot: "users/a" },
         locked: ["mountRoot"],
-      }),
+      });
+    const outside = await connect({ ticket: ticket() });
+    expect(outside.close).toHaveBeenCalledWith(1008, "Path not allowed");
+    expect(h.spawn).not.toHaveBeenCalled();
+
+    const inside = await connect({
+      ticket: ticket(),
+      query: {
+        cwd: "/workspace/users/a/repo",
+        mount: "/workspace/users/a/repo",
+      },
     });
-    expect(h.validPathCalls.map((c) => c[1])).toContain("/workspace/users/a");
+    expect(inside.close).not.toHaveBeenCalled();
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("an alias (symlink) of the workspace root still gets .daax shadowed", async () => {
+    h.aliases.set("/workspace/repo/rootlink", "/workspace");
+    await connect({
+      ticket: userTicket(A),
+      query: {
+        cwd: "/workspace/repo/rootlink",
+        mount: "/workspace/repo/rootlink",
+      },
+    });
+    expect(runArgs()).toContain("type=tmpfs,destination=/workspace/.daax");
+  });
+
+  it("a mount that does not contain .daax gets no shadow", async () => {
+    await connect({ ticket: userTicket(A) });
+    expect(runArgs().join(" ")).not.toContain("tmpfs");
   });
 
   it("a whole-workspace mount shadows .daax (every tenant's credentials)", async () => {

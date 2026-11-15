@@ -5,6 +5,7 @@
  */
 
 import { WebSocket } from "ws";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { IncomingMessage } from "http";
 import { getProjectInfo } from "../../lib/project-utils";
@@ -270,6 +271,13 @@ export async function handleConnection(
     ws.close(1008, "Path not allowed");
     return;
   }
+  // A mount that CONTAINS .daax (the workspace root, or any alias of it such
+  // as a symlink resolving to it) gets .daax shadowed by a tmpfs. Decided on
+  // canonical paths, like the confinement above, so an alias cannot dodge it.
+  // Only when it exists: Docker would otherwise create the mountpoint (an
+  // empty .daax/) inside the bind source on the host.
+  const daaxDir = join(resolveWorkspaceRoot(), ".daax");
+  const shadowDaax = existsSync(daaxDir) && isValidPath(daaxDir, mountPath);
 
   const sessionType = url.searchParams.get("sessionType") || "shell";
   const enableRecording =
@@ -299,6 +307,7 @@ export async function handleConnection(
     opencodeProvider,
     opencodeModel,
     principal,
+    shadowDaax,
   );
 
   // Check if node-pty is available
@@ -704,6 +713,7 @@ function buildShellCommand(
   opencodeProvider: string,
   opencodeModel: string,
   principal: Principal,
+  shadowDaax: boolean,
 ): { shell: string; shellArgs: string[] } {
   let shell: string;
   let shellArgs: string[];
@@ -743,12 +753,8 @@ function buildShellCommand(
         claudeHostPath: claudeAuthHostPath,
         openCodeHostPath: openCodeAuthHostPath,
       });
-      // A mount of the whole workspace would also expose `.daax/` — every
-      // tenant's credential store and the legacy shared one. Shadow it.
-      const mountsWorkspaceRoot =
-        !!HOST_WORKSPACE_PATH &&
-        mountPath.replace(/\/+$/, "") ===
-          HOST_WORKSPACE_PATH.replace(/\/+$/, "");
+      // A mount containing `.daax/` (every tenant's credential store and the
+      // legacy shared one) gets it shadowed; decided canonically by the caller.
 
       shellArgs = [
         "run",
@@ -773,7 +779,7 @@ function buildShellCommand(
         "vscode",
         "-v",
         `${mountPath}:${containerPath}`,
-        ...(mountsWorkspaceRoot
+        ...(shadowDaax
           ? ["--mount", `type=tmpfs,destination=${containerPath}/.daax`]
           : []),
         // SECURITY / issue #195 (Fable M5): credential mounts are read-WRITE by

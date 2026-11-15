@@ -62,8 +62,11 @@ host-dev operator has no subject or settings row and behaves as before.
 Each owner gets their own store at `.daax/users/<owner>/{claude,opencode}`,
 created with mode 0700 the first time it is used. When a container mounts the
 whole workspace, `.daax/` is hidden from it by a tmpfs mount, and a non-admin
-can never mount `.daax/` or anything inside it (canonical path check), so one
-user's container cannot reach another user's credentials.
+can never mount `.daax/` or anything inside it (canonical path checks, so a
+symlink alias of the workspace root is shadowed too). Testcontainer and compose
+bind mounts get the same boundary: inside the user's `mountRoot`, never inside
+or containing `.daax/`. One user's container cannot reach another user's
+credentials.
 
 **Migration (non-destructive):** nothing is moved or deleted. The existing
 shared `.daax/claude` (host mode: `~/.daax-claude`) keeps serving the local

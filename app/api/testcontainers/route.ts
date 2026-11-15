@@ -15,6 +15,7 @@ import {
 } from "@/plugins/testcontainers/api";
 import type { ContainerCreateRequest } from "@/plugins/testcontainers/types";
 import { requirePrincipal } from "@/lib/auth";
+import { tenantVolumeViolation } from "@/lib/tenancy/volumes";
 import {
   OWNER_LABEL,
   filterOwned,
@@ -180,6 +181,16 @@ export async function POST(request: Request) {
         { error: volumeCheck.reason || "Invalid volume source" },
         { status: 400 },
       );
+    }
+
+    // dx#119: a non-admin's binds also stay inside their own mount boundary
+    // and never reach the .daax credential stores.
+    const tenantViolation = await tenantVolumeViolation(
+      auth.principal,
+      body.volumes,
+    );
+    if (tenantViolation) {
+      return NextResponse.json({ error: tenantViolation }, { status: 400 });
     }
 
     // dx#119: stamp the owner AFTER the caller's labels so it cannot be spoofed.

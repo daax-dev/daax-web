@@ -15,6 +15,8 @@ import {
 } from "@/plugins/testcontainers/api";
 import type { ComposeCreateRequest } from "@/plugins/testcontainers/types/compose";
 import { requirePrincipal } from "@/lib/auth";
+import { tenantVolumeViolation } from "@/lib/tenancy/volumes";
+import { parseComposeYaml } from "@/plugins/testcontainers/lib/compose-parser";
 import { filterOwned, ownerKeyFor } from "@/lib/tenancy/ownership";
 
 export async function GET() {
@@ -85,6 +87,27 @@ export async function POST(request: Request) {
         { error: "YAML content is required" },
         { status: 400 },
       );
+    }
+
+    // dx#119: every service's binds stay inside the caller's mount boundary
+    // and away from the .daax credential stores (checked before anything is
+    // stored or started). An unparseable YAML is left to the create call.
+    if (!auth.principal.admin) {
+      let services: { volumes?: { source?: unknown }[] }[] = [];
+      try {
+        services = parseComposeYaml(body.yaml, body.name).services;
+      } catch {
+        services = [];
+      }
+      for (const service of services) {
+        const violation = await tenantVolumeViolation(
+          auth.principal,
+          service.volumes,
+        );
+        if (violation) {
+          return NextResponse.json({ error: violation }, { status: 400 });
+        }
+      }
     }
 
     const result = await createComposeProject({
