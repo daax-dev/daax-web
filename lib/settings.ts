@@ -269,6 +269,19 @@ export const DEFAULT_PLUGINS: PluginConfig[] = [
         description: "Coding agents as observed by the dist-agent daemon",
         maturity: "beta",
       },
+      {
+        id: "substrate",
+        name: "Substrate",
+        description:
+          "Persistent agent sessions on Agent Substrate (shown when the backend is enabled)",
+        maturity: "beta",
+      },
+      {
+        id: "admin",
+        name: "Admin",
+        description: "Substrate provider keys and audit log (admins only)",
+        maturity: "beta",
+      },
       // Agent categories (shown on main AI Coding page)
       {
         id: "local-agents",
