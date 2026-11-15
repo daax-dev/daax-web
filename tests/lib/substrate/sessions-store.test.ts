@@ -68,7 +68,7 @@ describe("SessionsStore", () => {
       createdAt: "2026-11-15T00:00:00.000Z",
     });
     const [sql, params] = q.mock.calls[0];
-    expect(sql).toMatch(/owner_subject = \$1/);
+    expect(sql).toMatch(/lower\(owner_subject\) = lower\(\$1\)/);
     expect(sql).toMatch(/ended_at IS NULL/);
     expect(params).toEqual(["alice"]);
   });

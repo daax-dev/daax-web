@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFileSync, unlinkSync, existsSync } from "fs";
 import { join } from "path";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
+import { recordingOr404 } from "@/lib/tenancy/http";
 import { isValidRecordingId } from "@/server/recording/recorder";
 import { RECORDINGS_DIR } from "@/server/config/constants";
 
@@ -31,8 +32,9 @@ export async function GET(
   context: RouteContext,
 ): Promise<NextResponse> {
   // Require authentication before reading recording data
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  // dx#119: owner-scoped; not-yours is a 404.
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
 
   try {
     const { id } = await context.params;
@@ -42,6 +44,8 @@ export async function GET(
         { status: 400 },
       );
     }
+    const denied = recordingOr404(auth.principal, id);
+    if (denied) return denied;
     const metaPath = join(RECORDINGS_DIR, `${id}.json`);
     const castPath = join(RECORDINGS_DIR, `${id}.cast`);
 
@@ -78,8 +82,9 @@ export async function DELETE(
   context: RouteContext,
 ): Promise<NextResponse> {
   // Require authentication for destructive operations
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  // dx#119: owner-scoped; not-yours is a 404.
+  const auth = await requirePrincipal("recording:write");
+  if (!auth.authorized) return auth.response;
 
   try {
     // Auth is checked before id validation: unauthenticated callers get 401
@@ -91,6 +96,8 @@ export async function DELETE(
         { status: 400 },
       );
     }
+    const denied = recordingOr404(auth.principal, id);
+    if (denied) return denied;
     const metaPath = join(RECORDINGS_DIR, `${id}.json`);
     const castPath = join(RECORDINGS_DIR, `${id}.cast`);
 

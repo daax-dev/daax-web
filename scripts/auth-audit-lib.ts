@@ -9,7 +9,8 @@ export const WRITE_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
 /**
  * A real auth-guard CALL site. Recognises an AWAITED invocation of
  * `requireAuth(`, `requireAuthOrThrow(`, `requireAuthIdentity(`, `requireRole(`,
- * or `requireSuperAdmin(` (F5, #101). `requireAuthIdentity` is `requireAuth`
+ * `requirePrincipal(` (dx#119 — the same trust + RBAC path as `requireRole`,
+ * optionally without a permission), or `requireSuperAdmin(` (F5, #101). `requireAuthIdentity` is `requireAuth`
  * plus the trusted subject: it returns the same 401 on the same decision. `requireRole`/`requireSuperAdmin` are STRONGER than `requireAuth` —
  * they require authentication AND a role — so a route guarded by one is guarded.
  *
@@ -25,7 +26,7 @@ export const WRITE_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
  * safe to reuse.
  */
 export const AUTH_GUARD_CALL_RE =
-  /\bawait\s+(?:requireAuth(?:OrThrow|Identity)?|requireRole|requireSuperAdmin)\s*\(/;
+  /\bawait\s+(?:requireAuth(?:OrThrow|Identity)?|requireRole|requirePrincipal|requireSuperAdmin)\s*\(/;
 
 /**
  * An import statement that brings in an auth guard (`requireAuth*`,
@@ -36,7 +37,7 @@ export const AUTH_GUARD_CALL_RE =
  * so it cannot greedily swallow across an intervening statement terminator.
  */
 export const AUTH_GUARD_IMPORT_RE =
-  /import\s+[^;]*?require(?:Auth|Role|SuperAdmin)[^;]*?from/;
+  /import\s+[^;]*?require(?:Auth|Role|Principal|SuperAdmin)[^;]*?from/;
 
 /**
  * Single-char tokens that, when they are the immediately-preceding SIGNIFICANT

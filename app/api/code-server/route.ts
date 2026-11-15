@@ -3,7 +3,8 @@ import { spawn, execFileSync } from "child_process";
 import { getProjectInfo } from "@/lib/project-utils";
 import { expandPath, isValidPort } from "@/lib/path-utils";
 import { getSettings } from "@/lib/settings";
-import { requireAuth } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
+import { adminOnly } from "@/lib/tenancy/http";
 import { confineToRoot, PathConfinementError } from "@/lib/path-confine";
 import { lstatSync, realpathSync } from "fs";
 import { basename, dirname, join, resolve, sep } from "path";
@@ -319,8 +320,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // never be reachable unauthenticated (#183). In host-dev with no proxy the
   // shared bypass returns the local operator; a present-but-empty forwarded
   // identity or strict mode (DAAX_REQUIRE_AUTH=1) fails closed with 401.
-  const auth = await requireAuth();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
+  // dx#119: code-server is one unauthenticated IDE over the WHOLE workspace
+  // (every tenant's files and the .daax credential stores), so only an admin
+  // may launch it.
+  if (!auth.principal.admin) return adminOnly();
 
   try {
     const body = await request.json();

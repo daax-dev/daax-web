@@ -45,9 +45,13 @@ vi.mock("dockerode", () => {
   return { default: MockDocker };
 });
 
-vi.mock("@/lib/auth", () => ({
-  requireAuth: mockRequireAuth,
-}));
+vi.mock("@/lib/auth", async () => {
+  const { principalFrom } = await import("../helpers/auth-principal");
+  return {
+    requireAuth: mockRequireAuth,
+    requirePrincipal: principalFrom(mockRequireAuth),
+  };
+});
 
 import { NextResponse } from "next/server";
 import { POST as start } from "@/app/api/containers/[id]/start/route";

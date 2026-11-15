@@ -75,7 +75,13 @@ const m = vi.hoisted(() => ({
 // Module mocks — full surface each handler imports; the mutation fns are the
 // hoisted spies, the read fns return inert values so authenticated paths run.
 // ---------------------------------------------------------------------------
-vi.mock("@/lib/auth", () => ({ requireAuth: m.requireAuth }));
+vi.mock("@/lib/auth", async () => {
+  const { principalFrom } = await import("../helpers/auth-principal");
+  return {
+    requireAuth: m.requireAuth,
+    requirePrincipal: principalFrom(m.requireAuth),
+  };
+});
 
 vi.mock("@/lib/mcp-registry", () => ({
   addMcp: m.addMcp,
@@ -572,7 +578,11 @@ describe("registry/catalog/release mutation routes require auth (#197)", () => {
 
       expect(res.status).not.toBe(401);
       // approveSubmission(id, reviewedBy, reviewNotes) — 2nd arg is the actor.
-      expect(m.approveSubmission).toHaveBeenCalledWith("x", "tester", undefined);
+      expect(m.approveSubmission).toHaveBeenCalledWith(
+        "x",
+        "tester",
+        undefined,
+      );
       expect(m.approveSubmission.mock.calls[0]?.[1]).toBe("tester");
       expect(m.approveSubmission.mock.calls[0]?.[1]).not.toBe("attacker");
     });

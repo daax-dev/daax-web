@@ -7,13 +7,21 @@
  * `local` / `shell-tmux` shells, because all of them are a node-pty spawn of a
  * local command. Sessions are ephemeral: the connection handler still sends
  * EOF then SIGTERM on WS close. `buildShellCommand` below is the original
- * function, byte for byte apart from the `export`.
+ * function, apart from the `export` and the multi-tenancy (dx#119) additions
+ * to `docker run`: the owner label, the owner's own credential store and the
+ * `.daax` tmpfs shadow.
  */
 import { DOCKER_NETWORK } from "../config/constants";
 import { getPty } from "../sessions/pty-loader";
 import type { IPty } from "../sessions/types";
 import { buildPtyEnv } from "../sessions/pty-env";
 import { isAiSessionName } from "../../lib/ai-session-name";
+import {
+  OWNER_LABEL,
+  ownerKeyFor,
+  type Principal,
+} from "../../lib/tenancy/ownership";
+import { getUserAuthPaths } from "../docker/auth-paths";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
@@ -48,6 +56,10 @@ export interface ContainerSpawnSpec {
   isOpenCodeSession: boolean;
   opencodeProvider: string;
   opencodeModel: string;
+  /** Who the session acts as (dx#119): owner label + credential store. */
+  principal: Principal;
+  /** Shadow `<containerPath>/.daax` with a tmpfs (decided canonically by the caller). */
+  shadowDaax: boolean;
   cwd: string;
   cols: number;
   rows: number;
@@ -131,6 +143,8 @@ export class ContainerBackend implements ExecutionBackend<
       spec.isOpenCodeSession,
       spec.opencodeProvider,
       spec.opencodeModel,
+      spec.principal,
+      spec.shadowDaax,
     );
   }
 
@@ -210,6 +224,8 @@ export function buildShellCommand(
   isOpenCodeSession: boolean,
   opencodeProvider: string,
   opencodeModel: string,
+  principal: Principal,
+  shadowDaax: boolean,
 ): { shell: string; shellArgs: string[] } {
   let shell: string;
   let shellArgs: string[];
@@ -241,12 +257,25 @@ export function buildShellCommand(
       const useTmux = !command; // Shell sessions get tmux, AI tools run directly
       const tmuxSessionName = `daax-${sessionId.slice(0, 8)}`;
 
+      // Multi-tenancy (dx#119): label the container with its owner so the
+      // listing/kill routes and `docker exec` can scope to it, and mount the
+      // owner's OWN credential store instead of the one shared dir.
+      const owner = ownerKeyFor(principal) ?? "unknown";
+      const creds = getUserAuthPaths(owner, {
+        claudeHostPath: claudeAuthHostPath,
+        openCodeHostPath: openCodeAuthHostPath,
+      });
+      // A mount containing `.daax/` (every tenant's credential store and the
+      // legacy shared one) gets it shadowed; decided canonically by the caller.
+
       shellArgs = [
         "run",
         "-it",
         "--rm",
         "--name",
         `daax-${sessionId.slice(0, 8)}`,
+        "--label",
+        `${OWNER_LABEL}=${owner}`,
         // SECURITY / issue #195 (Fable M5): agent containers reach `postgres`
         // via daax-net. Evaluated for segregation and DEFERRED, not fixed here:
         // daax-net is the shared plane for daax's own services (code-server, the
@@ -262,6 +291,9 @@ export function buildShellCommand(
         "vscode",
         "-v",
         `${mountPath}:${containerPath}`,
+        ...(shadowDaax
+          ? ["--mount", `type=tmpfs,destination=${containerPath}/.daax`]
+          : []),
         // SECURITY / issue #195 (Fable M5): credential mounts are read-WRITE by
         // necessity, documented accepted risk. Write-back is REQUIRED and `:ro`
         // would break auth persistence (AC#4):
@@ -286,17 +318,20 @@ export function buildShellCommand(
         //     containers. So the residual risk for OpenCode host mode is
         //     exfiltration of the operator's REAL OpenCode credential (their
         //     actual OpenCode identity), not a daax-scoped copy.
+        // Multi-tenancy (dx#119): the store is now PER OWNER
+        // (`.daax/users/<owner>/…`, see getUserAuthPaths); only the operator and
+        // the legacy-credentials admin keep the original shared dir.
         // Residual risk: untrusted agent code can read/exfiltrate the long-lived
         // token in whichever store is mounted, and the store is shared across
-        // daax agent sessions — with OpenCode host mode being the operator's real
+        // the same owner's daax agent sessions — with OpenCode host mode being the operator's real
         // global credential (see above). Follow-up (tracked in the #195 decision
         // log): a daax-scoped OpenCode store for host mode, plus per-session,
         // short-lived scoped tokens so a compromised session cannot exfiltrate a
         // durable credential or read another session's token.
         "-v",
-        `${claudeAuthHostPath}:/home/vscode/.claude`, // Persist Claude auth (RW required — see note above)
+        `${creds.claudeHostPath}:/home/vscode/.claude`, // Per-owner Claude auth (RW required — see note above)
         "-v",
-        `${openCodeAuthHostPath}:/home/vscode/.local/share/opencode`, // Persist OpenCode auth (RW required — see note above)
+        `${creds.openCodeHostPath}:/home/vscode/.local/share/opencode`, // Per-owner OpenCode auth (RW required — see note above)
         "-w",
         containerPath,
         "-e",

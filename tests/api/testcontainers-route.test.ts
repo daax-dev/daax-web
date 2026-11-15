@@ -18,7 +18,13 @@ const { mockRequireAuth, mockCreateContainer, mockCheckDockerStatus } =
     mockCheckDockerStatus: vi.fn(),
   }));
 
-vi.mock("@/lib/auth", () => ({ requireAuth: mockRequireAuth }));
+vi.mock("@/lib/auth", async () => {
+  const { principalFrom } = await import("../helpers/auth-principal");
+  return {
+    requireAuth: mockRequireAuth,
+    requirePrincipal: principalFrom(mockRequireAuth),
+  };
+});
 
 vi.mock("@/plugins/testcontainers/api", () => ({
   listContainers: vi.fn(),

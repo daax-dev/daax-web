@@ -8,7 +8,7 @@
  */
 import { NextRequest } from "next/server";
 
-import { requireAuthIdentity } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
 import { endSession, getSession } from "@/lib/substrate/service";
 import {
   audited,
@@ -21,11 +21,11 @@ import {
 type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, { params }: Ctx) {
-  const auth = await requireAuthIdentity();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
   const ctx = substrateDeps();
   if (!ctx.ok) return ctx.response;
-  const who = await callerFrom(auth);
+  const who = callerFrom(auth.principal);
   if (!who.ok) return who.response;
   try {
     return respond(await getSession(ctx.deps, who.caller, (await params).id));
@@ -35,11 +35,13 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
 }
 
 export async function DELETE(_req: NextRequest, { params }: Ctx) {
-  const auth = await requireAuthIdentity();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal("containers:write", {
+    route: "DELETE /api/substrate/sessions/:id",
+  });
+  if (!auth.authorized) return auth.response;
   const ctx = substrateDeps();
   if (!ctx.ok) return ctx.response;
-  const who = await callerFrom(auth);
+  const who = callerFrom(auth.principal);
   if (!who.ok) return who.response;
   try {
     const id = (await params).id;

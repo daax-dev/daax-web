@@ -9,14 +9,22 @@ import {
   getContainerStats,
   checkDockerStatus,
 } from "@/plugins/testcontainers/api";
+import { requirePrincipal } from "@/lib/auth";
+import { testcontainerOr404 } from "@/lib/tenancy/testcontainers";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
 export async function GET(_request: Request, { params }: RouteParams) {
+  // dx#119: owner-scoped; not-yours is a 404.
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
+
   try {
     const { id } = await params;
+    const denied = await testcontainerOr404(auth.principal, id);
+    if (denied) return denied;
 
     const status = await checkDockerStatus();
     if (!status.connected) {

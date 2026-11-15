@@ -1,15 +1,20 @@
 import "server-only";
 /**
  * Shared plumbing for /api/substrate/* (dx#113). Each route still calls
- * `requireAuthIdentity()` itself (the auth audit detects guards per file).
+ * `requirePrincipal()` itself (the auth audit detects guards per file).
  */
 import { NextResponse } from "next/server";
 
-import { resolveAccess, type IdentityResult } from "@/lib/auth";
+import type { Principal } from "@/lib/tenancy/ownership";
 import { isDbConfigured } from "@/lib/db/config";
 import { query } from "@/lib/db/pg";
 import { getSubstrateRuntime } from "@/server/backends/substrate-runtime";
-import { SessionsStore, type Caller, type QueryFn } from "./sessions-store";
+import {
+  callerFromPrincipal,
+  SessionsStore,
+  type Caller,
+  type QueryFn,
+} from "./sessions-store";
 import type { ServiceDeps, ServiceResult } from "./service";
 import {
   listSubstrateAudit,
@@ -82,22 +87,17 @@ export function substrateDeps():
 }
 
 /**
- * The owner identity for a session: the trusted subject, or `local` for the
- * host-dev operator (admin-equivalent, as `resolveAccess` treats it).
+ * The substrate caller for an authorized principal (dx#119): owner key (the
+ * trusted subject, or `local` for the host-dev operator), admin flag and
+ * permissions, all from `requirePrincipal`.
  */
-export async function callerFrom(
-  identity: Extract<IdentityResult, { authenticated: true }>,
-): Promise<
+export function callerFrom(
+  principal: Principal,
+):
   | { ok: true; caller: Caller & { operator: boolean } }
-  | { ok: false; response: NextResponse }
-> {
-  if (identity.operator) {
-    return {
-      ok: true,
-      caller: { subject: "local", isAdmin: true, operator: true },
-    };
-  }
-  if (!identity.subject) {
+  | { ok: false; response: NextResponse } {
+  const caller = callerFromPrincipal(principal);
+  if (!caller) {
     return {
       ok: false,
       response: NextResponse.json(
@@ -109,15 +109,7 @@ export async function callerFrom(
       ),
     };
   }
-  const access = await resolveAccess();
-  return {
-    ok: true,
-    caller: {
-      subject: identity.subject,
-      isAdmin: access.isAdmin,
-      operator: false,
-    },
-  };
+  return { ok: true, caller: { ...caller, operator: principal.operator } };
 }
 
 export function respond<T>(result: ServiceResult<T>): NextResponse {

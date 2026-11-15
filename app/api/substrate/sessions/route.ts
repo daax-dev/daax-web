@@ -9,7 +9,7 @@
  */
 import { NextRequest } from "next/server";
 
-import { requireAuthIdentity } from "@/lib/auth";
+import { requirePrincipal } from "@/lib/auth";
 import { createSession, listSessions } from "@/lib/substrate/service";
 import {
   audited,
@@ -20,11 +20,11 @@ import {
 } from "@/lib/substrate/route-helpers";
 
 export async function GET() {
-  const auth = await requireAuthIdentity();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
   const ctx = substrateDeps();
   if (!ctx.ok) return ctx.response;
-  const who = await callerFrom(auth);
+  const who = callerFrom(auth.principal);
   if (!who.ok) return who.response;
   try {
     return respond(await listSessions(ctx.deps, who.caller));
@@ -34,11 +34,13 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAuthIdentity();
-  if (!auth.authenticated) return auth.response;
+  const auth = await requirePrincipal("terminal:exec", {
+    route: "POST /api/substrate/sessions",
+  });
+  if (!auth.authorized) return auth.response;
   const ctx = substrateDeps();
   if (!ctx.ok) return ctx.response;
-  const who = await callerFrom(auth);
+  const who = callerFrom(auth.principal);
   if (!who.ok) return who.response;
   let body: unknown;
   try {

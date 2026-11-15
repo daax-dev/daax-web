@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { requirePrincipal } from "@/lib/auth";
+import { adminOnly } from "@/lib/tenancy/http";
 import { readFile, readdir } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
@@ -237,6 +239,12 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  // dx#119: these are the operator's own agent transcripts (no daax owner),
+  // so they are admin-only.
+  const auth = await requirePrincipal();
+  if (!auth.authorized) return auth.response;
+  if (!auth.principal.admin) return adminOnly();
+
   const { id } = await params;
   const { searchParams } = new URL(request.url);
   const format = searchParams.get("format") || "json";
