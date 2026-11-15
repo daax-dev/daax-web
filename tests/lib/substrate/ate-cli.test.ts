@@ -74,13 +74,13 @@ describe("AteCli", () => {
     expect(calls[0].env.KUBECONFIG).toBe(cfg.kubeconfig);
   });
 
-  it("in-cluster mode removes any inherited KUBECONFIG", () => {
+  it("in-cluster mode pins KUBECONFIG to an empty file, never ~/.kube/config", () => {
     const cli = new AteCli({ ateBin: "k", atespace: "a" });
     expect(
       cli.env({
         KUBECONFIG: "/home/u/.kube/config",
       } as unknown as NodeJS.ProcessEnv).KUBECONFIG,
-    ).toBe(undefined);
+    ).toBe("/dev/null");
     expect(cli.globalArgs()).toEqual([]);
   });
 

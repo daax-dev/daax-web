@@ -186,18 +186,70 @@ export async function createSession(
         template,
         egressHosts: hosts,
       });
-      await deps.store.transition(session.id, ["creating"], "running");
+      if (!(await deps.store.transition(session.id, ["creating"], "running"))) {
+        // Ended (or otherwise moved) while provisioning: whatever spawn
+        // created after End's delete must not outlive the session.
+        await cleanup(deps, session.actorName, session.id);
+      }
     } catch (err) {
-      await deps.store.setState(
+      logFailure("create", session.id, err);
+      // Never leave a half-made actor behind (e.g. created but with no
+      // egress policy): tear it down, then record the failure. An `error`
+      // session can only be ended, never resumed.
+      await cleanup(deps, session.actorName, session.id);
+      await deps.store.transition(
         session.id,
+        ["creating"],
         "error",
-        `create: ${(err as Error).message}`.slice(0, 2000),
+        `create: ${publicReason(err)}`,
       );
     }
   })();
   (deps.background ?? ((p) => void p))(provision);
 
   return ok<SessionView>(session, 202);
+}
+
+/**
+ * What a user may see about a substrate failure. Raw kubectl-ate stderr
+ * (endpoints, paths, identities) goes to the server log only.
+ */
+export function publicReason(err: unknown): string {
+  const s = String((err as Error)?.message ?? err).toLowerCase();
+  if (s.includes("timed out")) return "the substrate API timed out";
+  if (s.includes("not found")) return "the actor no longer exists";
+  if (s.includes("quota") || s.includes("resourceexhausted"))
+    return "the cluster has no capacity for this session";
+  if (s.includes("unavailable") || s.includes("connection refused"))
+    return "the substrate API is unavailable";
+  if (s.includes("permission") || s.includes("unauthenticated"))
+    return "daax is not authorized for this substrate operation";
+  return "the substrate operation failed (see server logs)";
+}
+
+function logFailure(op: string, id: string, err: unknown): void {
+  console.error(
+    `[substrate] ${op} failed for session ${id}: ${(err as Error)?.message ?? err}`,
+  );
+}
+
+/** True only for "already running"-style replies to a resume. */
+export function isAlreadyRunning(err: unknown): boolean {
+  return /already (running|resumed)|is already in state .*running/i.test(
+    String((err as Error)?.message ?? err),
+  );
+}
+
+async function cleanup(
+  deps: ServiceDeps,
+  actorName: string,
+  id: string,
+): Promise<void> {
+  try {
+    await deps.backend.stop(actorName);
+  } catch (err) {
+    logFailure("cleanup", id, err);
+  }
 }
 
 export async function listSessions(
@@ -247,12 +299,10 @@ export async function suspendSession(
   try {
     await deps.backend.suspend(s.actorName);
   } catch (err) {
-    await deps.store.setState(
-      id,
-      "running",
-      `suspend: ${(err as Error).message}`,
-    );
-    return fail(502, "substrate-error", (err as Error).message);
+    logFailure("suspend", id, err);
+    const reason = publicReason(err);
+    await deps.store.setState(id, "running", `suspend: ${reason}`);
+    return fail(502, "substrate-error", reason);
   }
   await deps.store.setState(id, "suspended");
   return ok({ ...s, state: "suspended" });
@@ -265,16 +315,19 @@ export async function resumeSession(
 ): Promise<ServiceResult<SessionView>> {
   const s = await deps.store.getVisible(caller, id);
   if (!s) return notFound();
-  if (!(await deps.store.transition(id, ["suspended", "error"], "resuming"))) {
+  // Only a suspended session resumes. An `error` session (failed create or
+  // failed end) can only be ended: its actor may lack its egress policy.
+  if (!(await deps.store.transition(id, ["suspended"], "resuming"))) {
     return fail(409, "invalid-state", `cannot resume a ${s.state} session`);
   }
   try {
     await deps.backend.resume(s.actorName);
   } catch (err) {
-    const msg = (err as Error).message;
-    if (!msg.toLowerCase().includes("running")) {
-      await deps.store.setState(id, s.state, `resume: ${msg}`);
-      return fail(502, "substrate-error", msg);
+    if (!isAlreadyRunning(err)) {
+      logFailure("resume", id, err);
+      const reason = publicReason(err);
+      await deps.store.setState(id, "suspended", `resume: ${reason}`);
+      return fail(502, "substrate-error", reason);
     }
   }
   await deps.store.setState(id, "running");
@@ -301,8 +354,10 @@ export async function endSession(
   try {
     await deps.backend.stop(s.actorName);
   } catch (err) {
-    await deps.store.setState(id, "error", `end: ${(err as Error).message}`);
-    return fail(502, "substrate-error", (err as Error).message);
+    logFailure("end", id, err);
+    const reason = publicReason(err);
+    await deps.store.setState(id, "error", `end: ${reason}`);
+    return fail(502, "substrate-error", reason);
   }
   await deps.store.markEnded(id);
   return ok({ id, state: "ended" as const });

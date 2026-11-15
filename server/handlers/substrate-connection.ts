@@ -99,7 +99,8 @@ export class SubstrateHub {
   private cols = DEFAULT_TERMINAL_COLS;
   private rows = DEFAULT_TERMINAL_ROWS;
   recordingId: string | undefined;
-  private recordWanted = false;
+  /** Auto-record on output (a viewer asked with ?record=true). */
+  recordWanted = false;
   private sessionType = "substrate";
 
   constructor(
@@ -164,13 +165,18 @@ export class SubstrateHub {
         cols: this.cols,
         rows: this.rows,
       });
+      // Only the CURRENT upstream may talk to viewers: a stream detached by
+      // leave() can still deliver data or its close after a new viewer has
+      // joined (fast refresh), and must not reach or disconnect them.
       pty.onData((data) => {
+        if (this.upstream !== pty) return;
         this.broadcast({ type: "output", data });
         this.maybeStartRecording();
         if (this.recordingId) recordOutput(this.sessionId, data);
       });
       pty.onExit(() => {
-        if (this.upstream === pty) this.upstream = null;
+        if (this.upstream !== pty) return;
+        this.upstream = null;
         if (this.recordingId) flushRecordingBuffer(this.sessionId);
         // The stream went away under attached viewers (actor suspended or
         // ended, tunnel lost). The session itself is not ended here.
@@ -209,7 +215,7 @@ export class SubstrateHub {
       await this.ensureUpstream();
     } catch (err) {
       this.clients.delete(ws);
-      this.pending = [];
+      if (this.clients.size === 0) this.pending = [];
       throw err;
     }
     if (!this.clients.has(ws)) {
@@ -324,6 +330,9 @@ export function handleSubstrateConnection(
     getRecordingId: () => hub.recordingId,
     setRecordingId: (id) => {
       hub.recordingId = id;
+      // An explicit stop (the session's recording is shared by its viewers)
+      // must not be undone by auto-start on the next output chunk.
+      if (id === undefined) hub.recordWanted = false;
     },
   };
   // Registered synchronously so nothing the client sends while the upstream

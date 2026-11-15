@@ -1,11 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   attachSession,
   createSession,
   endSession,
   getSession,
+  isAlreadyRunning,
   listSessions,
+  publicReason,
   resumeSession,
   suspendSession,
 } from "@/lib/substrate/service";
@@ -43,16 +45,44 @@ describe("createSession", () => {
     expect((await store.get(res.body.id))?.state).toBe("running");
   });
 
-  it("records a provisioning failure as state error (no retry timer, no kill)", async () => {
+  it("a provisioning failure tears down the half-made actor and records a public reason", async () => {
     const { deps, backend, store, settle } = makeDeps();
-    backend.spawn.mockRejectedValueOnce(new Error("quota exceeded"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    backend.spawn.mockRejectedValueOnce(
+      new Error(
+        "ResourceExhausted: quota; token-file /run/secret/ate endpoint 10.128.0.5:8080",
+      ),
+    );
     const res = await createSession(deps, ALICE, { agent: "claude" });
     await settle();
     if (!res.ok) throw new Error("expected ok");
     const row = await store.get(res.body.id);
     expect(row?.state).toBe("error");
-    expect(row?.lastError).toMatch(/quota exceeded/);
-    expect(backend.stop).not.toHaveBeenCalled();
+    expect(row?.lastError).toBe(
+      "create: the cluster has no capacity for this session",
+    );
+    expect(row?.lastError).not.toMatch(/token-file|10\.128/);
+    expect(backend.stop).toHaveBeenCalledWith(res.body.actorName);
+    // An errored session cannot be resumed (its actor may lack a policy).
+    const resumed = await resumeSession(deps, ALICE, res.body.id);
+    expect(!resumed.ok && resumed.status).toBe(409);
+    expect(backend.resume).not.toHaveBeenCalled();
+  });
+
+  it("End during provisioning: whatever spawn creates afterwards is removed", async () => {
+    let finishSpawn!: () => void;
+    const { deps, backend, store, settle } = makeDeps();
+    backend.spawn.mockImplementationOnce(
+      () => new Promise<null>((r) => (finishSpawn = () => r(null))),
+    );
+    const res = await createSession(deps, ALICE, { agent: "claude" });
+    if (!res.ok) throw new Error("expected ok");
+    expect((await endSession(deps, ALICE, res.body.id)).ok).toBe(true);
+    expect(backend.stop).toHaveBeenCalledTimes(1);
+    finishSpawn();
+    await settle();
+    expect(backend.stop).toHaveBeenCalledTimes(2);
+    expect((await store.get(res.body.id))?.state).toBe("ended");
   });
 
   it.each([
@@ -162,12 +192,14 @@ describe("lifecycle", () => {
 
   it("a failed suspend leaves the session running with the error", async () => {
     const { deps, backend, store, alice } = await seeded();
+    vi.spyOn(console, "error").mockImplementation(() => {});
     backend.suspend.mockRejectedValueOnce(new Error("snapshot failed"));
     const res = await suspendSession(deps, ALICE, alice.id);
     expect(!res.ok && res.status).toBe(502);
     const row = await store.get(alice.id);
     expect(row?.state).toBe("running");
-    expect(row?.lastError).toMatch(/snapshot failed/);
+    expect(row?.lastError).toMatch(/^suspend: /);
+    expect(row?.lastError).not.toMatch(/snapshot failed/);
   });
 
   it("end is the only kill: deletes actor + policy and hides the session", async () => {
@@ -181,10 +213,47 @@ describe("lifecycle", () => {
 
   it("a failed end keeps the record (state error) so End can be retried", async () => {
     const { deps, backend, store, alice } = await seeded();
+    vi.spyOn(console, "error").mockImplementation(() => {});
     backend.stop.mockRejectedValueOnce(new Error("api unavailable"));
     expect((await endSession(deps, ALICE, alice.id)).ok).toBe(false);
     expect((await store.get(alice.id))?.state).toBe("error");
     expect((await endSession(deps, ALICE, alice.id)).ok).toBe(true);
+  });
+});
+
+describe("failure reporting", () => {
+  it("only an explicit already-running reply counts as a successful resume", async () => {
+    expect(isAlreadyRunning(new Error("actor is already running"))).toBe(true);
+    expect(isAlreadyRunning(new Error("actor not running"))).toBe(false);
+    expect(isAlreadyRunning(new Error("failed to reach running state"))).toBe(
+      false,
+    );
+    const { deps, backend, store, alice } = await seeded();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await suspendSession(deps, ALICE, alice.id);
+    backend.resume.mockRejectedValueOnce(
+      new Error("failed to reach running state"),
+    );
+    const res = await resumeSession(deps, ALICE, alice.id);
+    expect(!res.ok && res.status).toBe(502);
+    expect((await store.get(alice.id))?.state).toBe("suspended");
+  });
+
+  it("never returns raw kubectl-ate stderr to the user", async () => {
+    const { deps, backend, alice } = await seeded();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    backend.stop.mockRejectedValueOnce(
+      new Error(
+        "rpc error: dial tcp 10.128.0.5:8080 via /home/u/.kube-substrate/config",
+      ),
+    );
+    const res = await endSession(deps, ALICE, alice.id);
+    expect(!res.ok && res.message).toBe(
+      "the substrate operation failed (see server logs)",
+    );
+    expect(publicReason(new Error("timed out after 30000ms"))).toMatch(
+      /timed out/,
+    );
   });
 });
 

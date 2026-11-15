@@ -57,11 +57,12 @@ export class MemoryStore {
     id: string,
     from: readonly SessionState[],
     to: SessionState,
+    lastError: string | null = null,
   ) {
     const r = this.rows.get(id);
     if (!r || r.endedAt || !from.includes(r.state)) return false;
     r.state = to;
-    r.lastError = null;
+    r.lastError = lastError;
     return true;
   }
   async markEnded(id: string) {

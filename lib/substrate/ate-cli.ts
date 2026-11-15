@@ -6,7 +6,8 @@
  *
  * The child env drops `KUBECONFIG` and re-pins it to the configured file, so a
  * stray `KUBECONFIG` (or the default `~/.kube/config`) can never select another
- * cluster. In-cluster mode sets no kubeconfig at all.
+ * cluster. In-cluster mode pins it to /dev/null (empty config, so the
+ * in-cluster service account is used, never ~/.kube/config).
  *
  * No `server-only` import: the terminal server uses `proxyArgs`.
  */
@@ -127,7 +128,10 @@ export class AteCli {
     for (const [k, v] of Object.entries(base)) {
       if (k !== "KUBECONFIG") out[k] = v;
     }
-    if (this.cfg.kubeconfig) out.KUBECONFIG = this.cfg.kubeconfig;
+    // In-cluster mode: point KUBECONFIG at an empty file so the loader can
+    // never pick up ~/.kube/config; an empty config falls back to the pod's
+    // in-cluster service-account config.
+    out.KUBECONFIG = this.cfg.kubeconfig ?? "/dev/null";
     return out;
   }
 

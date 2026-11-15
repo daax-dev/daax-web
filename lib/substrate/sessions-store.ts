@@ -207,11 +207,12 @@ export class SessionsStore {
     id: string,
     from: readonly SessionState[],
     to: SessionState,
+    lastError: string | null = null,
   ): Promise<boolean> {
     const res = await this.q(
-      `UPDATE substrate_sessions SET state = $3, last_error = NULL, updated_at = now()
+      `UPDATE substrate_sessions SET state = $3, last_error = $4, updated_at = now()
          WHERE id = $1 AND ended_at IS NULL AND state = ANY($2::text[])`,
-      [id, from, to],
+      [id, from, to, lastError],
     );
     return (res.rowCount ?? 0) > 0;
   }

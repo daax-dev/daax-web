@@ -112,10 +112,11 @@ export class SubstrateBackend implements ExecutionBackend<
     try {
       await cli.resumeActor(spec.actorName);
     } catch (err) {
+      // A new actor may already be running; anything else is a failure.
       if (
-        !String((err as Error).message)
-          .toLowerCase()
-          .includes("running")
+        !/already (running|resumed)|is already in state .*running/i.test(
+          String((err as Error).message),
+        )
       )
         throw err;
     }

@@ -311,3 +311,59 @@ describe("handleSubstrateConnection", () => {
     expect(ws.close).toHaveBeenCalledWith(1011, "attach failed");
   });
 });
+
+describe("SubstrateHub races (review fixes)", () => {
+  it("a stale stream's late close/data never reaches viewers who joined after it", async () => {
+    const ptys = [fakePty(), fakePty()];
+    // The first stream's close arrives late (not synchronously on kill()).
+    ptys[0].kill = vi.fn();
+    let i = 0;
+    const hub = new SubstrateHub(
+      SESSION,
+      ACTOR,
+      async () => ptys[i++] as unknown as IPty,
+    );
+    const oldTab = fakeWs();
+    await hub.join(oldTab as unknown as WebSocket, {
+      record: false,
+      sessionType: "s",
+    });
+    hub.leave(oldTab as unknown as WebSocket); // refresh: old tab gone
+    const newTab = fakeWs();
+    await hub.join(newTab as unknown as WebSocket, {
+      record: false,
+      sessionType: "s",
+    });
+    ptys[0].emit("stale");
+    ptys[0].drop(); // the old socket's close finally arrives
+    expect(newTab.close).not.toHaveBeenCalled();
+    expect(sent(newTab)).not.toContainEqual({ type: "output", data: "stale" });
+    ptys[1].emit("fresh");
+    expect(sent(newTab)).toContainEqual({ type: "output", data: "fresh" });
+  });
+
+  it("an explicit stopRecording is not undone by auto-start", async () => {
+    const pty = fakePty();
+    const backend = { attach: vi.fn(async () => pty as unknown as IPty) };
+    const ws = fakeWs();
+    handleSubstrateConnection(
+      ws as unknown as WebSocket,
+      new URL("ws://x/?mode=substrate&record=true"),
+      {
+        ok: true,
+        user: "alice",
+        method: "ticket",
+        hostShell: { ok: false, reason: "x" },
+        substrate: { session: SESSION, actor: ACTOR },
+      },
+      { ok: true, backend } as never,
+    );
+    await flush();
+    pty.emit("a");
+    expect(rec.startRecording).toHaveBeenCalledTimes(1);
+    ws.fire("message", JSON.stringify({ type: "stopRecording" }));
+    await flush();
+    pty.emit("b");
+    expect(rec.startRecording).toHaveBeenCalledTimes(1);
+  });
+});
