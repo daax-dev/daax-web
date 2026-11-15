@@ -1,6 +1,6 @@
 /**
  * Postgres persistence for server-side security settings (dx#119).
- * Schema: migrations/1781568000400_tenant-settings.js.
+ * Schema: migrations/1781568000500_tenant-settings.js.
  */
 import { query } from "@/lib/db/pg";
 import {
