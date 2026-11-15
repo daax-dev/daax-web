@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { readdirSync } from "node:fs";
 import path from "node:path";
 import { Client } from "pg";
 import { runner } from "node-pg-migrate";
@@ -101,14 +102,20 @@ describe.skipIf(!configured)("digital workers store (Postgres)", () => {
     await query("DELETE FROM workers");
   });
 
-  it("migration is the latest and round-trips down/up for all four tables", async () => {
-    const last = await query<{ name: string }>(
-      "SELECT name FROM pgmigrations ORDER BY run_on DESC, id DESC LIMIT 1",
+  it("migration is applied and round-trips down/up for all four tables", async () => {
+    const applied = await query<{ name: string }>(
+      "SELECT name FROM pgmigrations WHERE name = $1",
+      [MIGRATION],
     );
-    expect(last.rows[0].name).toBe(MIGRATION);
+    expect(applied.rows).toHaveLength(1);
     expect(await existingTables()).toEqual([...TABLES].sort());
 
-    await migrate("down", 1);
+    // Roll back this migration and every later one, however many land after
+    // it (same approach as substrate-sessions-pg.test.ts).
+    const later = readdirSync(MIGRATIONS_DIR).filter(
+      (f) => f.endsWith(".js") && f >= `${MIGRATION}.js`,
+    ).length;
+    await migrate("down", later);
     expect(await existingTables()).toEqual([]);
 
     await migrate("up");
