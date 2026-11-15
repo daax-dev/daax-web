@@ -21,6 +21,7 @@ import {
 } from "@/lib/devcontainer";
 import { getWorkflowFiles } from "@/lib/devcontainer/github-workflow";
 import type { DevContainerGeneratorInput } from "@/lib/devcontainer/types";
+import { requireAuth } from "@/lib/auth";
 
 // Repository paths
 const DEV_CONTAINERS_REPO = path.resolve(process.cwd(), "../dev-containers");
@@ -30,6 +31,13 @@ const WORKFLOWS_DIR = path.join(DEV_CONTAINERS_REPO, ".github/workflows");
  * GET handler for status checks
  */
 export async function GET(request: NextRequest) {
+  // Require authentication in-handler (A4 defense-in-depth): `init-workflows`
+  // writes files under ../dev-containers. This route was previously middleware-
+  // only; a per-route guard means a disabled/bypassed middleware is not a total
+  // authz failure (A3).
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   const { searchParams } = new URL(request.url);
   const action = searchParams.get("action");
 
@@ -65,6 +73,11 @@ export async function GET(request: NextRequest) {
  * POST handler for generating and pushing devcontainers
  */
 export async function POST(request: NextRequest) {
+  // Require authentication in-handler (A4 defense-in-depth): this route writes
+  // template files into the dev-containers repo. Previously middleware-only.
+  const auth = await requireAuth();
+  if (!auth.authenticated) return auth.response;
+
   const { searchParams } = new URL(request.url);
   const action = searchParams.get("action");
 

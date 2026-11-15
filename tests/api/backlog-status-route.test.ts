@@ -46,6 +46,22 @@ vi.mock("@/lib/settings", () => ({
   })),
 }));
 
+// POST now requires authentication in-handler (A4/A3). Mock it authenticated so
+// these tests exercise the action/path-validation logic (a dedicated 401 test
+// lives in tests/api/premortem-route-guards.test.ts).
+vi.mock("@/lib/auth", () => ({
+  requireAuth: vi.fn(async () => ({
+    authenticated: true,
+    user: {
+      username: "tester",
+      email: null,
+      groups: [],
+      authenticated: true,
+      pictureUrl: null,
+    },
+  })),
+}));
+
 import { GET, POST } from "@/app/api/backlog/status/route";
 import { backlogServer } from "@/server/backlog-server";
 
