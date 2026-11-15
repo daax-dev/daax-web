@@ -382,6 +382,11 @@ import {
 } from "@/app/api/settings/policy/route";
 import { PUT as putOverridesRoute } from "@/app/api/settings/policy/users/[subject]/route";
 import { POST as dockerPull } from "@/app/api/docker/pull/route";
+import { GET as listTranscripts } from "@/app/api/transcripts/route";
+import { GET as getTranscript } from "@/app/api/transcripts/[id]/route";
+import { GET as watchtowerAttention } from "@/app/api/watchtower/attention/route";
+import { GET as watchtowerTools } from "@/app/api/watchtower/sessions/[id]/tools/route";
+import { GET as agentviewGet } from "@/app/api/agentview/[...path]/route";
 import { sessionStore } from "@/lib/ai-sessions";
 
 const RECORDINGS = join(homedir(), ".daax", "recordings");
@@ -901,5 +906,25 @@ describe("docker pull", () => {
     expect((await dockerPull(req("POST", { image: "redis" }))).status).toBe(
       403,
     );
+  });
+});
+
+// ===========================================================================
+describe("surfaces with no daax owner to filter on are admin-only", () => {
+  it("transcripts, Watchtower and Agent View refuse a user (403)", async () => {
+    as("A");
+    expect((await listTranscripts()).status).toBe(403);
+    expect((await getTranscript(req(), ctx("id", "claude:x"))).status).toBe(
+      403,
+    );
+    expect((await watchtowerAttention(req())).status).toBe(403);
+    expect((await watchtowerTools(req(), ctx("id", "s1"))).status).toBe(403);
+    expect(
+      (
+        await agentviewGet(req(), {
+          params: Promise.resolve({ path: ["agents"] }),
+        })
+      ).status,
+    ).toBe(403);
   });
 });

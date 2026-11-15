@@ -88,6 +88,7 @@ vi.mock("@/server/recording/recorder", () => ({
 }));
 
 import { handleConnection } from "@/server/handlers/connection-handler";
+import { handleAttentionBridge } from "@/server/handlers/attention-bridge";
 import { _resetSeenJti } from "@/server/handlers/ws-auth";
 import { mintTicket, type TicketClaims } from "@/lib/ws-ticket";
 import { permissionsForRoles } from "@/lib/rbac/permissions";
@@ -430,5 +431,29 @@ describe("recordings over the WS message channel", () => {
     onData("hello");
     sendMsg(ws, { type: "startRecording" });
     expect(h.startRecording).not.toHaveBeenCalled();
+  });
+});
+
+describe("the attention stream", () => {
+  it("is refused for a user (every agent's live events, no owner to filter)", () => {
+    const client = {
+      send: vi.fn(),
+      on: vi.fn(),
+      close: vi.fn(),
+      readyState: 1,
+    };
+    const req = {
+      url: "/?stream=attention",
+      socket: { remoteAddress: "172.18.0.1" },
+      headers: {
+        origin: ORIGIN,
+        "sec-websocket-protocol": `daax-ws-ticket, ${userTicket(A)}`,
+      },
+    } as unknown as IncomingMessage;
+    handleAttentionBridge(client as unknown as WebSocket, req);
+    expect(client.close).toHaveBeenCalledWith(
+      1008,
+      "attention stream is admin-only",
+    );
   });
 });

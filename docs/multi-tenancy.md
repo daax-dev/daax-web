@@ -34,6 +34,7 @@ daax-web isolates authenticated users from each other. Decision: daax-dev/dx#119
 | `docker pull`                                            | `containers:write`     | yes           | yes   |
 | Worktree list                                            | authenticated          | main + own    | all   |
 | Worktree create / remove                                 | `terminal:exec`        | own           | all   |
+| Transcripts, Watchtower board/stream, Agent View proxy   | admin only             | no            | yes   |
 | Own security settings (`PUT /api/settings/user`)         | `settings:write`       | own, unlocked | own   |
 | Policy, locks, per-user overrides                        | `admin:settings:write` | no            | yes   |
 
@@ -68,6 +69,11 @@ shared store, unset the variable and remove the directory.
 
 The substrate backend uses no sandbox credentials (provider keys stay in the
 agentgateway LLM gateway), so none of this applies to it.
+
+Transcripts (the operator's `~/.claude/projects`), the Watchtower attention
+board and its WS stream, and the Agent View proxy carry other agents' data that
+has no daax owner to filter on. They are admin-only until those sessions are
+stamped with an owner.
 
 ## Not isolated (yet)
 

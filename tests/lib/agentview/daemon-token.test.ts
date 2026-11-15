@@ -11,7 +11,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const { mockRequireAuth } = vi.hoisted(() => ({ mockRequireAuth: vi.fn() }));
-vi.mock("@/lib/auth", () => ({ requireAuth: mockRequireAuth }));
+vi.mock("@/lib/auth", async () => {
+  const { principalFrom } = await import("../../helpers/auth-principal");
+  return {
+    requireAuth: mockRequireAuth,
+    requirePrincipal: principalFrom(mockRequireAuth),
+  };
+});
 
 import { fetchDaemon } from "@/lib/agentview/server";
 import { GET } from "@/app/api/agentview/[...path]/route";
