@@ -1,15 +1,23 @@
 /**
- * Worktree ownership markers against a real git repository (dx#119).
+ * Worktree ownership against a real git repository (dx#119). The owner is
+ * kept in daax's state dir, never in the tenant-writable workspace.
  * Skips when git is not available.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   createWorktree,
+  forgetWorktreeOwner,
   getWorktreeOwner,
   listWorktrees,
 } from "@/lib/worktree-manager";
@@ -25,8 +33,11 @@ try {
 
 describe.skipIf(!hasGit)("worktree owner markers", () => {
   let repo: string;
+  let state: string;
   beforeAll(() => {
     repo = realpathSync(mkdtempSync(join(tmpdir(), "daax-wt-owner-")));
+    state = mkdtempSync(join(tmpdir(), "daax-wt-state-"));
+    process.env.DAAX_WORKTREE_OWNERS_FILE = join(state, "owners.json");
     const git = (...args: string[]) =>
       execFileSync("git", args, { cwd: repo, stdio: "ignore" });
     git("init", "-q", "-b", "main");
@@ -42,9 +53,13 @@ describe.skipIf(!hasGit)("worktree owner markers", () => {
       "init",
     );
   });
-  afterAll(() => rmSync(repo, { recursive: true, force: true }));
+  afterAll(() => {
+    delete process.env.DAAX_WORKTREE_OWNERS_FILE;
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(state, { recursive: true, force: true });
+  });
 
-  it("records the owner outside the working tree and reads it back", async () => {
+  it("records the owner outside the workspace and reads it back", async () => {
     const wt = await createWorktree({
       projectPath: repo,
       branchName: "tenant-a",
@@ -57,6 +72,23 @@ describe.skipIf(!hasGit)("worktree owner markers", () => {
       cwd: wt.path,
     }).toString();
     expect(status).toBe("");
+    // Nothing owner-related lands in git's admin dir (tenant-writable).
+    const adminDir = join(repo, ".git", "worktrees", "tenant-a");
+    expect(readdirSync(adminDir).some((f) => /owner/i.test(f))).toBe(false);
+    expect(existsSync(process.env.DAAX_WORKTREE_OWNERS_FILE!)).toBe(true);
+  });
+
+  it("forgetting a worktree drops its owner record", async () => {
+    const wt = await createWorktree({
+      projectPath: repo,
+      branchName: "tenant-a-2",
+      owner: A,
+    });
+    forgetWorktreeOwner(wt.path);
+    expect(await getWorktreeOwner(wt.path)).toEqual({
+      owner: null,
+      main: false,
+    });
   });
 
   it("the main worktree is shared (no owner, main=true)", async () => {

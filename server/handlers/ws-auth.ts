@@ -27,8 +27,9 @@
  * Multi-tenancy (dx#119): each accepted decision also carries a `principal`
  * (subject, admin, permissions) and, for a ticket, the server-resolved
  * settings `policy`. This plane has no Postgres, so a ticket's signed claims are
- * the source of truth; a bare forwarded identity is an admin only when it is a
- * `DAAX_ADMIN_USERS` subject and otherwise has no permissions. When Traefik
+ * the source of truth. A bare forwarded identity (no ticket) has no
+ * permissions when ticketing is configured; without ticketing it is an admin
+ * only when it is a `DAAX_ADMIN_USERS` subject. When Traefik
  * forwards an identity AND a ticket is offered, the ticket is verified and must
  * name the same subject.
  *
@@ -181,20 +182,25 @@ export function authenticateConnection(req: IncomingMessage): AuthDecision {
     .trim();
   const ticket = extractTicket(req.headers["sec-websocket-protocol"]);
   if (xUser && loopback && !ticket) {
-    // No Postgres on this plane, so roles cannot be resolved for a bare
-    // forwarded identity. Only a DAAX_ADMIN_USERS subject is known to be an
-    // admin; anyone else gets no permissions and must present a ticket, which
-    // carries the RBAC the app resolved (dx#119, fail closed).
+    // No Postgres on this plane, so roles and settings locks cannot be
+    // resolved for a bare forwarded identity (dx#119, fail closed):
+    //   - ticketing configured (DAAX_WS_TOKEN_SECRET): the app always mints a
+    //     ticket, so a ticketless upgrade gets NO permissions — the signed
+    //     claims are the only authority, for admins too (a role revoked in the
+    //     DB or a lock on the subject must not be skippable by omitting it);
+    //   - no ticketing (host-dev behind Traefik): only a DAAX_ADMIN_USERS
+    //     subject is known to be an admin; anyone else gets no permissions.
     const hostShell = decideHostShell(xUser);
     const subject = canonicalizeSubject(xUser);
-    const principal: Principal = hostShell.ok
-      ? {
-          subject,
-          operator: false,
-          admin: true,
-          permissions: ADMIN_PERMISSIONS,
-        }
-      : { subject, operator: false, admin: false, permissions: [] };
+    const principal: Principal =
+      hostShell.ok && !getWsTokenSecret()
+        ? {
+            subject,
+            operator: false,
+            admin: true,
+            permissions: ADMIN_PERMISSIONS,
+          }
+        : { subject, operator: false, admin: false, permissions: [] };
     return { ok: true, user: xUser, method: "forwarded", hostShell, principal };
   }
 

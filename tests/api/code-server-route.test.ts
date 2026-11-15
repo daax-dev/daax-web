@@ -95,9 +95,13 @@ vi.mock("child_process", async () => {
 });
 
 // Deterministic auth gate — flipped per-test to exercise the 401 path.
-vi.mock("@/lib/auth", () => ({
-  requireAuth: mockRequireAuth,
-}));
+vi.mock("@/lib/auth", async () => {
+  const { principalFrom } = await import("../helpers/auth-principal");
+  return {
+    requireAuth: mockRequireAuth,
+    requirePrincipal: principalFrom(mockRequireAuth),
+  };
+});
 
 // Server-side workspace root is "~/prj"; the route must use THIS, never the
 // request body's basePath.

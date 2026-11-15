@@ -45,7 +45,9 @@ vi.mock("@/server/sessions/session-manager", () => ({
   hasSession: () => true,
 }));
 vi.mock("@/lib/worktree-manager", () => ({
-  isValidPath: () => true,
+  // Confinement always passes, except the dx#119 ".daax" check (base ends in
+  // /.daax), which these cases never target.
+  isValidPath: (_p: string, base: string) => !base.endsWith("/.daax"),
   resolveWorkspaceRoot: () => "/home/dev/prj",
 }));
 vi.mock("@/server/docker/image-manager", () => ({
@@ -140,6 +142,12 @@ afterEach(() => {
 });
 
 describe("host shell over the forwarded-identity path", () => {
+  // The bare forwarded path is the no-ticketing posture (host-dev behind
+  // Traefik). With ticketing configured a ticket is required (dx#119).
+  beforeEach(() => {
+    vi.stubEnv("DAAX_WS_TOKEN_SECRET", "");
+  });
+
   it("an admin subject gets a host shell", async () => {
     const ws = await connect({
       mode: "local",
@@ -229,6 +237,10 @@ describe("host shell over the forwarded-identity path", () => {
 });
 
 describe("container terminals on a host-mode daax", () => {
+  beforeEach(() => {
+    vi.stubEnv("DAAX_WS_TOKEN_SECRET", "");
+  });
+
   it("a non-admin's new container (docker run on the host socket) is refused", async () => {
     const ws = await connect({
       mode: "container",

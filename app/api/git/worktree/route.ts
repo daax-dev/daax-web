@@ -9,6 +9,7 @@ import {
   isValidBranchName,
   resolveWorkspaceRoot,
   getWorktreeOwner,
+  forgetWorktreeOwner,
 } from "@/lib/worktree-manager";
 import { generateUniqueName } from "@/lib/name-generator";
 import { requirePrincipal } from "@/lib/auth";
@@ -20,7 +21,8 @@ import {
 } from "@/lib/tenancy/ownership";
 
 // Multi-tenancy (dx#119): a worktree belongs to the user who created it (owner
-// recorded in git's per-worktree admin dir, see lib/worktree-manager.ts).
+// recorded in daax's own state dir, never in the tenant-writable workspace;
+// see lib/worktree-manager.ts).
 // Creating/removing one is part of running agents, so it needs terminal:exec.
 // The main worktree (the shared project checkout) is listed to everyone and
 // can be cleaned up by no one but an admin.
@@ -221,6 +223,7 @@ export async function DELETE(req: NextRequest) {
       pushBeforeCleanup: pushBeforeCleanup ?? true,
       forceDelete: forceDelete ?? false,
     });
+    if (result.deleted) forgetWorktreeOwner(worktreePath);
 
     return NextResponse.json(result);
   } catch (error) {

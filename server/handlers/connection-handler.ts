@@ -5,6 +5,7 @@
  */
 
 import { WebSocket } from "ws";
+import { join } from "node:path";
 import { IncomingMessage } from "http";
 import { getProjectInfo } from "../../lib/project-utils";
 import {
@@ -253,6 +254,19 @@ export async function handleConnection(
     console.log(
       `Rejected mount outside base path: ${mountPath} (base: ${securityBasePath})`,
     );
+    ws.close(1008, "Path not allowed");
+    return;
+  }
+
+  // Multi-tenancy (dx#119): `.daax/` under the workspace holds every tenant's
+  // credential store (and the legacy shared one). A non-admin may never mount
+  // it or anything inside it. Canonical (realpath) check via isValidPath, so a
+  // symlink planted in the workspace cannot point a mount into it.
+  if (
+    !principal.admin &&
+    isValidPath(mountPath, join(resolveWorkspaceRoot(), ".daax"))
+  ) {
+    console.log(`Rejected mount into .daax for ${auth.user}: ${mountPath}`);
     ws.close(1008, "Path not allowed");
     return;
   }

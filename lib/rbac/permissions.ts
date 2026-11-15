@@ -29,8 +29,9 @@
  *                            the ticket mint route
  *       containers:write   — container/session start/stop/restart/delete/reap,
  *                            testcontainers create/mutate, docker pull
- *       recording:write    — recording start (WS), delete, export, publish,
- *                            create-pr
+ *       recording:write    — recording start (WS), delete, publish, create-pr
+ *                            (reading and the HTML export are owner-scoped
+ *                            reads)
  *       settings:write     — PUT the caller's own server-side settings
  *       admin:settings:write — PUT the admin settings policy (defaults, locks,
  *                            per-user overrides)

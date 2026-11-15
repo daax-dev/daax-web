@@ -53,9 +53,11 @@ vi.mock("@/server/sessions/session-manager", () => ({
   hasSession: () => true,
 }));
 vi.mock("@/lib/worktree-manager", () => ({
+  // Lexical stand-in for the canonical check: inside `base` iff it contains
+  // the base's last segment. Enough for the confinement calls made here.
   isValidPath: (p: string, base: string) => {
     h.validPathCalls.push([p, base]);
-    return true;
+    return base.endsWith("/.daax") ? p.includes("/.daax") : true;
   },
   resolveWorkspaceRoot: () => "/workspace",
 }));
@@ -372,7 +374,7 @@ describe("server-side settings from the ticket", () => {
         locked: ["mountRoot"],
       }),
     });
-    expect(h.validPathCalls.at(-1)?.[1]).toBe("/workspace/users/a");
+    expect(h.validPathCalls.map((c) => c[1])).toContain("/workspace/users/a");
   });
 
   it("a whole-workspace mount shadows .daax (every tenant's credentials)", async () => {
@@ -381,6 +383,42 @@ describe("server-side settings from the ticket", () => {
       query: { cwd: "/workspace", mount: "/workspace" },
     });
     expect(runArgs()).toContain("type=tmpfs,destination=/workspace/.daax");
+  });
+});
+
+describe("credential stores under .daax", () => {
+  it.each(["/workspace/.daax/users/bbbbbbbb/claude", "/workspace/.daax"])(
+    "a user mounting %s is refused (another tenant's credentials)",
+    async (mount) => {
+      const ws = await connect({
+        ticket: userTicket(A),
+        query: { cwd: mount, mount },
+      });
+      expect(ws.close).toHaveBeenCalledWith(1008, "Path not allowed");
+      expect(h.spawn).not.toHaveBeenCalled();
+    },
+  );
+
+  it("the admin may mount it", async () => {
+    const ws = await connect({
+      ticket: adminTicket(),
+      query: { cwd: "/workspace/.daax", mount: "/workspace/.daax" },
+    });
+    expect(ws.close).not.toHaveBeenCalled();
+  });
+});
+
+describe("a bare forwarded admin when ticketing is configured", () => {
+  it("is refused: the signed claims are the only authority", async () => {
+    const ws = await connect({
+      headers: { "x-forwarded-user": ADMIN },
+      remoteAddress: "127.0.0.1",
+    });
+    expect(ws.close).toHaveBeenCalledWith(
+      1008,
+      "terminal refused: a terminal ticket is required",
+    );
+    expect(h.spawn).not.toHaveBeenCalled();
   });
 });
 

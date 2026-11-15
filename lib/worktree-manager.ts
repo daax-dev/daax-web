@@ -11,6 +11,7 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   writeFileSync,
 } from "fs";
 import { basename, dirname, join, resolve, sep } from "path";
@@ -332,13 +333,45 @@ export interface CreateWorktreeOptions {
 // Worktree ownership (multi-tenancy — dx#119)
 // ---------------------------------------------------------------------------
 //
-// The owner is recorded in git's PER-WORKTREE admin directory
-// (`<repo>/.git/worktrees/<name>/daax-owner`), not in the working tree, so it
-// never shows up in `git status`, needs no database (host-dev keeps working),
-// and is removed by git together with the worktree.
+// The owner is recorded in daax's OWN state dir (`~/.daax/worktree-owners.json`
+// — the web/terminal planes' `daax-recordings` volume in container mode), keyed
+// by the worktree's canonical path. It is deliberately NOT stored anywhere
+// under the workspace (e.g. `.git/worktrees/<name>/`): every tenant's agent
+// container can write the workspace, so an owner stored there could be
+// rewritten by another tenant to claim the worktree.
 
-/** File name of the owner marker inside a worktree's git admin dir. */
-export const WORKTREE_OWNER_FILE = "daax-owner";
+const OWNERS_FILE = join(homedir(), ".daax", "worktree-owners.json");
+
+/** Test seam: the owners file path. */
+export function worktreeOwnersFile(): string {
+  return process.env.DAAX_WORKTREE_OWNERS_FILE || OWNERS_FILE;
+}
+
+type OwnerMap = Record<string, string>;
+
+function readOwners(): OwnerMap {
+  try {
+    const parsed = JSON.parse(readFileSync(worktreeOwnersFile(), "utf-8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as OwnerMap)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeOwners(map: OwnerMap): void {
+  const file = worktreeOwnersFile();
+  mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(map, null, 2), { mode: 0o600 });
+  renameSync(tmp, file);
+}
+
+/** Canonical key for a worktree path (container namespace, symlinks resolved). */
+function worktreeKey(worktreePath: string): string | null {
+  return canonicalizePath(translatePath(worktreePath));
+}
 
 /** Absolute git admin dir of a checkout (container namespace), or null. */
 async function absoluteGitDir(containerPath: string): Promise<string | null> {
@@ -362,7 +395,9 @@ function isLinkedWorktreeGitDir(gitDir: string): boolean {
 /**
  * The worktree at `worktreePath` as an owned resource: null when it is not a
  * git checkout; `{ owner: null, main: true }` for a main worktree (shared,
- * admin-only to mutate); else the recorded owner (null = pre-#119).
+ * admin-only to mutate); else the recorded owner (null = pre-#119, admin-only).
+ * Tampering with git metadata can only make a worktree look main or unowned,
+ * both of which fail closed.
  */
 export async function getWorktreeOwner(
   worktreePath: string,
@@ -370,25 +405,27 @@ export async function getWorktreeOwner(
   const gitDir = await absoluteGitDir(translatePath(worktreePath));
   if (!gitDir) return null;
   if (!isLinkedWorktreeGitDir(gitDir)) return { owner: null, main: true };
-  try {
-    const v = readFileSync(join(gitDir, WORKTREE_OWNER_FILE), "utf-8").trim();
-    return { owner: v || null, main: false };
-  } catch {
-    return { owner: null, main: false };
-  }
+  const key = worktreeKey(worktreePath);
+  return { owner: (key && readOwners()[key]) || null, main: false };
 }
 
-async function recordWorktreeOwner(
-  containerWorktreePath: string,
-  owner: string,
-): Promise<void> {
-  const gitDir = await absoluteGitDir(containerWorktreePath);
-  if (!gitDir || !isLinkedWorktreeGitDir(gitDir)) {
-    throw new Error("cannot record worktree owner: not a linked worktree");
+function recordWorktreeOwner(worktreePath: string, owner: string): void {
+  const key = worktreeKey(worktreePath);
+  if (!key) throw new Error("cannot record worktree owner: unresolvable path");
+  const map = readOwners();
+  map[key] = owner;
+  writeOwners(map);
+}
+
+/** Drop the owner record of a removed worktree. */
+export function forgetWorktreeOwner(worktreePath: string): void {
+  const key = worktreeKey(worktreePath);
+  if (!key) return;
+  const map = readOwners();
+  if (key in map) {
+    delete map[key];
+    writeOwners(map);
   }
-  writeFileSync(join(gitDir, WORKTREE_OWNER_FILE), `${owner}\n`, {
-    mode: 0o644,
-  });
 }
 
 /**
@@ -554,7 +591,7 @@ export async function createWorktree(
     { cwd: containerProjectPath },
   );
 
-  if (owner) await recordWorktreeOwner(containerWorktreePath, owner);
+  if (owner) recordWorktreeOwner(containerWorktreePath, owner);
 
   // Get commit hash
   const { stdout: commit } = await execFileAsync("git", ["rev-parse", "HEAD"], {

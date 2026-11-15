@@ -292,6 +292,7 @@ vi.mock("@/lib/worktree-manager", () => ({
       main: w.main,
     })),
   getWorktreeOwner: async (p: string) => h.worktrees.get(p) ?? null,
+  forgetWorktreeOwner: () => {},
   createWorktree: async (opts: { owner?: string }) => {
     h.gitOps.push(`create:${opts.owner}`);
     return { path: "/workspace/repo/.worktrees/new", owner: opts.owner };
