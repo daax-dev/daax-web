@@ -39,7 +39,11 @@ import {
   recordOutput,
 } from "../recording/recorder";
 import { handleMessage, MessageHandlerContext } from "./message-handler";
-import { commandTarget, scheduleCommand } from "./command-handler";
+import {
+  commandTarget,
+  runsAsContainerCommand,
+  scheduleCommand,
+} from "./command-handler";
 import { resolveWorkspaceRoot, isValidPath } from "../../lib/worktree-manager";
 import {
   hasPermission,
@@ -572,8 +576,11 @@ export async function handleConnection(
     // Don't propagate - just log
   });
 
-  // If a command was specified, run it after shell initialization
-  if (command) {
+  // If a command was specified, run it after shell initialization. An
+  // inline-bootstrap command is already the new container's own command (see
+  // runsAsContainerCommand), so typing it again would run it twice and echo
+  // the wall of text that avoids.
+  if (command && !runsAsContainerCommand(mode, containerName, command)) {
     const commandTimeout = scheduleCommand(
       command,
       sessionId,

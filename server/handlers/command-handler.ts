@@ -24,6 +24,41 @@ export function commandTarget(mode: string): CommandTarget {
 }
 
 /**
+ * Commands whose expansion runs as a NEW agent container's own command instead
+ * of being typed into its already-running shell.
+ *
+ * `herdr-claude` expands (buildFullCommand) to a ~1000-character multi-stage
+ * bootstrap: PATH export, presence check, background server + poll loop,
+ * workspace create, agent start, exec. Typed into the pty, the shell echoes the
+ * whole wall of text at the user before anything happens. Run as the
+ * container's `zsh -c` argument it does the same thing with nothing echoed.
+ *
+ * Only commands whose expansion ends by exec'ing a long-running process (or an
+ * interactive shell on every failure path) belong here: a container command
+ * that returns exits the container.
+ */
+export function isInlineBootstrapCommand(command: string): boolean {
+  return /^herdr-claude(?:\s|$)/.test(command);
+}
+
+/**
+ * Whether this session's command is the container's own command (see
+ * isInlineBootstrapCommand): only for `docker run` of a new agent container.
+ * `docker exec` into an existing one, and local shells, still get it typed in.
+ * The container backend and the connection handler both decide by this, so a
+ * command is never run twice nor not at all.
+ */
+export function runsAsContainerCommand(
+  mode: string,
+  containerName: string,
+  command: string,
+): boolean {
+  return (
+    mode === "container" && !containerName && isInlineBootstrapCommand(command)
+  );
+}
+
+/**
  * Build the full command string, handling special cases for AI tools.
  */
 /**
