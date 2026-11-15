@@ -11,11 +11,11 @@
 # has: upstream Pocket ID answers it 404, so every daax request would fail.
 #
 # The check follows the chain itself, not text that merely appears in the
-# file: edge-auth-required must be a chain whose members are defined in this
-# file, a headers middleware blanking every identity header daax reads must
-# come BEFORE the one ForwardAuth, that ForwardAuth must be traefik-forward-auth
-# on loopback 4182 and return X-Forwarded-User, and nothing after it may set an
-# identity header. Reads only; prints no secrets (edge.yml carries none).
+# file: edge-auth-required must be a non-empty chain whose members are defined
+# in this file; every identity header daax reads must be blanked (and not set
+# again) BEFORE the one ForwardAuth; that ForwardAuth must be traefik-forward-auth
+# at http://127.0.0.1:4182/portals/main and return X-Forwarded-User; and nothing
+# after it may set an identity header. Reads only; prints no secrets (edge.yml carries none).
 # Needs python3 with PyYAML (Ubuntu: python3-yaml); without it, it refuses.
 set -euo pipefail
 
@@ -44,7 +44,8 @@ IDENTITY = [
     "X-Forwarded-Name", "X-Forwarded-Displayname", "X-Forwarded-Groups",
     "X-Forwarded-Admin",
 ]
-TFA = re.compile(r"^http://127\.0\.0\.1:4182/portals/[A-Za-z0-9_-]+$")
+# The portal daax's user menu signs out of (/portals/main/logout).
+TFA = re.compile(r"^http://127\.0\.0\.1:4182/portals/main$")
 
 problems = []
 raw = open(path, encoding="utf-8").read()
@@ -85,7 +86,7 @@ for i, ref in enumerate(members):
             continue
         fa = m["forwardAuth"] or {}
         if not TFA.match(str(fa.get("address", ""))):
-            problems.append(f"ForwardAuth {name!r} is not traefik-forward-auth on http://127.0.0.1:4182/portals/<portal>")
+            problems.append(f"ForwardAuth {name!r} is not traefik-forward-auth on http://127.0.0.1:4182/portals/main")
         if "x-forwarded-user" not in [str(h).lower() for h in fa.get("authResponseHeaders") or []]:
             problems.append(f"ForwardAuth {name!r} does not return X-Forwarded-User")
         fa_index = i
@@ -93,16 +94,23 @@ for i, ref in enumerate(members):
         req = lower_keys((m["headers"] or {}).get("customRequestHeaders"))
         touched = [h for h in IDENTITY if h.lower() in req]
         if fa_index is None:
-            resets_before |= {h for h in touched if req[h.lower()] == ""}
+            # The LAST assignment before auth is what reaches the ForwardAuth:
+            # a later non-empty value undoes an earlier reset.
+            for h in touched:
+                if req[h.lower()] == "":
+                    resets_before.add(h)
+                else:
+                    resets_before.discard(h)
+                    problems.append(f"{name!r} sets {h} to a non-empty value before the ForwardAuth")
         elif touched:
             problems.append(f"{name!r} sets identity headers AFTER the ForwardAuth: {', '.join(touched)}")
     else:
         problems.append(f"chain member {name!r} is neither a header reset nor the ForwardAuth")
 
-if members and fa_index is None:
+if isinstance(gate, dict) and fa_index is None:
     problems.append("chain has no ForwardAuth")
 missing = [h for h in IDENTITY if h not in resets_before]
-if members and missing:
+if isinstance(gate, dict) and missing:
     problems.append("identity headers not blanked before the ForwardAuth: " + ", ".join(missing))
 
 if problems:

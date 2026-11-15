@@ -125,6 +125,32 @@ describe("check-edge-gate.sh", () => {
       "'late' sets identity headers AFTER the ForwardAuth: X-Forwarded-User",
     ],
     [
+      "the chain is empty",
+      edge([]).replace("        middlewares:\n\n", "        middlewares: []\n"),
+      "chain has no ForwardAuth",
+    ],
+    [
+      "a middleware between the reset and auth sets an identity header",
+      edge(
+        ["edge-identity-reset", "admin-flag", "edge-forward-auth-check"],
+        `    admin-flag:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-Admin: "true"
+`,
+      ),
+      "'admin-flag' sets X-Forwarded-Admin to a non-empty value before the ForwardAuth",
+    ],
+    [
+      "the ForwardAuth uses another portal",
+      edge(
+        ["edge-identity-reset", "edge-forward-auth-check"],
+        "",
+        "http://127.0.0.1:4182/portals/other",
+      ),
+      "is not traefik-forward-auth on http://127.0.0.1:4182/portals/main",
+    ],
+    [
       "the reset misses a header daax reads",
       HOST_LOCAL.replace('          X-Forwarded-Groups: ""\n', ""),
       "not blanked before the ForwardAuth: X-Forwarded-Groups",
