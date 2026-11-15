@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   PERMISSIONS,
+  ENFORCED_PERMISSIONS,
   ROLE_PERMISSIONS,
   ADMIN_ROLE,
   DEFAULT_ROLE,
@@ -59,6 +60,17 @@ describe("rbac permission resolution (F5 #101)", () => {
     expect(rolesAreAdmin([ADMIN_ROLE])).toBe(true);
     expect(rolesAreAdmin([DEFAULT_ROLE])).toBe(false);
     expect(rolesAreAdmin([])).toBe(false);
+  });
+
+  it("digital workers: user may run workers, only admin may manage them", () => {
+    expect(PERMISSIONS).toContain("workers:manage");
+    expect(PERMISSIONS).toContain("workers:run");
+    expect(ENFORCED_PERMISSIONS).toContain("workers:manage");
+    expect(ENFORCED_PERMISSIONS).toContain("workers:run");
+    expect(roleHasPermission(DEFAULT_ROLE, "workers:run")).toBe(true);
+    expect(roleHasPermission(DEFAULT_ROLE, "workers:manage")).toBe(false);
+    expect(roleHasPermission(ADMIN_ROLE, "workers:manage")).toBe(true);
+    expect(roleHasPermission(ADMIN_ROLE, "workers:run")).toBe(true);
   });
 
   it("the ROLE_PERMISSIONS catalog is frozen (cannot be mutated at runtime)", () => {

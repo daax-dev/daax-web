@@ -21,6 +21,8 @@
  *       admin:db:read   — provenance-admin table/actions LIST + row/schema reads
  *       admin:db:write  — provenance-admin table row create/update/delete
  *       admin:users:write — provenance-admin action mutations
+ *       workers:manage  — digital worker create/update/delete, goals
+ *       workers:run     — queue/cancel digital worker runs (run, ask, voice)
  *   - ENFORCED via the SERVER ACCESS SUMMARY only (no route `requireRole` call):
  *       admin:users:read  — resolved by `resolveAccess()` / `/api/auth/access`
  *                           and used for admin-UI gating (settings/provenance
@@ -44,6 +46,8 @@ export const PERMISSIONS = Object.freeze([
   "admin:users:write",
   "admin:db:read",
   "admin:db:write",
+  "workers:manage",
+  "workers:run",
 ] as const);
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -62,6 +66,8 @@ export const ENFORCED_PERMISSIONS: readonly Permission[] = Object.freeze([
   "admin:users:write",
   "admin:db:read",
   "admin:db:write",
+  "workers:manage",
+  "workers:run",
 ]);
 
 /** The default role granted on a genuine JIT insert (docs §3 F5). */
@@ -93,6 +99,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<string, readonly Permission[]>> =
       "terminal:exec",
       "containers:write",
       "recording:write",
+      "workers:run",
     ]) as readonly Permission[],
   });
 
