@@ -359,6 +359,8 @@ export function handleSubstrateConnection(
     ws,
     getRecordingId: () => hub.recordingId,
     principal: auth.principal,
+    // The session's recording is its owner's, whoever starts it (dx#119).
+    recordingOwner: target.owner,
     setRecordingId: (id) => {
       hub.recordingId = id;
       // An explicit stop (the session's recording is shared by its viewers)

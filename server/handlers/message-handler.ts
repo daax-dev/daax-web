@@ -37,6 +37,12 @@ export interface MessageHandlerContext {
    * `recording:write`.
    */
   principal: Principal;
+  /**
+   * Owner key stamped on a recording this connection starts, when it is not
+   * the principal's: a substrate session's recording belongs to the session's
+   * owner even when an admin starts it. Defaults to `ownerKeyFor(principal)`.
+   */
+  recordingOwner?: string | null;
 }
 
 /**
@@ -168,7 +174,7 @@ function handleStartRecording(
       cols,
       rows,
       msg.clientSessionId,
-      ownerKeyFor(ctx.principal),
+      ctx.recordingOwner ?? ownerKeyFor(ctx.principal),
     );
     // startRecording returns null if duplicate (same clientSessionId already recording)
     if (recordingId) {

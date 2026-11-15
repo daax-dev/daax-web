@@ -462,6 +462,70 @@ describe("SubstrateHub races (review fixes)", () => {
   });
 });
 
+describe("recording ownership (dx#119)", () => {
+  const ADMIN: Principal = {
+    subject: "ad000000-0000-4000-8000-0000000000ad",
+    operator: false,
+    admin: true,
+    permissions: ["terminal:exec", "recording:write"],
+  };
+  const adminAuth = {
+    ok: true as const,
+    user: "root",
+    method: "ticket" as const,
+    hostShell: { ok: false as const, reason: "x" },
+    principal: ADMIN,
+    substrate: { session: SESSION, actor: ACTOR, owner: OWNER },
+  };
+
+  it("a recording an admin starts on a user's session belongs to the session owner", async () => {
+    const pty = fakePty();
+    const backend = { attach: vi.fn(async () => pty as unknown as IPty) };
+    const ws = fakeWs();
+    handleSubstrateConnection(
+      ws as unknown as WebSocket,
+      new URL("ws://x/?mode=substrate"),
+      adminAuth,
+      { ok: true, backend } as never,
+    );
+    await flush();
+    ws.fire("message", JSON.stringify({ type: "startRecording" }));
+    await flush();
+    expect(rec.startRecording).toHaveBeenCalledTimes(1);
+    expect(rec.startRecording.mock.calls[0][6]).toBe(OWNER);
+  });
+
+  it("an auto-started recording belongs to the session owner too", async () => {
+    const pty = fakePty();
+    const backend = { attach: vi.fn(async () => pty as unknown as IPty) };
+    const ws = fakeWs();
+    handleSubstrateConnection(
+      ws as unknown as WebSocket,
+      new URL("ws://x/?mode=substrate&record=true"),
+      adminAuth,
+      { ok: true, backend } as never,
+    );
+    await flush();
+    pty.emit("a");
+    expect(rec.startRecording.mock.calls[0][6]).toBe(OWNER);
+  });
+
+  it("record=true without recording:write does not record", async () => {
+    const pty = fakePty();
+    const backend = { attach: vi.fn(async () => pty as unknown as IPty) };
+    const ws = fakeWs();
+    handleSubstrateConnection(
+      ws as unknown as WebSocket,
+      new URL("ws://x/?mode=substrate&record=true"),
+      { ...adminAuth, principal: { ...USER, permissions: ["terminal:exec"] } },
+      { ok: true, backend } as never,
+    );
+    await flush();
+    pty.emit("a");
+    expect(rec.startRecording).not.toHaveBeenCalled();
+  });
+});
+
 describe("attach failure reporting", () => {
   it("never sends kubectl-ate stderr to the browser", async () => {
     const ws = fakeWs();
