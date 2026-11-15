@@ -977,6 +977,44 @@ describe("testcontainer / compose bind mounts stay inside the tenant boundary", 
   });
 });
 
+describe("named volumes are admin-only (they have no owner)", () => {
+  const create = (source: string) =>
+    createTc(
+      req("POST", {
+        image: "postgres:16",
+        volumes: [{ source, target: "/var/lib/postgresql/data" }],
+      }),
+    );
+
+  it.each(["daax_daax-pg-data", "daax_daax-recordings", "pgdata"])(
+    "a user cannot mount the named volume %s",
+    async (source) => {
+      as("A");
+      const res = await create(source);
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/Named volumes are admin-only/);
+      expect(h.tcOps).toEqual([]);
+    },
+  );
+
+  it("the admin may mount a named volume", async () => {
+    as("ADMIN");
+    expect((await create("pgdata")).status).toBe(201);
+  });
+
+  it("a compose service mounting a named volume is refused for a user", async () => {
+    as("A");
+    const res = await createCompose(
+      req("POST", {
+        name: "x",
+        yaml: "services:\n  db:\n    image: redis\n    volumes:\n      - daax_daax-pg-data:/data\n",
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(h.tcOps).toEqual([]);
+  });
+});
+
 describe("testcontainer binds with a symlinked tenant base", () => {
   it("are refused when the base resolves outside the workspace", async () => {
     // A tenant base outside the workspace: containment in the base alone

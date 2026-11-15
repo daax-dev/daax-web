@@ -120,4 +120,19 @@ describe("mode routing", () => {
       "terminal refused: terminal:exec not granted",
     );
   });
+
+  // Codex review of #530 as integrated (HIGH): a substrate attach ticket has
+  // no settings policy, so it must not open a container or local terminal.
+  it.each(["container", "local", "shell-tmux"])(
+    "a substrate attach ticket cannot open mode=%s",
+    (mode) => {
+      const ws = connect(`mode=${mode}`);
+      expect(ws.close).toHaveBeenCalledWith(
+        1008,
+        "terminal refused: ticket is for a substrate session",
+      );
+      expect(spawn).not.toHaveBeenCalled();
+      expect(substrate).not.toHaveBeenCalled();
+    },
+  );
 });

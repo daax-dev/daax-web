@@ -120,6 +120,15 @@ export async function handleConnection(
   // Dispatched after the `terminal:exec` check and before the
   // local-shell refusal below, which would otherwise refuse every non-admin
   // substrate attach (dx#119). The `.daax` / mountRoot checks are docker-only.
+  // A substrate attach ticket authorizes that one attach and nothing else: it
+  // carries no settings policy, so it must never open another terminal mode.
+  if (auth.substrate && mode !== "substrate") {
+    console.log(
+      `Refused ${mode} terminal for ${auth.method} identity ${auth.user}: substrate attach ticket`,
+    );
+    ws.close(1008, "terminal refused: ticket is for a substrate session");
+    return;
+  }
   if (mode === "substrate") {
     if (refuseWithoutExec()) return;
     handleSubstrateConnection(ws, url, auth);

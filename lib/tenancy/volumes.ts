@@ -7,7 +7,12 @@
  *   - never a source that CONTAINS `.daax` (the workspace root or an alias of
  *     it — testcontainers get no tmpfs shadow).
  * All checks are canonical (realpath) via isValidPath, so symlinks cannot
- * dodge them. Docker named volumes (non-absolute sources) are not host paths.
+ * dodge them.
+ *
+ * Docker named volumes (non-absolute sources) are not host paths, but they
+ * have no owner either: a name can be another tenant's volume or daax's own
+ * (its Postgres data, the shared recordings / worktree-owner state). So a
+ * non-admin may not mount a named volume at all; admins may.
  */
 import "server-only";
 
@@ -42,7 +47,11 @@ export async function tenantVolumeViolation(
   const daax = join(root, ".daax");
   for (const v of volumes) {
     const source = typeof v?.source === "string" ? v.source : "";
-    if (!source.startsWith("/")) continue; // named volume
+    if (!source) continue; // anonymous volume: fresh, nobody else's
+    if (!source.startsWith("/")) {
+      // Named volume: no owner to check against, so refused.
+      return `Named volumes are admin-only: ${source}`;
+    }
     // Both: a tenant base symlinked outside the workspace must not widen it.
     if (!isValidPath(source, base) || !isValidPath(source, root)) {
       return `Volume source is outside your workspace: ${source}`;
