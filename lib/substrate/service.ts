@@ -241,8 +241,11 @@ export async function createSession(
             )
           ) {
             if (created && !(await tryStop(deps, actorName, session.id))) {
-              await deps.store.setState(
+              // Guarded: an End that arrived during the cleanup keeps
+              // `ending` and is settled in `finally` below.
+              await deps.store.transition(
                 session.id,
+                ["error"],
                 "error",
                 `create: ${publicReason(err)}; cleanup failed, End to retry`,
               );
@@ -254,7 +257,23 @@ export async function createSession(
         }
       }
     } finally {
-      inFlight.delete(session.id);
+      // Settle an End that deferred to this create (202 `ending`) on any
+      // path that did not finalize it, e.g. one that arrived during a
+      // failed create's cleanup. Deletes only an owned actor (idempotent).
+      try {
+        const row = await deps.store.get(session.id);
+        if (row && !row.endedAt && row.state === "ending") {
+          await finishEnd(
+            deps,
+            session.id,
+            row.actorOwned ? row.actorName : null,
+          );
+        }
+      } catch (err) {
+        logFailure("settle end", session.id, err);
+      } finally {
+        inFlight.delete(session.id);
+      }
     }
   })();
   (deps.background ?? ((p) => void p))(provision);

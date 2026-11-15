@@ -142,6 +142,33 @@ describe("createSession", () => {
     expect(backend.stop).toHaveBeenLastCalledWith(res.body.actorName);
   });
 
+  it("End during a failed create's cleanup is settled when the cleanup succeeds (Codex r6)", async () => {
+    const { deps, backend, store, settle } = makeDeps();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    backend.spawn.mockImplementationOnce(async (spec) => {
+      await spec.onActorCreated?.();
+      throw new Error("egress policy rejected");
+    });
+    let finishCleanup!: () => void;
+    let cleanupStarted!: () => void;
+    const started = new Promise<void>((r) => (cleanupStarted = r));
+    backend.stop.mockImplementationOnce(
+      () =>
+        new Promise<void>((r) => {
+          finishCleanup = r;
+          cleanupStarted();
+        }),
+    );
+    const res = await createSession(deps, ALICE, { agent: "claude" });
+    if (!res.ok) throw new Error("expected ok");
+    await started; // provisioning is inside its cleanup
+    const end = await endSession(deps, ALICE, res.body.id);
+    expect(end.ok && end.body.state).toBe("ending");
+    finishCleanup();
+    await settle();
+    expect((await store.get(res.body.id))?.state).toBe("ended");
+  });
+
   it("End during a create that collides never deletes the taken actor", async () => {
     let reject!: (e: Error) => void;
     const { deps, backend, settle } = makeDeps();
