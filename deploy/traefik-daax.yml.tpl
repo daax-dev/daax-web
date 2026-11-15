@@ -4,15 +4,20 @@
 # Routes for daax.HOSTNAME_PLACEHOLDER.poley.dev
 #
 # Prerequisites:
-#   - Pocket ID running on port 1411 (for ForwardAuth)
+#   - This host's identity edge (dx edge bundle, edge/install/identity-host.sh):
+#     /etc/traefik/dynamic/edge.yml defining `edge-auth-required`, the chain
+#     edge-identity-reset -> traefik-forward-auth (127.0.0.1:4182/portals/main)
+#     -> this host's own Pocket ID (https://auth.<host>.poley.dev). Every router
+#     below that needs a login uses that gate; this file defines no ForwardAuth
+#     of its own, so it cannot point anywhere but the host's own IdP (dx#120).
+#     deploy-local.sh install-traefik-config refuses to install this file until
+#     that edge.yml is in place (deploy/host/check-edge-gate.sh).
 #   - Daax WEB container (daax) on port 4200
 #   - Daax TERMINAL container (daax-terminal) on port 4201 (F3 split, #100):
 #     the WS plane is a separate service; the daax-ws service below still
 #     targets 127.0.0.1:4201, now published by daax-terminal, so this routing
 #     is unchanged by the split.
 #   - Code-server container on port 18080
-#   - Host-mode daax (deploy/host/daax-host.sh) on 4210/4211 (optional; its
-#     routers answer 502 when it is not running)
 #   - Clawdbot gateway on port 18789 (optional)
 
 http:
@@ -23,8 +28,10 @@ http:
         dialTimeout: 30s
 
   middlewares:
-    # Defense-in-depth: strip auth identity headers from incoming requests
-    # so only Pocket ID ForwardAuth can populate them (prevents client spoofing).
+    # Defense-in-depth: strip auth identity headers from incoming requests so
+    # only the host's forward-auth gate can populate them (prevents client
+    # spoofing). edge-auth-required resets them as well; this also strips the
+    # proxy secret, which the edge chain does not know about.
     # X-Daax-Proxy-Secret is stripped here too so a client cannot forge it; the
     # real value is injected by inject-proxy-secret below (F1a, issue #94).
     strip-forwarded-headers:
@@ -36,6 +43,7 @@ http:
           X-Forwarded-Name: ""
           X-Forwarded-Groups: ""
           X-Forwarded-Admin: ""
+          X-Forwarded-Displayname: ""
           X-Daax-Proxy-Secret: ""
 
     # Proxy-secret trust boundary (F1a, issue #94): inject the shared secret so
@@ -48,35 +56,6 @@ http:
         customRequestHeaders:
           X-Daax-Proxy-Secret: "DAAX_PROXY_SECRET_PLACEHOLDER"
 
-    # Pocket ID ForwardAuth middleware
-    pocket-id-auth:
-      forwardAuth:
-        address: "http://127.0.0.1:1411/api/forward-auth/verify"
-        trustForwardHeader: true
-        authResponseHeaders:
-          - X-Forwarded-User
-          - X-Forwarded-Email
-          - X-Forwarded-Username
-          - X-Forwarded-Name
-          - X-Forwarded-Groups
-          - X-Forwarded-Admin
-
-    # The same verify endpoint, admins only — Pocket ID answers non-admins with
-    # a refusal (the edge bundle's edge-auth-admin uses the same parameter).
-    # Only the host-mode daax routers use it: their terminal is a shell on the
-    # host as the operator, so being signed in is not enough.
-    pocket-id-auth-admin:
-      forwardAuth:
-        address: "http://127.0.0.1:1411/api/forward-auth/verify?require_admin=true"
-        trustForwardHeader: true
-        authResponseHeaders:
-          - X-Forwarded-User
-          - X-Forwarded-Email
-          - X-Forwarded-Username
-          - X-Forwarded-Name
-          - X-Forwarded-Groups
-          - X-Forwarded-Admin
-
   routers:
     # WebSocket endpoint - higher priority to match before main route
     daax-ws:
@@ -85,7 +64,7 @@ http:
       priority: 100
       middlewares:
         - strip-forwarded-headers
-        - pocket-id-auth
+        - edge-auth-required
       tls:
         certResolver: cloudflare
       entryPoints:
@@ -97,45 +76,21 @@ http:
       service: daax
       middlewares:
         - strip-forwarded-headers
-        - pocket-id-auth
+        - edge-auth-required
         - inject-proxy-secret
       tls:
         certResolver: cloudflare
       entryPoints:
         - websecure
 
-    # Host-mode daax (deploy/host/daax-host.sh) — Agent View's "Resume here".
-    # Its terminal is a shell ON THE HOST as the operator, so these two routers
-    # carry the chains of daax-ws and daax above with one change, tighter:
-    # pocket-id-auth-admin (Pocket ID admins only) in place of pocket-id-auth.
-    # The proxy secret is injected on HTTP only, and the WS is admitted by the
-    # forwarded identity from a loopback peer (server/handlers/ws-auth.ts). The
-    # instance declares this one origin in DAAX_EXTRA_ALLOWED_ORIGINS; Origin
-    # is never rewritten here. With no daax-host service running these answer
-    # 502 after sign-in and expose nothing.
-    daax-host-ws:
-      rule: Host(`daax-host.HOSTNAME_PLACEHOLDER.poley.dev`) && PathPrefix(`/ws`)
-      service: daax-host-ws
-      priority: 100
-      middlewares:
-        - strip-forwarded-headers
-        - pocket-id-auth-admin
-      tls:
-        certResolver: cloudflare
-      entryPoints:
-        - websecure
-
-    daax-host:
-      rule: Host(`daax-host.HOSTNAME_PLACEHOLDER.poley.dev`)
-      service: daax-host
-      middlewares:
-        - strip-forwarded-headers
-        - pocket-id-auth-admin
-        - inject-proxy-secret
-      tls:
-        certResolver: cloudflare
-      entryPoints:
-        - websecure
+    # Host-mode daax (deploy/host/daax-host.sh, daax-host.<host>, loopback
+    # 4210/4211) has NO router here. Its terminal is a shell on the host as the
+    # operator, and these routers used to be gated admins-only by the
+    # retired shared IdP fork's `?require_admin=true` verify endpoint. Upstream
+    # Pocket ID has no such endpoint, and the host's traefik-forward-auth gate
+    # is not yet configured with an admin-only check, so the route stays absent
+    # (fail closed) until one exists, matching the fleet's daax.yml
+    # (.logs/decisions/idp-per-host.jsonl, idp-per-host-002).
 
     # Code-Server (VS Code in browser)
     daax-code:
@@ -143,7 +98,7 @@ http:
       service: daax-code
       middlewares:
         - strip-forwarded-headers
-        - pocket-id-auth
+        - edge-auth-required
       tls:
         certResolver: cloudflare
       entryPoints:
@@ -151,7 +106,7 @@ http:
 
     # Clawdbot Gateway
     #
-    # pocket-id-auth (Pocket ID passkey ForwardAuth) is INTENTIONALLY EXCLUDED
+    # edge-auth-required (the host's passkey ForwardAuth) is INTENTIONALLY EXCLUDED
     # from this router — unlike daax / daax-ws / daax-code above (issue #202,
     # Fable Review Finding L5).
     #
@@ -199,18 +154,6 @@ http:
       loadBalancer:
         servers:
           - url: "http://127.0.0.1:4201"
-
-    # Host-mode daax: not containers. Ports from daax-host.sh (4200/4201 are
-    # the containers above).
-    daax-host:
-      loadBalancer:
-        servers:
-          - url: "http://127.0.0.1:4210"
-
-    daax-host-ws:
-      loadBalancer:
-        servers:
-          - url: "http://127.0.0.1:4211"
 
     daax-code:
       loadBalancer:

@@ -594,6 +594,11 @@ cmd_install_traefik_config() {
   validate_hostname
   [[ -f "$TRAEFIK_TEMPLATE" ]] || die "traefik template missing: $TRAEFIK_TEMPLATE"
   [[ -d "$TRAEFIK_DYNAMIC_DIR" ]] || die "traefik dynamic dir missing: $TRAEFIK_DYNAMIC_DIR"
+  # The template names edge-auth-required and defines no ForwardAuth itself
+  # (dx#120): refuse to install it on a host whose edge.yml does not provide
+  # the host-local gate, rather than install routes that answer 404 or worse.
+  bash "$SCRIPT_DIR/deploy/host/check-edge-gate.sh" "$TRAEFIK_DYNAMIC_DIR/edge.yml" \
+    || die "refusing to install daax routes without this host's forward-auth gate"
 
   local target="$TRAEFIK_DYNAMIC_DIR/daax.yml"
   local tmp="$target.tmp.$$"
