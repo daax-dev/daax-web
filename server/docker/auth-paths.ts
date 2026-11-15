@@ -6,7 +6,6 @@
  */
 
 import { homedir } from "os";
-import { join } from "path";
 import { mkdirSync, existsSync, chownSync } from "fs";
 import {
   HOST_WORKSPACE_PATH,
@@ -52,12 +51,12 @@ export function getOpenCodeAuthLocalPath(): string {
     // Container mode: create inside the mounted workspace
     return `${CONTAINER_WORKSPACE_PATH}/.daax/opencode`;
   }
-  // Host mode: respect XDG_DATA_HOME if set
-  const xdgDataHome = process.env.XDG_DATA_HOME;
-  if (xdgDataHome && xdgDataHome.trim().length > 0) {
-    return join(xdgDataHome, "opencode");
-  }
-  return `${homedir()}/.local/share/opencode`;
+  // Host mode: use a daax-DEDICATED store (R4), NOT the operator's real global
+  // `~/.local/share/opencode`. Mounting the real store RW into untrusted agent
+  // containers let agent code exfiltrate/overwrite the operator's actual
+  // OpenCode credential. Mirrors Claude host mode (`~/.daax-claude`): the dir is
+  // created empty and populated by `opencode auth login` INSIDE a daax container.
+  return `${homedir()}/.daax-opencode`;
 }
 
 /**
@@ -68,12 +67,9 @@ export function getOpenCodeAuthHostPath(): string {
     // Container mode: translate to host path for Docker volume mount
     return `${HOST_WORKSPACE_PATH}/.daax/opencode`;
   }
-  // Host mode: same as local path
-  const xdgDataHome = process.env.XDG_DATA_HOME;
-  if (xdgDataHome && xdgDataHome.trim().length > 0) {
-    return join(xdgDataHome, "opencode");
-  }
-  return `${homedir()}/.local/share/opencode`;
+  // Host mode: daax-DEDICATED store (R4), same as the local path — never the
+  // operator's real `~/.local/share/opencode`. See getOpenCodeAuthLocalPath.
+  return `${homedir()}/.daax-opencode`;
 }
 
 /**

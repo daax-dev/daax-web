@@ -281,19 +281,16 @@ export function buildShellCommand(
         //     daax-scoped Claude credential.
         //   - OpenCode, CONTAINER mode: daax-scoped to
         //     `${workspace}/.daax/opencode`.
-        //   - OpenCode, HOST mode: NOT daax-scoped. auth-paths.ts resolves this
-        //     to the operator's REAL global `~/.local/share/opencode` (or
-        //     $XDG_DATA_HOME/opencode) and mounts it read-WRITE into agent
-        //     containers. So the residual risk for OpenCode host mode is
-        //     exfiltration of the operator's REAL OpenCode credential (their
-        //     actual OpenCode identity), not a daax-scoped copy.
+        //   - OpenCode, HOST mode: daax-scoped to `~/.daax-opencode`
+        //     (auth-paths.ts), created empty and populated by `opencode auth
+        //     login` inside a daax container. The operator's real global
+        //     `~/.local/share/opencode` is never mounted.
         // Residual risk: untrusted agent code can read/exfiltrate the long-lived
-        // token in whichever store is mounted, and the store is shared across
-        // daax agent sessions — with OpenCode host mode being the operator's real
-        // global credential (see above). Follow-up (tracked in the #195 decision
-        // log): a daax-scoped OpenCode store for host mode, plus per-session,
-        // short-lived scoped tokens so a compromised session cannot exfiltrate a
-        // durable credential or read another session's token.
+        // token in whichever daax-scoped store is mounted, and the store is
+        // shared across daax agent sessions. Follow-up (tracked in the #195
+        // decision log): per-session, short-lived scoped tokens so a compromised
+        // session cannot exfiltrate a durable credential or read another
+        // session's token.
         "-v",
         `${claudeAuthHostPath}:/home/vscode/.claude`, // Persist Claude auth (RW required — see note above)
         "-v",
